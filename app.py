@@ -10,3 +10,6 @@ def create_app():
         return {"Hello": "World"}
 
     return app
+
+# create app
+app = create_app()
