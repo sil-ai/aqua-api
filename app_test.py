@@ -15,7 +15,15 @@ def client():
     with TestClient(mock_app) as client:
         yield client
 
+
+# Test for the root endpoint
 def test_read_main(client):
     response = client.get("/")
     assert response.status_code == 200
     assert response.json() == {"Hello": "World"}
+
+# TODO
+# Test for the List Versions endpoint
+def test_list_versions(client):
+    response = client.get("/version")
+    # assert
