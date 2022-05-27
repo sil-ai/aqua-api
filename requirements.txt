@@ -1,0 +1,5 @@
+gql
+pytest
+requests_toolbelt
+fastapi
+uvicorn[standard]
