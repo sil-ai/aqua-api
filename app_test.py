@@ -26,4 +26,4 @@ def test_read_main(client):
 # Test for the List Versions endpoint
 def test_list_versions(client):
     response = client.get("/version")
-    # assert
+    assert response.status_code == 200
