@@ -4,7 +4,7 @@ import os
 from fastapi import FastAPI
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
-from queries import list_versions_query
+from queries import all_queries
 
 
 # TODO
@@ -12,11 +12,10 @@ from queries import list_versions_query
 
 # Creates the FastAPI app object
 def create_app():
-
     app = FastAPI()
 
     transport = RequestsHTTPTransport(
-            url=os.getenv("DGRAPH_URL", verify=True, retries=3
+            url=os.getenv("DGRAPH_URL"), verify=True, retries=3
             )
 
     @app.get("/")
@@ -25,7 +24,7 @@ def create_app():
 
     @app.get("/version")
     def list_version():
-        list_versions = list_versions_query()
+        list_versions = all_queries.list_versions_query()
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
