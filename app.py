@@ -1,17 +1,22 @@
+import json
+import os
+
 from fastapi import FastAPI
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 
-import json
 
-#TODO
-# Initialize a connection to the DGraph DB
-# Use environment variables
+# TODO
+# Create queries file
 
 # Creates the FastAPI app object
 def create_app():
 
     app = FastAPI()
+
+    transport = RequestsHTTPTransport(
+            url=os.getenv('DGRAPH_URL'), verify=True, retries=3
+            )
 
     @app.get("/")
     def read_root():
@@ -19,51 +24,43 @@ def create_app():
 
     @app.get("/version")
     def list_version():
-        # Connect to DGraph
-        dgraph_url = 'https://blue-surf-460035.us-east-1.aws.cloud.dgraph.io/graphql'
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
-        transport = RequestsHTTPTransport(
-                url=dgraph_url, verify=True, retries=3
-                )
-
-        client = Client(transport=transport, fetch_schema_from_transport=True)
-
-        query = gql(
-            (
-                """
-                    query MyQuery { 
-                        queryBibleVersion {
-                            id
-                            name
-                            abbreviation
-                            isoLanguage {
-                                iso639
+            query = gql(
+                (
+                    """
+                        query MyQuery { 
+                            queryBibleVersion {
+                                id
+                                name
+                                abbreviation
+                                isoLanguage {
+                                    iso639
+                                }
+                                isoScript {
+                                    iso15924
+                                }
+                                rights
                             }
-                            isoScript {
-                                iso15924
-                            }
-                            rights
                         }
-                    }
-                """
+                    """
                 )
             )
-        result = client.execute(query)
-        version_data = []
-        for i in range(len(result['queryBibleVersion'])):
-            ids = result['queryBibleVersion'][i]['id']
-            name = result['queryBibleVersion'][i]['name']
-            abbv = result['queryBibleVersion'][i]['abbreviation']
-            iso = result['queryBibleVersion'][i]['isoLanguage']['iso639']
-            script = result['queryBibleVersion'][i]['isoScript']['iso15924']
-            rights = result['queryBibleVersion'][i]['rights']
             
-            ind_data = {
-                    'id': ids, 'name': name, 'abbreviation': abbv,
-                    'language': iso, 'script': script, 'rights': rights
-                    }
+            result = client.execute(query)
+            version_data = []
 
-            version_data.append(ind_data)
+            for version in result['queryBibleVersion']: 
+                ind_data = {
+                        'id': version['id'], 
+                        'name': version['name'], 
+                        'abbreviation': version['abbreviation'],
+                        'language': version['isoLanguage']['iso639'], 
+                        'script': version['isoScript']['iso15924'], 
+                        'rights': version['rights']
+                        }
+
+                version_data.append(ind_data)
 
         return {'data': version_data}
 

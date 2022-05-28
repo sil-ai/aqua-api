@@ -1,5 +1,5 @@
-gql
-pytest
-requests_toolbelt
-fastapi
-uvicorn[standard]
+gql==3.3.0
+pytest==7.1.2
+requests_toolbelt==0.9.1
+fastapi==0.78.0
+uvicorn[standard]==0.17.6
