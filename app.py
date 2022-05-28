@@ -4,6 +4,7 @@ import os
 from fastapi import FastAPI
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
+from queries import list_versions_query
 
 
 # TODO
@@ -15,7 +16,7 @@ def create_app():
     app = FastAPI()
 
     transport = RequestsHTTPTransport(
-            url=os.getenv('DGRAPH_URL'), verify=True, retries=3
+            url=os.getenv("DGRAPH_URL", verify=True, retries=3
             )
 
     @app.get("/")
@@ -24,45 +25,28 @@ def create_app():
 
     @app.get("/version")
     def list_version():
+        list_versions = list_versions_query()
+
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
-            query = gql(
-                (
-                    """
-                        query MyQuery { 
-                            queryBibleVersion {
-                                id
-                                name
-                                abbreviation
-                                isoLanguage {
-                                    iso639
-                                }
-                                isoScript {
-                                    iso15924
-                                }
-                                rights
-                            }
-                        }
-                    """
-                )
-            )
-            
+            query = gql(list_versions)
+ 
             result = client.execute(query)
             version_data = []
 
-            for version in result['queryBibleVersion']: 
+            for version in result["queryBibleVersion"]: 
                 ind_data = {
-                        'id': version['id'], 
-                        'name': version['name'], 
-                        'abbreviation': version['abbreviation'],
-                        'language': version['isoLanguage']['iso639'], 
-                        'script': version['isoScript']['iso15924'], 
-                        'rights': version['rights']
+                        "id": version["id"], 
+                        "name": version["name"], 
+                        "abbreviation": version["abbreviation"],
+                        "language": version["isoLanguage"]["iso639"], 
+                        "script": version["isoScript"]["iso15924"], 
+                        "rights": version["rights"]
                         }
 
                 version_data.append(ind_data)
 
-        return {'data': version_data}
+        return {"data": version_data}
 
     return app
 
