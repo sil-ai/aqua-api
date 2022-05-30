@@ -77,7 +77,7 @@ def download_iso_langs():
 
 def load_iso_langs(langs, upsert_method, db_engine):
     langs.to_sql(
-            "iso_language",
+            "isoLanguage",
             db_engine,
             index=False,
             if_exists="append",
@@ -99,7 +99,7 @@ def download_iso_scripts():
 
 def load_iso_scripts(scripts, upsert_method, db_engine):
     scripts.to_sql(
-            "iso_script",
+            "isoScript",
             db_engine,
             index=False,
             if_exists="append",

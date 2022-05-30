@@ -35,13 +35,13 @@ def create_app():
             result = client.execute(query)
             version_data = []
 
-            for version in result["bible_version"]: 
+            for version in result["bibleVersion"]: 
                 ind_data = {
                         "id": version["id"], 
                         "name": version["name"], 
                         "abbreviation": version["abbreviation"],
-                        "language": version["iso_language"]["iso639"], 
-                        "script": version["iso_script"]["iso15924"], 
+                        "language": version["language"]["iso639"], 
+                        "script": version["script"]["iso15924"], 
                         "rights": version["rights"]
                         }
 

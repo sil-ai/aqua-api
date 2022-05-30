@@ -2,14 +2,14 @@ class all_queries():
     def list_versions_query():
         list_version = """
                     query MyQuery {
-                        bible_version {
+                        bibleVersion {
                             id
                             name
                             abbreviation
-                            iso_language {
+                            language {
                                 iso639
                             }
-                            iso_script {
+                            script {
                                 iso15924
                             }
                             rights
