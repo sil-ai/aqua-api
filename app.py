@@ -1,29 +1,51 @@
-from fastapi import FastAPI
+import json
+import os
 
-#TODO
-# Initialize a connection to the DGraph DB
-# Use environment variables
+from fastapi import FastAPI
+from gql import Client, gql
+from gql.transport.requests import RequestsHTTPTransport
+from queries import all_queries
+
+
+# TODO
+# Create queries file
 
 # Creates the FastAPI app object
 def create_app():
-
     app = FastAPI()
+
+    transport = RequestsHTTPTransport(
+            url=os.getenv("DGRAPH_URL"), verify=True, retries=3
+            )
 
     @app.get("/")
     def read_root():
         return {"Hello": "World"}
 
-    #TODO
     @app.get("/version")
     def list_version():
+        list_versions = all_queries.list_versions_query()
 
-        # Connect to DGraph
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
-        # Get the versions back
+            query = gql(list_versions)
+ 
+            result = client.execute(query)
+            version_data = []
 
-        # format them somewhat
+            for version in result["queryBibleVersion"]: 
+                ind_data = {
+                        "id": version["id"], 
+                        "name": version["name"], 
+                        "abbreviation": version["abbreviation"],
+                        "language": version["isoLanguage"]["iso639"], 
+                        "script": version["isoScript"]["iso15924"], 
+                        "rights": version["rights"]
+                        }
 
-        return {}
+                version_data.append(ind_data)
+
+        return {"data": version_data}
 
     return app
 
