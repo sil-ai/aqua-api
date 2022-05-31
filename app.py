@@ -14,8 +14,10 @@ from queries import all_queries
 def create_app():
     app = FastAPI()
 
+    # Configure connection to the GRAPHQL endpoint
+    headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
     transport = RequestsHTTPTransport(
-            url=os.getenv("DGRAPH_URL"), verify=True, retries=3
+            url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
             )
 
     @app.get("/")
@@ -33,13 +35,13 @@ def create_app():
             result = client.execute(query)
             version_data = []
 
-            for version in result["queryBibleVersion"]: 
+            for version in result["bibleVersion"]: 
                 ind_data = {
                         "id": version["id"], 
                         "name": version["name"], 
                         "abbreviation": version["abbreviation"],
-                        "language": version["isoLanguage"]["iso639"], 
-                        "script": version["isoScript"]["iso15924"], 
+                        "language": version["language"]["iso639"], 
+                        "script": version["script"]["iso15924"], 
                         "rights": version["rights"]
                         }
 
