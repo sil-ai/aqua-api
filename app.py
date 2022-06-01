@@ -1,18 +1,39 @@
 import json
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Security, Depends, HTTPException
+from fastapi.security.api_key import APIKeyQuery, APIKeyCookie, APIKeyHeader, APIKey
+from fastapi.openapi.docs import get_swagger_ui_html
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
+from starlette.status import HTTP_403_FORBIDDEN
+from starlette.responses import RedirectResponse, JSONResponse
+
 from queries import all_queries
+from key_fetch import get_secret
 
-
-# TODO
-# Create queries file
 
 # Creates the FastAPI app object
 def create_app():
     app = FastAPI()
+
+    API_KEYS = []
+    key_fetch = get_secret(os.getenv("AWS_ACCESS_KEY"), os.getenv("AWS_SECRET_KEY"))
+    removable = ["{", "}", '"']
+    format_keys = key_fetch.translate(
+            {ord(c):'' for c in removable}
+            ).split(',')
+    for keys in format_keys:
+        key = keys.split(':')
+        API_KEYS.append(key[1])
+    print(API_KEYS)
+    # Define API key parameters
+    API_KEY_NAME = "access_token"
+    COOKIE_DOMAIN = "0.0.0.0:8000"
+
+    api_key_query = APIKeyQuery(name=API_KEY_NAME, auto_error=False)
+    api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
+    api_key_cookie = APIKeyCookie(name=API_KEY_NAME, auto_error=False)
 
     # Configure connection to the GRAPHQL endpoint
     headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
@@ -20,12 +41,30 @@ def create_app():
             url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
             )
 
+    async def get_api_key(
+            api_key_query: str = Security(api_key_query),
+            api_key_header: str = Security(api_key_header),
+            api_key_cookie: str = Security(api_key_cookie)
+            ):
+
+        if api_key_query in API_KEYS:
+            return api_key_query
+        elif api_key_header in API_KEYS:
+            return api_key_header
+        elif api_key_cookie in API_KEYS:
+            return api_key_cookie
+        else:
+            raise HTTPException(
+                    status_code=HTTP_403_FORBIDDEN, 
+                    detail="Could not validate credentials."
+                    )
+
     @app.get("/")
-    def read_root():
+    async def read_root():
         return {"Hello": "World"}
 
     @app.get("/version")
-    def list_version():
+    async def list_version(api_key: APIKey = Depends(get_api_key)):
         list_versions = all_queries.list_versions_query()
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
