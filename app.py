@@ -17,17 +17,11 @@ from key_fetch import get_secret
 def create_app():
     app = FastAPI()
 
-    API_KEYS = []
-    key_fetch = get_secret(os.getenv("AWS_ACCESS_KEY"), os.getenv("AWS_SECRET_KEY"))
-    removable = ["{", "}", '"']
-    format_keys = key_fetch.translate(
-            {ord(c):'' for c in removable}
-            ).split(',')
-    for keys in format_keys:
-        key = keys.split(':')
-        API_KEYS.append(key[1])
-    print(API_KEYS)
     # Define API key parameters
+    API_KEYS = get_secret(
+            os.getenv("AWS_ACCESS_KEY"),
+            os.getenv("AWS_SECRET_KEY")
+            )
     API_KEY_NAME = "access_token"
     COOKIE_DOMAIN = "0.0.0.0:8000"
 
