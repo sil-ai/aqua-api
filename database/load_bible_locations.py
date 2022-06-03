@@ -52,21 +52,23 @@ def dataframe_creation():
     verses = {'fullVerseId': [], 'number': []}
 
     for index, row in vref.iterrows():
-        books['abbreviation'].append(vref['book'])
-        books['name'].append(books_json[vref['book']]['name'])
-        books['number'].append(books_json[vref['book']]['number'])
+        if row['book'] in books_json.keys() and row['book'] not in books['abbreviation']:
+            books['abbreviation'].append(row['book'])
+            books['name'].append(books_json[row['book']]['name'])
+            books['number'].append(books_json[row['book']]['number'])
 
-        chapters['number'].append(vref['chapter'])
+            chapters['number'].append(row['chapter'])
 
-        verses['fullVerseId'].append(vref['verse'])
-        verses['number'].append(vref['verse'])
-
+            #TODO - Let's make the fullVerseID be the vref entry
+            verses['fullVerseId'].append(row['verse'])
+            verses['number'].append(row['verse'])
     
-    book_df = books
+    book_df = pd.DataFrame(books)
     chapter_df = chapters
     verse_df = verses
 
-    return book_df, chapter_df, verse_df
+    return book_df
+    #return book_df, chapter_df, verse_df
 
 
 def load_books(book_df, upsert_method, db_engine):
@@ -90,6 +92,11 @@ def load_chapters(chapter_df, upsert_method, db_engine):
             chunksize=200, 
             method=upsert_method
     )
+
+    # TODO
+    # Do a sql (pandas from sql) to get the full chapter
+    # table with id values, so you can use those id values
+    # to add verses.
     return
 
 
@@ -108,7 +115,7 @@ def load_verses(verse_df, upsert_method, db_engine):
 def main():
 
     # initialize SQL engine
-    df_engine = db.create_engine(os.getenv("AQUA_DB"))
+    db_engine = db.create_engine(os.getenv("AQUA_DB"))
     meta = db.MetaData(db_engine)
     upsert_method = create_upsert_method(meta, None)
 
