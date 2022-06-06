@@ -7,10 +7,10 @@ import pandas as pd
 
 
 vref_filename = "vref.txt"
-my_col = ['book', 'chapter', 'verse']
-vref = pd.read_csv('vref.txt', sep=' |:', names=my_col, engine='python')
+my_col = ["book", "chapter", "verse"]
+vref = pd.read_csv(vref_filename, sep=" |:", names=my_col, engine="python")
 
-with open('bible_books.json', 'r') as f:
+with open("bible_books.json", "r") as f:
     books_json = json.load(f)
 
 def create_upsert_method(meta: db.MetaData, extra_update_fields: Optional[Dict[str, str]]):
@@ -47,28 +47,45 @@ def create_upsert_method(meta: db.MetaData, extra_update_fields: Optional[Dict[s
 
 
 def dataframe_creation():
-    books = {'abbreviation': [], 'name': [], 'number': []}
-    chapters = {'number': []}
-    verses = {'fullVerseId': [], 'number': []}
+    books = {"abbreviation": [], "name": [], "number": []}
+    chapters = {"number": [], "bookReference": []}
+    verses = {"fullVerseId": [], "number": [], "book": [], "chapt": []}
+
+    chapter_dict = {}
 
     for index, row in vref.iterrows():
-        if row['book'] in books_json.keys() and row['book'] not in books['abbreviation']:
-            books['abbreviation'].append(row['book'])
-            books['name'].append(books_json[row['book']]['name'])
-            books['number'].append(books_json[row['book']]['number'])
+        if row["book"] in books_json.keys():
+            if row["book"] not in books["abbreviation"]:
+                books["abbreviation"].append(row["book"])
+                books["name"].append(books_json[row["book"]]["name"])
+                books["number"].append(books_json[row["book"]]["number"])
 
-            chapters['number'].append(row['chapter'])
+            if row["book"] in chapter_dict.keys():
+                chapter_dict[row["book"]].append(row["chapter"])
+            elif row["book"] not in chapter_dict.keys():
+                chapter_dict[row["book"]] = [row["chapter"]]
+            
+            verseId = (
+                    row["book"] + " " + 
+                    str(row["chapter"]) + ":" + 
+                    str(row["verse"])
+                    )
+            verses["fullVerseId"].append(verseId)
+            verses["number"].append(row["verse"])
+            verses["book"].append(row["book"])
+            verses["chapt"].append(row["chapter"])
 
-            #TODO - Let's make the fullVerseID be the vref entry
-            verses['fullVerseId'].append(row['verse'])
-            verses['number'].append(row['verse'])
-    
+    for book in chapter_dict.keys():
+        new_chapter = list(set(chapter_dict[book]))
+        for chapter in new_chapter:
+            chapters["number"].append(chapter)
+            chapters["bookReference"].append(book)
+
     book_df = pd.DataFrame(books)
-    chapter_df = chapters
-    verse_df = verses
+    chapter_df = pd.DataFrame(chapters)
+    verse_df = pd.DataFrame(verses)
 
-    return book_df
-    #return book_df, chapter_df, verse_df
+    return book_df, chapter_df, verse_df
 
 
 def load_books(book_df, upsert_method, db_engine):
@@ -93,14 +110,29 @@ def load_chapters(chapter_df, upsert_method, db_engine):
             method=upsert_method
     )
 
-    # TODO
-    # Do a sql (pandas from sql) to get the full chapter
-    # table with id values, so you can use those id values
-    # to add verses.
-    return
+    chapter_sql = pd.read_sql_table(
+                "chapterReference", 
+                db_engine
+                )
+
+    return chapter_sql
 
 
-def load_verses(verse_df, upsert_method, db_engine):
+def load_verses(verse_df, upsert_method, db_engine, chapter_sql):
+    chapter_list = []
+    for index, row in verse_df.iterrows():
+        book = row["book"]
+        chapter = row["chapt"]
+        ids = chapter_sql.loc[
+                (chapter_sql["bookReference"] == book) &
+                (chapter_sql["number"] == chapter),
+                "id"].values[0]
+        chapter_list.append(ids)
+
+    verse_df["chapter"] = chapter_list
+
+    verse_df = verse_df.drop(columns=["book", "chapt"])
+
     verse_df.to_sql(
             "verseReference",
             db_engine,
@@ -120,13 +152,12 @@ def main():
     upsert_method = create_upsert_method(meta, None)
 
     # Create dataframes
-    df_book = dataframe_creation()
-    # df_book, df_chapter, df_verse = dataframe_creation()
+    df_book, df_chapter, df_verse = dataframe_creation()
 
     # Load books
     load_books(df_book, upsert_method, db_engine)
-    # load_chapters(df_chapter, upsert_method, db_engine)
-    # load_verses(df_verse, upsert_method, db_engine)
+    chapter_sql = load_chapters(df_chapter, upsert_method, db_engine)
+    load_verses(df_verse, upsert_method, db_engine, chapter_sql)
 
 if __name__ == "__main__":
     main()
