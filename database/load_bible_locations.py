@@ -48,7 +48,7 @@ def create_upsert_method(meta: db.MetaData, extra_update_fields: Optional[Dict[s
 
 def dataframe_creation():
     books = {"abbreviation": [], "name": [], "number": []}
-    chapters = {"number": [], "bookReference": []}
+    chapters = {"fullChapterId": [], "number": [], "bookReference": []}
     verses = {"fullVerseId": [], "number": [], "book": [], "chapt": []}
 
     chapter_dict = {}
@@ -59,7 +59,7 @@ def dataframe_creation():
                 books["abbreviation"].append(row["book"])
                 books["name"].append(books_json[row["book"]]["name"])
                 books["number"].append(books_json[row["book"]]["number"])
-
+ 
             if row["book"] in chapter_dict.keys():
                 chapter_dict[row["book"]].append(row["chapter"])
             elif row["book"] not in chapter_dict.keys():
@@ -70,6 +70,7 @@ def dataframe_creation():
                     str(row["chapter"]) + ":" + 
                     str(row["verse"])
                     )
+            
             verses["fullVerseId"].append(verseId)
             verses["number"].append(row["verse"])
             verses["book"].append(row["book"])
@@ -78,8 +79,13 @@ def dataframe_creation():
     for book in chapter_dict.keys():
         new_chapter = list(set(chapter_dict[book]))
         for chapter in new_chapter:
+            chaptId = (
+                    book + " " + str(chapter)
+                    )
+            
             chapters["number"].append(chapter)
             chapters["bookReference"].append(book)
+            chapters["fullChapterId"].append(chaptId)
 
     book_df = pd.DataFrame(books)
     chapter_df = pd.DataFrame(chapters)
@@ -126,7 +132,7 @@ def load_verses(verse_df, upsert_method, db_engine, chapter_sql):
         ids = chapter_sql.loc[
                 (chapter_sql["bookReference"] == book) &
                 (chapter_sql["number"] == chapter),
-                "id"].values[0]
+                "fullChapterId"].values[0]
         chapter_list.append(ids)
 
     verse_df["chapter"] = chapter_list
