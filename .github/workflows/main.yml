@@ -1,0 +1,30 @@
+
+name: branch-build
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+
+  tests:
+    name: Building and pushing main branch images
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+      
+    - name: Build 
+      run: make build-actions
+      
+    - name: Install doctl 
+      uses: digitalocean/action-doctl@v2
+      with:
+        token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+      
+    - name: Log in to DO Container Registry 
+      run: doctl registry login --expiry-seconds 600
+        
+    - name: Push 
+      run: make push-branch

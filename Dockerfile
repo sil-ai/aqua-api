@@ -12,6 +12,7 @@ COPY app_test.py /app/app_test.py
 COPY queries.py /app/queries.py
 COPY key_fetch.py /app/key_fetch.py
 
+
 WORKDIR /app
 
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
