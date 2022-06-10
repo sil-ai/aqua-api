@@ -11,7 +11,7 @@ build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
 test:
-	docker run -it -e AWS_ACCESS_KEY=${AWS_ACCESS_KEY} \
+	docker run -e AWS_ACCESS_KEY=${AWS_ACCESS_KEY} \
 	-e AWS_SECRET_KEY=${AWS_SECRET_KEY} \
 	-e GRAPHQL_URL=${GRAPHQL_URL} \
 	-e GRAPHQL_SECRET=${GRAPHQL_SECRET} \
