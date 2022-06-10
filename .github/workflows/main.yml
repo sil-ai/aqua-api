@@ -18,6 +18,14 @@ jobs:
     - name: Build 
       run: make build-actions
       
+    - name: Test
+      run: make test
+      env:
+        AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
+        AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
+        GRAPHQL_URL: ${{ secrets.GRAPHQL_URL }}
+        GRAPHQL_SECRET: ${{ secrets.GRAPHQL_SECRET }}
+      
     - name: Install doctl 
       uses: digitalocean/action-doctl@v2
       with:
