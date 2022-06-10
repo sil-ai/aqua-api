@@ -1,9 +1,10 @@
 import json
 import os
 
-from fastapi import FastAPI, Security, Depends, HTTPException
+from fastapi import FastAPI, Body, Security, Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyQuery, APIKeyCookie, APIKeyHeader, APIKey
 from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.security import OAuth2PasswordBearer
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 from starlette.status import HTTP_403_FORBIDDEN
@@ -12,22 +13,25 @@ from starlette.responses import RedirectResponse, JSONResponse
 from queries import all_queries
 from key_fetch import get_secret
 
+# Get valid API keys
+api_keys = get_secret(
+            os.getenv("AWS_ACCESS_KEY"),
+            os.getenv("AWS_SECRET_KEY")
+            )
+
+# Use Token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+def api_key_auth(api_key: str = Depends(oauth2_scheme)):
+    if api_key not in api_keys:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Forbidden"
+        )
 
 # Creates the FastAPI app object
 def create_app():
     app = FastAPI()
-
-    # Define API key parameters
-    API_KEYS = get_secret(
-            os.getenv("AWS_ACCESS_KEY"),
-            os.getenv("AWS_SECRET_KEY")
-            )
-    API_KEY_NAME = "access_token"
-    COOKIE_DOMAIN = "0.0.0.0:8000"
-
-    api_key_query = APIKeyQuery(name=API_KEY_NAME, auto_error=False)
-    api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
-    api_key_cookie = APIKeyCookie(name=API_KEY_NAME, auto_error=False)
 
     # Configure connection to the GRAPHQL endpoint
     headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
@@ -35,36 +39,18 @@ def create_app():
             url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
             )
 
-    async def get_api_key(
-            api_key_query: str = Security(api_key_query),
-            api_key_header: str = Security(api_key_header),
-            api_key_cookie: str = Security(api_key_cookie)
-            ):
-
-        if api_key_query in API_KEYS:
-            return api_key_query
-        elif api_key_header in API_KEYS:
-            return api_key_header
-        elif api_key_cookie in API_KEYS:
-            return api_key_cookie
-        else:
-            raise HTTPException(
-                    status_code=HTTP_403_FORBIDDEN, 
-                    detail="Could not validate credentials."
-                    )
-
     @app.get("/")
     async def read_root():
         return {"Hello": "World"}
 
-    @app.get("/version")
-    async def list_version(api_key: APIKey = Depends(get_api_key)):
+    @app.get("/version", dependencies=[Depends(api_key_auth)])
+    async def list_version():
         list_versions = all_queries.list_versions_query()
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
             query = gql(list_versions)
- 
+
             result = client.execute(query)
             version_data = []
 
@@ -86,3 +72,4 @@ def create_app():
 
 # create app
 app = create_app()
+

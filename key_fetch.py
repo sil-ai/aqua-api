@@ -19,7 +19,7 @@ def get_secret(AWS_ACCESS_KEY, AWS_SECRET_KEY):
         get_secret_value_response = client.get_secret_value(
             SecretId=secret_name
         )
-    
+
     except ClientError as e:
         if e.response['Error']['Code'] == 'DecryptionFailureException':
             raise e

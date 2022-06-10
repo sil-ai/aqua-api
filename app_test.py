@@ -7,14 +7,18 @@ from fastapi.testclient import TestClient
 @pytest.fixture
 def client():
 
+    def skip_auth():
+        return True
+
     # Get a mock FastAPI app.
     mock_app = app.create_app()
+    #print(mock_app.dependency_overrides.keys())
+    mock_app.dependency_overrides[app.api_key_auth] = skip_auth
 
     # Yield the mock/ test client for the FastAPI
     # app we spun up any time this generator is called.
     with TestClient(mock_app) as client:
         yield client
-
 
 # Test for the root endpoint
 def test_read_main(client):
