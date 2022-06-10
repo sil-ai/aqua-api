@@ -36,3 +36,6 @@ jobs:
         
     - name: Push 
       run: make push-branch
+
+    - name: Deploy
+      run: doctl app create-deployment ${{ secrets.DIGITALOCEAN_APP_ID }} --force-rebuild
