@@ -10,6 +10,14 @@ build-local:
 build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
+test:
+	docker run -it -e AWS_ACCESS_KEY=${AWS_ACCESS_KEY} \
+	-e AWS_SECRET_KEY=${AWS_SECRET_KEY} \
+	-e GRAPHQL_URL=${GRAPHQL_URL} \
+	-e GRAPHQL_SECRET=${GRAPHQL_SECRET} \
+	-p 8000:8000 \
+	${REGISTRY}/${IMAGENAME}:latest pytest
+
 push-branch:
 	docker push ${REGISTRY}/${IMAGENAME}:latest
 	docker tag ${REGISTRY}/${IMAGENAME}:latest ${REGISTRY}/${IMAGENAME}:${GITHUB_SHA}
