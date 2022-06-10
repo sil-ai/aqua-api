@@ -4,7 +4,7 @@ name: branch-build
 on:
   push:
     branches:
-      - main
+      - master
 
 jobs:
 
