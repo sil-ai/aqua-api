@@ -5,3 +5,4 @@ requests_toolbelt==0.9.1
 fastapi==0.78.0
 uvicorn[standard]==0.17.6
 boto3==1.21.31
+pandas==1.4.1
