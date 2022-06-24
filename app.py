@@ -46,9 +46,11 @@ def create_app():
             url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
             )
 
+
     @app.get("/")
     async def read_root():
         return {"Hello": "World"}
+
 
     @app.get("/version", dependencies=[Depends(api_key_auth)])
     async def list_version():
@@ -75,12 +77,7 @@ def create_app():
 
         return {"data": version_data}
 
-    @app.get("/load_bible", dependencies=[Depends(api_key_auth))
-    async def load_bible():
-        bible_loading = all_queries.bible_loading()
-
-    return app
-
+    
     @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
     async def upload_bible(files: List[UploadFile] = File(...)):
         for file in files:
@@ -97,6 +94,9 @@ def create_app():
                 await file.close()
 
         return {"message": f"Successfuly uploaded {[file.filename for file in files]}"}
+
+    return app
+
 
 # create app
 app = create_app()
