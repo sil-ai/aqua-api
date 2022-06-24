@@ -1,11 +1,3 @@
-from typing import Optional, Dict
-import json
-import os
-
-import pandas as pd
-import sqlalchemy as db
-
-
 class bible_text(verses, version, date, published):
     def create_upsert_method(meta: db.MetaData, extra_update_fields: Optional[Dict[str, str]]):
         """
