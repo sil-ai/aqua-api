@@ -2,6 +2,7 @@ import json
 import os
 
 from fastapi import FastAPI, Body, Security, Depends, HTTPException, status
+from fastapi import File, UploadFile
 from fastapi.security.api_key import APIKeyQuery, APIKeyCookie, APIKeyHeader, APIKey
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.security import OAuth2PasswordBearer
@@ -12,6 +13,7 @@ from starlette.responses import RedirectResponse, JSONResponse
 
 from queries import all_queries
 from key_fetch import get_secret
+from verse_text import bible_text
 
 # Get valid API keys
 api_keys = get_secret(
@@ -19,8 +21,12 @@ api_keys = get_secret(
             os.getenv("AWS_SECRET_KEY")
             )
 
+my_col = ['book', 'chapter', 'verse']
+vref = pd.read_csv('vref.txt', sep=' |:', names=my_col, engine='python')
+
 # Use Token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
 
 def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     if api_key not in api_keys:
@@ -28,6 +34,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Forbidden"
         )
+
 
 # Creates the FastAPI app object
 def create_app():
@@ -68,8 +75,28 @@ def create_app():
 
         return {"data": version_data}
 
+    @app.get("/load_bible", dependencies=[Depends(api_key_auth))
+    async def load_bible():
+        bible_loading = all_queries.bible_loading()
+
     return app
+
+    @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
+    async def upload_bible(files: List[UploadFile] = File(...)):
+        for file in files:
+            try:
+                contents = await file.read()
+                with open(file.filename, 'wb') as f:
+                    verses = f.readlines()
+
+            except Exception:
+                return {"message": "There was an error uploading the file(s)"}
+            finally:
+                bible_text(verses, date, version, published)
+
+                await file.close()
+
+        return {"message": f"Successfuly uploaded {[file.filename for file in files]}"}
 
 # create app
 app = create_app()
-

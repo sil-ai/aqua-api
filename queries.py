@@ -17,3 +17,6 @@ class all_queries():
                     }
                     """
         return list_version
+
+    def bible_loading():
+
