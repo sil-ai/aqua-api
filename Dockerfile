@@ -12,7 +12,7 @@ COPY app_test.py /app/app_test.py
 COPY queries.py /app/queries.py
 COPY key_fetch.py /app/key_fetch.py
 COPY vref.txt /app/vref.txt
-COPY verse_text.py /app/verse_text.py
+COPY bible_loading.py /app/bible_loading.py
 
 
 WORKDIR /app
