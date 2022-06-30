@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import date
 
 from fastapi import FastAPI, Body, Security, Depends, HTTPException, status
 from fastapi import File, UploadFile
@@ -11,12 +12,10 @@ from gql.transport.requests import RequestsHTTPTransport
 from starlette.status import HTTP_403_FORBIDDEN
 from starlette.responses import RedirectResponse, JSONResponse
 import pandas as pd
-import sqlalchemy as db
-from typing import Optional, Dict
 
-from queries import all_queries
+import queries
+import bible_loading
 from key_fetch import get_secret
-from verse_text import bible_text
 
 # Get valid API keys
 api_keys = get_secret(
@@ -57,7 +56,7 @@ def create_app():
 
     @app.get("/version", dependencies=[Depends(api_key_auth)])
     async def list_version():
-        list_versions = all_queries.list_versions_query()
+        list_versions = queries.list_versions_query()
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
@@ -83,6 +82,8 @@ def create_app():
     
     @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
     async def upload_bible(files: List[UploadFile] = File(...)):
+        revision = queries.bible_revision(str(date.today()))
+
         for file in files:
             try:
                 contents = await file.read()
@@ -91,12 +92,30 @@ def create_app():
 
             except Exception:
                 return {"message": "There was an error uploading the file(s)"}
+            
             finally:
-                bible_text(verses, date, version, published)
+                
+                
+                with Client(transport=transport,
+                        fetch_schema_from_transport=True) as client:
+
+                    query = gcl(revision)
+
+                    client.execute(query)
+
+                    # TODO add index for bible_revision
+                    revision_id = 
+
+                    bibleRevision = []
+                    for verse in verses:
+                        bibleRevision.append(revision_id)
+
+                    bible_loading.upload_bible("vref.txt", verses, bibleRevision)
 
                 await file.close()
 
         return {"message": f"Successfuly uploaded {[file.filename for file in files]}"}
+
 
     return app
 

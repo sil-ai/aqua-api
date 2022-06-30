@@ -1,4 +1,11 @@
-class bible_text(verses, version, date, published):
+from typing import Optional, Dict
+import os
+import json
+
+import sqlalchemy as db
+import pandas as pd
+
+def upload_bible(vref_file, verses, bibleRevision):
     def create_upsert_method(meta: db.MetaData, extra_update_fields: Optional[Dict[str, str]]):
         """
         Create upsert method that satisfied the pandas's to_sql API.
@@ -24,17 +31,17 @@ class bible_text(verses, version, date, published):
             upsert_stmt = insert_stmt.on_conflict_do_update(
                 index_elements=sql_table.primary_key.columns, # index elements are primary keys of a table
                 set_=update_stmt # the SET part of an INSERT statement
-            )
-
+                )
+    
             # execute upsert statement
             conn.execute(upsert_stmt)
 
         return method
 
 
-    def text_dataframe(vref_file, verses):
+    def text_dataframe(vref_file, verses, bibleRevision):
         my_col = ["book", "chapter", "verse"]
-        vref = pd.read_csv(vref.file, sep=" |:", names=my_col, engine="python")
+        vref = pd.read_csv(vref_file, sep=" |:", names=my_col, engine="python")
 
         vref["text"] = verses
 
@@ -42,11 +49,14 @@ class bible_text(verses, version, date, published):
         for index, row in vref.iterrows():
             ids = (
                 row["book"] + " " +
-                row["chapter"] + ":" +
-                row["verse"]
+                str(row["chapter"]) + ":" +
+                str(row["verse"])
                 )
 
+            verse_id.append(ids)
+
         vref["verseReference"] = verse_id
+        vref["bibleRevision"] = bibleRevision
 
         verseText = vref.drop(columns=["book", "chapter", "verse"])
 
@@ -59,32 +69,19 @@ class bible_text(verses, version, date, published):
                 db_engine,
                 index=False,
                 if_exists="append",
-                chunksize=200, 
+                chunksize=200,
                 method=upsert_method
                 )
         return
 
 
-    def text_uploading(verses):
-        # initialize SQL engine
-        db_engine = db.create_engine(os.getenv("AQUA_DB"))
-        meta = db.MetaData(db_engine)
-        upsert_method = create_upsert_method(meta, None)
+    # initialize SQL engine
+    db_engine = db.create_engine(os.getenv("AQUA_DB"))
+    meta = db.MetaData(db_engine)
+    upsert_method = create_upsert_method(meta, None)
 
-        verseText = text_dataframe("vref.txt", verses)
+    verseText = text_dataframe(vref_file, verses, bibleRevision)
+    
+    text_loading(verseText, upsert_method, db_engine)
 
-        return
-
-
-    def revision_mutation(version, date, published):
-        bible_revise = """
-            mutation MyMutation {
-              insert_bibleRevision(objects: {bibleVersion: {}, date: {}, published: {}}) {
-                returning {
-                  id
-                }
-              }
-            }
-            """.format(version, date, published)
-        
-        return bible_revise
+    return
