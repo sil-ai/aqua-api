@@ -1,6 +1,7 @@
 import json
 import os
 from datetime import date
+from typing import List
 
 from fastapi import FastAPI, Body, Security, Depends, HTTPException, status
 from fastapi import File, UploadFile
