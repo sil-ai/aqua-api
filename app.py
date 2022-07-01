@@ -12,6 +12,7 @@ from gql.transport.requests import RequestsHTTPTransport
 from starlette.status import HTTP_403_FORBIDDEN
 from starlette.responses import RedirectResponse, JSONResponse
 import pandas as pd
+import numpy as np
 
 import queries
 import bible_loading
@@ -87,24 +88,26 @@ def create_app():
         for file in files:
             try:
                 contents = await file.read()
-                with open(file.filename, 'wb') as f:
-                    verses = f.readlines()
+                verses = []
+                
+                with open(file.filename, "r") as f:
+                    for line in f:
+                        if line == "\n" or line == "" or line == " ":
+                            verses.append(np.nan)
+                        else:
+                            verses.append(line.replace("\n", ""))
 
             except Exception:
                 return {"message": "There was an error uploading the file(s)"}
             
-            finally:
-                
-                
+            finally:                
                 with Client(transport=transport,
                         fetch_schema_from_transport=True) as client:
 
                     query = gcl(revision)
 
-                    client.execute(query)
-
-                    # TODO add index for bible_revision
-                    revision_id = 
+                    revision = client.execute(query)
+                    revision_id = revision["bibleRevision"]["id"]
 
                     bibleRevision = []
                     for verse in verses:
@@ -114,7 +117,10 @@ def create_app():
 
                 await file.close()
 
-        return {"message": f"Successfuly uploaded {[file.filename for file in files]}"}
+        return {
+                "message": f"Successfuly uploaded {[file.filename for file in files]}", 
+                "Revision ID": revision_id
+                }
 
 
     return app
