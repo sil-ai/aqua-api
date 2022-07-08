@@ -31,3 +31,7 @@ def test_read_main(client):
 def test_list_versions(client):
     response = client.get("/version")
     assert response.status_code == 200
+
+def test_upload_bible(client):
+    response = client.get("/upload_bible")
+    assert response.status_code == 200
