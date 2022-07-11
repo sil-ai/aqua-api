@@ -1,6 +1,7 @@
 import app
 import pytest
 from fastapi.testclient import TestClient
+import requests
 
 # Create a generator that when called gives
 # a mock/ test API client, for our FastAPI app.
@@ -33,5 +34,10 @@ def test_list_versions(client):
     assert response.status_code == 200
 
 def test_upload_bible(client):
-    response = client.get("/upload_bible")
-    assert response.status_code == 200
+    url = "http://0.0.0.0:8000/upload"
+    files = [
+        ("files", open("fixtures/uploadtest_1.txt", "rb")), 
+        ("files", open("fixtures/uploadtest_2.txt","rb"))
+        ]
+    response = requests.post(url=url, files=files)
+    print(response.json())
