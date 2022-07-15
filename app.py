@@ -15,6 +15,7 @@ from key_fetch import get_secret
 
 # Get valid API keys
 api_keys = get_secret(
+            "dev/aqua-api/ak",
             os.getenv("AWS_ACCESS_KEY"),
             os.getenv("AWS_SECRET_KEY")
             )

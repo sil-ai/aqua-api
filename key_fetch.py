@@ -2,9 +2,7 @@ import boto3
 import base64
 from botocore.exceptions import ClientError
 
-def get_secret(AWS_ACCESS_KEY, AWS_SECRET_KEY):
-
-    secret_name = "dev/aqua-api/ak"
+def get_secret(secret_name, AWS_ACCESS_KEY, AWS_SECRET_KEY):
     region_name = "us-east-1"
 
     session = boto3.session.Session()
