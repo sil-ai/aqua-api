@@ -18,7 +18,7 @@ def list_versions_query():
         
     return list_version
 
-def bible_revision(date):
+def insert_bible_revision(date):
     bible_revise = """
         mutation MyMutation {
           insert_bibleRevision(objects: {bibleVersion: 1, date: {}, published: false}) {

@@ -4,38 +4,24 @@ import pandas as pd
 import numpy as np
 import pytest
 from pytest import fixture
+import sqlalchemy as db
+
+import bible_loading
 
 
 def test_text_dataframe(): 
     verses = []
+    bibleRevision = []
     with open("fixtures/test_bible.txt", "r") as f:
         for line in f:
             if line == "\n" or line == "" or line == " ":
                 verses.append(np.nan)
+                bibleRevision.append(np.nan)
             else:
                 verses.append(line.replace("\n", ""))
-        return verses
+                bibleRevision.append(3)
 
-    my_col = ["book", "chapter", "verse"]
-    vref_dataframe = pd.read_csv("fixtures/vref.txt", sep=" |:", names=my_col, engine="python")
-
-    vref_dataframe["text"] = verses
-
-    vref = vref_dataframe.dropna()
-
-    verse_id = []
-    for index, row in vref.iterrows():
-        ids = (
-            row["book"] + " " +
-            str(row["chapter"]) + ":" +
-            str(row["verse"])
-            )
-
-        verse_id.append(ids)
-
-    vref["verseReference"] = verse_id
-
-    verseText = vref.drop(columns=["book", "chapter", "verse"])
+    verseText = bible_loading.text_dataframe(verses, bibleRevision)
 
     test_data = {
             "locations": [
@@ -67,4 +53,37 @@ def test_text_dataframe():
                 success = False
                 break
 
-    assert True == success 
+    assert True == success
+
+
+def test_text_loading():
+    db_engine = db.create_engine(os.getenv("AQUA_DB"))
+    
+    verse_dict = {
+        "text": ["TEST"], 
+        "bibleRevision": [3], 
+        "verseReference": ["GEN 1:1"]
+        }
+
+    verseText = pd.DataFrame(verse_dict)
+
+    text_load = bible_loading.text_loading(verseText, db_engine)
+
+    assert text_load == True
+
+
+def test_upload_bible():
+    verses = []
+    bibleRevision = []
+    with open("fixtures/test_bible.txt", "r") as f:
+        for line in f:
+            if line == "\n" or line == "" or line == " ":
+                verses.append(np.nan)
+                bibleRevision.append(np.nan)
+            else:
+                verses.append(line.replace("\n", ""))
+                bibleRevision.append(3)
+
+    bible_upload = bible_loading.upload_bible(verses, bibleRevision)
+
+    assert bible_upload == True

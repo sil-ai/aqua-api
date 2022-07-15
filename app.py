@@ -19,12 +19,16 @@ import queries
 import bible_loading
 from key_fetch import get_secret
 
-# Get valid API keys
+# run api key fetch function requiring 
+# input of AWS credentials
 api_keys = get_secret(
+            "dev/aqua-api/ak",
             os.getenv("AWS_ACCESS_KEY"),
             os.getenv("AWS_SECRET_KEY")
             )
 
+# setting column names and reading in
+# versification file to dataframe
 my_col = ['book', 'chapter', 'verse']
 vref = pd.read_csv('vref.txt', sep=' |:', names=my_col, engine='python')
 
@@ -86,7 +90,13 @@ def create_app():
     async def upload_bible(files: List[UploadFile] = File(...)):
         revision = queries.bible_revision(str(date.today()))
 
-        for file in files:
+        if len(files) > 1:
+            raise HTTPException(
+                    status_code=status.HTTP_400_BADREQUEST,
+                    detail="Bad Request. Please Upload Only 1 File."
+                    )
+        
+        else:
             try:
                 contents = await file.read()
                 verses = []
@@ -105,23 +115,24 @@ def create_app():
                 with Client(transport=transport,
                         fetch_schema_from_transport=True) as client:
 
-                    query = gcl(revision)
+                    mutation = gql(revision)
 
-                    revision = client.execute(query)
+                    revision = client.execute(mutation)
                     revision_id = revision["bibleRevision"]["id"]
 
                     bibleRevision = []
                     for verse in verses:
                         bibleRevision.append(revision_id)
 
-                    bible_loading.upload_bible("vref.txt", verses, bibleRevision)
+                    bible_loading.upload_bible(verses, bibleRevision)
 
                 await file.close()
 
-        return {
-                "message": f"Successfuly uploaded {[file.filename for file in files]}", 
-                "Revision ID": revision_id
-                }
+            return {
+                    "message": f"Successfuly uploaded {file.filename}", 
+                    "Revision ID": revision_id
+                    }
+
 
 
     return app
