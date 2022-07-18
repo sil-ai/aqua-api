@@ -2,6 +2,7 @@ import json
 import os
 from datetime import date
 from typing import List
+from tempfile import NamedTemporaryFile
 
 from fastapi import FastAPI, Body, Security, Depends, HTTPException, status
 from fastapi import File, UploadFile
@@ -86,52 +87,46 @@ def create_app():
         return {"data": version_data}
 
     
-    @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
-    async def upload_bible(files: List[UploadFile] = File(...)):
-        revision = queries.bible_revision(str(date.today()))
-
-        if len(files) > 1:
-            raise HTTPException(
-                    status_code=status.HTTP_400_BADREQUEST,
-                    detail="Bad Request. Please Upload Only 1 File."
-                    )
+    @app.get("/upload_bible", dependencies=[Depends(api_key_auth)])
+    async def upload_bible(file: UploadFile = File(...)):
+        revision_date = '"' + str(date.today()) + '"'
+        revision = queries.insert_bible_revision(revision_date)
         
-        else:
-            try:
-                contents = await file.read()
-                verses = []
-                
-                with open(file.filename, "r") as f:
-                    for line in f:
-                        if line == "\n" or line == "" or line == " ":
-                            verses.append(np.nan)
-                        else:
-                            verses.append(line.replace("\n", ""))
+        contents = await file.read()
+        temp_file = NamedTemporaryFile()
+        temp_file.write(contents)        
+        temp_file.seek(0)
 
-            except Exception:
-                return {"message": "There was an error uploading the file(s)"}
-            
-            finally:                
-                with Client(transport=transport,
-                        fetch_schema_from_transport=True) as client:
+        with Client(transport=transport,
+                fetch_schema_from_transport=True) as client:
 
-                    mutation = gql(revision)
+            mutation = gql(revision)
 
-                    revision = client.execute(mutation)
-                    revision_id = revision["bibleRevision"]["id"]
+            revision = client.execute(mutation)
+            revision_id = revision["insert_bibleRevision"]["returning"][0]["id"]
 
-                    bibleRevision = []
-                    for verse in verses:
-                        bibleRevision.append(revision_id)
+        verses = []
+        bibleRevision = []
+        
+        with open(temp_file.name, "r") as bible_data:
+            for line in bible_data:
+                if line == "\n" or line == "" or line == " ":
+                    verses.append(np.nan)
+                    bibleRevision.append(revision_id)
+                else:
+                    verses.append(line.replace("\n", ""))
+                    bibleRevision.append(revision_id)
 
-                    bible_loading.upload_bible(verses, bibleRevision)
+        bible_loading.upload_bible(verses, bibleRevision)
 
-                await file.close()
+        temp_file.close()
 
-            return {
-                    "message": f"Successfuly uploaded {file.filename}", 
-                    "Revision ID": revision_id
-                    }
+        await file.close()
+
+        return {
+                "message": f"Successfuly uploaded {file.filename}", 
+                "Revision ID": revision_id
+                }
 
 
 
