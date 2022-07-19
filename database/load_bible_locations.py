@@ -54,27 +54,26 @@ def dataframe_creation():
     chapter_dict = {}
 
     for index, row in vref.iterrows():
-        if row["book"] in books_json.keys():
-            if row["book"] not in books["abbreviation"]:
-                books["abbreviation"].append(row["book"])
-                books["name"].append(books_json[row["book"]]["name"])
-                books["number"].append(books_json[row["book"]]["number"])
+        if row["book"] not in books["abbreviation"]:
+            books["abbreviation"].append(row["book"])
+            books["name"].append(books_json[row["book"]]["name"])
+            books["number"].append(books_json[row["book"]]["number"])
  
-            if row["book"] in chapter_dict.keys():
-                chapter_dict[row["book"]].append(row["chapter"])
-            elif row["book"] not in chapter_dict.keys():
-                chapter_dict[row["book"]] = [row["chapter"]]
+        if row["book"] in chapter_dict.keys():
+            chapter_dict[row["book"]].append(row["chapter"])
+        elif row["book"] not in chapter_dict.keys():
+            chapter_dict[row["book"]] = [row["chapter"]]
             
-            verseId = (
-                    row["book"] + " " + 
-                    str(row["chapter"]) + ":" + 
-                    str(row["verse"])
-                    )
+        verseId = (
+                row["book"] + " " + 
+                str(row["chapter"]) + ":" + 
+                str(row["verse"])
+                )
             
-            verses["fullVerseId"].append(verseId)
-            verses["number"].append(row["verse"])
-            verses["book"].append(row["book"])
-            verses["chapt"].append(row["chapter"])
+        verses["fullVerseId"].append(verseId)
+        verses["number"].append(row["verse"])
+        verses["book"].append(row["book"])
+        verses["chapt"].append(row["chapter"])
 
     for book in chapter_dict.keys():
         new_chapter = list(set(chapter_dict[book]))

@@ -24,3 +24,4 @@ jobs:
         AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
         GRAPHQL_URL: ${{ secrets.GRAPHQL_URL }}
         GRAPHQL_SECRET: ${{ secrets.GRAPHQL_SECRET }}
+        AQUA_DB: ${{ secrets.AQUA_DB }}
