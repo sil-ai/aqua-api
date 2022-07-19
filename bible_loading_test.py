@@ -68,8 +68,10 @@ def test_text_loading():
     verseText = pd.DataFrame(verse_dict)
 
     text_load = bible_loading.text_loading(verseText, db_engine)
-
     assert text_load == True
+
+    #TODO - Do an explicit SQL query to check that the data was uploaded.
+    # and then another assert.
 
 
 def test_upload_bible():

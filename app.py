@@ -28,11 +28,6 @@ api_keys = get_secret(
             os.getenv("AWS_SECRET_KEY")
             )
 
-# setting column names and reading in
-# versification file to dataframe
-my_col = ['book', 'chapter', 'verse']
-vref = pd.read_csv('vref.txt', sep=' |:', names=my_col, engine='python')
-
 # Use Token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
@@ -92,11 +87,13 @@ def create_app():
         revision_date = '"' + str(date.today()) + '"'
         revision = queries.insert_bible_revision(revision_date)
         
+        # Convert into bytes and save as a temporary file.
         contents = await file.read()
         temp_file = NamedTemporaryFile()
         temp_file.write(contents)        
         temp_file.seek(0)
 
+        # Create a corresponding revision in the database.
         with Client(transport=transport,
                 fetch_schema_from_transport=True) as client:
 
@@ -105,6 +102,7 @@ def create_app():
             revision = client.execute(mutation)
             revision_id = revision["insert_bibleRevision"]["returning"][0]["id"]
 
+        # Parse the input Bible revision data.
         verses = []
         bibleRevision = []
         
@@ -117,18 +115,17 @@ def create_app():
                     verses.append(line.replace("\n", ""))
                     bibleRevision.append(revision_id)
 
+        # Push the revision to the database.
         bible_loading.upload_bible(verses, bibleRevision)
 
+        # Clean up.
         temp_file.close()
-
         await file.close()
 
         return {
                 "message": f"Successfuly uploaded {file.filename}", 
                 "Revision ID": revision_id
                 }
-
-
 
     return app
 
