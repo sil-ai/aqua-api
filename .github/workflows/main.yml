@@ -26,6 +26,8 @@ jobs:
         GRAPHQL_URL: ${{ secrets.GRAPHQL_URL }}
         GRAPHQL_SECRET: ${{ secrets.GRAPHQL_SECRET }}
         AQUA_DB: ${{ secrets.AQUA_DB }}
+        TEST_KEY: ${{ secrets.TEST_KEY }}
+        FAIL_KEY: ${{ secrets.FAIL_KEY }}
       
     - name: Install doctl 
       uses: digitalocean/action-doctl@v2

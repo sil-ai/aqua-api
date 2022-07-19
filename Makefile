@@ -16,6 +16,8 @@ test:
 	-e GRAPHQL_URL=${GRAPHQL_URL} \
 	-e GRAPHQL_SECRET=${GRAPHQL_SECRET} \
 	-e AQUA_DB=${AQUA_DB} \
+	-e TEST_KEY=${TEST_KEY} \
+	-e FAIL_KEY=${FAIL_KEY} \
 	-p 8000:8000 \
 	${REGISTRY}/${IMAGENAME}:latest pytest
 
