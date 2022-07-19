@@ -1,6 +1,9 @@
+from pathlib import Path
+
 import app
 import pytest
 from fastapi.testclient import TestClient
+
 
 # Create a generator that when called gives
 # a mock/ test API client, for our FastAPI app.
@@ -30,4 +33,10 @@ def test_read_main(client):
 # Test for the List Versions endpoint
 def test_list_versions(client):
     response = client.get("/version")
+    assert response.status_code == 200
+
+def test_upload_bible(client):
+    test_upload_file = Path("fixtures/uploadtest.txt")
+    file = {"file": test_upload_file.open("rb")}
+    response = client.post("/upload_bible", files=file)
     assert response.status_code == 200
