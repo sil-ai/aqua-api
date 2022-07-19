@@ -13,6 +13,7 @@ COPY queries.py /app/queries.py
 COPY key_fetch.py /app/key_fetch.py
 COPY vref.txt /app/vref.txt
 COPY bible_loading.py /app/bible_loading.py
+COPY bible_loading_test.py
 COPY fixtures/* /app/fixtures/
 
 
