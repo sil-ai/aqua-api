@@ -82,7 +82,7 @@ def create_app():
         return {"data": version_data}
 
     
-    @app.get("/upload_bible", dependencies=[Depends(api_key_auth)])
+    @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
     async def upload_bible(file: UploadFile = File(...)):
         revision_date = '"' + str(date.today()) + '"'
         revision = queries.insert_bible_revision(revision_date)

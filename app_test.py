@@ -38,5 +38,5 @@ def test_list_versions(client):
 def test_upload_bible(client):
     test_upload_file = Path("fixtures/uploadtest.txt")
     file = {"file": test_upload_file.open("rb")}
-    response = client.get("/upload_bible", files=file)
+    response = client.post("/upload_bible", files=file)
     assert response.status_code == 200
