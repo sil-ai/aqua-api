@@ -20,7 +20,3 @@ def test_get_secret():
 
     assert TEST_KEY in API_KEYS
     assert FAIL_KEY not in API_KEYS
-
-
-def test_api_key_auth():
-    
