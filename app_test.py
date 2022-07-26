@@ -1,9 +1,16 @@
 from pathlib import Path
+import os
 
 import app
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
+
+def test_key_auth():
+    with pytest.raises(HTTPException) as err:
+        app.api_key_auth(os.getenv("FAIL_KEY"))
+    assert err.value.status_code == 401
 
 # Create a generator that when called gives
 # a mock/ test API client, for our FastAPI app.

@@ -5,6 +5,7 @@ import base64
 from botocore.exceptions import ClientError
 
 import key_fetch
+import app
 
 
 def test_get_secret():
@@ -19,3 +20,7 @@ def test_get_secret():
 
     assert TEST_KEY in API_KEYS
     assert FAIL_KEY not in API_KEYS
+
+
+def test_api_key_auth():
+    
