@@ -38,7 +38,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Forbidden"
         )
-
+    
 
 # Creates the FastAPI app object
 def create_app():
@@ -126,6 +126,30 @@ def create_app():
                 "message": f"Successfuly uploaded {file.filename}", 
                 "Revision ID": revision_id
                 }
+
+    
+    @app.get("", dependencies=[Depends(api_key_auth)])
+    async def get_verse():
+        chapter_verses = queries.chapter_verses_query()
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+
+            query = gql(chapter_verses)
+
+            result = client.execute(query)
+            version_data = []
+
+            for version in result["bibleVersion"]: 
+                ind_data = {
+                        "id": version["id"], 
+                        "name": version["name"], 
+                        "abbreviation": version["abbreviation"],
+                        "language": version["language"]["iso639"], 
+                        "script": version["script"]["iso15924"], 
+                        "rights": version["rights"]
+                        }
+
+                version_data.append(ind_data)
 
     return app
 
