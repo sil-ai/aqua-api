@@ -18,6 +18,7 @@ test:
 	-e AQUA_DB=${AQUA_DB} \
 	-e TEST_KEY=${TEST_KEY} \
 	-e FAIL_KEY=${FAIL_KEY} \
+	-e KEY_VAULT=${KEY_VAULT} \
 	-p 8000:8000 \
 	${REGISTRY}/${IMAGENAME}:latest pytest
 

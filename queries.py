@@ -32,9 +32,3 @@ def insert_bible_revision(date):
                 """.format(date)
         
     return bible_revise
-
-def verse_chapter_query():
-    verse_chapter = """
-    """
-
-    return verse_chapter

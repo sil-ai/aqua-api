@@ -28,7 +28,8 @@ jobs:
         AQUA_DB: ${{ secrets.AQUA_DB }}
         TEST_KEY: ${{ secrets.TEST_KEY }}
         FAIL_KEY: ${{ secrets.FAIL_KEY }}
-      
+        KEY_VAULT: ${{ secrets.KEY_VAULT }}
+
     - name: Install doctl 
       uses: digitalocean/action-doctl@v2
       with:

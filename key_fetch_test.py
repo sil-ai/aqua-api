@@ -13,7 +13,7 @@ def test_get_secret():
     FAIL_KEY = os.getenv("FAIL_KEY")
 
     API_KEYS = key_fetch.get_secret(
-            "dev/aqua-api/tests", 
+            os.getenv("KEY_VAULT"), 
             os.getenv("AWS_ACCESS_KEY"),
             os.getenv("AWS_SECRET_KEY")
             )
