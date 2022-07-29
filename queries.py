@@ -18,6 +18,7 @@ def list_versions_query():
         
     return list_version
 
+
 def insert_bible_revision(date):
     bible_revise = """
                 mutation MyMutation {{
@@ -33,8 +34,41 @@ def insert_bible_revision(date):
         
     return bible_revise
 
-def chapter_verses_query():
-    chapter_verses = """
-    """.format()
+
+def list_revisions_query(revision):
+    list_revisions = """
+    """.format(revision)
+
+    return get_revisions
+
+
+def get_chapters_query(revision, book, chapter):
     
-    return chapter_verse
+
+    get_chapters = """
+    """.format(revision, verseReference)
+
+    return get_chapter
+
+
+def get_verses_query(revision, book, chapter, verse):
+    verseReference = book + " " + str(chapter) + ":" + str(verse)
+
+    get_verses = """
+    query MyQuery {
+      verseText(where: {bibleRevision: {_eq: {}}, verseReference: {_eq: {}}}) {
+        id
+        text
+        verseReference
+        revision {
+          bibleVersion
+          date
+          version {
+            name
+          }
+        }
+      }
+    }
+    """.format(revision, verseReference)
+    
+    return get_verses
