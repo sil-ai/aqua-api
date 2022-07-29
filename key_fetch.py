@@ -2,7 +2,7 @@ import boto3
 import base64
 from botocore.exceptions import ClientError
 
-def get_secret(secret_name, AWS_ACCESS_KEY, AWS_SECRET_KEY):
+def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
     region_name = "us-east-1"
 
     session = boto3.session.Session()
@@ -15,7 +15,7 @@ def get_secret(secret_name, AWS_ACCESS_KEY, AWS_SECRET_KEY):
 
     try:
         get_secret_value_response = client.get_secret_value(
-            SecretId=secret_name
+            SecretId=KEY_VAULT
         )
 
     except ClientError as e:

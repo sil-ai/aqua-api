@@ -23,7 +23,7 @@ from key_fetch import get_secret
 # run api key fetch function requiring 
 # input of AWS credentials
 api_keys = get_secret(
-            "dev/aqua-api/ak",
+            os.getenv("KEY_VAULT"),
             os.getenv("AWS_ACCESS_KEY"),
             os.getenv("AWS_SECRET_KEY")
             )
@@ -38,7 +38,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Forbidden"
         )
-
+    return True        
 
 # Creates the FastAPI app object
 def create_app():
