@@ -56,15 +56,32 @@ def test_upload_bible(client):
 
 
 def test_list_revisions(client):
-    response = client.get("/list_revisions")
+    test_version = {
+            "version": "TEST"
+            }
+
+    response = client.get("/list_revisions", params=test_version)
     assert response.status_code == 200
 
 
 def test_get_chapter(client):
-    response = client.get("/get_chapter")
+    test_chapter = {
+            "revision": 3,
+            "book": "GEN",
+            "chapter": 1
+            }
+
+    response = client.get("/get_chapter", params=test_chapter)
     assert response.status_code == 200
 
 
 def test_get_verse(client):
-    response = client.get("/get_verse")
+    test_version = {
+            "revision": 3,
+            "book": "GEN",
+            "chapter": 1,
+            "verse": 1
+            }
+
+    response = client.get("/get_verse", params=test_version)
     assert response.status_code == 200
