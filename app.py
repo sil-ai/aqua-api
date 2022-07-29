@@ -38,8 +38,12 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Forbidden"
         )
+<<<<<<< HEAD
     return True
     
+=======
+    return True        
+>>>>>>> 1ab60993f7e412e0cb79ef80c9d4ac0378321078
 
 # Creates the FastAPI app object
 def create_app():
