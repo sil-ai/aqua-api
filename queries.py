@@ -35,40 +35,63 @@ def insert_bible_revision(date):
     return bible_revise
 
 
-def list_revisions_query(revision):
+def list_revisions_query(bibleVersion):
     list_revisions = """
-    """.format(revision)
+                  query MyQuery {{
+                    bibleRevision(where: {{
+                      version: {{
+                        abbreviation: {{_eq: {}}}}}}}) {{
+                      id
+                      date
+                      version {{
+                        name
+                      }}
+                    }}
+                  }}
+    """.format(bibleVersion)
 
-    return get_revisions
+    return list_revisions
 
 
-def get_chapters_query(revision, book, chapter):
-    
-
-    get_chapters = """
-    """.format(revision, verseReference)
+def get_chapter_query(revision, chapterReference):
+    get_chapter = """
+                query MyQuery {{
+                  verseText(where: {{bibleRevision: {{_eq: {}}}, 
+                    verseReferenceByVersereference: {{
+                      chapterReference: {{
+                        fullChapterId: {{_eq: {}}}}}}}}}) {{
+                    id
+                    text
+                    verseReference
+                    revision {{
+                      date
+                      version {{
+                        name
+                      }}
+                    }}
+                  }}
+                }}
+                """.format(revision, chapterReference)
 
     return get_chapter
 
 
-def get_verses_query(revision, book, chapter, verse):
-    verseReference = book + " " + str(chapter) + ":" + str(verse)
-
+def get_verses_query(revision, verseReference):
     get_verses = """
-    query MyQuery {
-      verseText(where: {bibleRevision: {_eq: {}}, verseReference: {_eq: {}}}) {
-        id
-        text
-        verseReference
-        revision {
-          bibleVersion
-          date
-          version {
-            name
-          }
-        }
-      }
-    }
-    """.format(revision, verseReference)
+              query MyQuery {{
+                verseText(where: {{bibleRevision: {{_eq: {}}}, 
+                  verseReference: {{_eq: {}}}}}) {{
+                  id
+                  text
+                  verseReference
+                  revision {{
+                    date
+                    version {{
+                      name
+                    }}
+                  }}
+                }}
+              }}
+              """.format(revision, verseReference)
     
     return get_verses
