@@ -79,7 +79,7 @@ def create_app():
 
                 version_data.append(ind_data)
 
-        return {"data": version_data}
+        return version_data
 
     
     @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
@@ -147,7 +147,7 @@ def create_app():
 
                 revisions_data.append(revision_data)
 
-        return {"data": revisions_data}
+        return revisions_data
 
 
     @app.get("/get_chapter", dependencies=[Depends(api_key_auth)])
@@ -171,7 +171,7 @@ def create_app():
 
                 chapters_data.append(chapter_data)
 
-        return {"data": chapters_data}
+        return chapters_data
     
 
     @app.get("/get_verse", dependencies=[Depends(api_key_auth)])
@@ -197,7 +197,7 @@ def create_app():
 
                 verses_data.append(verse_data)
 
-        return {"data": verses_data}
+        return verses_data
 
     return app
 
