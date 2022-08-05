@@ -1,0 +1,11 @@
+table:
+  name: bookReference
+  schema: public
+array_relationships:
+  - name: chapterReferences
+    using:
+      foreign_key_constraint_on:
+        column: bookReference
+        table:
+          name: chapterReference
+          schema: public

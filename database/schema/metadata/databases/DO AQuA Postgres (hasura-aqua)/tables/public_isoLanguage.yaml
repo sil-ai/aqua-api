@@ -1,0 +1,11 @@
+table:
+  name: isoLanguage
+  schema: public
+array_relationships:
+  - name: bibleVersions
+    using:
+      foreign_key_constraint_on:
+        column: isoLanguage
+        table:
+          name: bibleVersion
+          schema: public

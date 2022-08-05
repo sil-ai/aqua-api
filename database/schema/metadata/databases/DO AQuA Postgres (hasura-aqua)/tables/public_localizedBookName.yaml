@@ -1,0 +1,3 @@
+table:
+  name: localizedBookName
+  schema: public
