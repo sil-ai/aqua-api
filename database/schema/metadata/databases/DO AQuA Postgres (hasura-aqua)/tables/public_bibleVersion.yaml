@@ -1,0 +1,18 @@
+table:
+  name: bibleVersion
+  schema: public
+object_relationships:
+  - name: language
+    using:
+      foreign_key_constraint_on: isoLanguage
+  - name: script
+    using:
+      foreign_key_constraint_on: isoScript
+array_relationships:
+  - name: bibleRevisions
+    using:
+      foreign_key_constraint_on:
+        column: bibleVersion
+        table:
+          name: bibleRevision
+          schema: public

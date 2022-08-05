@@ -1,0 +1,11 @@
+table:
+  name: isoScript
+  schema: public
+array_relationships:
+  - name: bibleVersions
+    using:
+      foreign_key_constraint_on:
+        column: isoScript
+        table:
+          name: bibleVersion
+          schema: public

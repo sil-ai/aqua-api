@@ -1,0 +1,15 @@
+table:
+  name: bibleRevision
+  schema: public
+object_relationships:
+  - name: version
+    using:
+      foreign_key_constraint_on: bibleVersion
+array_relationships:
+  - name: verseTexts
+    using:
+      foreign_key_constraint_on:
+        column: bibleRevision
+        table:
+          name: verseText
+          schema: public

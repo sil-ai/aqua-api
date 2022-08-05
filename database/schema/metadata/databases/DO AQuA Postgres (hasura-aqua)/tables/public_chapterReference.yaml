@@ -1,0 +1,15 @@
+table:
+  name: chapterReference
+  schema: public
+object_relationships:
+  - name: bookReferenceByBookreference
+    using:
+      foreign_key_constraint_on: bookReference
+array_relationships:
+  - name: verseReferences
+    using:
+      foreign_key_constraint_on:
+        column: chapter
+        table:
+          name: verseReference
+          schema: public
