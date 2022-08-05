@@ -18,6 +18,7 @@ def list_versions_query():
         
     return list_version
 
+
 def insert_bible_revision(date):
     bible_revise = """
                 mutation MyMutation {{
@@ -32,3 +33,65 @@ def insert_bible_revision(date):
                 """.format(date)
         
     return bible_revise
+
+
+def list_revisions_query(bibleVersion):
+    list_revisions = """
+                  query MyQuery {{
+                    bibleRevision(where: {{
+                      version: {{
+                        abbreviation: {{_eq: {}}}}}}}) {{
+                      id
+                      date
+                      version {{
+                        name
+                      }}
+                    }}
+                  }}
+    """.format(bibleVersion)
+
+    return list_revisions
+
+
+def get_chapter_query(revision, chapterReference):
+    get_chapter = """
+                query MyQuery {{
+                  verseText(where: {{bibleRevision: {{_eq: {}}}, 
+                    verseReferenceByVersereference: {{
+                      chapterReference: {{
+                        fullChapterId: {{_eq: {}}}}}}}}}) {{
+                    id
+                    text
+                    verseReference
+                    revision {{
+                      date
+                      version {{
+                        name
+                      }}
+                    }}
+                  }}
+                }}
+                """.format(revision, chapterReference)
+
+    return get_chapter
+
+
+def get_verses_query(revision, verseReference):
+    get_verses = """
+              query MyQuery {{
+                verseText(where: {{bibleRevision: {{_eq: {}}}, 
+                  verseReference: {{_eq: {}}}}}) {{
+                  id
+                  text
+                  verseReference
+                  revision {{
+                    date
+                    version {{
+                      name
+                    }}
+                  }}
+                }}
+              }}
+              """.format(revision, verseReference)
+    
+    return get_verses

@@ -33,11 +33,13 @@ def client():
     with TestClient(mock_app) as client:
         yield client
 
+
 # Test for the root endpoint
 def test_read_main(client):
     response = client.get("/")
     assert response.status_code == 200
     assert response.json() == {"Hello": "World"}
+
 
 # TODO
 # Test for the List Versions endpoint
@@ -45,8 +47,41 @@ def test_list_versions(client):
     response = client.get("/version")
     assert response.status_code == 200
 
+
 def test_upload_bible(client):
     test_upload_file = Path("fixtures/uploadtest.txt")
     file = {"file": test_upload_file.open("rb")}
     response = client.post("/upload_bible", files=file)
+    assert response.status_code == 200
+
+
+def test_list_revisions(client):
+    test_version = {
+            "version": "TEST"
+            }
+
+    response = client.get("/list_revisions", params=test_version)
+    assert response.status_code == 200
+
+
+def test_get_chapter(client):
+    test_chapter = {
+            "revision": 3,
+            "book": "GEN",
+            "chapter": 1
+            }
+
+    response = client.get("/get_chapter", params=test_chapter)
+    assert response.status_code == 200
+
+
+def test_get_verse(client):
+    test_version = {
+            "revision": 3,
+            "book": "GEN",
+            "chapter": 1,
+            "verse": 1
+            }
+
+    response = client.get("/get_verse", params=test_version)
     assert response.status_code == 200

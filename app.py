@@ -38,7 +38,9 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Forbidden"
         )
-    return True        
+
+    return True
+    
 
 # Creates the FastAPI app object
 def create_app():
@@ -61,12 +63,10 @@ def create_app():
         list_versions = queries.list_versions_query()
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
-
             query = gql(list_versions)
-
             result = client.execute(query)
-            version_data = []
 
+            version_data = []
             for version in result["bibleVersion"]: 
                 ind_data = {
                         "id": version["id"], 
@@ -79,7 +79,7 @@ def create_app():
 
                 version_data.append(ind_data)
 
-        return {"data": version_data}
+        return version_data
 
     
     @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
@@ -126,6 +126,78 @@ def create_app():
                 "message": f"Successfuly uploaded {file.filename}", 
                 "Revision ID": revision_id
                 }
+
+    
+    @app.get("/list_revisions", dependencies=[Depends(api_key_auth)])
+    async def list_revisions(version: str):
+        bibleVersion = '"' + version + '"'
+        list_revision = queries.list_revisions_query(bibleVersion)
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            query = gql(list_revision)
+            result = client.execute(query)
+
+            revisions_data = []
+            for revision in result["bibleRevision"]: 
+                revision_data = {
+                        "id": revision["id"],
+                        "date": revision["date"],
+                        "versionName": revision["version"]["name"]
+                        }
+
+                revisions_data.append(revision_data)
+
+        return revisions_data
+
+
+    @app.get("/get_chapter", dependencies=[Depends(api_key_auth)])
+    async def get_chapter(revision: int, book: str, chapter: int):
+        chapterReference = '"' + book + " " + str(chapter) + '"'
+        get_chapters = queries.get_chapter_query(revision, chapterReference)
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            query = gql(get_chapters)
+            result = client.execute(query)
+            
+            chapters_data = []
+            for chapter in result["verseText"]: 
+                chapter_data = {
+                        "id": chapter["id"], 
+                        "text": chapter["text"], 
+                        "verseReference": chapter["verseReference"],
+                        "revisionDate": chapter["revision"]["date"],
+                        "versionName": chapter["revision"]["version"]["name"]
+                        }
+
+                chapters_data.append(chapter_data)
+
+        return chapters_data
+    
+
+    @app.get("/get_verse", dependencies=[Depends(api_key_auth)])
+    async def get_verse(revision: int, book: str, chapter: int, verse: int):
+        verseReference = (
+                '"' + book + " " + str(chapter) + ":" + str(verse) + '"'
+                )
+        get_verses = queries.get_verses_query(revision, verseReference)
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            query = gql(get_verses)
+            result = client.execute(query)
+            
+            verses_data = []
+            for verse in result["verseText"]: 
+                verse_data = {
+                        "id": verse["id"],
+                        "text": verse["text"], 
+                        "verseReference": verse["verseReference"],
+                        "revisionDate": verse["revision"]["date"],
+                        "versionName": verse["revision"]["version"]["name"]
+                        }
+
+                verses_data.append(verse_data)
+
+        return verses_data
 
     return app
 
