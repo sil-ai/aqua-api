@@ -83,9 +83,16 @@ def create_app():
 
     
     @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
-    async def upload_bible(file: UploadFile = File(...)):
+    async def upload_bible(
+            version: int, published: bool = False, 
+            file: UploadFile = File(...)
+            ):
+        
         revision_date = '"' + str(date.today()) + '"'
-        revision = queries.insert_bible_revision(revision_date)
+        published_fixed = str(published).lower()
+        revision = queries.insert_bible_revision(
+                version, revision_date, published_fixed
+                )
         
         # Convert into bytes and save as a temporary file.
         contents = await file.read()

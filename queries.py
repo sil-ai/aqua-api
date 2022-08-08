@@ -19,18 +19,18 @@ def list_versions_query():
     return list_version
 
 
-def insert_bible_revision(date):
+def insert_bible_revision(version, date, published):
     bible_revise = """
                 mutation MyMutation {{
                   insert_bibleRevision(objects: {{
-                    bibleVersion: 1, date: {}, published: false
+                    bibleVersion: {}, date: {}, published: {}
                     }}) {{
                     returning {{
                       id
                     }}
                   }}
                 }}
-                """.format(date)
+                """.format(version, date, published)
         
     return bible_revise
 
@@ -48,7 +48,7 @@ def list_revisions_query(bibleVersion):
                       }}
                     }}
                   }}
-    """.format(bibleVersion)
+                  """.format(bibleVersion)
 
     return list_revisions
 
