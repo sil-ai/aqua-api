@@ -35,6 +35,20 @@ def insert_bible_revision(version, date, published):
     return bible_revise
 
 
+def fetch_bible_version(abbreviation):
+    version_id = """
+                query MyQuery {{
+                  bibleVersion(where: {{
+                    abbreviation: {{_eq: {}}}
+                    }}) {{
+                    id
+                    }}
+                }}
+                """.format(abbreviation)
+        
+    return version_id
+
+
 def list_revisions_query(bibleVersion):
     list_revisions = """
                   query MyQuery {{
