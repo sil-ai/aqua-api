@@ -57,10 +57,12 @@ def test_upload_bible(client):
 
     test_id_revision = {
             "version_id": 3,
+            "version_abbreviation": "TEST",
             "published": False
             }
 
     test_abv_revision = {
+            "version_id": None,
             "version_abbreviation": "TEST",
             "published": False}
 
