@@ -84,12 +84,23 @@ def create_app():
     
     @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
     async def upload_bible(
-            version: Union[int, str], published: bool = False, 
+            version_id: Union[int, None] = None, 
+            version_abbreviation: Union[str, None] = None, 
+            published: bool = False, 
             file: UploadFile = File(...)
             ):
         
-        if type(version) == str:
-            abbreviation = '"' + version + '"'
+        if version_id == None and version_abbreviation == None:
+            raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="version_id or version_abbreviation required"
+                    )
+
+        elif version_id != None:
+            version_fixed = version_id
+        
+        elif version_abbreviation != None:
+            abbreviation = '"' + version_abbreviation + '"'
             fetch_version = queries.fetch_bible_version(abbreviation)
                         
             with Client(transport=transport, fetch_schema_from_transport=True) as client:
@@ -97,10 +108,6 @@ def create_app():
                 result = client.execute(query)
 
             version_fixed = result["bibleVersion"][0]["id"]
-
-
-        elif type(version) == int:
-            version_fixed = version
 
         revision_date = '"' + str(date.today()) + '"'
         published_fixed = str(published).lower()

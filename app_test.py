@@ -49,15 +49,36 @@ def test_list_versions(client):
 
 
 def test_upload_bible(client):
-    test_revision = {
-            "version": 3,
+    test_none_revision = {
+            "version_id": None,
+            "version_abbreviation": None,
             "published": False
             }
 
+    test_id_revision = {
+            "version_id": 3,
+            "published": False
+            }
+
+    test_abv_revision = {
+            "version_abbreviation": "TEST",
+            "published": False}
+
+    test_upload_file = Path("fixtures/uploadtest.txt")
+    file = {"file": test_upload_file.open("rb")}    
+    response_none = client.post("/upload_bible", params=test_none_revision, files=file)
+
     test_upload_file = Path("fixtures/uploadtest.txt")
     file = {"file": test_upload_file.open("rb")}
-    response = client.post("/upload_bible", params=test_revision, files=file)
-    assert response.status_code == 200
+    response_id = client.post("/upload_bible", params=test_id_revision, files=file)
+    
+    test_upload_file = Path("fixtures/uploadtest.txt")
+    file = {"file": test_upload_file.open("rb")}
+    response_abv = client.post("/upload_bible", params=test_abv_revision, files=file)
+    
+    assert response_none.status_code == 400
+    assert response_id.status_code == 200
+    assert response_abv.status_code == 200
 
 
 def test_list_revisions(client):
