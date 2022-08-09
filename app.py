@@ -1,7 +1,7 @@
 import json
 import os
 from datetime import date
-from typing import List
+from typing import List, Union
 from tempfile import NamedTemporaryFile
 
 from fastapi import FastAPI, Body, Security, Depends, HTTPException, status
@@ -83,9 +83,37 @@ def create_app():
 
     
     @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
-    async def upload_bible(file: UploadFile = File(...)):
+    async def upload_bible(
+            version_id: Union[int, None] = None, 
+            version_abbreviation: Union[str, None] = None, 
+            published: bool = False, 
+            file: UploadFile = File(...)
+            ):
+        
+        if version_id == None and version_abbreviation == None:
+            raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="version_id or version_abbreviation required"
+                    )
+
+        elif version_id != None:
+            version_fixed = version_id
+        
+        elif version_abbreviation != None:
+            abbreviation = '"' + version_abbreviation + '"'
+            fetch_version = queries.fetch_bible_version(abbreviation)
+                        
+            with Client(transport=transport, fetch_schema_from_transport=True) as client:
+                query = gql(fetch_version)
+                result = client.execute(query)
+
+            version_fixed = result["bibleVersion"][0]["id"]
+
         revision_date = '"' + str(date.today()) + '"'
-        revision = queries.insert_bible_revision(revision_date)
+        published_fixed = str(published).lower()
+        revision = queries.insert_bible_revision(
+                version_fixed, revision_date, published_fixed
+                )
         
         # Convert into bytes and save as a temporary file.
         contents = await file.read()
