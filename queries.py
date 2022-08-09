@@ -49,6 +49,23 @@ def fetch_bible_version(abbreviation):
     return version_id
 
 
+def delete_bibleRevision_text(revision_id):
+    revision_delete = """
+                      mutation MyMutation {{}
+                        delete_verseText(where: {{
+                          bibleRevision: {{
+                            _eq: {}
+                          }}
+                        }})
+                        delete_bibleRevision(where: {{
+                          id: {{
+                            _eq: {}
+                          }}
+                        }})
+                      }}
+                      """.format(revision_id, revision_id)
+
+
 def list_revisions_query(bibleVersion):
     list_revisions = """
                   query MyQuery {{

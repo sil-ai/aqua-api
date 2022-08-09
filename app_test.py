@@ -5,7 +5,16 @@ import app
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from gql import Client, gql
+from gql.transport.requests import RequestsHTTPTransport
 
+import queries
+
+
+headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
+transport = RequestsHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
+        )
 
 def test_key_auth():
     with pytest.raises(HTTPException) as err:
@@ -14,6 +23,7 @@ def test_key_auth():
 
     response = app.api_key_auth(os.getenv("TEST_KEY"))
     assert response == True
+
 
 # Create a generator that when called gives
 # a mock/ test API client, for our FastAPI app.
@@ -68,7 +78,7 @@ def test_upload_bible(client):
 
     test_upload_file = Path("fixtures/uploadtest.txt")
     file = {"file": test_upload_file.open("rb")}    
-    response_none = client.post("/upload_bible", params=test_none_revision, files=file)
+    response_none = client.post("/upload_bible", params=test_none_revision, files=file) 
 
     test_upload_file = Path("fixtures/uploadtest.txt")
     file = {"file": test_upload_file.open("rb")}
@@ -78,6 +88,19 @@ def test_upload_bible(client):
     file = {"file": test_upload_file.open("rb")}
     response_abv = client.post("/upload_bible", params=test_abv_revision, files=file)
     
+    delete_response_id = queries.delete_bibleRevision_text(revision_id)
+    delete_response_abv = queries.delete_bibleRevision_text(revision_id)
+
+    with Client(transport=transport,
+            fetch_schema_from_transport=True) as mutation_client:
+
+        mutation_id = gql(delete_response_id)
+        mutation_abv = gql(delete_response_abv)
+
+        revised_id = mutation_client.execute(mutation_id)
+        revised_abv = mutation_client.execute(mutation_abv)
+
+
     assert response_none.status_code == 400
     assert response_id.status_code == 200
     assert response_abv.status_code == 200
