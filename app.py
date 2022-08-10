@@ -81,7 +81,69 @@ def create_app():
 
         return version_data
 
-    
+   
+    @app.get("/add_version", dependencies=[Depends(api_key_auth)])
+    async def add_version(
+            name: str, isoLanguage: str, isoScript: str,
+            abbreviation: str, rights: Union[str, None] = None, 
+            forwardTranslation: Union[int, None] = None,
+            backTranslation: Union[int, None] = None, 
+            machineTranslation: bool = False
+            ):
+
+        name_fixed = '"' + name +  '"'
+        isoLang_fixed = '"' + isoLanguage + '"'
+        isoScpt_fixed = '"' + isoScript + '"'
+        abbv_fixed = '"' + abbreviation + '"'
+        
+        if rights == None:
+            rights_fixed = "null"
+        else:
+            rights_fixed = '"' + rights + '"'
+
+        if forwardTranslation == None:
+            fT = "null"
+        else:
+            fT = forwardTranslation
+
+        if backTranslation == None:
+            bT = "null"
+        else:
+            bT = backTranslation
+
+        check_version = queries.check_version_query()
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            check_query = gql(check_version)
+            check_data = client.execute(check_query)
+
+            for version in check_data["bibleVersion"]:
+                if abbreviation.lower() == version["abbreviation"].lower():
+                    raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Version abbreviation already in use."
+                            )
+
+            new_version = queries.add_version_query(
+                    name_fixed, isoLang_fixed, isoScpt_fixed,
+                    abbv_fixed, rights_fixed, fT,
+                    bT, str(machineTranslation).lower()
+                    )
+            mutation = gql(new_version)
+
+            revision = client.execute(mutation)
+        
+        new_version = {
+                "id": revision["insert_bibleVersion"]["returning"][0]["id"],
+                "name": revision["insert_bibleVersion"]["returning"][0]["name"],
+                "abbreviation": revision["insert_bibleVersion"]["returning"][0]["abbreviation"],
+                "language": revision["insert_bibleVersion"]["returning"][0]["language"]["name"],
+                "rights": revision["insert_bibleVersion"]["returning"][0]["rights"]
+                }
+
+        return new_version
+
+
     @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
     async def upload_bible(
             version_id: Union[int, None] = None, 
@@ -110,9 +172,8 @@ def create_app():
             version_fixed = result["bibleVersion"][0]["id"]
 
         revision_date = '"' + str(date.today()) + '"'
-        published_fixed = str(published).lower()
         revision = queries.insert_bible_revision(
-                version_fixed, revision_date, published_fixed
+                version_fixed, revision_date, str(published).lower()
                 )
         
         # Convert into bytes and save as a temporary file.

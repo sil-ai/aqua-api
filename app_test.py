@@ -58,6 +58,33 @@ def test_list_versions(client):
     assert response.status_code == 200
 
 
+def test_add_version(client):
+    test_version = {
+            "name": "delete", "isoLanguage": "eng",
+            "isoScript": "Latn", "abbreviation": "DEL"
+            }
+
+    fail_version = {
+            "name": "test", "isoLanguage": "eng",
+            "isoScript": "Latn", "abbreviation": "TEST"
+            }
+
+    test_response = client.get("/add_version", params=test_version)
+    fail_response = client.get("/add_version", params=fail_version)
+
+    delete_abv = '"' + test_version["abbreviation"] + '"'
+    delete_test_version = queries.delete_bible_version(delete_abv)
+
+    with Client(transport=transport,
+            fetch_schema_from_transport=True) as mutation_client:
+
+        mutation = gql(delete_test_version)
+        deleted_version = mutation_client.execute(mutation)
+
+    assert test_response.status_code == 200
+    assert fail_response.status_code == 400
+
+
 def test_upload_bible(client):
     test_none_revision = {
             "version_id": None,
@@ -87,9 +114,12 @@ def test_upload_bible(client):
     test_upload_file = Path("fixtures/uploadtest.txt")
     file = {"file": test_upload_file.open("rb")}
     response_abv = client.post("/upload_bible", params=test_abv_revision, files=file)
-    
+
+    revision_id = response_id.json()["Revision ID"]
+    revision_abv = response_abv.json()["Revision ID"]
+
     delete_response_id = queries.delete_bibleRevision_text(revision_id)
-    delete_response_abv = queries.delete_bibleRevision_text(revision_id)
+    delete_response_abv = queries.delete_bibleRevision_text(revision_abv)
 
     with Client(transport=transport,
             fetch_schema_from_transport=True) as mutation_client:
@@ -99,7 +129,6 @@ def test_upload_bible(client):
 
         revised_id = mutation_client.execute(mutation_id)
         revised_abv = mutation_client.execute(mutation_abv)
-
 
     assert response_none.status_code == 400
     assert response_id.status_code == 200
