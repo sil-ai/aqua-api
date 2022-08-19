@@ -58,7 +58,7 @@ def create_app():
         return {"Hello": "World"}
 
 
-    @app.get("/version", dependencies=[Depends(api_key_auth)])
+    @app.get("/list_versions", dependencies=[Depends(api_key_auth)])
     async def list_version():
         list_versions = queries.list_versions_query()
 
