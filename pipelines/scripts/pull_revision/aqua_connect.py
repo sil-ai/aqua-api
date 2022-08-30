@@ -1,8 +1,9 @@
-__version__ = '0.102'
+__version__ = '0.103'
 
 import os
 from dotenv import load_dotenv
-load_dotenv()
+#!!! assumes that the .env is in the scripts super folder for now
+load_dotenv('../.env')
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 import contextlib
