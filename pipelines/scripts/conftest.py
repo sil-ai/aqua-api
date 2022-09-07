@@ -7,6 +7,8 @@ load_dotenv()
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+acs = os.environ['aqua_connection_string']
+
 @pytest.fixture(scope='session')
 def aqua_connection_string():
     return os.environ['aqua_connection_string']

@@ -1,40 +1,28 @@
 import os
 from dotenv import load_dotenv
-#!!! assumes that the .env is in the scripts super folder for now
 load_dotenv()
-from sqlalchemy import create_engine
-from sqlalchemy.exc import OperationalError
-import contextlib
-from aqua_utils import get_logger
+from sqlalchemy import Column, Integer, String, create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import Session
 
-logger = get_logger(__name__)
+Base = declarative_base()
 
-@contextlib.contextmanager
-def get_aqua_conn():
-    conn_string = get_connection_string()
-    try:
-        engine = create_engine(conn_string)
-        conn = engine.connect()
-        yield conn
-        conn.close()
-    except OperationalError as oe:
-        logger.error(oe)
-        yield None
+class VerseText(Base):
+    __tablename__ = "verseText"
+    #TODO: check what the original field lengths are
+    id = Column(Integer, primary_key=True)
+    #transfers all but one Apocryphal verse ESG 10:3
+    text = Column(
+        String(550, "utf8_unicode_ci"), nullable=False)
+    bibleRevision = Column(Integer, nullable=False, index=True)
+    #transfers across all reference strings
+    verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
 
-def get_connection_string():
-    try:
-        #TODO: see if I can build this string in the .env file
-        #user = os.environ['user']
-        #pword = os.environ['aqua_pw']
-        #host  = os.environ['host']
-        #port = os.environ['port']
-        #db = os.environ['db']
-        #return  f"postgresql://{user}:{pword}@{host}:{port}/{db}?sslmode=require"
-        return os.environ['aqua_connection_string']
-    except KeyError:
-        err_message = 'Incorrect database connection string'
-        raise KeyError(err_message)
+def get_session():
+    engine = create_engine(os.environ['aqua_connection_string'], pool_size=5, pool_recycle=3600)
+    with Session(engine) as session:
+        yield engine,session
 
 if __name__ == '__main__':
-    with get_aqua_conn() as conn:
-        logger.info(conn)
+    engine,session = next(get_session())
+    session.query(VerseText)

@@ -1,5 +1,5 @@
 import argparse
-from aqua_connect2 import get_session, VerseText
+from aqua_connect import get_session, VerseText
 import pandas as pd
 from datetime import datetime
 from aqua_utils import get_logger
