@@ -12,4 +12,4 @@ COPY . .
 
 RUN mkdir out
 
-ENTRYPOINT ["python3", "./pull_revision.py"]
+ENTRYPOINT ["python3", "./pull_rev.py"]
