@@ -16,6 +16,6 @@ def engine(aqua_connection_string):
     return create_engine(aqua_connection_string, pool_size=5, pool_recycle=3600)
 
 @pytest.fixture(scope='session')
-def session():
+def session(engine):
     with Session(engine) as session:
         yield session

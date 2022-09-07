@@ -15,8 +15,13 @@ class PullRevision:
         #initializes the class variables
         self.revision_id = args.revision
         self.out = args.out
-        self.revision_text = None
-        
+        self.revision_text = pd.DataFrame()
+        #self.vref = self.prepare_vref()
+
+    @staticmethod
+    def prepare_vref():
+        return open('./vref.txt').read().splitlines()
+
     def get_args(self):
         #initializes a command line argument parser
         parser = argparse.ArgumentParser(description='Pull and output verses from a revision')
@@ -31,6 +36,10 @@ class PullRevision:
             else:
                 self.logger.error(se.code)
 
+    @staticmethod
+    def is_duplicated(refs):
+        return len(refs) != len(set(refs))
+
     def pull_revision(self):
         #with postgres connection gets the verses from the verseText table
         #??? Think about dividing get_session into get_engine and get_session
@@ -38,10 +47,16 @@ class PullRevision:
         self.logger.info(f'Loading verses from Revision {self.revision_id}...')
         #builds a dataframe of verses from the revision in self.revision_id
         revision_verses = pd.read_sql(session.query(VerseText).filter(VerseText.bibleRevision==self.revision_id).statement, session.bind)
-        #loads the verses as part of the PullRevision object
+        #??? Maybe rework as a try/except block? Seems convoluted
         if not revision_verses.empty:
-            self.revision_text = revision_verses.set_index('id',drop=True)
-            return self
+            #checks that the version doesn't have duplicated verse references
+            if not self.is_duplicated(revision_verses.verseReference):
+                #loads the verses as part of the PullRevision object
+                self.revision_text = revision_verses.set_index('id',drop=True)
+                return self
+            else:
+                self.logger.info(f'Duplicated verses in Revision {self.revision_id}')
+                return self
         else:
             self.logger.info(f'No verses for Revision {self.revision_id}')
             return self
@@ -50,7 +65,7 @@ class PullRevision:
         #saves the output as a csv file with revision_id and date
         if not self.revision_text.empty:
             date = datetime.now().strftime("%Y_%m_%d")
-            self.revision_text.to_csv(self.out + f'/biblerevision{self.revision_id}_{date}.csv')
+            self.revision_text.to_csv(self.out + f'/{self.revision_id}_{date}.csv')
             self.logger.info(f'Revision {self.revision_id} saved to file in location {self.out}')
         else:
             self.logger.info('Revision text is empty. Nothing printed.')

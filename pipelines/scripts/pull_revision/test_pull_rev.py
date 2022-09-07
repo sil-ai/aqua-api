@@ -6,7 +6,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import NoSuchModuleError, OperationalError, ArgumentError, ProgrammingError
 from pull_rev import PullRevision
 import dateutil.parser as p
+import pandas as pd
 from datetime import datetime
+from aqua_connect import VerseText
 
 #test for valid database connection
 def test_conn(engine, session, aqua_connection_string):
@@ -74,7 +76,7 @@ def test_invalid_revision():
             return_value=argparse.Namespace(revision=-3,out='.')):
             pr = PullRevision()
             pr.pull_revision()
-        if not pr.revision_text:
+        if pr.revision_text.empty:
             pass
         else:
             raise AssertionError('Invalid revision number should have failed')
@@ -95,8 +97,20 @@ def test_missing_output():
         else:
             raise AssertionError(f'Error is {err}')
 
+#test for duplicated Bible references
+def test_duplicated_refs(session, revision=3, out='.'):
+    try:
+        with patch('argparse.ArgumentParser.parse_args',
+            return_value=argparse.Namespace(revision=revision,out=out)):
+            revision_verses = pd.read_sql(session.query(VerseText).filter(VerseText.bibleRevision==revision).statement, session.bind)
+            assert all([item==revision for item in revision_verses.bibleRevision])
+            assert len(revision_verses.verseReference) != len(set(revision_verses.verseReference))
+    except Exception as err:
+        raise AssertionError(f'Error is {err}')
+
+
 #test for a valid pull_rev
-def test_valid_pull_rev(revision=3, out='.'):
+def test_valid_pull_rev(revision=2, out='.'):
     try:
         with patch('argparse.ArgumentParser.parse_args',
             return_value=argparse.Namespace(revision=revision,out=out)):
@@ -111,7 +125,7 @@ def test_valid_pull_rev(revision=3, out='.'):
         raise AssertionError(f'Error is {err}')
 
 #test for working logger
-def test_working_logger(revision=3, out='.'):
+def test_working_logger(revision=2, out='.'):
     with patch('argparse.ArgumentParser.parse_args',
             return_value=argparse.Namespace(revision=revision,out=out)):
         pr = PullRevision()
