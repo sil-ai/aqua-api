@@ -105,7 +105,6 @@ def test_valid_pull_rev(revision=3, out='.'):
             pr.output_revision()
         assert pr.revision_id == revision
         assert pr.out == out
-        #!!! relies on length of revision 3 not changing
         assert len(pr.revision_text) > 0
         assert all([item==revision for item in pr.revision_text.bibleRevision])
     except Exception as err:
