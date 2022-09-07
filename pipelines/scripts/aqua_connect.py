@@ -1,13 +1,13 @@
-__version__ = '0.103'
-
 import os
 from dotenv import load_dotenv
 #!!! assumes that the .env is in the scripts super folder for now
-load_dotenv('../.env')
+load_dotenv()
 from sqlalchemy import create_engine
 from sqlalchemy.exc import OperationalError
 import contextlib
+from aqua_utils import get_logger
 
+logger = get_logger(__name__)
 
 @contextlib.contextmanager
 def get_aqua_conn():
@@ -18,21 +18,23 @@ def get_aqua_conn():
         yield conn
         conn.close()
     except OperationalError as oe:
-        print(oe)
+        logger.error(oe)
         yield None
 
 def get_connection_string():
     try:
-        user = os.environ['user']
-        pword = os.environ['aqua_pw']
-        host  = os.environ['host']
-        port = os.environ['port']
-        db = os.environ['db']
-        return  f"postgresql://{user}:{pword}@{host}:{port}/{db}?sslmode=require"
-    except KeyError as err:
-        err_message = f'Environmental variable {err} missing'
+        #TODO: see if I can build this string in the .env file
+        #user = os.environ['user']
+        #pword = os.environ['aqua_pw']
+        #host  = os.environ['host']
+        #port = os.environ['port']
+        #db = os.environ['db']
+        #return  f"postgresql://{user}:{pword}@{host}:{port}/{db}?sslmode=require"
+        return os.environ['aqua_connection_string']
+    except KeyError:
+        err_message = 'Incorrect database connection string'
         raise KeyError(err_message)
 
 if __name__ == '__main__':
     with get_aqua_conn() as conn:
-        print(conn)
+        logger.info(conn)
