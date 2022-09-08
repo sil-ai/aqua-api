@@ -1,7 +1,7 @@
 import argparse
+from datetime import datetime
 import pandas as pd
 from mock import patch
-from datetime import datetime
 from pull_rev import PullRevision
 from db_connect import VerseText
 
@@ -10,14 +10,14 @@ def test_missing_revision():
     try:
         with patch('argparse.ArgumentParser.parse_args',
             return_value=argparse.Namespace(revision=None,out='.')):
-            pr = PullRevision()
-            pr.pull_revision()
+            pullrev = PullRevision()
+            pullrev.pull_revision()
         raise AssertionError('Missing revision should have failed')
     except ValueError as err:
         if err.args[0] == 'Missing Revision Id or output path':
             pass
         else:
-            raise AssertionError(f'Error is {err}')
+            raise AssertionError(f'Error is {err}') from err
 
 
 #test for invalid revision number -3
@@ -25,39 +25,41 @@ def test_invalid_revision():
     try:
         with patch('argparse.ArgumentParser.parse_args',
             return_value=argparse.Namespace(revision=-3,out='.')):
-            pr = PullRevision()
-            pr.pull_revision()
-        if pr.revision_text.empty:
+            pullrev = PullRevision()
+            pullrev.pull_revision()
+        if pullrev.revision_text.empty:
             pass
         else:
             raise AssertionError('Invalid revision number should have failed')
     except Exception as err:
-        raise AssertionError(f'Error is {err}')
+        raise AssertionError(f'Error is {err}') from err
 
 #test for missing output
 def test_missing_output():
     try:
         with patch('argparse.ArgumentParser.parse_args',
             return_value=argparse.Namespace(revision=3,out='')):
-            pr = PullRevision()
-            pr.pull_revision()
+            pullrev = PullRevision()
+            pullrev.pull_revision()
         raise AssertionError('Invalid revision number should have failed')
     except ValueError as err:
         if err.args[0] == 'Missing Revision Id or output path':
             pass
         else:
-            raise AssertionError(f'Error is {err}')
+            raise AssertionError(f'Error is {err}') from err
 
 #test for duplicated Bible references
 def test_duplicated_refs(session, revision=3, out='.'):
     try:
         with patch('argparse.ArgumentParser.parse_args',
             return_value=argparse.Namespace(revision=revision,out=out)):
-            revision_verses = pd.read_sql(session.query(VerseText).filter(VerseText.bibleRevision==revision).statement, session.bind)
-            assert all([item==revision for item in revision_verses.bibleRevision])
+            revision_verses = pd.read_sql(session.query(VerseText).\
+                              filter(VerseText.bibleRevision==revision)\
+                              .statement, session.bind)
+            assert all(item==revision for item in revision_verses.bibleRevision)
             assert len(revision_verses.verseReference) != len(set(revision_verses.verseReference))
     except Exception as err:
-        raise AssertionError(f'Error is {err}')
+        raise AssertionError(f'Error is {err}') from err
 
 
 #test for a valid pull_rev
@@ -65,22 +67,22 @@ def test_valid_pull_rev(revision=2, out='.'):
     try:
         with patch('argparse.ArgumentParser.parse_args',
             return_value=argparse.Namespace(revision=revision,out=out)):
-            pr = PullRevision()
-            pr.pull_revision()
-            pr.output_revision()
-        assert pr.revision_id == revision
-        assert pr.out == out
-        assert len(pr.revision_text) > 0
-        assert all([item==revision for item in pr.revision_text.bibleRevision])
+            pullrev = PullRevision()
+            pullrev.pull_revision()
+            pullrev.output_revision()
+        assert pullrev.revision_id == revision
+        assert pullrev.out == out
+        assert len(pullrev.revision_text) > 0
+        assert all(item==revision for item in pullrev.revision_text.bibleRevision)
     except Exception as err:
-        raise AssertionError(f'Error is {err}')
+        raise AssertionError(f'Error is {err}') from err
 
 #test for working logger
 def test_working_logger(caplog, revision=3, out='.'):
     with patch('argparse.ArgumentParser.parse_args',
             return_value=argparse.Namespace(revision=revision,out=out)):
-        pr = PullRevision()
-        pr.pull_revision()
+        pullrev = PullRevision()
+        pullrev.pull_revision()
     #check the logs
     current_dt = datetime.now()
     for logentry in caplog.records:
@@ -98,4 +100,4 @@ def test_working_logger(caplog, revision=3, out='.'):
         #compare the message
         assert  'Revision 3' in logentry.message
         #compare the module
-        assert 'pull_rev' == logentry.module
+        assert logentry.module == 'pull_rev'

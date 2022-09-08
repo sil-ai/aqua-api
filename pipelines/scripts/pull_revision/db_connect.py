@@ -17,11 +17,8 @@ class VerseText(Base):
     verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
 
 def get_session():
-    #??? Should this yield only session?  Need engine in testing but maybe I can pull out of session?
+    #??? Should this yield only session?
+    #Need engine in testing but maybe I can pull out of session?
     engine = create_engine(os.environ['AQUA_CONNECTION_STRING'], pool_size=5, pool_recycle=3600)
     with Session(engine) as session:
         yield engine,session
-
-if __name__ == '__main__':
-    engine,session = next(get_session())
-    session.query(VerseText)

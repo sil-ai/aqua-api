@@ -1,8 +1,8 @@
 import argparse
-from db_connect import get_session, VerseText
-import pandas as pd
 from datetime import datetime
 import logging
+import pandas as pd
+from db_connect import get_session, VerseText
 
 def get_logger():
     module_name = __file__.split('/')[-1].split('.')[0]
@@ -37,7 +37,8 @@ class PullRevision:
     def prepare_vref():
         return open('./vref.txt').read().splitlines()
 
-    def get_args(self):
+    @staticmethod
+    def get_args():
         #initializes a command line argument parser
         parser = argparse.ArgumentParser(description='Pull and output verses from a revision')
         parser.add_argument('-r','--revision', type=int, help='Revision ID', required=True)
@@ -45,11 +46,11 @@ class PullRevision:
         #gets the arguments - will fail if they are of the wrong type
         try:
             return parser.parse_args()
-        except SystemExit as se:
-            if se.code == 2:
-                raise ValueError('Argument error')
+        except SystemExit as sys_exit:
+            if sys_exit.code == 2:
+                raise ValueError('Argument error') from sys_exit
             else:
-                self.logger.error(se.code)
+                raise ValueError(sys_exit.code) from sys_exit
 
     @staticmethod
     def is_duplicated(refs):
@@ -59,29 +60,30 @@ class PullRevision:
         #with postgres connection gets the verses from the verseText table
         #??? Think about dividing get_session into get_engine and get_session
         __,session = next(get_session())
-        self.logger.info(f'Loading verses from Revision {self.revision_id}...')
+        self.logger.info('Loading verses from Revision %s...', self.revision_id)
         #builds a dataframe of verses from the revision in self.revision_id
-        revision_verses = pd.read_sql(session.query(VerseText).filter(VerseText.bibleRevision==self.revision_id).statement, session.bind)
+        revision_verses = pd.read_sql(session.query(VerseText)\
+                          .filter(VerseText.bibleRevision==self.revision_id)\
+                          .statement, session.bind)
         #??? Maybe rework as a try/except block? Seems convoluted
         if not revision_verses.empty:
             #checks that the version doesn't have duplicated verse references
             if not self.is_duplicated(revision_verses.verseReference):
                 #loads the verses as part of the PullRevision object
                 self.revision_text = revision_verses.set_index('id',drop=True)
-                return self
             else:
-                self.logger.info(f'Duplicated verses in Revision {self.revision_id}')
-                return self
+                self.logger.info('Duplicated verses in Revision %s', self.revision_id)
         else:
-            self.logger.info(f'No verses for Revision {self.revision_id}')
-            return self
+            self.logger.info('No verses for Revision %s', self.revision_id)
+        return self
 
     def output_revision(self):
         #saves the output as a csv file with revision_id and date
         if not self.revision_text.empty:
             date = datetime.now().strftime("%Y_%m_%d")
             self.revision_text.to_csv(self.out + f'/{self.revision_id}_{date}.csv')
-            self.logger.info(f'Revision {self.revision_id} saved to file in location {self.out}')
+            self.logger.info('Revision %s saved to file in location %s',
+                              self.revision_id, self.out)
         else:
             self.logger.info('Revision text is empty. Nothing printed.')
 
