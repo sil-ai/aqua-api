@@ -19,7 +19,7 @@ class VerseText(Base):
     verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
 
 def get_session():
-    engine = create_engine(os.environ['aqua_connection_string'], pool_size=5, pool_recycle=3600)
+    engine = create_engine(os.environ['AQUA_CONNECTION_STRING'], pool_size=5, pool_recycle=3600)
     with Session(engine) as session:
         yield engine,session
 

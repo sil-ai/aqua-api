@@ -1,13 +1,31 @@
 import argparse
-from aqua_connect import get_session, VerseText
+from db_connect import get_session, VerseText
 import pandas as pd
 from datetime import datetime
 from aqua_utils import get_logger
 
+import os
+import logging
+
+def get_logger():
+    module_name = __file__.split('/')[-1].split('.')[0]
+    #set the root logger to a debug level
+    logger = logging.getLogger(module_name)
+    logger.setLevel(logging.DEBUG)
+    logger.handlers = []
+    #set up a stream handler
+    s_handler = logging.StreamHandler()
+    s_handler.setLevel(logging.DEBUG)
+    log_format = logging.Formatter(fmt='%(asctime)s | %(levelname)s | %(message)s | %(name)s',
+                                 datefmt='%Y-%m-%d %H:%M:%S')
+    s_handler.setFormatter(log_format)
+    logger.addHandler(s_handler)
+    return logger
+
 class PullRevision:
 
     def __init__(self,):
-        self.logger = get_logger(__file__)
+        self.logger = get_logger()
         #gets the args of the form --revision 3 --out /path/to/output/file
         args = self.get_args()
         if not (args.revision and args.out):
