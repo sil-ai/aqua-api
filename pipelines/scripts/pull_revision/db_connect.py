@@ -1,6 +1,4 @@
 import os
-from dotenv import load_dotenv
-load_dotenv()
 from sqlalchemy import Column, Integer, String, create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import Session
@@ -19,6 +17,7 @@ class VerseText(Base):
     verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
 
 def get_session():
+    #??? Should this yield only session?  Need engine in testing but maybe I can pull out of session?
     engine = create_engine(os.environ['AQUA_CONNECTION_STRING'], pool_size=5, pool_recycle=3600)
     with Session(engine) as session:
         yield engine,session

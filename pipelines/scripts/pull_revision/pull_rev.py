@@ -2,9 +2,6 @@ import argparse
 from db_connect import get_session, VerseText
 import pandas as pd
 from datetime import datetime
-from aqua_utils import get_logger
-
-import os
 import logging
 
 def get_logger():
