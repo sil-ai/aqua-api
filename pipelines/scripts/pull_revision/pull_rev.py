@@ -1,3 +1,4 @@
+import os
 import argparse
 from datetime import datetime
 import logging
@@ -97,7 +98,6 @@ class PullRevision:
         #saves the output as a txt file with revision_id and unix date
         if not self.revision_text.empty:
             output_text = self.prepare_output()
-            #self.revision_text.to_csv(self.out + f'/{self.revision_id}_{date}.csv')
             filename = f'{self.revision_id}_{date}.txt'
             filepath = self.out + '/' + filename
             output_text.to_csv(filepath, index=False)
