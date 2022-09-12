@@ -15,3 +15,12 @@ def engine(aqua_connection_string):
 def session(engine):
     with Session(engine) as session:
         yield session
+
+class ValueStorage:
+    valid_pull_rev = None
+    revision = None
+    out = None
+
+@pytest.fixture(scope='session')
+def valuestorage():
+    return ValueStorage()

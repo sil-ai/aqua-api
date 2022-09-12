@@ -1,9 +1,13 @@
+import os
 import argparse
 from datetime import datetime
 import pandas as pd
 from mock import patch
+import json
 from pull_rev import PullRevision
 from db_connect import VerseText
+from conftest import ValueStorage
+import pickle
 
 #test for missing revision
 def test_missing_revision():
@@ -63,7 +67,7 @@ def test_duplicated_refs(session, revision=3, out='.'):
 
 
 #test for a valid pull_rev
-def test_valid_pull_rev(revision=2, out='.'):
+def test_valid_pull_rev(valuestorage, revision=2, out='.'):
     try:
         with patch('argparse.ArgumentParser.parse_args',
             return_value=argparse.Namespace(revision=revision,out=out)):
@@ -74,6 +78,10 @@ def test_valid_pull_rev(revision=2, out='.'):
         assert pullrev.out == out
         assert len(pullrev.revision_text) > 0
         assert all(item==revision for item in pullrev.revision_text.bibleRevision)
+        #assign the valid pullrev for later tests
+        valuestorage.valid_pull_rev = pullrev
+        valuestorage.revision = revision
+        valuestorage.out = out
     except Exception as err:
         raise AssertionError(f'Error is {err}') from err
 
@@ -101,3 +109,40 @@ def test_working_logger(caplog, revision=3, out='.'):
         assert  'Revision 3' in logentry.message
         #compare the module
         assert logentry.module == 'pull_rev'
+
+def get_valid_file(vs):
+    #passed along from test_valid_pull_rev
+    pr = vs.valid_pull_rev
+    date = datetime.now().strftime("%Y_%m_%d")
+    filename = f'{pr.revision_id}_{date}.txt'
+    #get the correct path
+    if os.curdir != pr.out:
+        filepath = os.path.join(os.curdir,pr.out, filename)
+    else:
+        filepath = os.path.join(pr.out,filename)
+    try:
+        #if the file opens it exists in the correct path
+        return open(filepath).read().splitlines()
+    except FileNotFoundError as err:
+        raise AssertionError(err) from err
+
+#test that valid output is in correct folder
+def test_output_folder(valuestorage):
+    #passed along from test_valid_pull_rev
+    pr = valuestorage.valid_pull_rev
+    assert pr.out == valuestorage.out
+    assert pr.revision_id == valuestorage.revision
+    valid_output = get_valid_file(valuestorage)
+    #??? What should the assertion be here?
+
+#test for matching output
+def test_matching_output(valuestorage):
+    pr = valuestorage.valid_pull_rev
+    valid_output = get_valid_file(valuestorage)
+    #json.dump(valid_output, open('vo.json','w'))
+    #pickle.dump(pr, open('pr.pkl','wb'))
+    #TODO: figure out why this assertion is failing by one
+    assert len(pr.vref) == len(valid_output)
+
+
+
