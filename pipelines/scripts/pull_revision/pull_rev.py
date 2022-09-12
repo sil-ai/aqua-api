@@ -31,11 +31,15 @@ class PullRevision:
         self.revision_id = args.revision
         self.out = args.out
         self.revision_text = pd.DataFrame()
-        #self.vref = self.prepare_vref()
+        self.vref = self.prepare_vref()
 
     @staticmethod
     def prepare_vref():
-        return open('./vref.txt').read().splitlines()
+        #??? maybe consolidate the name to one variable?
+        try:
+            return pd.Series(open('./vref.txt').read().splitlines(), name='verseReference')
+        except FileNotFoundError as err:
+            raise FileNotFoundError(err) from err
 
     @staticmethod
     def get_args():
@@ -77,13 +81,28 @@ class PullRevision:
             self.logger.info('No verses for Revision %s', self.revision_id)
         return self
 
+    def prepare_output(self):
+        #outer merges the vref list on the revision verses
+        all_verses = pd.merge(self.revision_text,self.vref,on='verseReference',how='outer')
+        #customed sort index
+        vref_sort_index = dict(zip(self.vref,range(len(self.vref))))
+        #map the sort order
+        all_verses['sort_order'] = all_verses['verseReference'].map(vref_sort_index)
+        #sort all verses based on vref custom sort
+        all_verses.sort_values('sort_order', inplace=True)
+        return all_verses['text']
+
     def output_revision(self):
-        #saves the output as a csv file with revision_id and date
+        date = datetime.now().strftime("%Y_%m_%d")
+        #saves the output as a txt file with revision_id and unix date
         if not self.revision_text.empty:
-            date = datetime.now().strftime("%Y_%m_%d")
-            self.revision_text.to_csv(self.out + f'/{self.revision_id}_{date}.csv')
-            self.logger.info('Revision %s saved to file in location %s',
-                              self.revision_id, self.out)
+            output_text = self.prepare_output()
+            #self.revision_text.to_csv(self.out + f'/{self.revision_id}_{date}.csv')
+            filename = f'{self.revision_id}_{date}.txt'
+            filepath = self.out + '/' + filename
+            output_text.to_csv(filepath, index=False)
+            self.logger.info('Revision %s saved to file %s in location %s',
+                              self.revision_id, filename, self.out)
         else:
             self.logger.info('Revision text is empty. Nothing printed.')
 
@@ -92,7 +111,9 @@ if __name__ == '__main__':
         pr = PullRevision()
         pr.pull_revision()
         pr.output_revision()
-    except (ValueError, OSError, KeyError, AttributeError) as err:
+    except (ValueError, OSError,
+            KeyError, AttributeError,
+            FileNotFoundError) as err:
         try:
             pr.logger.error(err)
         except NameError:
