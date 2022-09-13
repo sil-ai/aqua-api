@@ -1,4 +1,4 @@
-import os
+import numpy as np
 import argparse
 from datetime import datetime
 import logging
@@ -91,7 +91,8 @@ class PullRevision:
         all_verses['sort_order'] = all_verses['verseReference'].map(vref_sort_index)
         #sort all verses based on vref custom sort
         all_verses.sort_values('sort_order', inplace=True)
-        return all_verses['text']
+        all_verses_text = all_verses['text'].replace(np.nan,'',regex=True)
+        return all_verses_text.to_list()
 
     def output_revision(self):
         date = datetime.now().strftime("%Y_%m_%d")
@@ -100,7 +101,9 @@ class PullRevision:
             output_text = self.prepare_output()
             filename = f'{self.revision_id}_{date}.txt'
             filepath = self.out + '/' + filename
-            output_text.to_csv(filepath, index=False)
+            with open(filepath,'w') as outfile:
+                for verse_text in output_text:
+                    outfile.write(f'{verse_text}\n')
             self.logger.info('Revision %s saved to file %s in location %s',
                               self.revision_id, filename, self.out)
         else:
