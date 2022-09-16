@@ -1,5 +1,6 @@
 import argparse
 import logging
+import numpy as np
 
 def get_logger():
     module_name = __file__.split('/')[-1].split('.')[0]
@@ -24,10 +25,15 @@ class SplitRevision:
         args = self.get_args()
         if not (args.input and args.num and args.out):
             raise ValueError('Missing split number or path')
-        #initializes the class variables
-        self.input = args.input
+        #initializes the instance variables
+        self.revision_list = self.get_revision_file(args.input)
         self.out = args.out
         self.num = args.num
+        self.split_revision = None
+
+    @staticmethod
+    def get_revision_file(filepath):
+        return open(filepath).read().splitlines()
 
     @staticmethod
     def get_args():
@@ -45,12 +51,22 @@ class SplitRevision:
             else:
                 raise ValueError(sys_exit.code) from sys_exit
 
+    def split_revision(self):
+        self.split_revision = None
+
+    def output_split_revisions(self):
+        pass
+
 if __name__ == '__main__':
+    import ipdb; ipdb.set_trace()
     try:
         sr = SplitRevision()
+        sr.split_revision()
+        sr.output_split_revisions()
     except (ValueError, OSError,
             KeyError, AttributeError,
-            FileNotFoundError) as err:
+            FileNotFoundError,
+            IsADirectoryError) as err:
         try:
             sr.logger.error(err)
         except NameError:
