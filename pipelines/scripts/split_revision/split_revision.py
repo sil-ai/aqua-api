@@ -1,8 +1,5 @@
-import numpy as np
 import argparse
-from datetime import datetime
 import logging
-import pandas as pd
 
 def get_logger():
     module_name = __file__.split('/')[-1].split('.')[0]
