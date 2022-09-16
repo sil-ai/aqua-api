@@ -28,7 +28,7 @@ class PullRevision:
         args = self.get_args()
         if not (args.revision and args.out):
             raise ValueError('Missing Revision Id or output path')
-        #initializes the class variables
+        #initializes the instance variables
         self.revision_id = args.revision
         self.out = args.out
         self.revision_text = pd.DataFrame()
