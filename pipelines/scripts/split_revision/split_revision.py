@@ -1,6 +1,8 @@
+import re
 import argparse
 import logging
 import numpy as np
+import pandas as pd
 
 def get_logger():
     module_name = __file__.split('/')[-1].split('.')[0]
@@ -26,14 +28,21 @@ class SplitRevision:
         if not (args.input and args.num and args.out):
             raise ValueError('Missing split number or path')
         #initializes the instance variables
-        self.revision_list = self.get_revision_file(args.input)
-        self.out = args.out
+        self.input_filepath = args.input
+        self.output_filepath = args.out
         self.num = args.num
-        self.split_revision = None
+        revision_file = self.get_revision_file()
+        self.revision_list = self.build_revision_list(revision_file)
+
+    def get_revision_file(self):
+        return open(self.input_filepath).read().splitlines()
 
     @staticmethod
-    def get_revision_file(filepath):
-        return open(filepath).read().splitlines()
+    def build_revision_list(revision_file):
+        #TODO: better way to pass vref to these classes
+        vref = open('../pull_revision/vref.txt').read().splitlines()
+        #put reference and verse together and strip out missing verses
+        return [item for item in list(zip(vref,revision_file)) if item[1]]
 
     @staticmethod
     def get_args():
@@ -52,19 +61,29 @@ class SplitRevision:
                 raise ValueError(sys_exit.code) from sys_exit
 
     def split_revision(self):
-        self.split_revision = None
+        #split revision list into roughly 'num' chunks
+        return np.array_split(self.revision_list, self.num)
 
-    def output_split_revisions(self):
-        pass
+    def output_split_revisions(self, split_revisions):
+        regex_string = r'(?!.*\/)(.*)\.txt'
+        regex = re.compile(regex_string)
+        input_filename = regex.search(self.input_filepath).groups()[0]
+        #!!! Note chunk file numbering starts with zero
+        for idx in range(self.num):
+            output_filename = f'{self.output_filepath}/{input_filename}_chunk{idx}.csv'
+            output_file = pd.DataFrame(split_revisions[idx])
+            #outputs the idxth chunk of split_revisions to outputname file
+            #without index or headers
+            output_file.to_csv(output_filename, index=False, header=False)
 
 if __name__ == '__main__':
-    import ipdb; ipdb.set_trace()
     try:
         sr = SplitRevision()
-        sr.split_revision()
-        sr.output_split_revisions()
+        split_revisions = sr.split_revision()
+        sr.output_split_revisions(split_revisions)
     except (ValueError, OSError,
             KeyError, AttributeError,
+            TypeError,
             FileNotFoundError,
             IsADirectoryError) as err:
         try:
