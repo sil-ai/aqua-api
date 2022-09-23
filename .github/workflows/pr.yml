@@ -14,10 +14,10 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v2
       
-    - name: Build 
+    - name: Build API
       run: make build-actions
       
-    - name: Test
+    - name: Test API
       run: make test
       env:
         AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
@@ -28,3 +28,15 @@ jobs:
         TEST_KEY: ${{ secrets.TEST_KEY }}
         FAIL_KEY: ${{ secrets.FAIL_KEY }}
         KEY_VAULT: ${{ secrets.KEY_VAULT }}
+
+    - name: Build Pipelines
+      run: make build-pipelines
+      env:
+        REGISTRY: ${{ secrets.AWS_REGISTRY }}
+        AQUA_DB: ${{ secrets.AQUA_DB }}
+      
+    - name: Test Pipelines
+      run: make test-pipelines
+      env:
+        REGISTRY: ${{ secrets.AWS_REGISTRY }}
+        AQUA_DB: ${{ secrets.AQUA_DB }}

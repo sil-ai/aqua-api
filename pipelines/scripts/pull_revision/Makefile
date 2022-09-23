@@ -1,26 +1,19 @@
 all: build-local
 
-IMAGENAME=aqua-api
-REGISTRY=registry.digitalocean.com/aqua-tools
+IMAGENAME=aqua-pipeline-pull-revision
 GH_BRANCH=$(shell basename ${GITHUB_REF})
 
 build-local:
+	cp ../../../fixtures/vref.txt .
 	docker build -t ${REGISTRY}/${IMAGENAME}:latest .
+	rm vref.txt
 
 build-actions:
+	cp ../../../fixtures/vref.txt .
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
 test:
-	docker run -e AWS_ACCESS_KEY=${AWS_ACCESS_KEY} \
-	-e AWS_SECRET_KEY=${AWS_SECRET_KEY} \
-	-e GRAPHQL_URL=${GRAPHQL_URL} \
-	-e GRAPHQL_SECRET=${GRAPHQL_SECRET} \
-	-e AQUA_DB=${AQUA_DB} \
-	-e TEST_KEY=${TEST_KEY} \
-	-e FAIL_KEY=${FAIL_KEY} \
-	-e KEY_VAULT=${KEY_VAULT} \
-	-p 8000:8000 \
-	${REGISTRY}/${IMAGENAME}:latest pytest
+	docker run --rm -it -e AQUA_DB=${AQUA_DB} ${REGISTRY}/${IMAGENAME}:latest pytest
 
 push-branch:
 	docker push ${REGISTRY}/${IMAGENAME}:latest
@@ -30,12 +23,3 @@ push-branch:
 push-release:
 	docker tag ${REGISTRY}/${IMAGENAME}:latest ${REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
 	docker push ${REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
-
-build-pipelines:
-	cd pipelines && ./build.sh
-
-test-pipelines:
-	cd pipelines && ./build.sh
-
-push-pipelines:
-	cd pipelines && ./push.sh
