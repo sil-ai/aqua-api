@@ -9,7 +9,7 @@ from datetime import datetime
 
 @pytest.fixture(scope='session')
 def revision_filepath():
-    return '2_2022_09_16.txt'
+    return 'sample_test_revision.txt'
 
 #test for missing input file
 def test_missing_input():
