@@ -10,6 +10,6 @@ do
     echo "Pushing $dir"
     echo "-----------------------"
     cd $dir
-    make push || exit 1
+    make push-branch || exit 1
     cd $currentdir
 done
