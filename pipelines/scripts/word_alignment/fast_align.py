@@ -1,43 +1,28 @@
-#!/usr/bin/env python
-# coding: utf-8
-
-# Before running this notebook, make sure that you upload the source and target corpora. The corpora should be a text file where each line is a separate sentence. The source and target sentences should be aligned by line number. The source file should be called `src.txt` and the target file should be called `trg.txt`.
-# 
-# 
-
-# Install Machine.py
-
-# In[1]:
-
-
-#get_ipython().system('pip install sil-machine[thot]')
-
-
-# Create parellel corpus from source and target corpora
-
-# In[9]:
-
-
+#imports
+#!pip install sil-machine[thot]
 import argparse
 from tqdm import tqdm
+import pandas as pd
+import string
+import os
+from machine.corpora import TextFileTextCorpus
+from machine.tokenization import LatinWordTokenizer
+from machine.translation import SymmetrizationHeuristic
+from machine.translation.thot import ThotFastAlignWordAlignmentModel, ThotSymmetrizedWordAlignmentModel
 
 #command line args
 parser = argparse.ArgumentParser(description="Argparser")
 parser.add_argument('--source', type=str, help='source translation')
 parser.add_argument('--target', type=str, help='target translation')
-parser.add_argument('--outfile', type=str, help='file to write to (csv)')
+parser.add_argument('--threshold', type=float, default=0.5, help='word score threshold {0,1}')
+parser.add_argument('--outpath', type=str, help='where to write results')
 args, unknown = parser.parse_known_args()
 
-
-# In[ ]:
-
-
-from machine.corpora import TextFileTextCorpus
-from machine.tokenization import LatinWordTokenizer
+#source and target files
 src_file = args.source
 trg_file = args.target
 
-
+#remove any empty lines from the source and target files
 def remove_empty_lines(src_file, trg_file, max_lines=999999):
     empty_lines = list(set(get_empty_lines(src_file)) | set(get_empty_lines(trg_file)))
     with open(src_file) as f:
@@ -49,16 +34,15 @@ def remove_empty_lines(src_file, trg_file, max_lines=999999):
     write_condensed_file(src_data, src_file + "_condensed", max_lines=max_lines)
     write_condensed_file(trg_data, trg_file + "_condensed", max_lines=max_lines)
 
-import string
 def write_condensed_file(data, filename, max_lines=999999):
     with open(filename, 'w') as f:
         for num, line in enumerate(data):
             line = line.translate(str.maketrans('', '', string.punctuation))
             if num < max_lines:
                 if num == 0:
-                    f.write(line.strip())
+                    f.write(line.strip().lower())
                 else:
-                    f.write('\n' + line.strip())
+                    f.write('\n' + line.strip().lower())
 
 def get_empty_lines(file):
     empty_lines = []
@@ -70,22 +54,12 @@ def get_empty_lines(file):
 
 remove_empty_lines(src_file, trg_file)
 
+#create parallel corpus
 source_corpus = TextFileTextCorpus(src_file + '_condensed')
 target_corpus = TextFileTextCorpus(trg_file+ '_condensed')
-
-# source_corpus = TextFileTextCorpus(src_file)
-# target_corpus = TextFileTextCorpus(trg_file)
 parallel_corpus = source_corpus.align_rows(target_corpus).tokenize(LatinWordTokenizer())
 
-
-# Train FastAlign model
-
-# In[ ]:
-
-
-from machine.translation import SymmetrizationHeuristic
-from machine.translation.thot import ThotFastAlignWordAlignmentModel, ThotSymmetrizedWordAlignmentModel
-
+# Train fast_align model
 src_trg_model = ThotFastAlignWordAlignmentModel()
 trg_src_model = ThotFastAlignWordAlignmentModel()
 symmetrized_model = ThotSymmetrizedWordAlignmentModel(src_trg_model, trg_src_model)
@@ -94,52 +68,39 @@ trainer = symmetrized_model.create_trainer(parallel_corpus.lowercase())
 trainer.train(lambda status: print(f"Training Symmetrized FastAlign model: {status.percent_completed:.2%}"))
 trainer.save()
 
-
-# Align the sentences in the parallel corpus
-
-# In[ ]:
-
+# Align the sentences in the parallel corpus and write to df
 alignments = symmetrized_model.get_best_alignment_batch(parallel_corpus.lowercase().to_tuples())
-
 data = {'source':[], 'target':[], 'word score':[], 'verse score':[]}
-
+print("Getting alignments...")
 for source_segment, target_segment, alignment in tqdm(alignments):
     pair_indices = alignment.to_aligned_word_pairs()
     verse_score = symmetrized_model.get_avg_translation_score(source_segment, target_segment, alignment)
     for pair in pair_indices:
+      score = symmetrized_model.get_translation_score(source_segment[pair.source_index], target_segment[pair.target_index])
       data['source'].append(source_segment[pair.source_index])
       data['target'].append(target_segment[pair.target_index])
-      score = symmetrized_model.get_translation_score(source_segment[pair.source_index], target_segment[pair.target_index])
       data['word score'].append(score)
       data['verse score'].append(verse_score)
-        
-import pandas as pd
-
 df = pd.DataFrame(data)
 
-df_no_dup = df.drop_duplicates(subset = ['source', 'target'])
-sources = df_no_dup['source'].tolist()
-targets = df_no_dup['target'].tolist()
+# remove duplicates and average out verse and word scores
+dups = df.groupby(['source', 'target']).size().reset_index()
+avgs = df.groupby(['source', 'target']).mean().reset_index()
+no_dups = pd.merge(dups, avgs)
+no_dups.rename(columns={0: "count"}, inplace=True)
 
-occurrences_list = []
-avg_word_scores = []
-avg_verse_scores = []
+#apply threshold
+no_dups = no_dups[no_dups['word score'] >= args.threshold]
 
-for i in tqdm(range(len(df_no_dup))):
-  #count how many times the pair occurs
-  occurrences = df.loc[(df['source'] == sources[i]) & (df['target'] == targets[i])]
-  num_occurrences = len(occurrences)
-  occurrences_list.append(num_occurrences)
+#write results to csv
+source_name = os.path.basename(args.source)
+target_name = os.path.basename(args.target)
+path = args.outpath + "/" + source_name.split('.')[0] + "_" + target_name.split('.')[0]
+os.makedirs(path)
+no_dups.to_csv(path + "/sorted.csv")
+df.to_csv(path + "/in_context.csv")
 
-  #average out scores
-  avg_word_scores.append(occurrences['word score'].mean())
-  avg_verse_scores.append(occurrences['verse score'].mean())
-  
-df_no_dup['word score'] = avg_word_scores
-df_no_dup['verse score'] = avg_verse_scores
-df_no_dup['num occurrences'] = occurrences_list
-
-df_no_dup.to_csv(args.outfile)
-
-#print(df.iloc[10000:10100])
+#delete temp files
+os.remove(src_file + '_condensed')
+os.remove(trg_file + '_condensed')
 
