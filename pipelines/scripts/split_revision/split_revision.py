@@ -4,25 +4,15 @@ import logging
 import numpy as np
 import pandas as pd
 
-def get_logger():
-    module_name = __file__.split('/')[-1].split('.')[0]
-    #set the root logger to a debug level
-    logger = logging.getLogger(module_name)
-    logger.setLevel(logging.DEBUG)
-    logger.handlers = []
-    #set up a stream handler
-    s_handler = logging.StreamHandler()
-    s_handler.setLevel(logging.DEBUG)
-    log_format = logging.Formatter(fmt='%(asctime)s | %(levelname)s | %(message)s | %(name)s',
-                                 datefmt='%Y-%m-%d %H:%M:%S')
-    s_handler.setFormatter(log_format)
-    logger.addHandler(s_handler)
-    return logger
+
+#TODO: make a decision about logging API-wide from Issue 40
+import logging
+logging.basicConfig(level=logging.DEBUG)
 
 class SplitRevision:
 
     def __init__(self,):
-        self.logger = get_logger()
+        #self.logger = get_logger()
         #gets the args of the form --input /path/to/my/input/file --num 100 --out /path/to/output
         args = self.get_args()
         if not (args.input and args.num and args.out):
@@ -62,7 +52,10 @@ class SplitRevision:
 
     def split_revision(self):
         #split revision list into roughly 'num' chunks
-        return np.array_split(self.revision_list, self.num)
+        import ipdb; ipdb.set_trace()
+        split_revision = np.array_split(self.revision_list, self.num)
+        logging.info('Revision is split into %s chunks', self.num)
+        return split_revision
 
     def output_split_revisions(self, split_revisions):
         regex_string = r'(?!.*\/)(.*)\.txt'
@@ -75,6 +68,7 @@ class SplitRevision:
             #outputs the idxth chunk of split_revisions to outputname file
             #without index or headers
             output_file.to_csv(output_filename, index=False, header=False)
+        logging.info('Revision is split into %s files', self.num)
 
 if __name__ == '__main__':
     try:
@@ -86,7 +80,4 @@ if __name__ == '__main__':
             TypeError,
             FileNotFoundError,
             IsADirectoryError) as err:
-        try:
-            sr.logger.error(err)
-        except NameError:
-            print(err)
+        logging.error(err)
