@@ -30,7 +30,7 @@ class SplitRevision:
     @staticmethod
     def build_revision_list(revision_file):
         #TODO: better way to pass vref to these classes
-        vref = open('../pull_revision/vref.txt').read().splitlines()
+        vref = open('vref.txt').read().splitlines()
         #put reference and verse together and strip out missing verses
         return [item for item in list(zip(vref,revision_file)) if item[1]]
 
@@ -52,7 +52,6 @@ class SplitRevision:
 
     def split_revision(self):
         #split revision list into roughly 'num' chunks
-        import ipdb; ipdb.set_trace()
         split_revision = np.array_split(self.revision_list, self.num)
         logging.info('Revision is split into %s chunks', self.num)
         return split_revision
