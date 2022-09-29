@@ -1,12 +1,13 @@
 # Word Alignment
 
+Word alignment scripts. These scripts work for any two aligned text files; they do not have to be Bibles.
+**`--source` and `target` must be aligned `.txt` files!** 
+
 ## fast_align.py
+An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align
 ### Usage:
 
 `python fast_align.py --source path/to/source/file --target path/to/target/file --threshold 0.5 --outpath /path/to/output/location`
-
-**`--source` and `target` must be aligned `.txt` files!**
-This script works for any two aligned text files; they do not have to be Bibles. 
 
 ### Output
 
@@ -23,12 +24,15 @@ A directory containing two files:
 
 `--threshold`  (default=`0.5`)  The fast_align word score threshold
 
-`--outpath`  Output location for the resulting directory    
+`--outpath`  Output location for the resulting directory   
+
+`--is-bible`  (default=`False`)  If `True`, will refer to lines by their verse references in the fast_align output files
 
 ## match_words_in_aligned_verse.py
+A modified version of Mark Woodward's [match_words_in_aligned_verse](https://github.com/sil-ai/new2old) algorithm
 ### Suggested usage:
 
-`python match_words_in_aligned_verse.py --keys-name en-NLT --values-name greek --repo pabnlp`
+`python match_words_in_aligned_verse.py --keys-name en-NLT --values-name greek`
 
 ### Output
 
@@ -49,3 +53,35 @@ A json file containing the word alignments.
 `--refresh-cache`  Ignore any saved index caches or frequency caches.
 
 `--outpath` Location where resulting files will be saved. 
+
+## combined.py
+Combines `fast_align.py` and `match_words_in_aligned_verse.py`. Takes about 20 minutes to align two bible texts. 
+vrefs are from [here](https://github.com/sil-ai/aqua-api/tree/master/fixtures)
+### Suggested usage:
+`python combined.py --source path/to/source/file --target path/to/target/file --is-bible True --outpath /path/to/output/location`
+
+### Output:
+A directory containing:
+
+1) a directory with fast_align data
+2) a directory with match_words_in_aligned_verse data
+3) a csv with the combined data from both algorithms. 
+
+*(Note: If an alignment is predicted by one algorithm but not the other, this will be represented by -1 in the combined dataframe.)*
+
+### Arguments:
+
+`--source`  Source text file
+
+`--target`  Target text file
+
+`--word-score-threshold`  (default=`0.5`)  The fast_align word score threshold
+
+`--jaccard-similarity-threshold`  (default=`0.5`)  The Jaccard similarity threshold
+
+`--is-bible`  (default=`False`)  If `True`, will refer to lines by their verse references in the fast_align output files
+
+`--count-threshold`  (default=`1`)  The threshold for count in match_words_in_aligned_verse (if it also meets the jaccard-similarity-threshold).
+
+`--outpath`  Output location for the resulting directory  
+

@@ -32,14 +32,9 @@ def get_bible_data(bible: str) -> pd.DataFrame:
     """
     Takes the Bible version as an input, and returns a dataframe of the text.
     Inputs:
-        bible_version:      A string, corresponding to the Bible version in https://github.com/BibleNLP/ebible-corpus/tree/main/corpus 
-                            or https://raw.githubusercontent.com/BibleNLP/biblical-humanities-corpus/main/corpus/scripture/
-        corpus_urls:        A dict of URLs showing where the corpus texts are found for each repo
-        vref_urls:        A dict of URLs showing where the vref files are found for each repo
-        repo:   A string, either ebible or pabnlp
-        credentials_file  A file storing your github username and Personal Access Token, to access private github repositories (e.g. pabnlp)
+        bible:      A string, path to input file
     Outputs:
-        df:         A dataframe with the Bible text in the version specified
+        df:         A dataframe with the text in one column and the separate words in another
     """
     with open(bible, 'r') as f:
         bible_data = f.readlines()
@@ -181,39 +176,35 @@ def get_single_df(
     Reads a dataframe corresponding to either the keys or values being investigated
     Inputs:
         df_path:    Path to the df parquet file, which may or may not currently exist. The dataframe is saved to this path.
-        df_name:    Name of the dataframe, normally the Bible version name, or 'greek', 'hebrew', 'OT_domains' or 'NT_domains'
-        repo:       A string, either 'ebible' or 'pabnlp'
-        credentials_file:  A file storing your github username and Personal Access Token, to access private github repositories (e.g. pabnlp)
+        df_name:    Name of the dataframe
         list_name:  The name that should be used for the df column with the relevant verse lists. Normally 'keys' or 'values'.
     Outputs:
-        df:         The dataframe containing Bible verses by vref index, and either a 'keys' or 'values' column with the relevant list data.
+        df:         The dataframe containing Bible verses, and either a 'keys' or 'values' column with the relevant list data.
     """
     df = get_bible_data(df_name)
     df.to_parquet(df_path)
     df = df.rename(columns={'words': list_name})
     return df
 
-def get_combined_df(keys_list_name: str, values_list_name: str) -> pd.DataFrame: 
+def get_combined_df(source, target, keys_list_name: str, values_list_name: str, outpath) -> pd.DataFrame: 
     """
     Takes the names of the keys_list and values_list and creates ref_df - the dataframe that will be used in the rest of the script.
     Inputs: 
+        source: Path to the source file
+        target: Path to the target file
         keys_list_name:     Name of the keys_list. Either a Bible text name or "OT_domains", "NT_domains", "greek" or "hebrew".
         values_list_name:   Name of the values_list. Either a Bible text name or "OT_domains", "NT_domains" or "greek" or "hebrew".
-        repo:   A string, either ebible or pabnlp
-        credentials_file  A file storing your github username and Personal Access Token, to access private github repositories (e.g. pabnlp)
     Outputs:
         ref_df:     A dataframe that combines the keys and values data into a single dataframe by Bible verse
     """
-    keys_list_name = args.keys_name.split('/')[-1]
-    values_list_name = args.values_name.split('/')[-1]
-
-    p = str(f"{args.outpath}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}")
+    #p = str(f"{outpath}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}")
+    p = str(f"{outpath}/{keys_list_name.split('.')[0]}_{values_list_name.split('.')[0]}_MWIAV")
    
     keys_ref_df_path = f"{p}/{keys_list_name.split('.')[0]}_ref_df.parquet"
     values_ref_df_path = f"{p}/{values_list_name.split('.')[0]}_ref_df.parquet"
 
-    keys_ref_df = get_single_df(keys_ref_df_path, args.keys_name, list_name = 'keys')
-    values_ref_df = get_single_df(values_ref_df_path, args.values_name, list_name = 'values') 
+    keys_ref_df = get_single_df(keys_ref_df_path, source, list_name = 'keys')
+    values_ref_df = get_single_df(values_ref_df_path, target, list_name = 'values') 
 
     values_ref_series = values_ref_df['values']
     ref_df = pd.concat([keys_ref_df, values_ref_series], axis=1)
@@ -222,14 +213,14 @@ def get_combined_df(keys_list_name: str, values_list_name: str) -> pd.DataFrame:
     logging.info(ref_df.head())
     return ref_df
 
-def main(args):
-    keys_list_name = args.keys_name.split('/')[-1]
-    values_list_name = args.values_name.split('/')[-1]
+def run_match_words_in_aligned_verse(source, target, outpath, logging_level, jaccard_similarity_threshold, count_threshold, refresh_cache):
+    keys_list_name = source.split('/')[-1]
+    values_list_name = target.split('/')[-1]
 
-    p = str(f"{args.outpath}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}")
+    p = str(f"{outpath}/{keys_list_name.split('.')[0]}_{values_list_name.split('.')[0]}_MWIAV")
     if not os.path.exists(p):
         os.makedirs(p)
-    logging.basicConfig(format='%(asctime)s - %(funcName)20s() - %(message)s', level=args.logging_level.upper(), filename=f'{p}/match_words_in_aligned_verse.log', filemode='a')
+    logging.basicConfig(format='%(asctime)s - %(funcName)20s() - %(message)s', level=logging_level.upper(), filename=f'{p}/match_words_in_aligned_verse.log', filemode='a')
     logging.info("START RUN")
 
     os.makedirs(p + "/cache", exist_ok=True)
@@ -239,14 +230,14 @@ def main(args):
     values_index_cache_file = f"{p}/cache/{values_list_name}-index-cache.json"
 
     matches_file = f"{p}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}-dictionary.json"
-    ref_df = get_combined_df(keys_list_name, values_list_name,)
+    ref_df = get_combined_df(source, target, keys_list_name, values_list_name, outpath)
     logging.info(f"Total verses: {len(ref_df)}")
-    
-    js_cache = initialize_cache(js_cache_file, to_tuples=True, refresh = args.refresh_cache)
+
+    js_cache = initialize_cache(js_cache_file, to_tuples=True, refresh = refresh_cache)
     js_cache_reverse = initialize_cache(reverse_freq_cache_file, reverse=True, to_tuples=True)
     js_cache = {**js_cache, **js_cache_reverse}
 
-    if args.refresh_cache or not os.path.exists(keys_index_cache_file):
+    if refresh_cache or not os.path.exists(keys_index_cache_file):
         keys_index = {}
         print("Getting sentences that contain each word in keys")
         for word in tqdm(list(ref_df['keys'].explode().unique())):
@@ -255,7 +246,7 @@ def main(args):
     else:
         keys_index = initialize_cache(keys_index_cache_file, refresh = False)
 
-    if args.refresh_cache or not os.path.exists(values_index_cache_file):
+    if refresh_cache or not os.path.exists(values_index_cache_file):
         values_index = {}
         print("Getting sentences that contain each word in values")
         for word in tqdm(list(ref_df['values'].explode().unique())):
@@ -284,15 +275,18 @@ def main(args):
                                                     js_cache=js_cache, 
                                                     keys_index=keys_index,
                                                     values_index=values_index,
-                                                    jaccard_similarity_threshold=args.jaccard_similarity_threshold,
-                                                    count_threshold=args.count_threshold,
+                                                    jaccard_similarity_threshold=jaccard_similarity_threshold,
+                                                    count_threshold=count_threshold,
                                                     )
     logging.info(f"Matches: {matches}")
-    
+
     write_dictionary_to_file(js_cache, js_cache_file, to_strings=True)   
     write_dictionary_to_file(matches, matches_file)
     logging.info(f"Matches: {matches}")
     logging.info("END RUN")
+
+def main(args):
+    run_match_words_in_aligned_verse(args.keys_name, args.values_name, args.outpath, args.logging_level, args.jaccard_similarity_threshold, args.count_threshold, args.refresh_cache)
 
 if __name__ == "__main__":
     pd.options.mode.chained_assignment = None  # default='warn'
