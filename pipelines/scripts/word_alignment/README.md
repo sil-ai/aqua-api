@@ -33,11 +33,11 @@ A directory containing two files:
 A modified version of Mark Woodward's [match_words_in_aligned_verse](https://github.com/sil-ai/new2old) algorithm
 ### Suggested Usage:
 
-`python match_words_in_aligned_verse.py --keys-name en-NLT --values-name greek`
+`python match_words_in_aligned_verse.py --keys-name path/to/source/file --values-name path/to/target/file --jaccard-similarity-threshold 0.5 --outpath /path/to/output/location`
 
 ### Output
 
-A json file containing the word alignments. 
+A directory containing cache, a log, and a json file with the word alignments. 
 
 ### Arguments:
 
@@ -47,7 +47,7 @@ A json file containing the word alignments.
 
 `--jaccard-similarity-threshold`  (default=`0.5`) The threshold for Jaccard Similarity for a match to be logged as significant and entered into the output dictionary (if it also meets the count-threshold).
 
-`--count-threshold`  (default=`5`)  The threshold for count (number of occurences of the two items in the same verse) for a match to be logged as significant and entered into the output dictionary (if it also meets the jaccard-similarity-threshold).
+`--count-threshold`  (default=`1`)  The threshold for count (number of occurences of the two items in the same verse) for a match to be logged as significant and entered into the output dictionary (if it also meets the jaccard-similarity-threshold).
 
 `--logging-level`  (default=`info`)
 
