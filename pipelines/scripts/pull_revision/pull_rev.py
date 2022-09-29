@@ -5,8 +5,8 @@ import logging
 import pandas as pd
 from db_connect import get_session, VerseText
 
-#!!! generic root logger for now
-logging.getLogger().level == logging.DEBUG
+#TODO: make a decision about logging API-wide from Issue 40
+logging.basicConfig(level=logging.DEBUG)
 
 class PullRevision:
 
