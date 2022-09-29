@@ -6,21 +6,21 @@ from datetime import datetime
 import pandas as pd
 
 #test for a valid pull_rev
-def test_valid_pull_rev(valuestorage, revision=2, out='out'):
+def test_valid_pull_rev(valuestorage, tmp_path, revision=2):
     try:
         with patch('argparse.ArgumentParser.parse_args',
-            return_value=argparse.Namespace(revision=revision,out=out)):
+            return_value=argparse.Namespace(revision=revision,out=str(tmp_path))):
             pullrev = PullRevision()
             pullrev.pull_revision()
             pullrev.output_revision()
         assert pullrev.revision_id == revision
-        assert pullrev.out == out
+        assert pullrev.out == str(tmp_path)
         assert len(pullrev.revision_text) > 0
         assert all(item==revision for item in pullrev.revision_text.bibleRevision)
         #assign the valid pullrev for later tests
         valuestorage.valid_pull_rev = pullrev
         valuestorage.revision = revision
-        valuestorage.out = out
+        valuestorage.out = str(tmp_path)
     except Exception as err:
         raise AssertionError(f'Error is {err}') from err
 
