@@ -1,17 +1,16 @@
-import numpy as np
-import argparse
 from datetime import datetime
 import logging
+import argparse
+import os
+
+import numpy as np
 import pandas as pd
 from db_connect import get_session, VerseText
 
-#TODO: make a decision about logging API-wide from Issue 40
-logging.basicConfig(level=logging.DEBUG)
 
 class PullRevision:
 
     def __init__(self,):
-        #self.logger = get_logger()
         #gets the args of the form --revision 3 --out /path/to/output/file
         args = self.get_args()
         if not (args.revision and args.out):
@@ -52,8 +51,7 @@ class PullRevision:
     def pull_revision(self):
         #with postgres connection gets the verses from the verseText table
         #??? Think about dividing get_session into get_engine and get_session
-        __,session = next(get_session())
-        #self.logger.info('Loading verses from Revision %s...', self.revision_id)
+        __, session = next(get_session())
         logging.info('Loading verses from Revision %s...', self.revision_id)
         #builds a dataframe of verses from the revision in self.revision_id
         revision_verses = pd.read_sql(session.query(VerseText)\
@@ -66,10 +64,8 @@ class PullRevision:
                 #loads the verses as part of the PullRevision object
                 self.revision_text = revision_verses.set_index('id',drop=True)
             else:
-                #self.logger.info('Duplicated verses in Revision %s', self.revision_id)
                 logging.info('Duplicated verses in Revision %s', self.revision_id)
         else:
-            #self.logger.info('No verses for Revision %s', self.revision_id)
             logging.info('No verses for Revision %s', self.revision_id)
         return self
 
@@ -86,6 +82,10 @@ class PullRevision:
         return all_verses_text.to_list()
 
     def output_revision(self):
+        # Check whether the specified path exists or not
+        isExist = os.path.exists(self.out)
+        if not isExist:
+            os.makedirs(self.out)
         date = datetime.now().strftime("%Y_%m_%d")
         #saves the output as a txt file with revision_id and unix date
         if not self.revision_text.empty:
@@ -95,12 +95,9 @@ class PullRevision:
             with open(filepath,'w') as outfile:
                 for verse_text in output_text:
                     outfile.write(f'{verse_text}\n')
-            #self.logger.info('Revision %s saved to file %s in location %s',
-            #                  self.revision_id, filename, self.out)
             logging.info('Revision %s saved to file %s in location %s',
-                          self.revision_id, filename, self.out)
+                              self.revision_id, filename, self.out)
         else:
-            #self.logger.info('Revision text is empty. Nothing printed.')
             logging.info('Revision text is empty. Nothing printed.')
 
 if __name__ == '__main__':
