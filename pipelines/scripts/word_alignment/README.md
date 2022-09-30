@@ -4,11 +4,11 @@ Word alignment scripts. These scripts work for any two aligned text files; they 
 
 **`--source` and `--target` must be aligned `.txt` files!** 
 
-## fast_align.py
+## align.py
 An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align
 ### Suggested Usage:
 
-`python fast_align.py --source path/to/source/file --target path/to/target/file --threshold 0.5 --outpath /path/to/output/location`
+`python align.py --source path/to/source/file --target path/to/target/file --threshold 0.5 --outpath /path/to/output/location`
 
 ### Output
 
@@ -29,11 +29,11 @@ A directory containing two files:
 
 `--is-bible`  (default=`False`)  If `True`, will refer to lines by their verse references in the fast_align output files
 
-## match_words_in_aligned_verse.py
+## match.py
 A modified version of Mark Woodward's [match_words_in_aligned_verse](https://github.com/sil-ai/new2old) algorithm
 ### Suggested Usage:
 
-`python match_words_in_aligned_verse.py --keys-name path/to/source/file --values-name path/to/target/file --jaccard-similarity-threshold 0.5 --outpath /path/to/output/location`
+`python match.py --keys-name path/to/source/file --values-name path/to/target/file --jaccard-similarity-threshold 0.5 --outpath /path/to/output/location`
 
 ### Output
 
@@ -56,7 +56,7 @@ A directory containing cache, a log, and a json file with the word alignments.
 `--outpath` Location where resulting files will be saved. 
 
 ## combined.py
-Combines `fast_align.py` and `match_words_in_aligned_verse.py`. Takes about 20 minutes to align two bible texts. 
+Combines `align.py` and `match.py`. Takes about 20 minutes to align two bible texts. 
 vrefs are from [here](https://github.com/sil-ai/aqua-api/tree/master/fixtures)
 ### Suggested Usage:
 `python combined.py --source path/to/source/file --target path/to/target/file --is-bible True --outpath /path/to/output/location`
