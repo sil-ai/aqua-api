@@ -2,6 +2,8 @@ from datetime import datetime
 import logging
 import argparse
 import os
+#TODO: make a decision about logging API-wide from Issue 40
+logging.basicConfig(level=logging.DEBUG)
 
 import numpy as np
 import pandas as pd
