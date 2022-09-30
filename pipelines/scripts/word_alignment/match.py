@@ -207,7 +207,7 @@ def get_combined_df(source, target, keys_list_name: str, values_list_name: str, 
         ref_df:     A dataframe that combines the keys and values data into a single dataframe by Bible verse
     """
     #p = str(f"{outpath}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}")
-    p = str(f"{outpath}/{keys_list_name.split('.')[0]}_{values_list_name.split('.')[0]}_MWIAV")
+    p = str(f"{outpath}/{keys_list_name.split('.')[0]}_{values_list_name.split('.')[0]}_match")
    
     keys_ref_df_path = f"{p}/{keys_list_name.split('.')[0]}_ref_df.parquet"
     values_ref_df_path = f"{p}/{values_list_name.split('.')[0]}_ref_df.parquet"
@@ -227,7 +227,7 @@ def run_match(source, target, outpath, logging_level, jaccard_similarity_thresho
     keys_list_name = source.split('/')[-1]
     values_list_name = target.split('/')[-1]
 
-    p = str(f"{outpath}/{keys_list_name.split('.')[0]}_{values_list_name.split('.')[0]}_MWIAV")
+    p = str(f"{outpath}/{keys_list_name.split('.')[0]}_{values_list_name.split('.')[0]}_match")
     if not os.path.exists(p):
         os.makedirs(p)
     logging.basicConfig(format='%(asctime)s - %(funcName)20s() - %(message)s', level=logging_level.upper(), filename=f'{p}/match_words_in_aligned_verse.log', filemode='a')

@@ -19,16 +19,18 @@ def make_output_dir(source, target, outpath):
 def run_fa(source, target, word_score_threshold, path, is_bible):
     align.run_align(source, target, word_score_threshold, path, is_bible)
 
+
 #run match words
 def run_match_words(source, target, path, jaccard_similarity_threshold, count_threshold):
-    match.run_match_words_in_aligned_verse(source, target, path, 'INFO', jaccard_similarity_threshold, count_threshold, True)
+    match.run_match(source, target, path, 'INFO', jaccard_similarity_threshold, count_threshold, True)
+
 
 #combine results
 def combine_df(outpath, s, t):
     #open results
-    fast_align_path = str(f'{outpath}/{s}_{t}_fast_align/sorted.csv')
-    match_path = str(f'{outpath}/{s}_{t}_MWIAV/{s}-{t}-dictionary.json')
-    fa_results = pd.read_csv(fast_align_path)
+    align_path = str(f'{outpath}/{s}_{t}_align/sorted.csv')
+    match_path = str(f'{outpath}/{s}_{t}_match/{s}-{t}-dictionary.json')
+    fa_results = pd.read_csv(align_path)
     match_results = json.load(open(match_path))
 
     #explode the match data
@@ -48,13 +50,15 @@ def combine_df(outpath, s, t):
         'source':sources,
         'target':targets,
         'jac_sim':jac_sims,
-        'mwiav_count':counts,
+        'match_count':counts,
     }
 
     #write to df and merge with fa results
     match_results = pd.DataFrame(data)
     df = pd.merge(fa_results, match_results, how='left', on=['source', 'target']).fillna(-1)
+    df.drop(columns=['Unnamed: 0'], inplace=True)
     return df
+
 
 if __name__ == "__main__":
     # #command line args
@@ -78,7 +82,7 @@ if __name__ == "__main__":
     run_match_words(args.source, args.target, path, args.jaccard_similarity_threshold, args.count_threshold)
 
     #combine results
-    df = combine_df(args.outpath, s, t)
+    df = combine_df(path, s, t)
 
     #save results
     df.to_csv(f"{path}/{s}_{t}_combined.csv")

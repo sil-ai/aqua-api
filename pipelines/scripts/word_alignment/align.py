@@ -1,5 +1,4 @@
 #imports
-#!pip install sil-machine[thot]
 import argparse
 import string
 import os
@@ -40,13 +39,14 @@ def write_condensed_files(src_file, trg_file):
     with open("trg_condensed.txt", "w") as f:
         for line in df['trg']:
             f.write(line)
-    #print(f'Length of condensed files: {len(df)}')
+
 
 def create_corpus(src_file, trg_file):
     source_corpus = TextFileTextCorpus(src_file)
     target_corpus = TextFileTextCorpus(trg_file)
     parallel_corpus = source_corpus.align_rows(target_corpus).tokenize(LatinWordTokenizer())
     return parallel_corpus
+
 
 def train_model(corpus):
     src_trg_model = ThotFastAlignWordAlignmentModel()
@@ -57,6 +57,7 @@ def train_model(corpus):
     trainer.train(lambda status: print(f"Training Symmetrized FastAlign model: {status.percent_completed:.2%}"))
     trainer.save()
     return symmetrized_model
+
 
 def get_alignments(model, corpus, vrefs):
     alignments = model.get_best_alignment_batch(corpus.lowercase().to_tuples())
@@ -76,8 +77,8 @@ def get_alignments(model, corpus, vrefs):
             data['verse score'].append(verse_score)
             data['vref'].append(vref)
     df = pd.DataFrame(data)
-    #print(f'Length of alignment df: {len(df)}')
     return df
+
 
 def get_vrefs(src_file, trg_file, is_bible):
     with open(src_file) as f:
@@ -98,31 +99,32 @@ def get_vrefs(src_file, trg_file, is_bible):
     df = df[df.trg != '\n']
     return df['vref'].tolist()
 
+
 def get_vref_scores(df):
     #remove duplicate verses
     df = df.drop_duplicates(subset=['vref'])
     vref_df = df[['vref', 'verse score']]
     return vref_df
 
+
 def apply_threshold(df, threshold):
     # remove duplicates and average out verse and word scores
     dups = df.groupby(['source', 'target']).size().reset_index()
     avgs = df.groupby(['source', 'target']).mean().reset_index()
     no_dups = pd.merge(dups, avgs)
-    no_dups.rename(columns={0: "fa_count"}, inplace=True)
+    no_dups.rename(columns={0: "align_count"}, inplace=True)
 
     #apply threshold
     no_dups = no_dups[no_dups['word score'] >= threshold]
     return no_dups
 
+
 def run_align(src_file, trg_file, threshold, outpath, is_bible):
-    #print(is_bible == "True")
     #remove empty lines
     write_condensed_files(src_file, trg_file)
 
     #get vrefs
     vrefs = get_vrefs(src_file, trg_file, is_bible)
-    #print(f'Length of vrefs: {len(vrefs)}')
 
     #create parallel corpus
     parallel_corpus = create_corpus("src_condensed.txt", "trg_condensed.txt")
@@ -142,7 +144,7 @@ def run_align(src_file, trg_file, threshold, outpath, is_bible):
     #write results to csv
     source_name = os.path.basename(src_file)
     target_name = os.path.basename(trg_file)
-    path = outpath + "/" + source_name.split('.')[0] + "_" + target_name.split('.')[0] + "_fast_align"
+    path = outpath + "/" + source_name.split('.')[0] + "_" + target_name.split('.')[0] + "_align"
     
     #if dir doesn't exist, create it
     if not os.path.exists(path):
@@ -155,6 +157,7 @@ def run_align(src_file, trg_file, threshold, outpath, is_bible):
     #delete temp files
     os.remove("src_condensed.txt")
     os.remove("trg_condensed.txt")
+
 
 if __name__ == "__main__":
     #command line args
