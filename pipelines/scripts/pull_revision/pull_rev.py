@@ -1,10 +1,8 @@
 from datetime import datetime
 import logging
-#TODO: make a decision about logging API-wide from Issue 40
-logging.basicConfig(level=logging.DEBUG)
-
 import argparse
 import os
+
 import numpy as np
 import pandas as pd
 from db_connect import get_session, VerseText
