@@ -2,7 +2,7 @@
 
 Word alignment scripts. These scripts work for any two aligned text files; they do not have to be Bibles.
 
-**`--source` and `target` must be aligned `.txt` files!** 
+**`--source` and `--target` must be aligned `.txt` files!** 
 
 ## fast_align.py
 An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align
