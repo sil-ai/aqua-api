@@ -2,11 +2,9 @@ import argparse
 from datetime import datetime
 import pandas as pd
 from mock import patch
-import json
 from pull_rev import PullRevision
 from db_connect import VerseText
-from conftest import ValueStorage
-import pickle
+import logging
 
 #test for missing revision
 def test_missing_revision():
@@ -64,16 +62,17 @@ def test_duplicated_refs(session, revision=3, out='.'):
     except Exception as err:
         raise AssertionError(f'Error is {err}') from err
 
-#test for working logger
-def test_working_logger(caplog, revision=3, out='.'):
+#test that logging is working
+def test_working_logging(caplog, revision=3, out='.'):
     with patch('argparse.ArgumentParser.parse_args',
             return_value=argparse.Namespace(revision=revision,out=out)):
-        pullrev = PullRevision()
-        pullrev.pull_revision()
+        with caplog.at_level(logging.DEBUG):
+            pullrev = PullRevision()
+            pullrev.pull_revision()
     #check the logs
     current_dt = datetime.now()
+    #TODO: fix logging test for generic logger
     for logentry in caplog.records:
-        print(logentry)
         #get the utc logentry
         log_dt = datetime.fromtimestamp(logentry.created)
         #compare the date
@@ -88,4 +87,3 @@ def test_working_logger(caplog, revision=3, out='.'):
         assert  'Revision 3' in logentry.message
         #compare the module
         assert logentry.module == 'pull_rev'
- 
