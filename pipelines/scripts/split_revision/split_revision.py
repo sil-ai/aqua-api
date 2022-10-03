@@ -4,6 +4,7 @@ import logging
 import numpy as np
 import pandas as pd
 import logging
+logging.getLogger().setLevel('DEBUG')
 
 class SplitRevision:
 
@@ -25,7 +26,7 @@ class SplitRevision:
     @staticmethod
     def build_revision_list(revision_file):
         #TODO: better way to pass vref to these classes
-        vref = open('../pull_revision/vref.txt').read().splitlines()
+        vref = open('vref.txt').read().splitlines()
         #put reference and verse together and strip out missing verses
         return [item for item in list(zip(vref,revision_file)) if item[1]]
 
