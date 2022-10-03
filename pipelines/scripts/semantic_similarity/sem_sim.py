@@ -9,7 +9,7 @@ class SemanticSimilarity:
         # --reference /path/to/my/reference/file --out /path/to/output
         args = self.get_args()
         if not (args.target and args.reference and args.out):
-            raise ValueError('Missing Revision Id or output path')
+            raise ValueError('Missing argument path')
         #initializes the instance variables
         self.target = args.target
         self.reference = args.reference
