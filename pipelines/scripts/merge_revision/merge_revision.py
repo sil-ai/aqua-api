@@ -48,8 +48,8 @@ class MergeRevision:
         if not self.check_matching_length():
             raise ValueError(f"Target and reference differ by {abs(len(self.reference)- len(self.target))}")
         #check that both target and reference are the same length as vref    
-        #elif not self.check_vref():
-        #    raise ValueError('Target and/or reference length don\'t match vref')
+        elif not self.check_vref():
+            raise ValueError('Target and/or reference length don\'t match vref')
         else:
             #merge the two revisions together
             merged_revisions = pd.DataFrame({'target':self.target, 'reference': self.reference})

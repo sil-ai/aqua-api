@@ -3,6 +3,7 @@ import argparse
 from mock import patch
 from merge_revision import MergeRevision
 import pandas as pd
+import random
 
 @pytest.mark.parametrize('target,reference,out',
                         [(None,'.','.'),
@@ -47,6 +48,10 @@ def test_merge_output(valuestorage, tmp_path):
         #each column should be the same length as vref
         assert len(merged_file.loc[:,'target']) == len(mr.vref)
         assert len(merged_file.loc[:,'reference']) == len(mr.vref)
+        #test random file contents
+        idx_list = random.sample(range(len(mr.vref)),5)
+        for idx in idx_list:
+            assert merged_file.loc[idx,'target'] == merged_file.loc[idx,'reference']
     except Exception as err:
         raise AssertionError(f'Error is {err}') from err
 

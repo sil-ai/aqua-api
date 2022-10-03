@@ -2,10 +2,12 @@ import pytest
 
 @pytest.fixture(scope='session')
 def valid_paths():
-    return {'target': 'target.txt', 'reference': 'reference.txt', 'out': 'align_result'}
+    return {'target': '2_2022_10_03.txt',
+           'reference': '3_2022_10_03.txt',
+           'out': 'merge_result'}
 
 class ValueStorage:
-    valid_alignrevision = None
+    valid_mergerevision = None
 
 @pytest.fixture(scope='session')
 def valuestorage():
