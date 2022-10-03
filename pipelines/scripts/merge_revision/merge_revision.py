@@ -1,12 +1,9 @@
-import re
 import argparse
 import logging
-import numpy as np
-import pandas as pd
-import logging
 logging.getLogger().setLevel('DEBUG')
+import pandas as pd
 
-class AlignRevision:
+class MergeRevision:
 
     def __init__(self,):
         #gets the args of the form --target /path/to/my/target/file
@@ -15,10 +12,10 @@ class AlignRevision:
         if not (args.target and args.reference and args.out):
             raise ValueError('Missing filepath')
         #initializes the instance variables
-        self.target = self.get_file(args.target)
-        self.reference = self.get_file(args.reference)
+        self.args = args
+        self.target = self.get_file(self.args.target)
+        self.reference = self.get_file(self.args.reference)
         self.vref = self.get_file('../../../fixtures/vref.txt')
-        self.out_filepath = args.out
 
     @staticmethod
     def get_file(filepath):
@@ -46,22 +43,36 @@ class AlignRevision:
     def check_vref(self):
         return (len(self.target) == len(self.vref)) and (len(self.reference) == len(self.vref))
     
-    def align_revision(self):
+    def merge_revision(self):
+        #check that target and reference are the same length
         if not self.check_matching_length():
             raise ValueError(f"Target and reference differ by {abs(len(self.reference)- len(self.target))}")
-        elif not self.check_vref():
-            raise ValueError('Target and/or reference don\'t match vref')
+        #check that both target and reference are the same length as vref    
+        #elif not self.check_vref():
+        #    raise ValueError('Target and/or reference length don\'t match vref')
         else:
-            pass
+            #merge the two revisions together
+            merged_revisions = pd.DataFrame({'target':self.target, 'reference': self.reference})
+            logging.info(f'Revision {self.get_revision_id(self.args.target)} and {self.get_revision_id(self.args.reference)} are merged')
+            return merged_revisions
 
-    def output_aligned_revisions(self, aligned_revisions):
-        pass
+    @staticmethod
+    def get_revision_id(filename):
+        return filename.split('.')[0].split('_')[0]
+
+    def output_merged_revisions(self, merged_revisions):
+        target_revision = self.get_revision_id(self.args.target)
+        reference_revision = self.get_revision_id(self.args.reference)
+        filename = f'{target_revision}_{reference_revision}_merge.csv'
+        filepath = self.args.out + '/' + filename
+        merged_revisions.to_csv(filepath, index=False)
+        logging.info(f'{filename} created in {self.args.out}')
 
 if __name__ == '__main__':
     try:
-        ar = AlignRevision()
-        aligned_revisions = ar.align_revision()
-        ar.output_aligned_revisions(aligned_revisions)
+        ar = MergeRevision()
+        merged_revisions = ar.merge_revision()
+        ar.output_merged_revisions(merged_revisions)
     except (ValueError, OSError,
             KeyError, AttributeError,
             TypeError,
