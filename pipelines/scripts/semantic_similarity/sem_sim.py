@@ -1,6 +1,8 @@
 import argparse
 import logging
+import torch
 logging.getLogger().setLevel('DEBUG')
+from sem_sim_model import SemanticSimBa
 
 class SemanticSimilarity:
 
@@ -11,9 +13,11 @@ class SemanticSimilarity:
         if not (args.target and args.reference and args.out):
             raise ValueError('Missing argument path')
         #initializes the instance variables
-        self.target = args.target
-        self.reference = args.reference
-        self.out = args.out
+        self.target_path = args.target
+        self.reference_path = args.reference
+        self.out_path = args.out
+        #gets model locally or from huggingface
+        self.sem_sim = SemanticSimBa()
 
     @staticmethod
     def get_args():
@@ -31,6 +35,10 @@ class SemanticSimilarity:
             else:
                 raise ValueError(sys_exit.code) from sys_exit
 
+    @staticmethod
+    def get_chunks(chunk_path):
+        pass
+
 if __name__ == '__main__':
     try:
         ss = SemanticSimilarity()
@@ -38,3 +46,4 @@ if __name__ == '__main__':
             KeyError, AttributeError,
             FileNotFoundError) as err:
         logging.error(err)
+
