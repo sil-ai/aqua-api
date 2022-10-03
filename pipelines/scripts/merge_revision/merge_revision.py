@@ -15,7 +15,7 @@ class MergeRevision:
         self.args = args
         self.target = self.get_file(self.args.target)
         self.reference = self.get_file(self.args.reference)
-        self.vref = self.get_file('../../../fixtures/vref.txt')
+        self.vref = self.get_file('vref.txt')
 
     @staticmethod
     def get_file(filepath):
