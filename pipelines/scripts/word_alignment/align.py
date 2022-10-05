@@ -102,7 +102,7 @@ def get_vrefs(src_file, trg_file, is_bible):
         trg_data = f.readlines()
 
     if is_bible == "True":
-        with open("../../../fixtures/vref.txt", "r") as f:
+        with open("vref.txt", "r") as f:
             vrefs = f.readlines()
         vrefs = [line.strip() for line in vrefs]
     else:

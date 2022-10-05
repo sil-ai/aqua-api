@@ -9,13 +9,16 @@ import pandas as pd
 from tqdm import tqdm
 from collections import Counter
 
-def write_dictionary_to_file(dictionary: dict, filename: str, to_strings: bool=False) -> None:
+
+def write_dictionary_to_file(
+    dictionary: dict, filename: str, to_strings: bool = False
+) -> None:
     """
     Takes a dictionary and writes it to a json file
     """
     if to_strings:
         dictionary = tuple_keys_to_string(dictionary)
-    with open(filename, 'w', encoding='utf8') as f:
+    with open(filename, "w", encoding="utf8") as f:
         json.dump(dictionary, f, ensure_ascii=False, indent=4)
     logging.info(f"Written file {filename}")
 
@@ -39,12 +42,12 @@ def get_bible_data(bible: str) -> pd.DataFrame:
     Outputs:
         df:         A dataframe with the text in one column and the separate words in another
     """
-    with open(bible, 'r') as f:
+    with open(bible, "r") as f:
         bible_data = f.readlines()
     words = [text_to_words(line) for line in bible_data]
-    df = pd.DataFrame({'text': bible_data, 'words': words})
-    df = df[df['text'].apply(lambda x: len(x) > 2)]
-    df = df[df['text'] != "b'\n'"]
+    df = pd.DataFrame({"text": bible_data, "words": words})
+    df = df[df["text"].apply(lambda x: len(x) > 2)]
+    df = df[df["text"] != "b'\n'"]
     return df
 
 
@@ -57,7 +60,11 @@ def get_indices_with_item(item: str, list_series: pd.Series) -> List[pd.Index]:
     Outputs:
         A list of indices for the list_series series, corresponding to rows that contain item
     """
-    index_list = list(list_series[list_series.apply(lambda x: item in x if isinstance(x, Iterable) else False)].index)
+    index_list = list(
+        list_series[
+            list_series.apply(lambda x: item in x if isinstance(x, Iterable) else False)
+        ].index
+    )
     return index_list
 
 
@@ -70,7 +77,10 @@ def get_jaccard_similarity(list1: list, list2: list) -> float:
     return float(intersection) / union if union != 0 else 0
 
 
-def get_correlations_between_sets(indexes_set_1: set, indexes_set_2: set,) -> Tuple[float, int]:
+def get_correlations_between_sets(
+    indexes_set_1: set,
+    indexes_set_2: set,
+) -> Tuple[float, int]:
     """
     Inputs:
     indexes_set_1:      A set of indexes, to be compared for correlation
@@ -86,15 +96,15 @@ def get_correlations_between_sets(indexes_set_1: set, indexes_set_2: set,) -> Tu
 
 
 def update_matches_for_lists(
-                            keys_list: list, 
-                            values_list: list, 
-                            js_cache: dict, 
-                            matches: dict,
-                            keys_index: dict,
-                            values_index: dict,
-                            jaccard_similarity_threshold: float = 0.5,
-                            count_threshold: int = 5,
-                            ) -> Tuple[dict, dict]:
+    keys_list: list,
+    values_list: list,
+    js_cache: dict,
+    matches: dict,
+    keys_index: dict,
+    values_index: dict,
+    jaccard_similarity_threshold: float = 0.5,
+    count_threshold: int = 5,
+) -> Tuple[dict, dict]:
     """
     Updates the matches dictionary with any matches between the keys and values in a verse that pass the thresholds for significance.
     Inputs:
@@ -116,24 +126,40 @@ def update_matches_for_lists(
     for keys_item in keys_list:
         for values_item in list(set(values_list)):
             if (keys_item in matches) and (values_item in matches[keys_item]):
-                cache_counter.update(['Already in matches'])
+                cache_counter.update(["Already in matches"])
                 continue
             elif (keys_item, values_item) in js_cache:
-                jaccard_similarity = js_cache[(keys_item, values_item)]['jaccard_similarity']
-                count = js_cache[(keys_item, values_item)]['count']
-                cache_counter.update(['Cached'])
+                jaccard_similarity = js_cache[(keys_item, values_item)][
+                    "jaccard_similarity"
+                ]
+                count = js_cache[(keys_item, values_item)]["count"]
+                cache_counter.update(["Cached"])
             else:
                 jaccard_similarity, count = get_correlations_between_sets(
-                                                                            set(keys_index.get(keys_item, [])),
-                                                                            set(values_index.get(values_item, [])),
-                                                                            )
-                js_cache[(keys_item, values_item)] = {'jaccard_similarity': jaccard_similarity, 'count': count} 
-                cache_counter.update(['Calculated'])
-            if jaccard_similarity > jaccard_similarity_threshold and count > count_threshold:
+                    set(keys_index.get(keys_item, [])),
+                    set(values_index.get(values_item, [])),
+                )
+                js_cache[(keys_item, values_item)] = {
+                    "jaccard_similarity": jaccard_similarity,
+                    "count": count,
+                }
+                cache_counter.update(["Calculated"])
+            if (
+                jaccard_similarity > jaccard_similarity_threshold
+                and count > count_threshold
+            ):
                 if keys_item not in matches:
                     matches[keys_item] = []
-                if values_item not in [item.get('value', '') for item in matches[keys_item]]: #matches[keys_item][:]['value']:
-                    matches[keys_item].append({'value': values_item, 'jaccard_similarity': jaccard_similarity, "count": count})
+                if values_item not in [
+                    item.get("value", "") for item in matches[keys_item]
+                ]:  # matches[keys_item][:]['value']:
+                    matches[keys_item].append(
+                        {
+                            "value": values_item,
+                            "jaccard_similarity": jaccard_similarity,
+                            "count": count,
+                        }
+                    )
     logging.debug(cache_counter)
     return (matches, js_cache)
 
@@ -149,10 +175,18 @@ def string_keys_to_tuple(dictionary: dict) -> dict:
     """
     Changes the string keys from a json file back to tuples, and returns the dictionary
     """
-    return {(key.split("-")[0], key.split("-")[1]): value for key, value in dictionary.items()}
+    return {
+        (key.split("-")[0], key.split("-")[1]): value
+        for key, value in dictionary.items()
+    }
 
 
-def initialize_cache(cache_file: dict, to_tuples:bool=False, reverse:bool=False, refresh:bool=False) -> dict:
+def initialize_cache(
+    cache_file: dict,
+    to_tuples: bool = False,
+    reverse: bool = False,
+    refresh: bool = False,
+) -> dict:
     """
     Either reads a cache file from a json file or creates an empty dictionary to use as a cache file.
     Inputs:
@@ -164,7 +198,7 @@ def initialize_cache(cache_file: dict, to_tuples:bool=False, reverse:bool=False,
         cache:          A dictionary to be used as a cache
     """
     if os.path.exists(cache_file) and not refresh:
-        with open(cache_file, 'r') as f:
+        with open(cache_file, "r") as f:
             cache = json.load(f)
             if to_tuples:
                 cache = string_keys_to_tuple(cache)
@@ -175,11 +209,7 @@ def initialize_cache(cache_file: dict, to_tuples:bool=False, reverse:bool=False,
     return cache
 
 
-def get_single_df(
-                    df_path:str, 
-                    df_name:str, 
-                    list_name:str = 'keys'
-                    ) -> pd.DataFrame:
+def get_single_df(df_path: str, df_name: str, list_name: str = "keys") -> pd.DataFrame:
     """
     Reads a dataframe corresponding to either the keys or values being investigated
     Inputs:
@@ -191,14 +221,16 @@ def get_single_df(
     """
     df = get_bible_data(df_name)
     df.to_parquet(df_path)
-    df = df.rename(columns={'words': list_name})
+    df = df.rename(columns={"words": list_name})
     return df
 
 
-def get_combined_df(source, target, keys_list_name: str, values_list_name: str, outpath) -> pd.DataFrame: 
+def get_combined_df(
+    source, target, keys_list_name: str, values_list_name: str, outpath
+) -> pd.DataFrame:
     """
     Takes the names of the keys_list and values_list and creates ref_df - the dataframe that will be used in the rest of the script.
-    Inputs: 
+    Inputs:
         source: Path to the source file
         target: Path to the target file
         keys_list_name:     Name of the keys_list. Either a Bible text name or "OT_domains", "NT_domains", "greek" or "hebrew".
@@ -206,36 +238,57 @@ def get_combined_df(source, target, keys_list_name: str, values_list_name: str, 
     Outputs:
         ref_df:     A dataframe that combines the keys and values data into a single dataframe by Bible verse
     """
-    #p = str(f"{outpath}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}")
-    p = str(f"{outpath}/{keys_list_name.split('.')[0]}_{values_list_name.split('.')[0]}_match")
-   
+    # p = str(f"{outpath}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}")
+    p = str(
+        f"{outpath}/{keys_list_name.split('.')[0]}_{values_list_name.split('.')[0]}_match"
+    )
+
     keys_ref_df_path = f"{p}/{keys_list_name.split('.')[0]}_ref_df.parquet"
     values_ref_df_path = f"{p}/{values_list_name.split('.')[0]}_ref_df.parquet"
 
-    keys_ref_df = get_single_df(keys_ref_df_path, source, list_name = 'keys')
-    values_ref_df = get_single_df(values_ref_df_path, target, list_name = 'values') 
+    keys_ref_df = get_single_df(keys_ref_df_path, source, list_name="keys")
+    values_ref_df = get_single_df(values_ref_df_path, target, list_name="values")
 
-    values_ref_series = values_ref_df['values']
+    values_ref_series = values_ref_df["values"]
     ref_df = pd.concat([keys_ref_df, values_ref_series], axis=1)
-    ref_df = ref_df.dropna(subset=['keys', 'values'])
-    ref_df.to_csv(f"{p}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}_ref_df.csv")
+    ref_df = ref_df.dropna(subset=["keys", "values"])
+    ref_df.to_csv(
+        f"{p}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}_ref_df.csv"
+    )
     logging.info(ref_df.head())
     return ref_df
 
 
-def run_match(source, target, outpath, logging_level, jaccard_similarity_threshold, count_threshold, refresh_cache):
-    keys_list_name = source.split('/')[-1]
-    values_list_name = target.split('/')[-1]
+def run_match(
+    source,
+    target,
+    outpath,
+    logging_level,
+    jaccard_similarity_threshold,
+    count_threshold,
+    refresh_cache,
+):
+    keys_list_name = source.split("/")[-1]
+    values_list_name = target.split("/")[-1]
 
-    p = str(f"{outpath}/{keys_list_name.split('.')[0]}_{values_list_name.split('.')[0]}_match")
+    p = str(
+        f"{outpath}/{keys_list_name.split('.')[0]}_{values_list_name.split('.')[0]}_match"
+    )
     if not os.path.exists(p):
         os.makedirs(p)
-    logging.basicConfig(format='%(asctime)s - %(funcName)20s() - %(message)s', level=logging_level.upper(), filename=f'{p}/match_words_in_aligned_verse.log', filemode='a')
+    logging.basicConfig(
+        format="%(asctime)s - %(funcName)20s() - %(message)s",
+        level=logging_level.upper(),
+        filename=f"{p}/match_words_in_aligned_verse.log",
+        filemode="a",
+    )
     logging.info("START RUN")
 
     os.makedirs(p + "/cache", exist_ok=True)
     js_cache_file = f"{p}/cache/{keys_list_name}-{values_list_name}-freq-cache.json"
-    reverse_freq_cache_file = f"{p}/cache/{values_list_name}-{keys_list_name}-freq-cache.json"
+    reverse_freq_cache_file = (
+        f"{p}/cache/{values_list_name}-{keys_list_name}-freq-cache.json"
+    )
     keys_index_cache_file = f"{p}/cache/{keys_list_name}-index-cache.json"
     values_index_cache_file = f"{p}/cache/{values_list_name}-index-cache.json"
 
@@ -243,73 +296,118 @@ def run_match(source, target, outpath, logging_level, jaccard_similarity_thresho
     ref_df = get_combined_df(source, target, keys_list_name, values_list_name, outpath)
     logging.info(f"Total verses: {len(ref_df)}")
 
-    js_cache = initialize_cache(js_cache_file, to_tuples=True, refresh = refresh_cache)
-    js_cache_reverse = initialize_cache(reverse_freq_cache_file, reverse=True, to_tuples=True)
+    js_cache = initialize_cache(js_cache_file, to_tuples=True, refresh=refresh_cache)
+    js_cache_reverse = initialize_cache(
+        reverse_freq_cache_file, reverse=True, to_tuples=True
+    )
     js_cache = {**js_cache, **js_cache_reverse}
 
     if refresh_cache or not os.path.exists(keys_index_cache_file):
         keys_index = {}
         print("Getting sentences that contain each word in keys")
-        for word in tqdm(list(ref_df['keys'].explode().unique())):
-            keys_index[word] = get_indices_with_item(word, ref_df['keys'])
+        for word in tqdm(list(ref_df["keys"].explode().unique())):
+            keys_index[word] = get_indices_with_item(word, ref_df["keys"])
         write_dictionary_to_file(keys_index, keys_index_cache_file)
     else:
-        keys_index = initialize_cache(keys_index_cache_file, refresh = False)
+        keys_index = initialize_cache(keys_index_cache_file, refresh=False)
 
     if refresh_cache or not os.path.exists(values_index_cache_file):
         values_index = {}
         print("Getting sentences that contain each word in values")
-        for word in tqdm(list(ref_df['values'].explode().unique())):
-            values_index[word] = get_indices_with_item(word, ref_df['values'])
+        for word in tqdm(list(ref_df["values"].explode().unique())):
+            values_index[word] = get_indices_with_item(word, ref_df["values"])
         write_dictionary_to_file(values_index, values_index_cache_file)
-    else:    
-        values_index = initialize_cache(values_index_cache_file, refresh = False)
+    else:
+        values_index = initialize_cache(values_index_cache_file, refresh=False)
 
-    ref_df = ref_df.dropna(subset=['keys', 'values'])  # Reduce ref_df to only verses present in both texts
+    ref_df = ref_df.dropna(
+        subset=["keys", "values"]
+    )  # Reduce ref_df to only verses present in both texts
     ref_df_indexes = list(ref_df.index)
     print("Getting keys_index")
     # Reduce the keys_index dict to only those verses present in the reduced ref_df
-    keys_index = {key: [item for item in values if item in ref_df_indexes] for key, values in tqdm(keys_index.items())}  
+    keys_index = {
+        key: [item for item in values if item in ref_df_indexes]
+        for key, values in tqdm(keys_index.items())
+    }
     print("Getting values_index")
     # Reduce the values_index dict to only those verses present in the reduced ref_df
-    values_index = {key: [item for item in values if item in ref_df_indexes] for key, values in tqdm(values_index.items())} 
-   
-    matches={}
- 
+    values_index = {
+        key: [item for item in values if item in ref_df_indexes]
+        for key, values in tqdm(values_index.items())
+    }
+
+    matches = {}
+
     print("Getting matches...")
     for index, row in tqdm(ref_df.iterrows()):
-        keys: List[str] = list(set(row['keys']))
-        values: List[str] = list(set(row['values']))
+        keys: List[str] = list(set(row["keys"]))
+        values: List[str] = list(set(row["values"]))
         matches, js_cache = update_matches_for_lists(
-                                                    keys, 
-                                                    values, 
-                                                    matches=matches,
-                                                    js_cache=js_cache, 
-                                                    keys_index=keys_index,
-                                                    values_index=values_index,
-                                                    jaccard_similarity_threshold=jaccard_similarity_threshold,
-                                                    count_threshold=count_threshold,
-                                                    )
+            keys,
+            values,
+            matches=matches,
+            js_cache=js_cache,
+            keys_index=keys_index,
+            values_index=values_index,
+            jaccard_similarity_threshold=jaccard_similarity_threshold,
+            count_threshold=count_threshold,
+        )
     logging.info(f"Matches: {matches}")
 
-    write_dictionary_to_file(js_cache, js_cache_file, to_strings=True)   
+    write_dictionary_to_file(js_cache, js_cache_file, to_strings=True)
     write_dictionary_to_file(matches, matches_file)
     logging.info(f"Matches: {matches}")
     logging.info("END RUN")
-    
+
 
 if __name__ == "__main__":
     pd.options.mode.chained_assignment = None  # default='warn'
-    pd.set_option('display.max_rows', 500)
+    pd.set_option("display.max_rows", 500)
     tqdm.pandas()
     parser = argparse.ArgumentParser()
-    parser.add_argument('--keys-name', help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'", required=True)
-    parser.add_argument('--values-name', help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'", required=True)
-    parser.add_argument('--jaccard-similarity-threshold', type=float, help="Threshold for Jaccard Similarity score to be significant", default=0.5)
-    parser.add_argument('--count-threshold', type=int, help="Threshold for count (number of co-occurences) score to be significant", default=5)
-    parser.add_argument('--logging-level', type=str, help="Logging level, default is INFO", default='INFO')
-    parser.add_argument('--refresh-cache', action="store_true", help="Refresh and overwrite the existing cache")
-    parser.add_argument('--outpath', type=str, help="Output path for matches")
+    parser.add_argument(
+        "--keys-name",
+        help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'",
+        required=True,
+    )
+    parser.add_argument(
+        "--values-name",
+        help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'",
+        required=True,
+    )
+    parser.add_argument(
+        "--jaccard-similarity-threshold",
+        type=float,
+        help="Threshold for Jaccard Similarity score to be significant",
+        default=0.5,
+    )
+    parser.add_argument(
+        "--count-threshold",
+        type=int,
+        help="Threshold for count (number of co-occurences) score to be significant",
+        default=5,
+    )
+    parser.add_argument(
+        "--logging-level",
+        type=str,
+        help="Logging level, default is INFO",
+        default="INFO",
+    )
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Refresh and overwrite the existing cache",
+    )
+    parser.add_argument("--outpath", type=str, help="Output path for matches")
     args = parser.parse_args()
 
-    run_match(args.keys_name, args.values_name, args.outpath, args.logging_level, args.jaccard_similarity_threshold, args.count_threshold, args.refresh_cache)
+    run_match(
+        args.keys_name,
+        args.values_name,
+        args.outpath,
+        args.logging_level,
+        args.jaccard_similarity_threshold,
+        args.count_threshold,
+        args.refresh_cache,
+    )
