@@ -10,8 +10,13 @@ if {$force_conservative} {
 	}
 }
 
+set arg1 [lindex $argv 0]
+set arg2 [lindex $argv 1]
+set arg3 [lindex $argv 2]
+set arg4 [lindex $argv 3]
+
 set timeout -1
-spawn ./database_create.sh https://adapting-trout-22.hasura.app p0jBFA090otLidrEATGGc5QbTTIGHee6LI27PyMtdqIOVYHWH25aIZfh1obtkFAN https://included-airedale-31.hasura.app JJ6AjIaCBhgJsm7AlXkwTjmmhu6PDc2ABgCzMMLv58llkrekDWfA22UCd04UFHjy
+spawn ./database_create.sh $arg1 $arg2 $arg3 $arg4
 match_max 100000
 expect -exact "\[0G\[2K\[1;92m? \[0m\[1;99mInitialize project with metadata & migrations from https://adapting-trout-22.hasura.app ? \[0m\[37m(Y/n) \[0m\[?25l7\[999;999f\[6n"
 send -- "\[25;99R"
