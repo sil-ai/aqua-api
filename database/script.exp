@@ -1,0 +1,20 @@
+#!/usr/bin/expect -f
+
+set force_conservative 1  ;
+			  ;
+if {$force_conservative} {
+	set send_slow {1 .1}
+	proc send {ignore arg} {
+		sleep .1
+		exp_send -s -- $arg
+	}
+}
+
+set timeout -1
+spawn ./database_create.sh https://adapting-trout-22.hasura.app p0jBFA090otLidrEATGGc5QbTTIGHee6LI27PyMtdqIOVYHWH25aIZfh1obtkFAN https://included-airedale-31.hasura.app JJ6AjIaCBhgJsm7AlXkwTjmmhu6PDc2ABgCzMMLv58llkrekDWfA22UCd04UFHjy
+match_max 100000
+expect -exact "\[0G\[2K\[1;92m? \[0m\[1;99mInitialize project with metadata & migrations from https://adapting-trout-22.hasura.app ? \[0m\[37m(Y/n) \[0m\[?25l7\[999;999f\[6n"
+send -- "\[25;99R"
+expect -exact "8\[?25h\[6n"
+send -- "\[25;99Ry\r"
+expect eof
