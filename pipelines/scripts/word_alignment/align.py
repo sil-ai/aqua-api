@@ -9,13 +9,18 @@ from machine.corpora import TextFileTextCorpus
 from machine.tokenization import LatinWordTokenizer
 from machine.translation import SymmetrizationHeuristic
 from machine.translation.thot import ThotFastAlignWordAlignmentModel, ThotSymmetrizedWordAlignmentModel
+from pathlib import Path
 
-def write_condensed_files(src_file, trg_file):
+def write_condensed_files(src_file: Path, trg_file: Path) -> None:
     #open files
     with open(src_file) as f:
         src_data = f.readlines()
     with open(trg_file) as f:
         trg_data = f.readlines()
+    
+    min_len = min(len(src_data), len(trg_data))
+    src_data = src_data[:min_len]
+    trg_data = trg_data[:min_len]
     
     #make into df
     df = pd.DataFrame({'src':src_data, 'trg':trg_data})
@@ -41,7 +46,7 @@ def write_condensed_files(src_file, trg_file):
             f.write(line)
 
 
-def create_corpus(src_file, trg_file):
+def create_corpus(src_file: Path, trg_file: Path):
     source_corpus = TextFileTextCorpus(src_file)
     target_corpus = TextFileTextCorpus(trg_file)
     parallel_corpus = source_corpus.align_rows(target_corpus).tokenize(LatinWordTokenizer())
@@ -93,6 +98,11 @@ def get_vrefs(src_file, trg_file, is_bible):
         vrefs = [line.strip() for line in vrefs]
     else:
         vrefs = [str(i) for i in range(len(src_data))]
+    
+    min_len = min(len(src_data), len(trg_data), len(vrefs))
+    src_data = src_data[:min_len]
+    trg_data = trg_data[:min_len]
+    vrefs = vrefs[:min_len]
 
     df = pd.DataFrame({'vref':vrefs, 'src':src_data, 'trg':trg_data})
     df = df[df.src != '\n']
@@ -119,7 +129,7 @@ def apply_threshold(df, threshold):
     return no_dups
 
 
-def run_align(src_file, trg_file, threshold, outpath, is_bible):
+def run_align(src_file: Path, trg_file: Path, threshold: float, outpath: Path, is_bible):
     #remove empty lines
     write_condensed_files(src_file, trg_file)
 
@@ -142,17 +152,15 @@ def run_align(src_file, trg_file, threshold, outpath, is_bible):
     no_dups = apply_threshold(df, threshold)
 
     #write results to csv
-    source_name = os.path.basename(src_file)
-    target_name = os.path.basename(trg_file)
-    path = outpath + "/" + source_name.split('.')[0] + "_" + target_name.split('.')[0] + "_align"
+    path = outpath / f'{src_file.stem}_{trg_file.stem}_align'
     
     #if dir doesn't exist, create it
-    if not os.path.exists(path):
-        os.makedirs(path)
+    if not path.exists():
+        path.mkdir()
 
-    no_dups.to_csv(path + "/sorted.csv")
-    df.to_csv(path + "/in_context.csv")
-    vref_df.to_csv(path + "/vref_scores.csv")
+    no_dups.to_csv(path / "sorted.csv")
+    df.to_csv(path / "in_context.csv")
+    vref_df.to_csv(path / "vref_scores.csv")
 
     #delete temp files
     os.remove("src_condensed.txt")
@@ -162,10 +170,10 @@ def run_align(src_file, trg_file, threshold, outpath, is_bible):
 if __name__ == "__main__":
     #command line args
     parser = argparse.ArgumentParser(description="Argparser")
-    parser.add_argument('--source', type=str, help='source translation')
-    parser.add_argument('--target', type=str, help='target translation')
+    parser.add_argument('--source', type=Path, help='source translation')
+    parser.add_argument('--target', type=Path, help='target translation')
     parser.add_argument('--threshold', type=float, default=0.5, help='word score threshold {0,1}')
-    parser.add_argument('--outpath', type=str, help='where to write results')
+    parser.add_argument('--outpath', type=Path, help='where to write results')
     parser.add_argument('--is-bible', type=str, default='False', help='is bible data?')
     args, unknown = parser.parse_known_args()
     
