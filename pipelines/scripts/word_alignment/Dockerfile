@@ -1,9 +1,24 @@
-FROM python:3.8-slim
+FROM python
 
-COPY ["requirements.txt", "./"]
+WORKDIR /app/fixtures
+COPY fixtures .
 
-RUN pip install -r requirements.txt
+WORKDIR /app
 
-COPY ["combined.py", "match.py", "align.py", "pachyderm.py", "./"]
+COPY combined.py .
+COPY align.py .
+COPY match.py .
+COPY combined_test.py .
+COPY align_test.py .
+COPY match_test.py .
+COPY requirements.txt .
+COPY vref.txt .
+COPY pachyderm.py
 
-CMD python pachyderm.py
+RUN python3 -m pip install --upgrade pip &&\
+    pip install --root-user-action=ignore -r requirements.txt
+
+RUN pip install "sil-machine[thot]"
+
+#CMD python pachyderm.py
+

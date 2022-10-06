@@ -1,4 +1,4 @@
-#imports
+# imports
 import os
 import json
 import argparse 
@@ -19,7 +19,8 @@ def make_output_dir(source: Path, target: Path, outpath: Path) -> Tuple[str, str
     path.mkdir(exist_ok=True)
     return s, t, path
 
-#run fast_align
+
+# run fast_align
 def run_fa(source, target, word_score_threshold, path, is_bible):
     align.run_align(source, target, word_score_threshold, path, is_bible)
 
@@ -28,6 +29,7 @@ def run_fa(source, target, word_score_threshold, path, is_bible):
 def run_match_words(source, target, path, jaccard_similarity_threshold, count_threshold, refresh_cache=False):
     match.run_match(source, target, path, 'INFO', jaccard_similarity_threshold, count_threshold, refresh_cache=refresh_cache)
 
+    
 def get_scores_from_match_dict(dictionary: dict, source: str, target: str) -> Tuple[float, float]:
     list_for_source = dictionary.get(source, [])
     match_list = [match for match in list_for_source if match.get('value') == target]
@@ -37,6 +39,7 @@ def get_scores_from_match_dict(dictionary: dict, source: str, target: str) -> Tu
     match_count = match_list[0]['count']
     return jac_sim, match_count
 
+  
 #combine results
 def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
     #open results
@@ -69,18 +72,23 @@ if __name__ == "__main__":
     parser.add_argument('--outpath', type=Path, help='where to store results')
     args, unknown = parser.parse_known_args()
 
-        
-
     #make output dir
     s, t, path = make_output_dir(args.source, args.target, args.outpath)
 
-    #run fast align
+    # run fast align
     run_fa(args.source, args.target, args.word_score_threshold, path, args.is_bible)
 
-    #run match words
-    run_match_words(args.source, args.target, path, args.jaccard_similarity_threshold, args.count_threshold)
+    # run match words
+    run_match_words(
+        args.source,
+        args.target,
+        path,
+        args.jaccard_similarity_threshold,
+        args.count_threshold,
+    )
 
-    #combine results
+    # combine results
     df = combine_df(path, s, t)
+    
     #save results
     df.to_csv(f"{path}/{s}_{t}_combined.csv")
