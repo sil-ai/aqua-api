@@ -10,6 +10,7 @@ from tqdm import tqdm
 from collections import Counter
 from pathlib import Path
 from machine.tokenization import LatinWordTokenizer
+import unicodedata
 
 def write_dictionary_to_file(dictionary: dict, filename: str, to_strings: bool=False) -> None:
     """
@@ -30,12 +31,15 @@ def text_to_words(text: str) -> List[str]:
         A list of words, where the sentence has had its punctuation removed, and words splits into a list of words
     """
     # word_list = re.sub("[^\w\s]", "", text.lower()).split()
-    # word_list = text.lower().replace('.', '').replace(',', '').replace('?', '').replace('!', '').split()
     word_tokenizer = LatinWordTokenizer()
-    word_list = [word for word in word_tokenizer.tokenize(text)]
+    word_list = [normalize_word(word) for word in word_tokenizer.tokenize(text)]
 
     return word_list
 
+def normalize_word(word):
+    return re.sub("[^\w\s]", "", word.lower()) if word else ''  #  Gives 18,159 unique words in the OT
+    # return unicodedata.normalize('NFD', word)  # This does much less normalisation, and still gives 87,564 unique words in the OT
+    # return text.lower().replace('.', '').replace(',', '').replace('?', '').replace('!', '').split()
 
 def get_bible_data(bible: Path) -> pd.DataFrame:
     """
@@ -200,8 +204,7 @@ def get_single_df(
     df = df.rename(columns={'normalized_words': list_name})
     return df
 
-def normalize_word(word):
-    return re.sub("[^\w\s]", "", word.lower())
+
 
 def get_combined_df(source: Path, target: Path, keys_list_name: str, values_list_name: str, outpath: Path) -> pd.DataFrame: 
     """
@@ -251,7 +254,7 @@ def run_match(source: Path, target: Path, outpath: Path, logging_level: str, jac
     logging.basicConfig(format='%(asctime)s - %(funcName)20s() - %(message)s', level=logging_level.upper(), filename=f'{p}/match_words_in_aligned_verse.log', filemode='a')
     logging.info("START RUN")
 
-    cache_dir = p / 'cache'
+    cache_dir = outpath / 'cache'
     cache_dir.mkdir(exist_ok=True)
     js_cache_file = cache_dir / f'{keys_list_name}-{values_list_name}-freq-cache.json'
     reverse_freq_cache_file = cache_dir / f'{values_list_name}-{keys_list_name}-freq-cache.json'
@@ -297,7 +300,7 @@ def run_match(source: Path, target: Path, outpath: Path, logging_level: str, jac
     matches={}
  
     print("Getting matches...")
-    for index, row in tqdm(ref_df.iterrows()):
+    for index, row in tqdm(ref_df.iterrows(), total=ref_df.shape[0]):
         keys: List[str] = list(set(row['keys']))
         values: List[str] = list(set(row['values']))
         matches, js_cache = update_matches_for_lists(

@@ -4,9 +4,9 @@ from combined import run_fa, run_match_words, combine_df
 import os
 
 def main():
-    word_score_threshold = 0.2
-    jaccard_similarity_threshold = 0.5
-    count_threshold = 1
+    word_score_threshold = 0.01
+    jaccard_similarity_threshold = 0.01
+    count_threshold = 0
     outpath = Path('pfs/out')
     ref_dir = Path('pfs/ref_data')
     for dirpath, dirs, files in os.walk("pfs/text_data"):
@@ -22,14 +22,14 @@ def main():
                     if file != ref_file:
                         out_file = outpath / f'{file.stem}_{ref_file.stem}_match' / f'{file.stem}-{ref_file.stem}_ref_df.csv'
                         print(out_file)
-                        # if not out_file.exists():
-                        # run_fa(
-                        #         Path(os.path.join(dirpath, file)), 
-                        #         Path(os.path.join(ref_dirpath, ref_file)), 
-                        #         word_score_threshold, 
-                        #         Path(outpath), 
-                        #         'True'
-                        #         )
+                        if not out_file.exists():
+                            run_fa(
+                                Path(os.path.join(dirpath, file)), 
+                                Path(os.path.join(ref_dirpath, ref_file)), 
+                                word_score_threshold, 
+                                Path(outpath), 
+                                'True'
+                                )
                         run_match_words(
                                         Path(os.path.join(dirpath, file)), 
                                         Path(os.path.join(ref_dirpath, ref_file)), 

@@ -28,11 +28,11 @@ def run_fa(source, target, word_score_threshold, path, is_bible):
 def run_match_words(source, target, path, jaccard_similarity_threshold, count_threshold, refresh_cache=False):
     match.run_match(source, target, path, 'INFO', jaccard_similarity_threshold, count_threshold, refresh_cache=refresh_cache)
 
-def get_scores_from_match_dict(dictionary, source, target):
+def get_scores_from_match_dict(dictionary: dict, source: str, target: str) -> Tuple[float, float]:
     list_for_source = dictionary.get(source, [])
     match_list = [match for match in list_for_source if match.get('value') == target]
     if len(match_list) == 0:
-        return -1, -1
+        return -1, 0
     jac_sim = match_list[0]['jaccard_similarity']
     match_count = match_list[0]['count']
     return jac_sim, match_count
@@ -47,29 +47,8 @@ def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
     fa_results.loc[:, 'normalized_target'] = fa_results['target'].apply(match.normalize_word)
 
     match_results = json.load(open(match_path))
-    #explode the match data
-    # sources = []
-    # targets = []
-    # jac_sims = []
-    # counts = []
-
-    # for lemma in match_results:
-    #     for features in match_results[lemma]:
-    #         sources.append(lemma)
-    #         targets.append(features['value'])
-    #         jac_sims.append(features['jaccard_similarity'])
-    #         counts.append(features['count'])
-    
-    # data = {
-    #     'normalized_source':sources,
-    #     'normalized_target':targets,
-    #     'jac_sim':jac_sims,
-    #     'match_count':counts,
-    # }
     
     #write to df and merge with fa results
-    # match_results = pd.DataFrame(data)
-    # df = pd.merge(fa_results, match_results, how='left', on=['normalized_source', 'normalized_target']).fillna(-1)
     df = fa_results
     df.loc[:, 'jac_sim'] = df.apply(lambda x: get_scores_from_match_dict(match_results, x['normalized_source'], x['normalized_target'])[0], axis=1)
     df.loc[:, 'match_counts'] = df.apply(lambda x: get_scores_from_match_dict(match_results, x['normalized_source'], x['normalized_target'])[1], axis=1)
