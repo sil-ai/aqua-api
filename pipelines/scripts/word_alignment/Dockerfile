@@ -13,8 +13,12 @@ COPY align_test.py .
 COPY match_test.py .
 COPY requirements.txt .
 COPY vref.txt .
+COPY pachyderm.py
 
 RUN python3 -m pip install --upgrade pip &&\
     pip install --root-user-action=ignore -r requirements.txt
 
 RUN pip install "sil-machine[thot]"
+
+#CMD python pachyderm.py
+
