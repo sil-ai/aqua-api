@@ -4,12 +4,12 @@ IMAGENAME=aqua-pipeline-word-alignment
 GH_BRANCH=$(shell basename ${GITHUB_REF})
 
 build-local:
-	cp ../../../../vref.txt .
+	cp ../../../vref.txt .
 	docker build -t ${REGISTRY}/${IMAGENAME}:latest .
 	rm vref.txt
 
 build-actions:
-	cp ../../../../vref.txt .
+	cp ../../../vref.txt .
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
 test:
