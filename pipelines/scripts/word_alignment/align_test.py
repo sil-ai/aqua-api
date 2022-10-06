@@ -1,11 +1,11 @@
 import os
-
+from pathlib import Path
 import align
 
 
 def test_write_condensed_files():
 
-    align.write_condensed_files("fixtures/src.txt", "fixtures/trg.txt")
+    align.write_condensed_files(Path("fixtures/src.txt"), Path("fixtures/trg.txt"))
 
     # check that files exist
     assert os.path.exists("fixtures/src.txt")

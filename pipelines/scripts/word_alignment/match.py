@@ -33,16 +33,21 @@ def text_to_words(text: str) -> List[str]:
     Outputs:
         A list of words, where the sentence has had its punctuation removed, and words splits into a list of words
     """
-    # word_list = re.sub("[^\w\s]", "", text.lower()).split()
     word_tokenizer = LatinWordTokenizer()
     word_list = [normalize_word(word) for word in word_tokenizer.tokenize(text)]
+    # remove any blanks
+    word_list = [word for word in word_list if word]
 
     return word_list
 
+
 def normalize_word(word):
-    return re.sub("[^\w\s]", "", word.lower()) if word else ''  #  Gives 18,159 unique words in the OT
+    return (
+        re.sub("[^\w\s]", "", word.lower()) if word else ""
+    )  #  Gives 18,159 unique words in the OT
     # return unicodedata.normalize('NFD', word)  # This does much less normalisation, and still gives 87,564 unique words in the OT
     # return text.lower().replace('.', '').replace(',', '').replace('?', '').replace('!', '').split()
+
 
 def get_bible_data(bible: Path) -> pd.DataFrame:
     """
@@ -55,10 +60,14 @@ def get_bible_data(bible: Path) -> pd.DataFrame:
     with open(bible, "r") as f:
         bible_data = f.readlines()
     words = [text_to_words(line) for line in bible_data]
-    normalized_words = [[normalize_word(word) for word in word_list] for word_list in words]
-    df = pd.DataFrame({'text': bible_data, 'words': words, 'normalized_words': normalized_words})
-    df = df[df['text'].apply(lambda x: len(x) > 2)]
-    df = df[df['text'] != "b'\n'"]
+    normalized_words = [
+        [normalize_word(word) for word in word_list] for word_list in words
+    ]
+    df = pd.DataFrame(
+        {"text": bible_data, "words": words, "normalized_words": normalized_words}
+    )
+    df = df[df["text"].apply(lambda x: len(x) > 2)]
+    df = df[df["text"] != "b'\n'"]
     return df
 
 
@@ -186,10 +195,18 @@ def string_keys_to_tuple(dictionary: dict) -> dict:
     """
     Changes the string keys from a json file back to tuples, and returns the dictionary
     """
-    return {(key.split("-")[0], key.split("-")[1]): value for key, value in dictionary.items()}
+    return {
+        (key.split("-")[0], key.split("-")[1]): value
+        for key, value in dictionary.items()
+    }
 
 
-def initialize_cache(cache_file: Path, to_tuples:bool=False, reverse:bool=False, refresh:bool=False) -> dict:
+def initialize_cache(
+    cache_file: Path,
+    to_tuples: bool = False,
+    reverse: bool = False,
+    refresh: bool = False,
+) -> dict:
     """
     Either reads a cache file from a json file or creates an empty dictionary to use as a cache file.
     Inputs:
@@ -201,7 +218,7 @@ def initialize_cache(cache_file: Path, to_tuples:bool=False, reverse:bool=False,
         cache:          A dictionary to be used as a cache
     """
     if cache_file.exists() and not refresh:
-        with open(cache_file, 'r') as f:
+        with open(cache_file, "r") as f:
             cache = json.load(f)
             if to_tuples:
                 cache = string_keys_to_tuple(cache)
@@ -213,10 +230,10 @@ def initialize_cache(cache_file: Path, to_tuples:bool=False, reverse:bool=False,
 
 
 def get_single_df(
-                    # df_path:Path, 
-                    text_file_path:Path, 
-                    list_name:str = 'keys'
-                    ) -> pd.DataFrame:
+    # df_path:Path,
+    text_file_path: Path,
+    list_name: str = "keys",
+) -> pd.DataFrame:
     """
     Reads a dataframe corresponding to either the keys or values being investigated
     Inputs:
@@ -228,12 +245,17 @@ def get_single_df(
     """
     df = get_bible_data(text_file_path)
     # df.to_parquet(df_path)
-    df = df.rename(columns={'normalized_words': list_name})
+    df = df.rename(columns={"normalized_words": list_name})
     return df
 
 
-
-def get_combined_df(source: Path, target: Path, keys_list_name: str, values_list_name: str, outpath: Path) -> pd.DataFrame: 
+def get_combined_df(
+    source: Path,
+    target: Path,
+    keys_list_name: str,
+    values_list_name: str,
+    outpath: Path,
+) -> pd.DataFrame:
     """
     Takes the names of the keys_list and values_list and creates ref_df - the dataframe that will be used in the rest of the script.
     Inputs:
@@ -244,51 +266,66 @@ def get_combined_df(source: Path, target: Path, keys_list_name: str, values_list
     Outputs:
         ref_df:     A dataframe that combines the keys and values data into a single dataframe by Bible verse
     """
-    #p = str(f"{outpath}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}")
-    p = outpath / f'{keys_list_name}_{values_list_name}_match'
-   
+    # p = str(f"{outpath}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}")
+    p = outpath / f"{keys_list_name}_{values_list_name}_match"
+
     # keys_ref_df_path = p / f'{keys_list_name.stem}_ref_df.parquet'
     # values_ref_df_path = p / f'{values_list_name.stem}_ref_df.parquet'
 
     keys_ref_df = get_single_df(
-                                # keys_ref_df_path, 
-                                source, 
-                                list_name = 'keys'
-                                )
+        # keys_ref_df_path,
+        source,
+        list_name="keys",
+    )
     values_ref_df = get_single_df(
-                                # values_ref_df_path, 
-                                target, 
-                                list_name = 'values'
-                                ) 
+        # values_ref_df_path,
+        target,
+        list_name="values",
+    )
 
     values_ref_series = values_ref_df["values"]
     ref_df = pd.concat([keys_ref_df, values_ref_series], axis=1)
-    ref_df = ref_df.dropna(subset=['keys', 'values'])
-    ref_df.to_csv(p / f'{keys_list_name}_{values_list_name}_ref_df.csv')
+    ref_df = ref_df.dropna(subset=["keys", "values"])
+    ref_df.to_csv(p / f"{keys_list_name}_{values_list_name}_ref_df.csv")
     logging.info(ref_df.head())
     return ref_df
 
 
-def run_match(source: Path, target: Path, outpath: Path, logging_level: str, jaccard_similarity_threshold: float, count_threshold: int, refresh_cache: bool = False) -> None:
+def run_match(
+    source: Path,
+    target: Path,
+    outpath: Path,
+    logging_level: str,
+    jaccard_similarity_threshold: float,
+    count_threshold: int,
+    refresh_cache: bool = False,
+) -> None:
     keys_list_name = source.stem
     # keys_list_name = source.split('/')[-1]
     values_list_name = target.stem
     # values_list_name = target.split('/')[-1]
 
-    p = outpath / f'{keys_list_name}_{values_list_name}_match'
+    p = outpath / f"{keys_list_name}_{values_list_name}_match"
     if not p.exists():
         p.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(format='%(asctime)s - %(funcName)20s() - %(message)s', level=logging_level.upper(), filename=f'{p}/match_words_in_aligned_verse.log', filemode='a')
+    logging.basicConfig(
+        format="%(asctime)s - %(funcName)20s() - %(message)s",
+        level=logging_level.upper(),
+        filename=f"{p}/match_words_in_aligned_verse.log",
+        filemode="a",
+    )
     logging.info("START RUN")
 
-    cache_dir = outpath / 'cache'
+    cache_dir = outpath / "cache"
     cache_dir.mkdir(exist_ok=True)
-    js_cache_file = cache_dir / f'{keys_list_name}-{values_list_name}-freq-cache.json'
-    reverse_freq_cache_file = cache_dir / f'{values_list_name}-{keys_list_name}-freq-cache.json'
-    keys_index_cache_file = cache_dir / f'{keys_list_name}-index-cache.json'
-    values_index_cache_file = cache_dir / f'{values_list_name}-index-cache.json'
+    js_cache_file = cache_dir / f"{keys_list_name}-{values_list_name}-freq-cache.json"
+    reverse_freq_cache_file = (
+        cache_dir / f"{values_list_name}-{keys_list_name}-freq-cache.json"
+    )
+    keys_index_cache_file = cache_dir / f"{keys_list_name}-index-cache.json"
+    values_index_cache_file = cache_dir / f"{values_list_name}-index-cache.json"
 
-    matches_file = p / f'{keys_list_name}_{values_list_name}-dictionary.json'
+    matches_file = p / f"{keys_list_name}_{values_list_name}-dictionary.json"
     ref_df = get_combined_df(source, target, keys_list_name, values_list_name, outpath)
     logging.info(f"Total verses: {len(ref_df)}")
 
@@ -316,8 +353,10 @@ def run_match(source: Path, target: Path, outpath: Path, logging_level: str, jac
     else:
         values_index = initialize_cache(values_index_cache_file, refresh=False)
 
-    ref_df = ref_df.dropna(subset=['keys', 'values'])  # Reduce ref_df to only verses present in both texts
-    logging.info(f'ref_df: {ref_df}')
+    ref_df = ref_df.dropna(
+        subset=["keys", "values"]
+    )  # Reduce ref_df to only verses present in both texts
+    logging.info(f"ref_df: {ref_df}")
 
     ref_df_indexes = list(ref_df.index)
     print("Getting keys_index")
@@ -337,8 +376,8 @@ def run_match(source: Path, target: Path, outpath: Path, logging_level: str, jac
 
     print("Getting matches...")
     for index, row in tqdm(ref_df.iterrows(), total=ref_df.shape[0]):
-        keys: List[str] = list(set(row['keys']))
-        values: List[str] = list(set(row['values']))
+        keys: List[str] = list(set(row["keys"]))
+        values: List[str] = list(set(row["values"]))
         matches, js_cache = update_matches_for_lists(
             keys,
             values,
@@ -362,13 +401,50 @@ if __name__ == "__main__":
     pd.set_option("display.max_rows", 500)
     tqdm.pandas()
     parser = argparse.ArgumentParser()
-    parser.add_argument('--keys', type=Path, help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'", required=True)
-    parser.add_argument('--values', type=Path, help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'", required=True)
-    parser.add_argument('--jaccard-similarity-threshold', type=float, help="Threshold for Jaccard Similarity score to be significant", default=0.5)
-    parser.add_argument('--count-threshold', type=int, help="Threshold for count (number of co-occurences) score to be significant", default=5)
-    parser.add_argument('--logging-level', type=str, help="Logging level, default is INFO", default='INFO')
-    parser.add_argument('--refresh-cache', action="store_true", help="Refresh and overwrite the existing cache")
-    parser.add_argument('--outpath', type=Path, help="Output path for matches")
+    parser.add_argument(
+        "--keys",
+        type=Path,
+        help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'",
+        required=True,
+    )
+    parser.add_argument(
+        "--values",
+        type=Path,
+        help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'",
+        required=True,
+    )
+    parser.add_argument(
+        "--jaccard-similarity-threshold",
+        type=float,
+        help="Threshold for Jaccard Similarity score to be significant",
+        default=0.5,
+    )
+    parser.add_argument(
+        "--count-threshold",
+        type=int,
+        help="Threshold for count (number of co-occurences) score to be significant",
+        default=5,
+    )
+    parser.add_argument(
+        "--logging-level",
+        type=str,
+        help="Logging level, default is INFO",
+        default="INFO",
+    )
+    parser.add_argument(
+        "--refresh-cache",
+        action="store_true",
+        help="Refresh and overwrite the existing cache",
+    )
+    parser.add_argument("--outpath", type=Path, help="Output path for matches")
     args = parser.parse_args()
 
-    run_match(args.keys, args.values, args.outpath, args.logging_level, args.jaccard_similarity_threshold, args.count_threshold, args.refresh_cache)
+    run_match(
+        args.keys,
+        args.values,
+        args.outpath,
+        args.logging_level,
+        args.jaccard_similarity_threshold,
+        args.count_threshold,
+        args.refresh_cache,
+    )
