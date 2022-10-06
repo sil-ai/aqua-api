@@ -1,6 +1,10 @@
 import os
+
 from pathlib import Path
 import align
+import pandas as pd
+from machine.corpora import ParallelTextCorpus
+from machine.translation.thot import ThotSymmetrizedWordAlignmentModel
 
 
 def test_write_condensed_files():
@@ -39,3 +43,27 @@ def test_write_condensed_files():
     # remove the condensed files
     os.remove("src_condensed.txt")
     os.remove("trg_condensed.txt")
+
+
+def test_create_corpus():
+    corpus = align.create_corpus(Path("fixtures/src.txt"), Path("fixtures/trg.txt"))
+    assert corpus is not None
+
+
+def test_train_model():
+    corpus = align.create_corpus(Path("fixtures/src.txt"), Path("fixtures/trg.txt"))
+    model = align.train_model(corpus)
+    assert model is not None
+    assert type(model) == ThotSymmetrizedWordAlignmentModel
+
+
+def test_get_alignments():
+    src_file = Path("fixtures/src.txt")
+    trg_file = Path("fixtures/trg.txt")
+    vrefs = align.get_vrefs(src_file, trg_file, False)
+    corpus = align.create_corpus(Path("fixtures/src.txt"), Path("fixtures/trg.txt"))
+    model = align.train_model(corpus)
+    alignments = align.get_alignments(model, corpus, vrefs)
+
+    assert type(alignments) == pd.DataFrame
+    assert len(alignments) > 0
