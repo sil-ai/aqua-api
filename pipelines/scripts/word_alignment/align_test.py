@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 import align
 import pandas as pd
-from machine.corpora import ParallelTextCorpus
 from machine.translation.thot import ThotSymmetrizedWordAlignmentModel
 
 
