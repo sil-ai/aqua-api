@@ -2,7 +2,9 @@
 import argparse
 import string
 import os
+import sys
 
+from unicodedata import category
 import pandas as pd
 from tqdm import tqdm
 from machine.corpora import TextFileTextCorpus
@@ -35,8 +37,15 @@ def write_condensed_files(src_file: Path, trg_file: Path) -> None:
     df = df[df.trg != "\n"]
 
     # remove punctuation
+    punctuation_chars = ""
+    for i in range(sys.maxunicode):
+        if category(chr(i)).startswith("P"):
+            punctuation_chars += chr(i)
+
     df["src"] = df["src"].str.replace("[{}]".format(string.punctuation), "", regex=True)
+    df["src"] = df["src"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
     df["trg"] = df["trg"].str.replace("[{}]".format(string.punctuation), "", regex=True)
+    df["trg"] = df["trg"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
 
     # make lowercase
     df["src"] = df["src"].str.lower()
