@@ -5,7 +5,7 @@ Word alignment scripts. These scripts work for any two aligned text files; they 
 **`--source` and `--target` must be aligned `.txt` files!** 
 
 ## align.py
-An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align
+An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align. Returns alignment scores for all possible alignments in a line. Ignores word order. 
 ### Suggested Usage:
 
 `python align.py --source path/to/source/file --target path/to/target/file --threshold 0.5 --outpath /path/to/output/location`
@@ -15,6 +15,7 @@ An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/m
 A directory containing two files:
 
 `in_context.csv`  All possible alignment pairs in the order they appear in `--source` and `target`. The word score threshold is not applied.
+
 `sorted.csv`  All possible alignment pairs sorted alphabetically. Pairs are counted, duplicated are removed, word scores are averaged, and the word score threshold is applied.
 
 ### Arguments:
@@ -30,7 +31,7 @@ A directory containing two files:
 `--is-bible`  (default=`False`)  If `True`, will refer to lines by their verse references in the fast_align output files
 
 ## align_best.py
-An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align
+An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align. Returns only the best alignment for each word in each line. Takes word order into account. 
 ### Suggested Usage:
 
 `python align_best.py --source path/to/source/file --target path/to/target/file --threshold 0.5 --outpath /path/to/output/location`
@@ -40,7 +41,9 @@ An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/m
 A directory containing two directories (one for each alignment direction), each containing three files:
 
 `in_context.csv`  Best alignment pairs in the order they appear in `--source` and `target`. The word score threshold is not applied.
+
 `sorted.csv`  Best alignment pairs sorted alphabetically. Pairs are counted, duplicated are removed, word and verse scores are averaged, and the word score threshold is applied.
+
 `vref_scores.csv` Average alignment scores for each line (or verse, if `--is-bible` is `True`)
 
 ### Arguments:
