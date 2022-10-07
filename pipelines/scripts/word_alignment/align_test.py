@@ -56,13 +56,13 @@ def test_train_model():
     assert type(model) == ThotSymmetrizedWordAlignmentModel
 
 
-def test_get_alignments():
+def test_get_alignment_scores():
     src_file = Path("fixtures/src.txt")
     trg_file = Path("fixtures/trg.txt")
     vrefs = align.get_vrefs(src_file, trg_file, False)
     corpus = align.create_corpus(Path("fixtures/src.txt"), Path("fixtures/trg.txt"))
     model = align.train_model(corpus)
-    alignments = align.get_alignments(model, corpus, vrefs)
+    alignments = align.get_alignment_scores(model, corpus, vrefs)
 
     assert type(alignments) == pd.DataFrame
     assert len(alignments) > 0
@@ -77,31 +77,6 @@ def test_get_vrefs():
     vrefs = align.get_vrefs(src_file, trg_file, False)
     assert type(vrefs) == list
     assert len(vrefs) == len(src_data)
-
-
-def test_get_vref_scores():
-    src_file = Path("fixtures/src.txt")
-    trg_file = Path("fixtures/trg.txt")
-    vrefs = align.get_vrefs(src_file, trg_file, False)
-    corpus = align.create_corpus(src_file, trg_file)
-    model = align.train_model(corpus)
-    alignments = align.get_alignments(model, corpus, vrefs)
-    vref_scores = align.get_vref_scores(alignments)
-    assert type(vref_scores) == pd.DataFrame
-    assert len(vref_scores) > 0
-
-
-def test_apply_threshold():
-    src_file = Path("fixtures/src.txt")
-    trg_file = Path("fixtures/trg.txt")
-    vrefs = align.get_vrefs(src_file, trg_file, False)
-    corpus = align.create_corpus(src_file, trg_file)
-    model = align.train_model(corpus)
-    alignments = align.get_alignments(model, corpus, vrefs)
-    sorted_alignments = align.apply_threshold(alignments, 0.5)
-    assert type(sorted_alignments) == pd.DataFrame
-    assert len(sorted_alignments) > 0
-    assert len(sorted_alignments) < len(alignments)
 
 
 def test_run_align():
@@ -120,15 +95,12 @@ def test_run_align():
     # check the files exist
     in_context = Path(outdir, "in_context.csv")
     sorted_f = Path(outdir, "sorted.csv")
-    vrefs = Path(outdir, "vref_scores.csv")
     assert in_context.exists()
     assert sorted_f.exists()
-    assert vrefs.exists()
 
     # delete the files
     in_context.unlink()
     sorted_f.unlink()
-    vrefs.unlink()
 
     # delete dir
     outdir.rmdir()

@@ -14,8 +14,34 @@ An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/m
 
 A directory containing two files:
 
-`in_context.csv`  Alignment pairs in the order they appear in `--source` and `target`. The word score threshold is not applied.
-`sorted.csv`  Alignment pairs sorted alphabetically. Pairs are counted, duplicated are removed, word scores and verse scores are averaged, and the word score threshold is applied.
+`in_context.csv`  All possible alignment pairs in the order they appear in `--source` and `target`. The word score threshold is not applied.
+`sorted.csv`  All possible alignment pairs sorted alphabetically. Pairs are counted, duplicated are removed, word scores are averaged, and the word score threshold is applied.
+
+### Arguments:
+
+`--source`  Source text file
+
+`--target`  Target text file
+
+`--threshold`  (default=`0.5`)  The fast_align word score threshold
+
+`--outpath`  Output location for the resulting directory   
+
+`--is-bible`  (default=`False`)  If `True`, will refer to lines by their verse references in the fast_align output files
+
+## align_best.py
+An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align
+### Suggested Usage:
+
+`python align_best.py --source path/to/source/file --target path/to/target/file --threshold 0.5 --outpath /path/to/output/location`
+
+### Output
+
+A directory containing two directories (one for each alignment direction), each containing three files:
+
+`in_context.csv`  Best alignment pairs in the order they appear in `--source` and `target`. The word score threshold is not applied.
+`sorted.csv`  Best alignment pairs sorted alphabetically. Pairs are counted, duplicated are removed, word and verse scores are averaged, and the word score threshold is applied.
+`vref_scores.csv` Average alignment scores for each line (or verse, if `--is-bible` is `True`)
 
 ### Arguments:
 
@@ -75,6 +101,8 @@ A directory containing:
 `--source`  Source text file
 
 `--target`  Target text file
+
+`--align-best-only`  (default=`False`) Runs `align_best.py` if `True`, `align.py` otherwise
 
 `--word-score-threshold`  (default=`0.5`)  The fast_align word score threshold
 
