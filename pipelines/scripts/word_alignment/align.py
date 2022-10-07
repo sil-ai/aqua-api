@@ -108,10 +108,6 @@ def get_alignments(model, corpus, vrefs):
     df = pd.DataFrame(data)
     return df
 
-def append_alignments_to_data(model, corpus, vrefs, data):
-    
-    return data
-
 def get_vrefs(src_file, trg_file, is_bible):
     with open(src_file) as f:
         src_data = f.readlines()
