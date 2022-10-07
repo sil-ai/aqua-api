@@ -7,6 +7,7 @@ def main():
     word_score_threshold = 0.0
     jaccard_similarity_threshold = 0.01
     count_threshold = 0
+    refresh_cache = True
     outpath = Path('pfs/out')
     ref_dir = Path('pfs/ref_data')
     for dirpath, dirs, files in os.walk("pfs/text_data"):
@@ -29,7 +30,7 @@ def main():
                                     Path(os.path.join(ref_dirpath, ref_file)), 
                                     word_score_threshold, 
                                     Path(outpath), 
-                                    'True'
+                                    refresh_cache,
                                     )
                             run_match_words(
                                             Path(os.path.join(dirpath, file)), 
@@ -37,7 +38,7 @@ def main():
                                             Path(outpath), 
                                             jaccard_similarity_threshold=jaccard_similarity_threshold, 
                                             count_threshold=count_threshold,
-                                            refresh_cache=False
+                                            refresh_cache=refresh_cache,
                                             )
                         df = combine_df(outpath, file.stem, ref_file.stem)
                         # reverse_df = combine_df(outpath, ref_file.stem, file.stem)

@@ -12,12 +12,12 @@ def test_run_fa():
         0.5,
         Path("fixtures"),
         False,
-        align_best_only=False,
+        align_best_alignment=False,
     )
-    assert os.path.exists("fixtures/src_trg_align/sorted.csv")
-    assert os.path.exists("fixtures/src_trg_align/in_context.csv")
-    os.remove("fixtures/src_trg_align/sorted.csv")
-    os.remove("fixtures/src_trg_align/in_context.csv")
+    assert os.path.exists("fixtures/src_trg_align/all_sorted.csv")
+    assert os.path.exists("fixtures/src_trg_align/all_in_context.csv")
+    os.remove("fixtures/src_trg_align/all_sorted.csv")
+    os.remove("fixtures/src_trg_align/all_in_context.csv")
     os.rmdir("fixtures/src_trg_align")
 
     # align best
@@ -27,21 +27,21 @@ def test_run_fa():
         0.5,
         Path("fixtures"),
         False,
-        align_best_only=True,
+        align_best_alignment=True,
     )
-    assert os.path.exists("fixtures/srctrg_align_best/src_trg_align_best/sorted.csv")
+    assert os.path.exists("fixtures/srctrg_align_best/src_trg_align_best/best_sorted.csv")
     assert os.path.exists(
-        "fixtures/srctrg_align_best/src_trg_align_best/in_context.csv"
-    )
-    assert os.path.exists(
-        "fixtures/srctrg_align_best/src_trg_align_best/vref_scores.csv"
-    )
-    assert os.path.exists("fixtures/srctrg_align_best/trg_src_align_best/sorted.csv")
-    assert os.path.exists(
-        "fixtures/srctrg_align_best/trg_src_align_best/in_context.csv"
+        "fixtures/srctrg_align_best/src_trg_align_best/best_in_context.csv"
     )
     assert os.path.exists(
-        "fixtures/srctrg_align_best/trg_src_align_best/vref_scores.csv"
+        "fixtures/srctrg_align_best/src_trg_align_best/best_vref_scores.csv"
+    )
+    assert os.path.exists("fixtures/srctrg_align_best/trg_src_align_best/best_sorted.csv")
+    assert os.path.exists(
+        "fixtures/srctrg_align_best/trg_src_align_best/best_in_context.csv"
+    )
+    assert os.path.exists(
+        "fixtures/srctrg_align_best/trg_src_align_best/best_vref_scores.csv"
     )
 
     # remove all files and dirs

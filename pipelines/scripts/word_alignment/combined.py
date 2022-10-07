@@ -16,11 +16,10 @@ from pathlib import Path
 from typing import Tuple
 
 # run fast_align
-def run_fa(source, target, word_score_threshold, path, is_bible, align_best_only):
-    if align_best_only:
+def run_fa(source, target, word_score_threshold, path, is_bible, align_best_alignment: bool):
+    align.run_align(source, target, word_score_threshold, path, is_bible)
+    if align_best_alignment:
         align_best.run_align(source, target, word_score_threshold, path, is_bible)
-    else:
-        align.run_align(source, target, word_score_threshold, path, is_bible)
 
 
 # run match words
@@ -96,7 +95,7 @@ if __name__ == "__main__":
     parser.add_argument("--source", type=Path, help="source bible")
     parser.add_argument("--target", type=Path, help="target bible")
     parser.add_argument(
-        "--align-best-only",
+        "--align-best",
         type=bool,
         action='store_true',
         help="Get only the best alignments",
@@ -140,7 +139,7 @@ if __name__ == "__main__":
         args.word_score_threshold,
         path,
         args.is_bible,
-        args.align_best_only,
+        args.align_best,
     )
 
     # run match words

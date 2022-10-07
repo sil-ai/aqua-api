@@ -128,17 +128,17 @@ def test_run_align():
     bwd_dir = outdir / "trg_src_align_best"
 
     # check forward files exist
-    in_context_fwd = Path(fwd_dir, "in_context.csv")
-    sorted_f_fwd = Path(fwd_dir, "sorted.csv")
-    vrefs_fwd = Path(fwd_dir, "vref_scores.csv")
+    in_context_fwd = Path(fwd_dir, "best_in_context.csv")
+    sorted_f_fwd = Path(fwd_dir, "best_sorted.csv")
+    vrefs_fwd = Path(fwd_dir, "best_vref_scores.csv")
     assert in_context_fwd.exists()
     assert sorted_f_fwd.exists()
     assert vrefs_fwd.exists()
 
     # check backward files exist
-    in_context_bwd = Path(bwd_dir, "in_context.csv")
-    sorted_f_bwd = Path(bwd_dir, "sorted.csv")
-    vrefs_bwd = Path(bwd_dir, "vref_scores.csv")
+    in_context_bwd = Path(bwd_dir, "best_in_context.csv")
+    sorted_f_bwd = Path(bwd_dir, "best_sorted.csv")
+    vrefs_bwd = Path(bwd_dir, "best_vref_scores.csv")
     assert in_context_bwd.exists()
     assert sorted_f_bwd.exists()
     assert vrefs_bwd.exists()

@@ -86,21 +86,31 @@ def test_run_align():
     outpath = Path("fixtures")
     is_bible = False
 
-    align.run_align(src_file, trg_file, threshold, outpath, is_bible)
-
     # make out dir
     outdir = Path("fixtures/src_trg_align")
     outdir.mkdir(parents=True, exist_ok=True)
+    reverse_outdir = Path("fixtures/trg_src_align")
+    reverse_outdir.mkdir(parents=True, exist_ok=True)
+
+    align.run_align(src_file, trg_file, threshold, outpath, is_bible)
 
     # check the files exist
-    in_context = Path(outdir, "in_context.csv")
-    sorted_f = Path(outdir, "sorted.csv")
+    in_context = Path(outdir, "all_in_context.csv")
+    sorted_f = Path(outdir, "all_sorted.csv")
+    reverse_in_context = Path(reverse_outdir, "all_in_context.csv")
+    reverse_sorted_f = Path(reverse_outdir, "all_sorted.csv")
     assert in_context.exists()
     assert sorted_f.exists()
-
+    assert reverse_in_context.exists()
+    assert reverse_sorted_f.exists()
+    
     # delete the files
     in_context.unlink()
     sorted_f.unlink()
-
+    reverse_in_context.unlink()
+    reverse_sorted_f.unlink()
+    
     # delete dir
     outdir.rmdir()
+    reverse_outdir.rmdir()
+

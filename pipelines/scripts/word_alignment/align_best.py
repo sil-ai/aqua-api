@@ -96,14 +96,14 @@ def run_align(
     if not reverse_path.exists():
         reverse_path.mkdir()
 
-    no_dups.to_csv(path / "sorted.csv")
-    reverse_no_dups.to_csv(reverse_path / "sorted.csv")
+    no_dups.to_csv(path / "best_sorted.csv")
+    reverse_no_dups.to_csv(reverse_path / "best_sorted.csv")
 
-    df.to_csv(path / "in_context.csv")
-    reverse_df.to_csv(reverse_path / "in_context.csv")
+    df.to_csv(path / "best_in_context.csv")
+    reverse_df.to_csv(reverse_path / "best_in_context.csv")
 
-    vref_df.to_csv(path / "vref_scores.csv")
-    reverse_vref_df.to_csv(reverse_path / "vref_scores.csv")
+    vref_df.to_csv(path / "best_vref_scores.csv")
+    reverse_vref_df.to_csv(reverse_path / "best_vref_scores.csv")
 
     # delete temp files
     os.remove("src_condensed.txt")

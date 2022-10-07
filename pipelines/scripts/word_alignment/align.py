@@ -160,14 +160,21 @@ def run_align(
 
     # write results to csv
     path = outpath / f"{src_file.stem}_{trg_file.stem}_align"
+    reverse_path = outpath / f"{trg_file.stem}_{src_file.stem}_align"
 
     # if dir doesn't exist, create it
     if not path.exists():
         path.mkdir()
+    if not reverse_path.exists():
+        reverse_path.mkdir()
 
-    no_dups.to_csv(path / "sorted.csv")
+    no_dups.to_csv(path / "all_sorted.csv")
+    no_dups.to_csv(reverse_path / "all_sorted.csv")
 
-    df.to_csv(path / "in_context.csv")
+
+    df.to_csv(path / "all_in_context.csv")
+    df.to_csv(reverse_path / "all_in_context.csv")
+
 
     # delete temp files
     os.remove("src_condensed.txt")
