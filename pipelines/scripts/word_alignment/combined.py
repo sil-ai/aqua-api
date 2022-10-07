@@ -27,7 +27,7 @@ def get_scores_from_match_dict(dictionary: dict, source: str, target: str) -> Tu
     list_for_source = dictionary.get(source, [])
     match_list = [match for match in list_for_source if match.get('value') == target]
     if len(match_list) == 0:
-        return -1, 0
+        return 0, 0
     jac_sim = match_list[0]['jaccard_similarity']
     match_count = match_list[0]['count']
     return jac_sim, match_count

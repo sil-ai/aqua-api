@@ -4,7 +4,7 @@ from combined import run_fa, run_match_words, combine_df
 import os
 
 def main():
-    word_score_threshold = 0.01
+    word_score_threshold = 0.0
     jaccard_similarity_threshold = 0.01
     count_threshold = 0
     outpath = Path('pfs/out')
@@ -40,17 +40,17 @@ def main():
                                             refresh_cache=False
                                             )
                         df = combine_df(outpath, file.stem, ref_file.stem)
-                        reverse_df = combine_df(outpath, ref_file.stem, file.stem)
+                        # reverse_df = combine_df(outpath, ref_file.stem, file.stem)
 
                         #save results
                         path = outpath / f'{file.stem}_{ref_file.stem}_combined'
                         if not path.exists():
                             path.mkdir(exist_ok=True)
-                        reverse_path = outpath / f'{ref_file.stem}_{file.stem}_combined'
-                        if not reverse_path.exists():
-                            reverse_path.mkdir(exist_ok=True)
+                        # reverse_path = outpath / f'{ref_file.stem}_{file.stem}_combined'
+                        # if not reverse_path.exists():
+                        #     reverse_path.mkdir(exist_ok=True)
                         df.to_csv(path / f'{file.stem}_{ref_file.stem}_combined.csv')
-                        reverse_df.to_csv(reverse_path / f'{ref_file.stem}_{file.stem}_combined.csv')
+                        # reverse_df.to_csv(reverse_path / f'{ref_file.stem}_{file.stem}_combined.csv')
 
 
 if __name__ == "__main__":
