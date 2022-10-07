@@ -119,7 +119,6 @@ def update_matches_for_lists(
     values_list: list,
     js_cache: dict,
     matches: dict,
-    # reverse_matches: dict,
     keys_index: dict,
     values_index: dict,
     jaccard_similarity_threshold: float = 0.5,
@@ -170,12 +169,10 @@ def update_matches_for_lists(
             ):
                 if keys_item not in matches:
                     matches[keys_item] = []
-                # if values_item not in reverse_matches:
-                #     reverse_matches[values_item] = []
 
                 if values_item not in [
                     item.get("value", "") for item in matches[keys_item]
-                ]:  # matches[keys_item][:]['value']:
+                ]:
                     matches[keys_item].append(
                         {
                             "value": values_item,
@@ -183,13 +180,6 @@ def update_matches_for_lists(
                             "count": count,
                         }
                     )
-                # reverse_matches[values_item].append(
-                #         {
-                #             "value": keys_item,
-                #             "jaccard_similarity": jaccard_similarity,
-                #             "count": count,
-                #         }
-                # )
     return (matches, js_cache)
 
 
@@ -239,7 +229,6 @@ def initialize_cache(
 
 
 def get_single_df(
-    # df_path:Path,
     text_file_path: Path,
     list_name: str = "keys",
 ) -> pd.DataFrame:
@@ -253,7 +242,6 @@ def get_single_df(
         df:         The dataframe containing Bible verses, and either a 'keys' or 'values' column with the relevant list data.
     """
     df = get_bible_data(text_file_path)
-    # df.to_parquet(df_path)
     df = df.rename(columns={"normalized_words": list_name})
     return df
 
@@ -329,7 +317,6 @@ def run_match(
     values_index_cache_file = cache_dir / f"{values_list_name}-index-cache.json"
 
     matches_file = path / f"{keys_list_name}_{values_list_name}-dictionary.json"
-    # reverse_matches_file = reverse_path / f"{values_list_name}_{keys_list_name}-dictionary.json"
 
     ref_df = get_combined_df(source, target, keys_list_name, values_list_name, outpath)
     logging.info(f"Total verses: {len(ref_df)}")
@@ -399,7 +386,6 @@ def run_match(
 
     write_dictionary_to_file(js_cache, js_cache_file, to_strings=True)
     write_dictionary_to_file(matches, matches_file)
-    # write_dictionary_to_file(reverse_matches, reverse_matches_file)
 
     logging.info("END RUN")
 
