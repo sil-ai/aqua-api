@@ -97,8 +97,8 @@ if __name__ == "__main__":
     parser.add_argument("--target", type=Path, help="target bible")
     parser.add_argument(
         "--align-best-only",
-        type=str,
-        default="False",
+        type=bool,
+        action='store_true',
         help="Get only the best alignments",
     )
     parser.add_argument(
@@ -113,7 +113,7 @@ if __name__ == "__main__":
         help="Threshold for Jaccard Similarity score to be significant",
         default=0.5,
     )
-    parser.add_argument("--is-bible", type=str, default="False", help="is bible")
+    parser.add_argument("--is-bible", type=bool, action='store_true', help="is bible")
     parser.add_argument(
         "--count-threshold",
         type=int,

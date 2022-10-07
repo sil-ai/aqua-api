@@ -99,14 +99,14 @@ def get_alignment_scores(model, corpus, vrefs):
     return df
 
 
-def get_vrefs(src_file, trg_file, is_bible):
+def get_vrefs(src_file, trg_file, is_bible: bool):
     with open(src_file) as f:
         src_data = f.readlines()
 
     with open(trg_file) as f:
         trg_data = f.readlines()
 
-    if is_bible == "True":
+    if is_bible:
         with open("vref.txt", "r") as f:
             vrefs = f.readlines()
         vrefs = [line.strip() for line in vrefs]
@@ -137,7 +137,7 @@ def apply_threshold(df, threshold):
 
 
 def run_align(
-    src_file: Path, trg_file: Path, threshold: float, outpath: Path, is_bible
+    src_file: Path, trg_file: Path, threshold: float, outpath: Path, is_bible: bool
 ):
     # remove empty lines
     write_condensed_files(src_file, trg_file)
@@ -183,7 +183,8 @@ if __name__ == "__main__":
         "--threshold", type=float, default=0.5, help="word score threshold {0,1}"
     )
     parser.add_argument("--outpath", type=Path, help="where to write results")
-    parser.add_argument("--is-bible", type=str, default="False", help="is bible data?")
+    parser.add_argument("--is-bible", type=bool, action='store_true', help="is bible data")
+
     args, unknown = parser.parse_known_args()
 
     run_align(args.source, args.target, args.threshold, args.outpath, args.is_bible)
