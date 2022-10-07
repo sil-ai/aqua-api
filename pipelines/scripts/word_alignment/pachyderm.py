@@ -23,22 +23,22 @@ def main():
                         if file != ref_file:
                             out_file = outpath / f'{file.stem}_{ref_file.stem}_match' / f'{file.stem}-{ref_file.stem}_ref_df.csv'
                             print(out_file)
-                            # if not out_file.exists():
-                            #     run_fa(
-                            #         Path(os.path.join(dirpath, file)), 
-                            #         Path(os.path.join(ref_dirpath, ref_file)), 
-                            #         word_score_threshold, 
-                            #         Path(outpath), 
-                            #         'True'
-                            #         )
-                            # run_match_words(
-                            #                 Path(os.path.join(dirpath, file)), 
-                            #                 Path(os.path.join(ref_dirpath, ref_file)), 
-                            #                 Path(outpath), 
-                            #                 jaccard_similarity_threshold=jaccard_similarity_threshold, 
-                            #                 count_threshold=count_threshold,
-                            #                 refresh_cache=False
-                            #                 )
+                            if not out_file.exists():
+                                run_fa(
+                                    Path(os.path.join(dirpath, file)), 
+                                    Path(os.path.join(ref_dirpath, ref_file)), 
+                                    word_score_threshold, 
+                                    Path(outpath), 
+                                    'True'
+                                    )
+                            run_match_words(
+                                            Path(os.path.join(dirpath, file)), 
+                                            Path(os.path.join(ref_dirpath, ref_file)), 
+                                            Path(outpath), 
+                                            jaccard_similarity_threshold=jaccard_similarity_threshold, 
+                                            count_threshold=count_threshold,
+                                            refresh_cache=False
+                                            )
                         df = combine_df(outpath, file.stem, ref_file.stem)
                         reverse_df = combine_df(outpath, ref_file.stem, file.stem)
 
