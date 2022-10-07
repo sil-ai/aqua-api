@@ -120,6 +120,7 @@ def update_matches_for_lists(
     values_list: list,
     js_cache: dict,
     matches: dict,
+    reverse_matches: dict,
     keys_index: dict,
     values_index: dict,
     jaccard_similarity_threshold: float = 0.5,
@@ -170,18 +171,34 @@ def update_matches_for_lists(
             ):
                 if keys_item not in matches:
                     matches[keys_item] = []
-                if values_item not in [
-                    item.get("value", "") for item in matches[keys_item]
-                ]:  # matches[keys_item][:]['value']:
-                    matches[keys_item].append(
+                if values_item not in reverse_matches:
+                    reverse_matches[values_item] = []
+
+                # if values_item not in [
+                #     item.get("value", "") for item in matches[keys_item]
+                # ]:  # matches[keys_item][:]['value']:
+                #     matches[keys_item].append(
+                #         {
+                #             "value": values_item,
+                #             "jaccard_similarity": jaccard_similarity,
+                #             "count": count,
+                #         }
+                #     )
+                matches[keys_item].append(
                         {
                             "value": values_item,
                             "jaccard_similarity": jaccard_similarity,
                             "count": count,
                         }
-                    )
-    logging.debug(cache_counter)
-    return (matches, js_cache)
+                )
+                reverse_matches[values_item].append(
+                        {
+                            "value": keys_item,
+                            "jaccard_similarity": jaccard_similarity,
+                            "count": count,
+                        }
+                )
+    return (matches, reverse_matches, js_cache)
 
 
 def tuple_keys_to_string(dictionary: dict) -> dict:
@@ -305,13 +322,15 @@ def run_match(
     values_list_name = target.stem
     # values_list_name = target.split('/')[-1]
 
-    p = outpath / f"{keys_list_name}_{values_list_name}_match"
-    if not p.exists():
-        p.mkdir(parents=True, exist_ok=True)
+    path = outpath / f"{keys_list_name}_{values_list_name}_match"
+    reverse_path = outpath / f"{values_list_name}_{keys_list_name}_match"
+
+    if not path.exists():
+        path.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         format="%(asctime)s - %(funcName)20s() - %(message)s",
         level=logging_level.upper(),
-        filename=f"{p}/match_words_in_aligned_verse.log",
+        filename=f"{path}/match_words_in_aligned_verse.log",
         filemode="a",
     )
     logging.info("START RUN")
@@ -325,7 +344,9 @@ def run_match(
     keys_index_cache_file = cache_dir / f"{keys_list_name}-index-cache.json"
     values_index_cache_file = cache_dir / f"{values_list_name}-index-cache.json"
 
-    matches_file = p / f"{keys_list_name}_{values_list_name}-dictionary.json"
+    matches_file = path / f"{keys_list_name}_{values_list_name}-dictionary.json"
+    reverse_matches_file = reverse_path / f"{values_list_name}_{keys_list_name}-dictionary.json"
+
     ref_df = get_combined_df(source, target, keys_list_name, values_list_name, outpath)
     logging.info(f"Total verses: {len(ref_df)}")
 
@@ -373,26 +394,29 @@ def run_match(
     }
 
     matches = {}
+    reverse_matches={}
 
     print("Getting matches...")
     for index, row in tqdm(ref_df.iterrows(), total=ref_df.shape[0]):
         keys: List[str] = list(set(row["keys"]))
         values: List[str] = list(set(row["values"]))
-        matches, js_cache = update_matches_for_lists(
+        matches, reverse_matches, js_cache = update_matches_for_lists(
             keys,
             values,
             matches=matches,
+            reverse_matches=reverse_matches,
             js_cache=js_cache,
             keys_index=keys_index,
             values_index=values_index,
             jaccard_similarity_threshold=jaccard_similarity_threshold,
             count_threshold=count_threshold,
         )
-    logging.info(f"Matches: {matches}")
+    # logging.info(f"Matches: {matches}")
 
     write_dictionary_to_file(js_cache, js_cache_file, to_strings=True)
     write_dictionary_to_file(matches, matches_file)
-    logging.info(f"Matches: {matches}")
+    write_dictionary_to_file(reverse_matches, reverse_matches_file)
+
     logging.info("END RUN")
 
 

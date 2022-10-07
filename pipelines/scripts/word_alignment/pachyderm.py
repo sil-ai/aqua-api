@@ -16,32 +16,42 @@ def main():
             file = Path(file)
             for ref_dirpath, _, ref_files in os.walk(ref_dir):
                 for ref_file in ref_files:
-                    print(f"File 2: {ref_file}")
+                    if ref_file != 'vref.txt':
+                        print(f"File 2: {ref_file}")
 
-                    ref_file = Path(ref_file)
-                    if file != ref_file:
-                        out_file = outpath / f'{file.stem}_{ref_file.stem}_match' / f'{file.stem}-{ref_file.stem}_ref_df.csv'
-                        print(out_file)
-                        if not out_file.exists():
-                            run_fa(
-                                Path(os.path.join(dirpath, file)), 
-                                Path(os.path.join(ref_dirpath, ref_file)), 
-                                word_score_threshold, 
-                                Path(outpath), 
-                                'True'
-                                )
-                        run_match_words(
-                                        Path(os.path.join(dirpath, file)), 
-                                        Path(os.path.join(ref_dirpath, ref_file)), 
-                                        Path(outpath), 
-                                        jaccard_similarity_threshold=jaccard_similarity_threshold, 
-                                        count_threshold=count_threshold,
-                                        refresh_cache=False
-                                        )
-                    df = combine_df(outpath, file.stem, ref_file.stem)
-                    #save results
-                    print(df['jac_sim'])
-                    df.to_csv(outpath / f'{file.stem}_combined.csv')
+                        ref_file = Path(ref_file)
+                        if file != ref_file:
+                            out_file = outpath / f'{file.stem}_{ref_file.stem}_match' / f'{file.stem}-{ref_file.stem}_ref_df.csv'
+                            print(out_file)
+                            # if not out_file.exists():
+                            #     run_fa(
+                            #         Path(os.path.join(dirpath, file)), 
+                            #         Path(os.path.join(ref_dirpath, ref_file)), 
+                            #         word_score_threshold, 
+                            #         Path(outpath), 
+                            #         'True'
+                            #         )
+                            # run_match_words(
+                            #                 Path(os.path.join(dirpath, file)), 
+                            #                 Path(os.path.join(ref_dirpath, ref_file)), 
+                            #                 Path(outpath), 
+                            #                 jaccard_similarity_threshold=jaccard_similarity_threshold, 
+                            #                 count_threshold=count_threshold,
+                            #                 refresh_cache=False
+                            #                 )
+                        df = combine_df(outpath, file.stem, ref_file.stem)
+                        reverse_df = combine_df(outpath, ref_file.stem, file.stem)
+
+                        #save results
+                        path = outpath / f'{file.stem}_{ref_file.stem}_combined'
+                        if not path.exists():
+                            path.mkdir(exist_ok=True)
+                        reverse_path = outpath / f'{ref_file.stem}_{file.stem}_combined'
+                        if not reverse_path.exists():
+                            reverse_path.mkdir(exist_ok=True)
+                        df.to_csv(path / f'{file.stem}_{ref_file.stem}_combined.csv')
+                        reverse_df.to_csv(reverse_path / f'{ref_file.stem}_{file.stem}_combined.csv')
+
 
 if __name__ == "__main__":
     main()
