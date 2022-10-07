@@ -46,7 +46,6 @@ def normalize_word(word):
         re.sub("[^\w\s]", "", word.lower()) if word else ""
     )  #  Gives 18,159 unique words in the OT
     # return unicodedata.normalize('NFD', word)  # This does much less normalisation, and still gives 87,564 unique words in the OT
-    # return text.lower().replace('.', '').replace(',', '').replace('?', '').replace('!', '').split()
 
 
 def get_bible_data(bible: Path) -> pd.DataFrame:
@@ -283,19 +282,13 @@ def get_combined_df(
     Outputs:
         ref_df:     A dataframe that combines the keys and values data into a single dataframe by Bible verse
     """
-    # p = str(f"{outpath}/{keys_list_name.split('.')[0]}-{values_list_name.split('.')[0]}")
     p = outpath / f"{keys_list_name}_{values_list_name}_match"
 
-    # keys_ref_df_path = p / f'{keys_list_name.stem}_ref_df.parquet'
-    # values_ref_df_path = p / f'{values_list_name.stem}_ref_df.parquet'
-
     keys_ref_df = get_single_df(
-        # keys_ref_df_path,
         source,
         list_name="keys",
     )
     values_ref_df = get_single_df(
-        # values_ref_df_path,
         target,
         list_name="values",
     )
@@ -318,9 +311,7 @@ def run_match(
     refresh_cache: bool = False,
 ) -> None:
     keys_list_name = source.stem
-    # keys_list_name = source.split('/')[-1]
     values_list_name = target.stem
-    # values_list_name = target.split('/')[-1]
 
     path = outpath / f"{keys_list_name}_{values_list_name}_match"
     reverse_path = outpath / f"{values_list_name}_{keys_list_name}_match"

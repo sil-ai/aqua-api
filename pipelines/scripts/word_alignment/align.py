@@ -2,37 +2,50 @@
 import argparse
 import string
 import os
+import sys
 
+from unicodedata import category
 import pandas as pd
 from tqdm import tqdm
 from machine.corpora import TextFileTextCorpus
 from machine.tokenization import LatinWordTokenizer
 from machine.translation import SymmetrizationHeuristic
 
-from machine.translation.thot import ThotFastAlignWordAlignmentModel, ThotSymmetrizedWordAlignmentModel
+from machine.translation.thot import (
+    ThotFastAlignWordAlignmentModel,
+    ThotSymmetrizedWordAlignmentModel,
+)
 from pathlib import Path
 
+
 def write_condensed_files(src_file: Path, trg_file: Path) -> None:
-    #open files
+    # open files
     with open(src_file) as f:
         src_data = f.readlines()
     with open(trg_file) as f:
         trg_data = f.readlines()
-    
+
     min_len = min(len(src_data), len(trg_data))
     src_data = src_data[:min_len]
     trg_data = trg_data[:min_len]
-    
-    #make into df
-    df = pd.DataFrame({'src':src_data, 'trg':trg_data})
+
+    # make into df
+    df = pd.DataFrame({"src": src_data, "trg": trg_data})
 
     # remove lines that contain \n in either src or trg
     df = df[df.src != "\n"]
     df = df[df.trg != "\n"]
 
     # remove punctuation
+    punctuation_chars = ""
+    for i in range(sys.maxunicode):
+        if category(chr(i)).startswith("P"):
+            punctuation_chars += chr(i)
+
     df["src"] = df["src"].str.replace("[{}]".format(string.punctuation), "", regex=True)
+    df["src"] = df["src"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
     df["trg"] = df["trg"].str.replace("[{}]".format(string.punctuation), "", regex=True)
+    df["trg"] = df["trg"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
 
     # make lowercase
     df["src"] = df["src"].str.lower()
@@ -112,7 +125,7 @@ def get_vrefs(src_file, trg_file, is_bible):
         vrefs = [line.strip() for line in vrefs]
     else:
         vrefs = [str(i) for i in range(len(src_data))]
-    
+
     min_len = min(len(src_data), len(trg_data), len(vrefs))
     src_data = src_data[:min_len]
     trg_data = trg_data[:min_len]
@@ -142,9 +155,11 @@ def apply_threshold(df, threshold):
     no_dups = no_dups[no_dups["word score"] >= threshold]
     return no_dups
 
-  
-def run_align(src_file: Path, trg_file: Path, threshold: float, outpath: Path, is_bible):
-    #remove empty lines
+
+def run_align(
+    src_file: Path, trg_file: Path, threshold: float, outpath: Path, is_bible
+):
+    # remove empty lines
     write_condensed_files(src_file, trg_file)
 
     # get vrefs
@@ -200,11 +215,13 @@ def run_align(src_file: Path, trg_file: Path, threshold: float, outpath: Path, i
 if __name__ == "__main__":
     # command line args
     parser = argparse.ArgumentParser(description="Argparser")
-    parser.add_argument('--source', type=Path, help='source translation')
-    parser.add_argument('--target', type=Path, help='target translation')
-    parser.add_argument('--threshold', type=float, default=0.5, help='word score threshold {0,1}')
-    parser.add_argument('--outpath', type=Path, help='where to write results')
-    parser.add_argument('--is-bible', type=str, default='False', help='is bible data?')
+    parser.add_argument("--source", type=Path, help="source translation")
+    parser.add_argument("--target", type=Path, help="target translation")
+    parser.add_argument(
+        "--threshold", type=float, default=0.5, help="word score threshold {0,1}"
+    )
+    parser.add_argument("--outpath", type=Path, help="where to write results")
+    parser.add_argument("--is-bible", type=str, default="False", help="is bible data?")
     args, unknown = parser.parse_known_args()
 
     run_align(args.source, args.target, args.threshold, args.outpath, args.is_bible)

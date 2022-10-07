@@ -25,3 +25,18 @@ def test_run_fa():
     os.remove("fixtures/src_trg_align/in_context.csv")
     os.remove("fixtures/src_trg_align/vref_scores.csv")
     os.rmdir("fixtures/src_trg_align")
+
+
+def test_run_match_words():
+    src_file = Path("fixtures/src.txt")
+    trg_file = Path("fixtures/trg.txt")
+    outpath = Path("fixtures")
+    combined.run_match_words(src_file, trg_file, outpath, 0.5, 5, False)
+    assert os.path.exists("fixtures/src_trg_match/src_trg-dictionary.json")
+    # empty contents of dir and delete
+    for f in os.listdir("fixtures/src_trg_match"):
+        os.remove(os.path.join("fixtures/src_trg_match", f))
+    for f in os.listdir("fixtures/cache"):
+        os.remove(os.path.join("fixtures/cache", f))
+    os.rmdir("fixtures/src_trg_match")
+    os.rmdir("fixtures/cache")
