@@ -84,27 +84,36 @@ def train_model(corpus):
     return symmetrized_model
 
 
-def get_alignments(model, corpus, vrefs):
-    data = {"vref": [], "source": [], "target": [], "word score": [], "verse score": []}
-    alignments = model.get_best_alignment_batch(corpus.lowercase().to_tuples())
+def get_alignment_scores(model, corpus, vrefs):
+    data = {"vref": [], "source": [], "target": [], "word score": []}
+    # alignments = model.get_best_alignment_batch(corpus.lowercase().to_tuples())
+    # c = 0
+    # for source_segment, target_segment, alignment in tqdm(alignments):
+    #     pair_indices = alignment.to_aligned_word_pairs()
+    #     verse_score = model.get_avg_translation_score(
+    #         source_segment, target_segment, alignment
+    #     )
+    #     vref = vrefs[c]
+    #     c = c + 1
+    #     for pair in pair_indices:
+    #         score = model.get_translation_score(
+    #             source_segment[pair.source_index], target_segment[pair.target_index]
+    #         )
+    #         data["source"].append(source_segment[pair.source_index])
+    #         data["target"].append(target_segment[pair.target_index])
+    #         data["word score"].append(score)
+    #         data["verse score"].append(verse_score)
+    #         data["vref"].append(vref)
     c = 0
-    for source_segment, target_segment, alignment in tqdm(alignments):
-        pair_indices = alignment.to_aligned_word_pairs()
-        verse_score = model.get_avg_translation_score(
-            source_segment, target_segment, alignment
-        )
+    for source_verse, target_verse in tqdm(corpus.lowercase().to_tuples(), total=22815):
         vref = vrefs[c]
         c = c + 1
-        for pair in pair_indices:
-            score = model.get_translation_score(
-                source_segment[pair.source_index], target_segment[pair.target_index]
-            )
-            data["source"].append(source_segment[pair.source_index])
-            data["target"].append(target_segment[pair.target_index])
-            data["word score"].append(score)
-            data["verse score"].append(verse_score)
-            data["vref"].append(vref)
-
+        for word1 in source_verse:
+            for word2 in target_verse:
+                data["source"].append(word1)
+                data["target"].append(word2)
+                data["word score"].append(model.get_translation_score(word1, word2))
+                data["vref"].append(vref)
     df = pd.DataFrame(data)
     return df
 
@@ -133,11 +142,11 @@ def get_vrefs(src_file, trg_file, is_bible):
     return df["vref"].tolist()
 
 
-def get_vref_scores(df):
-    # remove duplicate verses
-    df = df.drop_duplicates(subset=["vref"])
-    vref_df = df[["vref", "verse score"]]
-    return vref_df
+# def get_vref_scores(df):
+#     # remove duplicate verses
+#     df = df.drop_duplicates(subset=["vref"])
+#     vref_df = df[["vref", "verse score"]]
+#     return vref_df
 
 
 def apply_threshold(df, threshold):
@@ -169,39 +178,39 @@ def run_align(
 
     # Get alignments
     print("Getting alignments...")
-    df = get_alignments(symmetrized_model, parallel_corpus, vrefs)
+    df = get_alignment_scores(symmetrized_model, parallel_corpus, vrefs)
 
-    print("Getting reverse alignments...")
-    reverse_df = get_alignments(symmetrized_model.inverse_word_alignment_model, parallel_corpus.invert(), vrefs)
+    # print("Getting reverse alignments...")
+    # reverse_df = get_alignment_scores(symmetrized_model.inverse_word_alignment_model, parallel_corpus.invert(), vrefs)
 
     # Get verse scores
-    vref_df = get_vref_scores(df)
-    reverse_vref_df = get_vref_scores(reverse_df)
+    # vref_df = get_vref_scores(df)
+    # reverse_vref_df = get_vref_scores(reverse_df)
 
     # Apply threshold
     no_dups = apply_threshold(df, threshold)
-    reverse_no_dups = apply_threshold(reverse_df, threshold)
+    # reverse_no_dups = apply_threshold(reverse_df, threshold)
 
 
     #write results to csv
     path = outpath / f'{src_file.stem}_{trg_file.stem}_align'
-    reverse_path = outpath / f'{trg_file.stem}_{src_file.stem}_align'
+    # reverse_path = outpath / f'{trg_file.stem}_{src_file.stem}_align'
 
     
     #if dir doesn't exist, create it
     if not path.exists():
         path.mkdir()
-    if not reverse_path.exists():
-        reverse_path.mkdir()
+    # if not reverse_path.exists():
+        # reverse_path.mkdir()
     
     no_dups.to_csv(path / "sorted.csv")
-    reverse_no_dups.to_csv(reverse_path / "sorted.csv")
+    # reverse_no_dups.to_csv(reverse_path / "sorted.csv")
 
     df.to_csv(path / "in_context.csv")
-    reverse_df.to_csv(reverse_path / "in_context.csv")
+    # reverse_df.to_csv(reverse_path / "in_context.csv")
     
-    vref_df.to_csv(path / "vref_scores.csv")
-    reverse_vref_df.to_csv(reverse_path / "vref_scores.csv")
+    # vref_df.to_csv(path / "vref_scores.csv")
+    # reverse_vref_df.to_csv(reverse_path / "vref_scores.csv")
 
     # delete temp files
     os.remove("src_condensed.txt")
