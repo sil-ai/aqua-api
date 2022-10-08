@@ -58,20 +58,31 @@ def get_scores_from_match_dict(
 def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
     # open results
     print(f"Combining results from the two algorithms from {s} to {t}")
-    align_path = outpath / f"{s}_{t}_align/sorted.csv"
+    align_path = outpath / f"{s}_{t}_align/all_sorted.csv"
+    best_path = outpath / f"{s}_{t}_align_best/best_sorted.csv"
     match_path = outpath / f"{s}_{t}_match/{s}_{t}-dictionary.json"
-    fa_results = pd.read_csv(align_path)
-    fa_results.loc[:, "normalized_source"] = fa_results["source"].apply(
+
+    all_results = pd.read_csv(align_path)
+    best_results = pd.read_csv(best_path)
+    all_results = all_results.merge(best_results, how='left', on=['source', 'target'])
+    all_results = all_results.rename(columns = {'align_count_x': 'co-occurrences', 'word score': 'FA_translation_score', 'align_count_y': 'FA_align_count', 'verse score': 'FA_verse_score'})
+    all_results.loc[:, ['avg_aligned']] = all_results.apply(lambda row: row['FA_align_count'] / row['co-occurrences'], axis = 1)
+    all_results.loc[:, 'FA_align_count'] = all_results.loc[:, 'FA_align_count'].apply(lambda x: 0 if pd.isnull(x) else x)
+    all_results.loc[:, 'verse score'] = all_results.loc[:, 'FA_verse_score'].apply(lambda x: 0 if pd.isnull(x) else x)
+    all_results.loc[:, 'avg_aligned'] = all_results.loc[:, 'avg_aligned'].apply(lambda x: 0 if pd.isnull(x) else x)
+    all_results.loc[:, 'alignment_count'] = all_results.loc[:, 'alignment_count'].apply(lambda x: 0 if pd.isnull(x) else x)
+    all_results.loc[:, 'FA_translation_score'] = all_results.loc[:, 'FA_translation_score'].apply(lambda x: 0 if x < 0.00001 else x)
+    all_results.loc[:, "normalized_source"] = all_results["source"].apply(
         match.normalize_word
     )
-    fa_results.loc[:, "normalized_target"] = fa_results["target"].apply(
+    all_results.loc[:, "normalized_target"] = all_results["target"].apply(
         match.normalize_word
     )
 
     match_results = json.load(open(match_path))
 
     # write to df and merge with fa results
-    df = fa_results
+    df = all_results
     df.loc[:, "jac_sim"] = df.progress_apply(
         lambda x: get_scores_from_match_dict(
             match_results, x["normalized_source"], x["normalized_target"]
@@ -85,7 +96,7 @@ def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
         axis=1,
     )
 
-    df.drop(columns=["Unnamed: 0"], inplace=True)
+    df.drop(columns=["Unnamed: 0_x", "Unnamed: 0_y"], inplace=True)
     return df
 
 

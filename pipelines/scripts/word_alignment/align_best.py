@@ -10,7 +10,7 @@ from tqdm import tqdm
 from machine.corpora import TextFileTextCorpus
 from machine.tokenization import LatinWordTokenizer
 from machine.translation import SymmetrizationHeuristic
-from align import write_condensed_files, create_corpus, train_model, get_vrefs, apply_threshold
+from align import write_condensed_files, create_corpus, train_model, get_vrefs
 
 from machine.translation.thot import (
     ThotFastAlignWordAlignmentModel,
@@ -20,7 +20,7 @@ from pathlib import Path
 
 
 def get_alignments(model, corpus, vrefs):
-    data = {"vref": [], "source": [], "target": [], "word score": [], "verse score": []}
+    data = {"vref": [], "source": [], "target": [], "alignment_count": [], "verse score": []}
     alignments = model.get_best_alignment_batch(corpus.lowercase().to_tuples())
     c = 0
     for source_segment, target_segment, alignment in tqdm(alignments):
@@ -36,7 +36,8 @@ def get_alignments(model, corpus, vrefs):
             )
             data["source"].append(source_segment[pair.source_index])
             data["target"].append(target_segment[pair.target_index])
-            data["word score"].append(score)
+            # data["word score"].append(score)
+            data["alignment_count"] = 1
             data["verse score"].append(verse_score)
             data["vref"].append(vref)
 
@@ -49,6 +50,17 @@ def get_vref_scores(df):
     df = df.drop_duplicates(subset=["vref"])
     vref_df = df[["vref", "verse score"]]
     return vref_df
+
+def apply_threshold(df, threshold):
+    # remove duplicates and average out verse and word scores
+    dups = df.groupby(["source", "target"]).size().reset_index()
+    avgs = df.groupby(["source", "target"]).mean().reset_index()
+    no_dups = pd.merge(dups, avgs)
+    no_dups.rename(columns={0: "align_count"}, inplace=True)
+
+    # apply threshold
+    no_dups = no_dups[no_dups["alignment_count"] >= threshold]
+    return no_dups
 
 
 def run_align(
@@ -84,7 +96,7 @@ def run_align(
     reverse_no_dups = apply_threshold(reverse_df, threshold)
 
     # write results to csv
-    outpath = outpath / f"{src_file.stem}{trg_file.stem}_align_best"
+    # outpath = outpath / f"{src_file.stem}{trg_file.stem}_align_best"
     if not outpath.exists():
         outpath.mkdir(parents=True)
     path = outpath / f"{src_file.stem}_{trg_file.stem}_align_best"
