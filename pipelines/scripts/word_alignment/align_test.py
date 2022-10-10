@@ -1,14 +1,20 @@
+from cmath import isfinite
 import os
+import pytest
 
 from pathlib import Path
 import align
 import pandas as pd
 from machine.translation.thot import ThotSymmetrizedWordAlignmentModel
 
+@pytest.mark.parametrize("source,target,expected", [
+                                                    ("fixtures/src.txt", "fixtures/trg.txt", None), 
+                                                    ("fixtures/de-LU1912.txt", "fixtures/en-KJV.txt", None),
+                                                    ("fixtures/de-LU1912_some_missing.txt", "fixtures/en-KJV_some_missing.txt", None),
+                                                    ])
+def test_write_condensed_files(source, target, expected):
 
-def test_write_condensed_files():
-
-    align.write_condensed_files(Path("fixtures/src.txt"), Path("fixtures/trg.txt"))
+    align.write_condensed_files(Path(source), Path(target))
 
     # check that files exist
     assert os.path.exists("fixtures/src.txt")
@@ -17,9 +23,9 @@ def test_write_condensed_files():
     assert os.path.exists("trg_condensed.txt")
 
     # open the files
-    with open("fixtures/src.txt", "r") as f:
+    with open(source, "r") as f:
         src_data = f.readlines()
-    with open("fixtures/trg.txt", "r") as f:
+    with open(target, "r") as f:
         trg_data = f.readlines()
     with open("src_condensed.txt", "r") as f:
         src_data_c = f.readlines()
@@ -43,29 +49,47 @@ def test_write_condensed_files():
     os.remove("src_condensed.txt")
     os.remove("trg_condensed.txt")
 
-
-def test_create_corpus():
-    corpus = align.create_corpus(Path("fixtures/src.txt"), Path("fixtures/trg.txt"))
+@pytest.mark.parametrize("source,target", [
+                                                    ("fixtures/src.txt", "fixtures/trg.txt"), 
+                                                    ("fixtures/de-LU1912.txt", "fixtures/en-KJV.txt"),
+                                                    ("fixtures/de-LU1912_some_missing.txt", "fixtures/en-KJV_some_missing.txt"),
+                                                    ])
+def test_create_corpus(source, target):
+    corpus = align.create_corpus(Path(source), Path(target))
     assert corpus is not None
+    # print(next(corpus.to_tuples()))
+    first_item_source = next(corpus.to_tuples())[0]
+    first_item_target = next(corpus.to_tuples())[1]
+    assert isinstance(first_item_source, list)
+    assert isinstance(first_item_target, list)
+    if len(first_item_source) > 0:
+        assert isinstance(first_item_source[0], str)
+    if len(first_item_target) > 0:
+        assert isinstance(first_item_target[0], str)
 
-
-def test_train_model():
-    corpus = align.create_corpus(Path("fixtures/src.txt"), Path("fixtures/trg.txt"))
+@pytest.mark.parametrize("source,target", [
+                                                    ("fixtures/src.txt", "fixtures/trg.txt"), 
+                                                    ])
+def test_train_model(source, target):
+    corpus = align.create_corpus(Path(source), Path(target))
     model = align.train_model(corpus)
     assert model is not None
     assert type(model) == ThotSymmetrizedWordAlignmentModel
 
-
-def test_get_alignment_scores():
-    src_file = Path("fixtures/src.txt")
-    trg_file = Path("fixtures/trg.txt")
+@pytest.mark.parametrize("source,target", [
+                                                    ("fixtures/src.txt", "fixtures/trg.txt"), 
+                                                    ])
+def test_get_alignment_scores(source, target):
+    src_file = Path(source)
+    trg_file = Path(target)
     vrefs = align.get_vrefs(src_file, trg_file, False)
-    corpus = align.create_corpus(Path("fixtures/src.txt"), Path("fixtures/trg.txt"))
+    corpus = align.create_corpus(Path(source), Path(target))
     model = align.train_model(corpus)
     alignments = align.get_alignment_scores(model, corpus, vrefs)
-
-    assert type(alignments) == pd.DataFrame
+    # reverse_alignments = align.get_alignment_scores(model.inverse_word_alignment_model, corpus.invert(), vrefs)
+    assert isinstance(alignments, pd.DataFrame)
     assert len(alignments) > 0
+    # assert alignments == reverse_alignments
 
 
 def test_get_vrefs():
