@@ -1,6 +1,5 @@
 import re
 import argparse
-import logging
 import numpy as np
 import pandas as pd
 import logging
@@ -17,18 +16,19 @@ class SplitRevision:
         self.input_filepath = args.input
         self.output_filepath = args.out
         self.num = args.num
-        revision_file = self.get_revision_file()
-        self.revision_list = self.build_revision_list(revision_file)
+        self.revision_df = self.get_revision_file()
+        #self.revision_list = self.build_revision_list(revision_file)
 
     def get_revision_file(self):
-        return open(self.input_filepath).read().splitlines()
+        return pd.read_csv(self.input_filepath)
+        #return open(self.input_filepath).read().splitlines()
 
-    @staticmethod
-    def build_revision_list(revision_file):
-        #TODO: better way to pass vref to these classes
-        vref = open('vref.txt').read().splitlines()
-        #put reference and verse together and strip out missing verses
-        return [item for item in list(zip(vref,revision_file)) if item[1]]
+    # @staticmethod
+    # def build_revision_list(revision_file):
+    #     #TODO: better way to pass vref to these classes
+    #     vref = open('vref.txt').read().splitlines()
+    #     #put reference and verse together and strip out missing verses
+    #     return [item for item in list(zip(vref,revision_file)) if item[1]]
 
     @staticmethod
     def get_args():
@@ -49,19 +49,20 @@ class SplitRevision:
     def split_revision(self):
         #split revision list into roughly 'num' chunks
         logging.info(f'Splitting revision into {self.num} chunks...')
-        return np.array_split(self.revision_list, self.num)
+        return np.array_split(self.revision_df, self.num)
 
     def output_split_revisions(self, split_revisions):
-        regex_string = r'(?!.*\/)(.*)\.txt'
+        regex_string = r'(?!.*\/)(.*)\.csv'
         regex = re.compile(regex_string)
         input_filename = regex.search(self.input_filepath).groups()[0]
         #!!! Note chunk file numbering starts with zero
+        import ipdb; ipdb.set_trace()
         for idx in range(self.num):
             output_filename = f'{self.output_filepath}/{input_filename}_chunk{idx}.csv'
             output_file = pd.DataFrame(split_revisions[idx])
             #outputs the idxth chunk of split_revisions to outputname file
-            #without index or headers
-            output_file.to_csv(output_filename, index=False, header=False)
+            #without index and has headers
+            output_file.to_csv(output_filename, index=False, header=True)
         logging.info(f'Revision chunks written to {self.output_filepath}')
 
 if __name__ == '__main__':
