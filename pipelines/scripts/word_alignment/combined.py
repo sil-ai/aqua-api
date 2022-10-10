@@ -209,8 +209,8 @@ if __name__ == "__main__":
     )
 
     # combine results
-    df = combine_df(path, args.source.stem, args.target.stem)
-    reverse_df = combine_df(reverse_path, args.target.stem, args.source.stem)
+    df = combine_df(args.outpath, args.source.stem, args.target.stem)
+    reverse_df = combine_df(args.outpath, args.target.stem, args.source.stem)
 
     # save results
     df.to_csv(path / f"{args.source.stem}_{args.target.stem}_combined.csv")
