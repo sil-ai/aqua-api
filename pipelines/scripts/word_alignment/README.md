@@ -88,16 +88,22 @@ A directory containing cache, a log, and a json file with the word alignments.
 Combines `align.py` and `match.py`. Takes about 20 minutes to align two bible texts. 
 vrefs are from [here](https://github.com/sil-ai/aqua-api/tree/master/fixtures)
 ### Suggested Usage:
-`python combined.py --source path/to/source/file --target path/to/target/file --is-bible True --outpath /path/to/output/location`
+`python combined.py --source path/to/source/file --target path/to/target/file --is-bible --outpath /path/to/output/location`
 
 ### Output:
 A directory containing:
 
-1) a directory with fast_align data
-2) a directory with match_words_in_aligned_verse data
-3) a csv with the combined data from both algorithms. 
+1) a directory with fast_align data (in `_align` directory)
+2) a directory with fast_align "best" data (in `_align_best` directory)
+2) a directory with match_words_in_aligned_verse data (in `_match` directory)
+3) a csv with the combined data from both algorithms (in `_combined` directory)
 
-*(Note: If an alignment is predicted by one algorithm but not the other, this will be represented by -1 in the combined dataframe.)*
+Note that the main output is the `_combined.csv` file in the `_combined` directory. This file lists all source-target combinations, with three metrics:
+    `FA_translation_score`:     The translation score the Fast Align trained model gives for these two words
+    `avg_aligned`:              The proportion of times the Fast Align trained model aligned these two words when they appeared together.
+    `jac_sim`:                  The Jaccard Similarity of the lines where the source appears and the lines where the target appears.
+
+These three metrics are somewhat independent of each other, and can be combined to give a score as to how well the two words correlate with each other.
 
 ### Arguments:
 
@@ -111,7 +117,7 @@ A directory containing:
 
 `--jaccard-similarity-threshold`  (default=`0.5`)  The Jaccard similarity threshold
 
-`--is-bible`  (default=`False`)  If `True`, will refer to lines by their verse references in the fast_align output files
+`--is-bible`  If present, output will refer to lines by their verse references
 
 `--count-threshold`  (default=`1`)  The threshold for count in match_words_in_aligned_verse (if it also meets the jaccard-similarity-threshold).
 
