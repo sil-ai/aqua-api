@@ -45,11 +45,12 @@ def test_merge_output(valuestorage, tmp_path):
         merged_file = pd.read_csv(filepath)
         #check the filetype is csv
         assert str(filepath).split('.')[-1]=='csv', 'File is not csv'
-        #each column should be the same length as vref
-        assert len(merged_file.loc[:,'target']) == len(mr.vref)
-        assert len(merged_file.loc[:,'reference']) == len(mr.vref)
+        #each column should be the same length as each other
+        assert len(merged_file.loc[:,'target']) == len(merged_file.loc[:,'reference'])
+        #each column should have a reference
+
         #test random file contents
-        idx_list = random.sample(range(len(mr.vref)),5)
+        idx_list = random.sample(range(len(merged_file)),5)
         for idx in idx_list:
             assert merged_file.loc[idx,'target'] == merged_file.loc[idx,'reference']
     except Exception as err:

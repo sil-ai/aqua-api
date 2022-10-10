@@ -52,9 +52,11 @@ class MergeRevision:
             raise ValueError('Target and/or reference length don\'t match vref')
         else:
             #merge the two revisions together
-            merged_revisions = pd.DataFrame({'target':self.target, 'reference': self.reference})
+            merged_revisions = pd.DataFrame({'target':self.target, 'reference': self.reference},index=self.vref)
+            #remove verses/rows in merged_revisions that are not in reference
+            merged_revisions1 = merged_revisions[merged_revisions['target']!='']
             logging.info(f'Revision {self.get_revision_id(self.args.target)} and {self.get_revision_id(self.args.reference)} are merged')
-            return merged_revisions
+            return merged_revisions1
 
     @staticmethod
     def get_revision_id(filename):
@@ -65,7 +67,8 @@ class MergeRevision:
         reference_revision = self.get_revision_id(self.args.reference)
         filename = f'{target_revision}_{reference_revision}_merge.csv'
         filepath = self.args.out + '/' + filename
-        merged_revisions.to_csv(filepath, index=False)
+        #in the format bible_ref, target_verse, reference_verse
+        merged_revisions.to_csv(filepath, index=True)
         logging.info(f'{filename} created in {self.args.out}')
 
 if __name__ == '__main__':
