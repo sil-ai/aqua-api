@@ -112,10 +112,10 @@ def get_vrefs(src_file, trg_file, is_bible: bool):
     else:
         vrefs = [str(i) for i in range(len(src_data))]
 
-    min_len = min(len(src_data), len(trg_data), len(vrefs))
-    src_data = src_data[:min_len]
-    trg_data = trg_data[:min_len]
-    vrefs = vrefs[:min_len]
+    # min_len = min(len(src_data), len(trg_data), len(vrefs))
+    # src_data = src_data[:min_len]
+    # trg_data = trg_data[:min_len]
+    # vrefs = vrefs[:min_len]
 
     df = pd.DataFrame({"vref": vrefs, "src": src_data, "trg": trg_data})
     df = df[df.src != "\n"]

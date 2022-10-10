@@ -48,65 +48,76 @@ def test_write_condensed_files(source, target):
     os.remove(source.parent / "src_condensed.txt")
     os.remove(target.parent / "trg_condensed.txt")
 
-
-def test_create_corpus():
-    corpus = align_best.create_corpus(
-        Path("fixtures/src.txt"), Path("fixtures/trg.txt")
-    )
+@pytest.mark.parametrize("source,target", [
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+                                                    (Path("fixtures/de-LU1912.txt"), Path("fixtures/en-KJV.txt")),
+                                                    (Path("fixtures/de-LU1912_some_missing.txt"), Path("fixtures/en-KJV_some_missing.txt")),
+                                                    ])
+def test_create_corpus(source, target):
+    corpus = align_best.create_corpus(source, target)
     assert corpus is not None
+    first_item_source = next(corpus.to_tuples())[0]
+    first_item_target = next(corpus.to_tuples())[1]
+    assert isinstance(first_item_source, list)
+    assert isinstance(first_item_target, list)
+    if len(first_item_source) > 0:
+        assert isinstance(first_item_source[0], str)
+    if len(first_item_target) > 0:
+        assert isinstance(first_item_target[0], str)
 
-
-def test_train_model():
-    corpus = align_best.create_corpus(
-        Path("fixtures/src.txt"), Path("fixtures/trg.txt")
-    )
+@pytest.mark.parametrize("source,target", [
+                                            (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+                                            ])
+def test_train_model(source, target):
+    corpus = align_best.create_corpus(source, target)
     model = align_best.train_model(corpus)
     assert model is not None
-    assert type(model) == ThotSymmetrizedWordAlignmentModel
+    assert isinstance(model, ThotSymmetrizedWordAlignmentModel)
 
-
-def test_get_alignments():
-    src_file = Path("fixtures/src.txt")
-    trg_file = Path("fixtures/trg.txt")
-    vrefs = align_best.get_vrefs(src_file, trg_file, False)
-    corpus = align_best.create_corpus(
-        Path("fixtures/src.txt"), Path("fixtures/trg.txt")
-    )
+@pytest.mark.parametrize("source,target", [
+                                            (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+                                            ])
+def test_get_alignments(source, target):
+    vrefs = align_best.get_vrefs(source, target, False)
+    corpus = align_best.create_corpus(source, target)
     model = align_best.train_model(corpus)
     alignments = align_best.get_alignments(model, corpus, vrefs)
 
     assert type(alignments) == pd.DataFrame
     assert len(alignments) > 0
 
-
-def test_get_vrefs():
-    src_file = Path("fixtures/src.txt")
-    trg_file = Path("fixtures/trg.txt")
+@pytest.mark.parametrize("source,target,is_bible", [
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt"), False), 
+                                                    (Path("fixtures/de-LU1912.txt"), Path("fixtures/en-KJV.txt"), True),
+                                                    (Path("fixtures/de-LU1912_some_missing.txt"), Path("fixtures/en-KJV_some_missing.txt"), True),
+                                                    ])
+def test_get_vrefs(source, target, is_bible):
     # get src file length
-    with open(src_file, "r") as f:
+    with open(source, "r") as f:
         src_data = f.readlines()
-    vrefs = align_best.get_vrefs(src_file, trg_file, False)
+    src_non_empty = [line for line in src_data if line != '\n']
+    vrefs = align_best.get_vrefs(source, target, is_bible)
     assert type(vrefs) == list
-    assert len(vrefs) == len(src_data)
+    assert len(vrefs) == len(src_non_empty)
 
-
-def test_get_vref_scores():
-    src_file = Path("fixtures/src.txt")
-    trg_file = Path("fixtures/trg.txt")
-    vrefs = align_best.get_vrefs(src_file, trg_file, False)
-    corpus = align_best.create_corpus(src_file, trg_file)
+@pytest.mark.parametrize("source,target", [
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+                                                    ])
+def test_get_vref_scores(source, target):
+    vrefs = align_best.get_vrefs(source, target, False)
+    corpus = align_best.create_corpus(source, target)
     model = align_best.train_model(corpus)
     alignments = align_best.get_alignments(model, corpus, vrefs)
     vref_scores = align_best.get_vref_scores(alignments)
     assert type(vref_scores) == pd.DataFrame
     assert len(vref_scores) > 0
 
-
-def test_apply_threshold():
-    src_file = Path("fixtures/src.txt")
-    trg_file = Path("fixtures/trg.txt")
-    vrefs = align_best.get_vrefs(src_file, trg_file, False)
-    corpus = align_best.create_corpus(src_file, trg_file)
+@pytest.mark.parametrize("source,target", [
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+                                                    ])
+def test_apply_threshold(source, target):
+    vrefs = align_best.get_vrefs(source, target, False)
+    corpus = align_best.create_corpus(source, target)
     model = align_best.train_model(corpus)
     alignments = align_best.get_alignments(model, corpus, vrefs)
     sorted_alignments = align_best.apply_threshold(alignments, 0.5)
@@ -114,18 +125,18 @@ def test_apply_threshold():
     assert len(sorted_alignments) > 0
     assert len(sorted_alignments) < len(alignments)
 
-
-def test_run_align():
-    src_file = Path("fixtures/src.txt")
-    trg_file = Path("fixtures/trg.txt")
+@pytest.mark.parametrize("source,target", [
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+                                                    ])
+def test_run_align(source, target):
     threshold = 0.5
-    outpath = Path("fixtures")
+    outpath = source.parent
     is_bible = False
 
-    align_best.run_best_align(src_file, trg_file, threshold, outpath, is_bible)
+    align_best.run_best_align(source, target, threshold, outpath, is_bible)
 
     # make out dir
-    outdir = Path("fixtures")
+    outdir = source.parent
     outdir.mkdir(parents=True, exist_ok=True)
 
     # get forwards and backwards dirs
