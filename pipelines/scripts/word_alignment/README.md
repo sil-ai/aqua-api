@@ -93,9 +93,9 @@ vrefs are from [here](https://github.com/sil-ai/aqua-api/tree/master/fixtures)
 ### Output:
 A directory containing:
 
-1) a directory with fast_align data (in `_align` directory)
-2) a directory with fast_align "best" data (in `_align_best` directory)
-2) a directory with match_words_in_aligned_verse data (in `_match` directory)
+1) a directory with align data (in `_align` directory)
+2) a directory with align_best "best" data (in `_align_best` directory)
+2) a directory with match data (in `_match` directory)
 3) a csv with the combined data from both algorithms (in `_combined` directory)
 
 Note that the main output is the `_combined.csv` file in the `_combined` directory. This file lists all source-target combinations, with three metrics:
