@@ -95,10 +95,14 @@ def test_get_vrefs(source, target, is_bible):
     # get src file length
     with open(source, "r") as f:
         src_data = f.readlines()
+    with open(target, "r") as f:
+        trg_data = f.readlines()
     src_non_empty = [line for line in src_data if line != '\n']
+    trg_non_empty = [line for line in trg_data if line != '\n']
+
     vrefs = align_best.get_vrefs(source, target, is_bible)
     assert type(vrefs) == list
-    assert len(vrefs) == len(src_non_empty)
+    assert len(vrefs) <= min(len(src_non_empty), len(trg_non_empty))
 
 @pytest.mark.parametrize("source,target", [
                                                     (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
