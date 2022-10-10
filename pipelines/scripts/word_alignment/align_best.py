@@ -3,6 +3,7 @@ import argparse
 import string
 import os
 import sys
+from typing import List
 
 from unicodedata import category
 import pandas as pd
@@ -19,8 +20,25 @@ from machine.translation.thot import (
 from pathlib import Path
 
 
-def get_alignments(model, corpus, vrefs):
-    data = {"vref": [], "source": [], "target": [], "alignment_count": [], "verse score": []}
+def get_alignments(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: List[str] = None) -> pd.DataFrame:
+    """
+    Takes a corpus and a word alignment model and calculates word alignments for each aligned line.
+    Returns a dataframe with words that have been aligned by the model.
+
+    Inputs:
+    model           A machine.translation.thot.ThotSymmetrizedWordAlignmentModel
+    corpus          A machine.corpora.TextFileTextCorpus of aligned texts
+    vrefs           An optional list of verse references for each aligned line
+
+    Outputs:
+    df                      A dataframe, where each row is an alignment of a source word and a target word.
+        source              The source word
+        target              The target word
+        alignment_count     Integer 1, to later be summed as a count
+        verse_score         The average alignment score for the line in question
+        vref                The verse reference for that line,     if a vref file has been supplied.
+    """
+    data = {"vref": [], "source": [], "target": [], "alignment_count": [], "verse_score": []}
     alignments = model.get_best_alignment_batch(corpus.lowercase().to_tuples())
     c = 0
     for source_segment, target_segment, alignment in tqdm(alignments):
@@ -28,7 +46,7 @@ def get_alignments(model, corpus, vrefs):
         verse_score = model.get_avg_translation_score(
             source_segment, target_segment, alignment
         )
-        vref = vrefs[c]
+        vref = vrefs[c] if vrefs else None
         c = c + 1
         for pair in pair_indices:
             score = model.get_translation_score(
@@ -38,20 +56,41 @@ def get_alignments(model, corpus, vrefs):
             data["target"].append(target_segment[pair.target_index])
             # data["word score"].append(score)
             data["alignment_count"] = 1
-            data["verse score"].append(verse_score)
+            data["verse_score"].append(verse_score)
             data["vref"].append(vref)
 
     df = pd.DataFrame(data)
     return df
 
 
-def get_vref_scores(df):
+def get_vref_scores(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Takes a dataframe that includes both "vref" and "verse_score" columns, and returns
+    a dataframe of just those two columns.
+
+    Inputs:
+    df      A dataframe with both "vref" and "verse_score" columns
+
+    Outputs:
+    vref_df     A dataframe with just "vref" and "verse_score" columns
+    """
     # remove duplicate verses
     df = df.drop_duplicates(subset=["vref"])
-    vref_df = df[["vref", "verse score"]]
+    vref_df = df[["vref", "verse_score"]]
     return vref_df
 
-def apply_threshold(df, threshold):
+def apply_threshold(df: pd.DataFrame, threshold: int) -> pd.DataFrame:
+    """
+    Takes a dataframe of aligned matches, removes duplicate source word / target word combinations,
+    discards those below the threshold and returns the dataframe.
+
+    Inputs:
+    df          A dataframe of alignment matches
+    threshold   A count threshold
+
+    Outputs:
+    no_dups     A dataframe with duplicates removed and align_counts below a threshold removed.
+    """
     # remove duplicates and average out verse and word scores
     dups = df.groupby(["source", "target"]).size().reset_index()
     avgs = df.groupby(["source", "target"]).mean().reset_index()
@@ -59,13 +98,24 @@ def apply_threshold(df, threshold):
     no_dups.rename(columns={0: "align_count"}, inplace=True)
 
     # apply threshold
-    no_dups = no_dups[no_dups["alignment_count"] >= threshold]
+    no_dups = no_dups[no_dups["align_count"] >= threshold]
     return no_dups
 
 
-def run_align(
+def run_best_align(
     src_file: Path, trg_file: Path, threshold: float, outpath: Path, is_bible: bool
-) -> None:
+    ) -> None:
+    """
+    Takes two input text files, runs get_alignments on them, and saves the resulting dataframe
+    to a csv file in a directory within outpath.
+
+    Inputs:
+    src_file           Path to a source text file of line-aligned text
+    trg_file           Path to a target text file of line-aligned text
+    threshold          Threshold over which results are kept
+    outpath            Path to base output directory
+    is_bible           Boolean for whether the text is Bible, and hence vref references should be used.
+    """
     # remove empty lines
     write_condensed_files(src_file, trg_file)
 
@@ -134,4 +184,4 @@ if __name__ == "__main__":
     parser.add_argument("--is-bible", type=bool, action='store_true', help="is bible data")
     args, unknown = parser.parse_known_args()
 
-    run_align(args.source, args.target, args.threshold, args.outpath, args.is_bible)
+    run_best_align(args.source, args.target, args.threshold, args.outpath, args.is_bible)

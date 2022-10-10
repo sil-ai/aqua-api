@@ -16,25 +16,35 @@ from pathlib import Path
 from typing import Tuple
 
 # run fast_align
-def run_fa(source, target, word_score_threshold, path, is_bible, align_best_alignment: bool):
+def run_fa(source, target, word_score_threshold, path, is_bible: bool, align_best_alignment: bool):
     align.run_align(source, target, word_score_threshold, path, is_bible)
     if align_best_alignment:
-        align_best.run_align(source, target, word_score_threshold, path, is_bible)
+        align_best.run_best_align(source, target, word_score_threshold, path, is_bible)
 
 
 # run match words
 def run_match_words(
-    source,
-    target,
-    path,
-    jaccard_similarity_threshold,
-    count_threshold,
-    refresh_cache=False,
-):
+    source: Path,
+    target: Path,
+    outpath: Path,
+    jaccard_similarity_threshold: float,
+    count_threshold: int,
+    refresh_cache: bool=False,
+    ) -> None:
+    """
+    Runs match.run_match with the supplied arguments.
+    Inputs:
+    source      A path to the source text
+    target      A path to the target text
+    outpath     Path to the base output directory
+    jaccard_similarity_threshold        Jaccard similiarty threshold above which word matches will be kept
+    count_threshold                     Count threshold above which word matches will be kept
+    refresh_cache           Force a cache refresh, rather than using cache from the last time the source and/or target were run
+    """
     match.run_match(
         source,
         target,
-        path,
+        outpath,
         "INFO",
         jaccard_similarity_threshold,
         count_threshold,
@@ -44,7 +54,18 @@ def run_match_words(
 
 def get_scores_from_match_dict(
     dictionary: dict, source: str, target: str
-) -> Tuple[float, float]:
+    ) -> Tuple[float, float]:
+    """
+    Takes a source word and a target word, looks them up in the match dictionary and returns the jaccard similarity and count fields for their match.
+    Inputs:
+    dictionary          The match dictionary for look up
+    source              A string word to look up
+    target              A string word to look up
+    
+    Outputs:
+    jac_sim             The jaccard similarity between the source and target in the dictionary
+    match_count         The count between the source and target in the dictionary
+    """
     list_for_source = dictionary.get(source, [])
     match_list = [match for match in list_for_source if match.get("value") == target]
     if len(match_list) == 0:
@@ -56,6 +77,16 @@ def get_scores_from_match_dict(
 
 # combine results
 def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
+    """
+    Reads the outputs saved to file from match.run_match(), align.run_align() and best_align.run_best_align() and saves to a single df
+    Inputs:
+    outpath             Path to the output directory
+    s                   Name of the source input (generally the stem of the filename)
+    t                   Name of the target input (generally the stem of the filename)
+
+    Output:
+    df                  A dataframe containing pairs of source and target words, with metrics from the three algorithms
+    """
     # open results
     print(f"Combining results from the two algorithms from {s} to {t}")
     align_path = outpath / f"{s}_{t}_align/all_sorted.csv"
@@ -65,13 +96,30 @@ def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
     all_results = pd.read_csv(align_path)
     best_results = pd.read_csv(best_path)
     all_results = all_results.merge(best_results, how='left', on=['source', 'target'])
-    all_results = all_results.rename(columns = {'align_count_x': 'co-occurrences', 'word score': 'FA_translation_score', 'align_count_y': 'FA_align_count', 'verse score': 'FA_verse_score'})
-    all_results.loc[:, ['avg_aligned']] = all_results.apply(lambda row: row['FA_align_count'] / row['co-occurrences'], axis = 1)
-    all_results.loc[:, 'FA_align_count'] = all_results.loc[:, 'FA_align_count'].apply(lambda x: 0 if pd.isnull(x) else x)
-    all_results.loc[:, 'verse score'] = all_results.loc[:, 'FA_verse_score'].apply(lambda x: 0 if pd.isnull(x) else x)
-    all_results.loc[:, 'avg_aligned'] = all_results.loc[:, 'avg_aligned'].apply(lambda x: 0 if pd.isnull(x) else x)
-    all_results.loc[:, 'alignment_count'] = all_results.loc[:, 'alignment_count'].apply(lambda x: 0 if pd.isnull(x) else x)
-    all_results.loc[:, 'FA_translation_score'] = all_results.loc[:, 'FA_translation_score'].apply(lambda x: 0 if x < 0.00001 else x)
+    all_results = all_results.rename(columns = {
+                                                'align_count_x': 'co-occurrences', 
+                                                'word score': 'FA_translation_score', 
+                                                'align_count_y': 'FA_align_count', 
+                                                'verse score': 'FA_verse_score',
+                                                })
+    all_results.loc[:, ['avg_aligned']] = all_results.apply(
+        lambda row: row['FA_align_count'] / row['co-occurrences'], axis = 1
+        )
+    all_results.loc[:, 'FA_align_count'] = all_results.loc[:, 'FA_align_count'].apply(
+        lambda x: 0 if pd.isnull(x) else x
+        )
+    all_results.loc[:, 'verse score'] = all_results.loc[:, 'FA_verse_score'].apply(
+        lambda x: 0 if pd.isnull(x) else x
+        )
+    all_results.loc[:, 'avg_aligned'] = all_results.loc[:, 'avg_aligned'].apply(
+        lambda x: 0 if pd.isnull(x) else x
+        )
+    all_results.loc[:, 'alignment_count'] = all_results.loc[:, 'alignment_count'].apply(
+        lambda x: 0 if pd.isnull(x) else x
+        )
+    all_results.loc[:, 'FA_translation_score'] = all_results.loc[:, 'FA_translation_score'].apply(
+        lambda x: 0 if x < 0.00001 else x
+        )
     all_results.loc[:, "normalized_source"] = all_results["source"].apply(
         match.normalize_word
     )
