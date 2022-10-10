@@ -29,7 +29,6 @@ def test_run_fa(source, target):
         source.parent,
         0.5,
         is_bible=False,
-        align_best_alignment=True,
     )
     assert os.path.exists(source.parent / "src_trg_align_best/best_sorted.csv")
     assert os.path.exists(
