@@ -69,7 +69,7 @@ class MergeRevision:
         filename = f'{target_revision}_{reference_revision}_merge.csv'
         filepath = self.args.out + '/' + filename
         #in the format bible_ref, target_verse, reference_verse
-        merged_revisions.to_csv(filepath, index=True)
+        merged_revisions.to_csv(filepath, index=True, header=True)
         logging.info(f'{filename} created in {self.args.out}')
 
 if __name__ == '__main__':
