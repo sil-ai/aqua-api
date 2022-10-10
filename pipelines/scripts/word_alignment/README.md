@@ -118,7 +118,7 @@ These three metrics are somewhat independent of each other, and can be combined 
 
 `--jaccard-similarity-threshold`  (default=`0.5`)  The Jaccard similarity threshold
 
-`--is-bible`  If present, output will refer to lines by their verse references
+`--is-bible`  Boolean: if present, output will refer to lines by their verse references
 
 `--count-threshold`  (default=`1`)  The threshold for count in match_words_in_aligned_verse (if it also meets the jaccard-similarity-threshold).
 
