@@ -117,10 +117,10 @@ def test_run_align():
     outpath = Path("fixtures")
     is_bible = False
 
-    align_best.run_align(src_file, trg_file, threshold, outpath, is_bible)
+    align_best.run_best_align(src_file, trg_file, threshold, outpath, is_bible)
 
     # make out dir
-    outdir = Path("fixtures/srctrg_align_best")
+    outdir = Path("fixtures")
     outdir.mkdir(parents=True, exist_ok=True)
 
     # get forwards and backwards dirs
@@ -154,4 +154,4 @@ def test_run_align():
     # delete dirs
     bwd_dir.rmdir()
     fwd_dir.rmdir()
-    outdir.rmdir()
+    # outdir.rmdir()

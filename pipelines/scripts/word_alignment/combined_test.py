@@ -29,29 +29,29 @@ def test_run_fa():
         False,
         align_best_alignment=True,
     )
-    assert os.path.exists("fixtures/srctrg_align_best/src_trg_align_best/best_sorted.csv")
+    assert os.path.exists("fixtures/src_trg_align_best/best_sorted.csv")
     assert os.path.exists(
-        "fixtures/srctrg_align_best/src_trg_align_best/best_in_context.csv"
+        "fixtures/src_trg_align_best/best_in_context.csv"
     )
     assert os.path.exists(
-        "fixtures/srctrg_align_best/src_trg_align_best/best_vref_scores.csv"
+        "fixtures/src_trg_align_best/best_vref_scores.csv"
     )
-    assert os.path.exists("fixtures/srctrg_align_best/trg_src_align_best/best_sorted.csv")
+    assert os.path.exists("fixtures/trg_src_align_best/best_sorted.csv")
     assert os.path.exists(
-        "fixtures/srctrg_align_best/trg_src_align_best/best_in_context.csv"
+        "fixtures/trg_src_align_best/best_in_context.csv"
     )
     assert os.path.exists(
-        "fixtures/srctrg_align_best/trg_src_align_best/best_vref_scores.csv"
+        "fixtures/trg_src_align_best/best_vref_scores.csv"
     )
 
     # remove all files and dirs
-    for f in os.listdir("fixtures/srctrg_align_best/src_trg_align_best"):
-        os.remove(os.path.join("fixtures/srctrg_align_best/src_trg_align_best", f))
-    for f in os.listdir("fixtures/srctrg_align_best/trg_src_align_best"):
-        os.remove(os.path.join("fixtures/srctrg_align_best/trg_src_align_best", f))
-    os.rmdir("fixtures/srctrg_align_best/src_trg_align_best")
-    os.rmdir("fixtures/srctrg_align_best/trg_src_align_best")
-    os.rmdir("fixtures/srctrg_align_best")
+    for f in os.listdir("fixtures/src_trg_align_best"):
+        os.remove(os.path.join("fixtures/src_trg_align_best", f))
+    for f in os.listdir("fixtures/trg_src_align_best"):
+        os.remove(os.path.join("fixtures/trg_src_align_best", f))
+    os.rmdir("fixtures/src_trg_align_best")
+    os.rmdir("fixtures/trg_src_align_best")
+    # os.rmdir("fixtures")
 
 
 def test_run_match_words():
