@@ -100,11 +100,9 @@ A directory containing:
 
 Note that the main output is the `_combined.csv` file in the `_combined` directory. This file lists all source-target combinations, with three metrics:
     
-`FA_translation_score`:     The translation score the Fast Align trained model gives for these two words
-
-`avg_aligned`:              The proportion of times the Fast Align trained model aligned these two words when they appeared together.
-
-`jac_sim`:                  The Jaccard Similarity of the lines where the source appears and the lines where the target appears.
+* *FA_translation_score`:     The translation score the Fast Align trained model gives for these two words
+* `avg_aligned`:              The proportion of times the Fast Align trained model aligned these two words when they appeared together.
+* `jac_sim`:                  The Jaccard Similarity of the lines where the source appears and the lines where the target appears.
 
 These three metrics are somewhat independent of each other, and can be combined to give a score as to how well the two words correlate with each other.
 
