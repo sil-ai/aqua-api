@@ -155,7 +155,6 @@ if __name__ == "__main__":
     parser.add_argument("--target", type=Path, help="target bible")
     parser.add_argument(
         "--align-best",
-        type=bool,
         action='store_true',
         help="Get only the best alignments",
     )
@@ -171,7 +170,7 @@ if __name__ == "__main__":
         help="Threshold for Jaccard Similarity score to be significant",
         default=0.5,
     )
-    parser.add_argument("--is-bible", type=bool, action='store_true', help="is bible")
+    parser.add_argument("--is-bible", action='store_true', help="is bible")
     parser.add_argument(
         "--count-threshold",
         type=int,
@@ -180,7 +179,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--outpath", type=Path, help="where to store results")
     args, unknown = parser.parse_known_args()
-
     # make output dir
     # s, t, path = make_output_dir(args.source, args.target, args.outpath)
     path = args.outpath / f"{args.source.stem}_{args.target.stem}_combined"
