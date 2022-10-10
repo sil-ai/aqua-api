@@ -3,7 +3,7 @@ import argparse
 import string
 import os
 import sys
-from typing import List
+from typing import List, Tuple
 
 from unicodedata import category
 import pandas as pd
@@ -49,9 +49,6 @@ def get_alignments(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTex
         vref = vrefs[c] if vrefs else None
         c = c + 1
         for pair in pair_indices:
-            score = model.get_translation_score(
-                source_segment[pair.source_index], target_segment[pair.target_index]
-            )
             data["source"].append(source_segment[pair.source_index])
             data["target"].append(target_segment[pair.target_index])
             # data["word score"].append(score)
@@ -103,8 +100,8 @@ def apply_threshold(df: pd.DataFrame, threshold: int) -> pd.DataFrame:
 
 
 def run_best_align(
-    src_path: Path, trg_path: Path, threshold: float, outpath: Path, is_bible: bool
-    ) -> None:
+    src_path: Path, trg_path: Path, outpath: Path, threshold: float=0.0, is_bible: bool=False, parallel_corpus = None, symmetrized_model = None
+    ) -> Tuple[TextFileTextCorpus, ThotSymmetrizedWordAlignmentModel]:
     """
     Takes two input text files, runs get_alignments on them, and saves the resulting dataframe
     to a csv file in a directory within outpath.
@@ -115,6 +112,10 @@ def run_best_align(
     threshold          Threshold over which results are kept
     outpath            Path to base output directory
     is_bible           Boolean for whether the text is Bible, and hence vref references should be used.
+
+    Outputs:
+    TextFileTextCorpus      In case you want to re-use it without training from scratch
+    ThotSymmetrizedWordAlignmentModel       In case you want to re-use it without training from scratch
     """
     # remove empty lines
     write_condensed_files(src_path, trg_path)
@@ -123,10 +124,12 @@ def run_best_align(
     vrefs = get_vrefs(src_path, trg_path, is_bible)
 
     # create parallel corpus
-    parallel_corpus = create_corpus(src_path.parent / "src_condensed.txt", trg_path.parent / "trg_condensed.txt")
+    if not parallel_corpus:
+        parallel_corpus = create_corpus(src_path.parent / "src_condensed.txt", trg_path.parent / "trg_condensed.txt")
 
     # Train fast_align model
-    symmetrized_model = train_model(parallel_corpus)
+    if not symmetrized_model:
+        symmetrized_model = train_model(parallel_corpus)
 
     # Get alignments
     print("Getting alignments...")
@@ -171,6 +174,7 @@ def run_best_align(
     (src_path.parent / "src_condensed.txt").unlink()
     (trg_path.parent / "trg_condensed.txt").unlink()
 
+    return parallel_corpus, symmetrized_model
 
 if __name__ == "__main__":
     # command line args
@@ -184,4 +188,4 @@ if __name__ == "__main__":
     parser.add_argument("--is-bible", type=bool, action='store_true', help="is bible data")
     args, unknown = parser.parse_known_args()
 
-    run_best_align(args.source, args.target, args.threshold, args.outpath, args.is_bible)
+    run_best_align(args.source, args.target, args.outpath, threshold=args.threshold, is_bible=args.is_bible)

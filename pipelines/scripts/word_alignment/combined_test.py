@@ -12,10 +12,9 @@ def test_run_fa(source, target):
     combined.run_fa(
         source,
         target,
-        0.5,
         source.parent,
-        False,
-        align_best_alignment=False,
+        0.5,
+        is_bible=False,
     )
     assert os.path.exists(source.parent / "src_trg_align/all_sorted.csv")
     assert os.path.exists(source.parent / "src_trg_align/all_in_context.csv")
@@ -27,9 +26,9 @@ def test_run_fa(source, target):
     combined.run_fa(
         source,
         target,
-        0.5,
         source.parent,
-        False,
+        0.5,
+        is_bible=False,
         align_best_alignment=True,
     )
     assert os.path.exists(source.parent / "src_trg_align_best/best_sorted.csv")

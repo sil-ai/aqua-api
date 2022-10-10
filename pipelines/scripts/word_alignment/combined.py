@@ -16,10 +16,29 @@ from pathlib import Path
 from typing import Tuple
 
 # run fast_align
-def run_fa(source, target, word_score_threshold, path, is_bible: bool, align_best_alignment: bool):
-    align.run_align(source, target, word_score_threshold, path, is_bible)
-    if align_best_alignment:
-        align_best.run_best_align(source, target, word_score_threshold, path, is_bible)
+def run_fa(
+            source: Path, 
+            target: Path, 
+            outpath: Path, 
+            word_score_threshold: float=0.0, 
+            is_bible: bool=False,
+            ) -> None:
+    """
+    Runs both alignment models: getting translation scores from all combinations of words in source and target
+    and getting counts for how many times those words are aligned together.
+
+    Inputs:
+    source              Path to the source file
+    target              Path to the target file
+    outpath             Path to the output directory
+    word_score_threshold    Threshold for results to be kept
+    is_bible            Boolean for whether the lines correspond to Bible verses
+    """
+    # Get all alignment scores
+    corpus, model = align.run_align(source, target, outpath, threshold=word_score_threshold, is_bible=is_bible)
+    
+    # Get count of best alignments
+    align_best.run_best_align(source, target, outpath, threshold=word_score_threshold, is_bible=is_bible, parallel_corpus=corpus, symmetrized_model=model)
 
 
 # run match words
@@ -98,7 +117,7 @@ def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
     all_results = all_results.merge(best_results, how='left', on=['source', 'target'])
     all_results = all_results.rename(columns = {
                                                 'align_count_x': 'co-occurrences', 
-                                                'word score': 'FA_translation_score', 
+                                                'word_score': 'FA_translation_score', 
                                                 'align_count_y': 'FA_align_count', 
                                                 'verse_score': 'FA_verse_score',
                                                 })
@@ -154,11 +173,6 @@ if __name__ == "__main__":
     parser.add_argument("--source", type=Path, help="source bible")
     parser.add_argument("--target", type=Path, help="target bible")
     parser.add_argument(
-        "--align-best",
-        action='store_true',
-        help="Get only the best alignments",
-    )
-    parser.add_argument(
         "--word-score-threshold",
         type=float,
         default=0.5,
@@ -181,8 +195,8 @@ if __name__ == "__main__":
     args, unknown = parser.parse_known_args()
     # make output dir
     # s, t, path = make_output_dir(args.source, args.target, args.outpath)
-    path = args.outpath / f"{args.source.stem}_{args.target.stem}_combined"
-    reverse_path = args.outpath / f"{args.target.stem}_{args.source.stem}_combined"
+    path = args.outpath / f"{args.source.stem}_{args.target.stem}"
+    reverse_path = args.outpath / f"{args.target.stem}_{args.source.stem}"
 
     if not path.exists():
         path.mkdir(exist_ok=True)
@@ -193,10 +207,9 @@ if __name__ == "__main__":
     run_fa(
         args.source,
         args.target,
-        args.word_score_threshold,
         path,
-        args.is_bible,
-        args.align_best,
+        word_score_threshold=args.word_score_threshold,
+        is_bible=args.is_bible,
     )
 
     # run match words

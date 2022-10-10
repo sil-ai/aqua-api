@@ -137,7 +137,7 @@ def test_run_align(source, target):
     outpath = source.parent
     is_bible = False
 
-    align_best.run_best_align(source, target, threshold, outpath, is_bible)
+    align_best.run_best_align(source, target, outpath, threshold=threshold, is_bible=is_bible)
 
     # make out dir
     outdir = source.parent

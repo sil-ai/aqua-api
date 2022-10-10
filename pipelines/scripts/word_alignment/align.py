@@ -2,6 +2,7 @@ import argparse
 import string
 import os
 import sys
+from typing import Tuple
 
 from unicodedata import category
 import pandas as pd
@@ -19,7 +20,12 @@ from pathlib import Path
 
 def write_condensed_files(src_path: Path, trg_path: Path) -> None:
     """
-    Takes two input files
+    Takes two input files and writes condensed versions to file, which only include those lines that
+    are not blank in both input files.
+
+    Inputs:
+    src_path            A Path to the source file
+    trg_path            A Path to the target file
     """
     # open files
     with open(src_path) as f:
@@ -58,7 +64,16 @@ def write_condensed_files(src_path: Path, trg_path: Path) -> None:
             f.write(line)
 
 
-def create_corpus(src_file: Path, trg_file: Path):
+def create_corpus(src_file: Path, trg_file: Path) -> TextFileTextCorpus:
+    """
+    Takes two line-aligned input files and produces a corpus.
+    Inputs:
+    src_path            A Path to the source file
+    trg_path            A Path to the target file
+
+    Outputs:
+    parallel_corpus     A tokenized TextFileTextCorpus
+    """
     source_corpus = TextFileTextCorpus(src_file)
     target_corpus = TextFileTextCorpus(trg_file)
     parallel_corpus = source_corpus.align_rows(target_corpus).tokenize(
@@ -67,7 +82,16 @@ def create_corpus(src_file: Path, trg_file: Path):
     return parallel_corpus
 
 
-def train_model(corpus):
+def train_model(corpus: TextFileTextCorpus) -> ThotSymmetrizedWordAlignmentModel:
+    """
+    Takes an aligned corpus as input, and trains a model on that corpus
+
+    Inputs:
+    corpus          A TextFileTextCorpus
+
+    Outputs:
+    symmetrized_model       A ThotSymmetrizedWordAlignmentModel trained on the corpus
+    """
     src_trg_model = ThotFastAlignWordAlignmentModel()
     trg_src_model = ThotFastAlignWordAlignmentModel()
     symmetrized_model = ThotSymmetrizedWordAlignmentModel(src_trg_model, trg_src_model)
@@ -82,23 +106,45 @@ def train_model(corpus):
     return symmetrized_model
 
 
-def get_alignment_scores(model, corpus, vrefs):
-    data = {"vref": [], "source": [], "target": [], "word score": []}
+def get_alignment_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: list = None) -> pd.DataFrame:
+    """
+    Takes a model and a corpus, and returns a dataframe with all word combinations in the corpus
+    and their corresponding translation score in the model.
+
+    Inputs:
+    model           A ThotSymmetrizedWordAlignmentModel
+    corpus          A TextFileTextCorpus
+    vrefs           An optional list of verse references to include in the Dataframe
+
+    Outputs:
+    df              A dataframe with the translation scores for every source word / target word combination
+    """
+    data = {"vref": [], "source": [], "target": [], "word_score": []}
     c = 0
     for source_verse, target_verse in tqdm(corpus.lowercase().to_tuples()):
-        vref = vrefs[c]
+        vref = vrefs[c] if vrefs else None
         c = c + 1
         for word1 in source_verse:
             for word2 in target_verse:
                 data["source"].append(word1)
                 data["target"].append(word2)
-                data["word score"].append(model.get_translation_score(word1, word2))
+                data["word_score"].append(model.get_translation_score(word1, word2))
                 data["vref"].append(vref)
     df = pd.DataFrame(data)
     return df
 
 
-def get_vrefs(src_file, trg_file, is_bible: bool):
+def get_vrefs(src_file: Path, trg_file: Path, is_bible: bool) -> list:
+    """
+    Takes two aligned text files and returns a list of vrefs that are non-empty in both files.
+
+    Inputs:
+    src_file            A Path to the source file
+    trg_file            A Path to the target file
+
+    Outputs:
+    df["vref"].tolist()     A list of vrefs that are non-blank in both input files
+    """
     with open(src_file) as f:
         src_data = f.readlines()
 
@@ -123,7 +169,18 @@ def get_vrefs(src_file, trg_file, is_bible: bool):
     return df["vref"].tolist()
 
 
-def apply_threshold(df, threshold):
+def remove_duplicates(df: pd.DataFrame, threshold=None) -> pd.DataFrame:
+    """
+    Takes a dataframe of sources and targets, groups the data by these sources and targets
+    and optionally only keeps those where the word_score is above a threshold.
+
+    Inputs:
+    df          A dataframe with "source" and "target" columns
+
+    Outputs
+    no_dups     A dataframe summarising the results grouped by source and target
+                with "align_count" and "word_score" columns
+    """
     # remove duplicates and average out verse and word scores
     dups = df.groupby(["source", "target"]).size().reset_index()
     avgs = df.groupby(["source", "target"]).mean().reset_index()
@@ -131,13 +188,14 @@ def apply_threshold(df, threshold):
     no_dups.rename(columns={0: "align_count"}, inplace=True)
 
     # apply threshold
-    no_dups = no_dups[no_dups["word score"] >= threshold]
+    if threshold:
+        no_dups = no_dups[no_dups["word_score"] >= threshold]
     return no_dups
 
 
 def run_align(
-    src_path: Path, trg_path: Path, threshold: float, outpath: Path, is_bible: bool
-):
+    src_path: Path, trg_path: Path, outpath: Path, threshold: float = 0.0, is_bible: bool=False, parallel_corpus = None, symmetrized_model = None
+) -> Tuple[TextFileTextCorpus, ThotSymmetrizedWordAlignmentModel]:
     # remove empty lines
     write_condensed_files(src_path, trg_path)
 
@@ -145,17 +203,19 @@ def run_align(
     vrefs = get_vrefs(src_path, trg_path, is_bible)
 
     # create parallel corpus
-    parallel_corpus = create_corpus(src_path.parent / "src_condensed.txt", trg_path.parent / "trg_condensed.txt")
+    if not parallel_corpus:
+        parallel_corpus = create_corpus(src_path.parent / "src_condensed.txt", trg_path.parent / "trg_condensed.txt")
 
     # Train fast_align model
-    symmetrized_model = train_model(parallel_corpus)
+    if not symmetrized_model:
+        symmetrized_model = train_model(parallel_corpus)
 
     # Get alignments
     print("Getting alignments...")
     df = get_alignment_scores(symmetrized_model, parallel_corpus, vrefs)
 
     # Apply threshold
-    no_dups = apply_threshold(df, threshold)
+    no_dups = remove_duplicates(df, threshold=threshold)
 
     # write results to csv
     path = outpath / f"{src_path.stem}_{trg_path.stem}_align"
@@ -179,6 +239,8 @@ def run_align(
     (src_path.parent / "src_condensed.txt").unlink()
     (trg_path.parent / "trg_condensed.txt").unlink()
 
+    return (parallel_corpus, symmetrized_model)
+
 
 if __name__ == "__main__":
     # command line args
@@ -193,4 +255,4 @@ if __name__ == "__main__":
 
     args, unknown = parser.parse_known_args()
 
-    run_align(args.source, args.target, args.threshold, args.outpath, args.is_bible)
+    run_align(args.source, args.target, args.outpath, threshold=args.threshold, is_bible=args.is_bible)

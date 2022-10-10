@@ -101,8 +101,8 @@ def test_get_vrefs():
     assert len(vrefs) == len(src_data)
 
 @pytest.mark.parametrize("source,target", [
-                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
-                                                    ])
+                                            (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+                                            ])
 def test_run_align(source, target):
     src_file = source
     trg_file = target
@@ -116,7 +116,7 @@ def test_run_align(source, target):
     reverse_outdir = outpath / "trg_src_align"
     reverse_outdir.mkdir(parents=True, exist_ok=True)
 
-    align.run_align(src_file, trg_file, threshold, outpath, is_bible)
+    align.run_align(src_file, trg_file, outpath, threshold=threshold, is_bible=is_bible)
 
     # check the files exist
     in_context = Path(outdir, "all_in_context.csv")
