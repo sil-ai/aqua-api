@@ -17,18 +17,9 @@ class SplitRevision:
         self.output_filepath = args.out
         self.num = args.num
         self.revision_df = self.get_revision_file()
-        #self.revision_list = self.build_revision_list(revision_file)
 
     def get_revision_file(self):
         return pd.read_csv(self.input_filepath)
-        #return open(self.input_filepath).read().splitlines()
-
-    # @staticmethod
-    # def build_revision_list(revision_file):
-    #     #TODO: better way to pass vref to these classes
-    #     vref = open('vref.txt').read().splitlines()
-    #     #put reference and verse together and strip out missing verses
-    #     return [item for item in list(zip(vref,revision_file)) if item[1]]
 
     @staticmethod
     def get_args():
@@ -56,7 +47,6 @@ class SplitRevision:
         regex = re.compile(regex_string)
         input_filename = regex.search(self.input_filepath).groups()[0]
         #!!! Note chunk file numbering starts with zero
-        import ipdb; ipdb.set_trace()
         for idx in range(self.num):
             output_filename = f'{self.output_filepath}/{input_filename}_chunk{idx}.csv'
             output_file = pd.DataFrame(split_revisions[idx])
