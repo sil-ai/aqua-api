@@ -48,7 +48,7 @@ def test_merge_output(valuestorage, tmp_path):
         #each column should be the same length as each other
         assert len(merged_file.loc[:,'target']) == len(merged_file.loc[:,'reference'])
         #each column should have a reference
-
+        assert len(merged_file[merged_file['vref']!='']) == len(merged_file)
         #test random file contents
         idx_list = random.sample(range(len(merged_file)),5)
         for idx in idx_list:

@@ -53,6 +53,7 @@ class MergeRevision:
         else:
             #merge the two revisions together
             merged_revisions = pd.DataFrame({'target':self.target, 'reference': self.reference},index=self.vref)
+            merged_revisions.index.name = 'vref'
             #remove verses/rows in merged_revisions that are not in reference
             merged_revisions1 = merged_revisions[merged_revisions['target']!='']
             logging.info(f'Revision {self.get_revision_id(self.args.target)} and {self.get_revision_id(self.args.reference)} are merged')
