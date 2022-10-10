@@ -100,7 +100,7 @@ def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
                                                 'align_count_x': 'co-occurrences', 
                                                 'word score': 'FA_translation_score', 
                                                 'align_count_y': 'FA_align_count', 
-                                                'verse score': 'FA_verse_score',
+                                                'verse_score': 'FA_verse_score',
                                                 })
     all_results.loc[:, ['avg_aligned']] = all_results.apply(
         lambda row: row['FA_align_count'] / row['co-occurrences'], axis = 1
@@ -108,7 +108,7 @@ def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
     all_results.loc[:, 'FA_align_count'] = all_results.loc[:, 'FA_align_count'].apply(
         lambda x: 0 if pd.isnull(x) else x
         )
-    all_results.loc[:, 'verse score'] = all_results.loc[:, 'FA_verse_score'].apply(
+    all_results.loc[:, 'verse _score'] = all_results.loc[:, 'FA_verse_score'].apply(
         lambda x: 0 if pd.isnull(x) else x
         )
     all_results.loc[:, 'avg_aligned'] = all_results.loc[:, 'avg_aligned'].apply(

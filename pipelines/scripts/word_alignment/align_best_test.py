@@ -1,29 +1,34 @@
 import os
 
 from pathlib import Path
+import pytest
 import align_best
 import pandas as pd
 from machine.translation.thot import ThotSymmetrizedWordAlignmentModel
 
+@pytest.mark.parametrize("source,target", [
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+                                                    (Path("fixtures/de-LU1912.txt"), Path("fixtures/en-KJV.txt")),
+                                                    (Path("fixtures/de-LU1912_some_missing.txt"), Path("fixtures/en-KJV_some_missing.txt")),
+                                                    ])
+def test_write_condensed_files(source, target):
 
-def test_write_condensed_files():
-
-    align_best.write_condensed_files(Path("fixtures/src.txt"), Path("fixtures/trg.txt"))
+    align_best.write_condensed_files(source, target)
 
     # check that files exist
-    assert os.path.exists("fixtures/src.txt")
-    assert os.path.exists("fixtures/trg.txt")
-    assert os.path.exists("src_condensed.txt")
-    assert os.path.exists("trg_condensed.txt")
+    assert os.path.exists(source)
+    assert os.path.exists(target)
+    assert os.path.exists(source.parent / "src_condensed.txt")
+    assert os.path.exists(target.parent / "trg_condensed.txt")
 
     # open the files
-    with open("fixtures/src.txt", "r") as f:
+    with open(source, "r") as f:
         src_data = f.readlines()
-    with open("fixtures/trg.txt", "r") as f:
+    with open(target, "r") as f:
         trg_data = f.readlines()
-    with open("src_condensed.txt", "r") as f:
+    with open(source.parent / "src_condensed.txt", "r") as f:
         src_data_c = f.readlines()
-    with open("trg_condensed.txt", "r") as f:
+    with open(target.parent / "trg_condensed.txt", "r") as f:
         trg_data_c = f.readlines()
 
     # check that the condensed files are shorter
@@ -40,8 +45,8 @@ def test_write_condensed_files():
         assert line != "\n"
 
     # remove the condensed files
-    os.remove("src_condensed.txt")
-    os.remove("trg_condensed.txt")
+    os.remove(source.parent / "src_condensed.txt")
+    os.remove(target.parent / "trg_condensed.txt")
 
 
 def test_create_corpus():

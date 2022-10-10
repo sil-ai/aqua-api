@@ -17,16 +17,15 @@ from machine.translation.thot import (
 from pathlib import Path
 
 
-def write_condensed_files(src_file: Path, trg_file: Path) -> None:
+def write_condensed_files(src_path: Path, trg_path: Path) -> None:
+    """
+    Takes two input files
+    """
     # open files
-    with open(src_file) as f:
+    with open(src_path) as f:
         src_data = f.readlines()
-    with open(trg_file) as f:
+    with open(trg_path) as f:
         trg_data = f.readlines()
-
-    min_len = min(len(src_data), len(trg_data))
-    src_data = src_data[:min_len]
-    trg_data = trg_data[:min_len]
 
     # make into df
     df = pd.DataFrame({"src": src_data, "trg": trg_data})
@@ -51,10 +50,10 @@ def write_condensed_files(src_file: Path, trg_file: Path) -> None:
     df["trg"] = df["trg"].str.lower()
 
     # write to condensed txt files
-    with open("src_condensed.txt", "w") as f:
+    with open(src_path.parent / "src_condensed.txt", "w") as f:
         for line in df["src"]:
             f.write(line)
-    with open("trg_condensed.txt", "w") as f:
+    with open(trg_path.parent / "trg_condensed.txt", "w") as f:
         for line in df["trg"]:
             f.write(line)
 
@@ -137,16 +136,16 @@ def apply_threshold(df, threshold):
 
 
 def run_align(
-    src_file: Path, trg_file: Path, threshold: float, outpath: Path, is_bible: bool
+    src_path: Path, trg_path: Path, threshold: float, outpath: Path, is_bible: bool
 ):
     # remove empty lines
-    write_condensed_files(src_file, trg_file)
+    write_condensed_files(src_path, trg_path)
 
     # get vrefs
-    vrefs = get_vrefs(src_file, trg_file, is_bible)
+    vrefs = get_vrefs(src_path, trg_path, is_bible)
 
     # create parallel corpus
-    parallel_corpus = create_corpus("src_condensed.txt", "trg_condensed.txt")
+    parallel_corpus = create_corpus(src_path.parent / "src_condensed.txt", trg_path.parent / "trg_condensed.txt")
 
     # Train fast_align model
     symmetrized_model = train_model(parallel_corpus)
@@ -159,8 +158,8 @@ def run_align(
     no_dups = apply_threshold(df, threshold)
 
     # write results to csv
-    path = outpath / f"{src_file.stem}_{trg_file.stem}_align"
-    reverse_path = outpath / f"{trg_file.stem}_{src_file.stem}_align"
+    path = outpath / f"{src_path.stem}_{trg_path.stem}_align"
+    reverse_path = outpath / f"{trg_path.stem}_{src_path.stem}_align"
 
     # if dir doesn't exist, create it
     if not path.exists():
@@ -177,8 +176,8 @@ def run_align(
 
 
     # delete temp files
-    os.remove("src_condensed.txt")
-    os.remove("trg_condensed.txt")
+    (src_path.parent / "src_condensed.txt").unlink()
+    (trg_path.parent / "trg_condensed.txt").unlink()
 
 
 if __name__ == "__main__":

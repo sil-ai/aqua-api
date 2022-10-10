@@ -103,7 +103,7 @@ def apply_threshold(df: pd.DataFrame, threshold: int) -> pd.DataFrame:
 
 
 def run_best_align(
-    src_file: Path, trg_file: Path, threshold: float, outpath: Path, is_bible: bool
+    src_path: Path, trg_path: Path, threshold: float, outpath: Path, is_bible: bool
     ) -> None:
     """
     Takes two input text files, runs get_alignments on them, and saves the resulting dataframe
@@ -117,13 +117,13 @@ def run_best_align(
     is_bible           Boolean for whether the text is Bible, and hence vref references should be used.
     """
     # remove empty lines
-    write_condensed_files(src_file, trg_file)
+    write_condensed_files(src_path, trg_path)
 
     # get vrefs
-    vrefs = get_vrefs(src_file, trg_file, is_bible)
+    vrefs = get_vrefs(src_path, trg_path, is_bible)
 
     # create parallel corpus
-    parallel_corpus = create_corpus("src_condensed.txt", "trg_condensed.txt")
+    parallel_corpus = create_corpus(src_path.parent / "src_condensed.txt", trg_path.parent / "trg_condensed.txt")
 
     # Train fast_align model
     symmetrized_model = train_model(parallel_corpus)
@@ -149,8 +149,8 @@ def run_best_align(
     # outpath = outpath / f"{src_file.stem}{trg_file.stem}_align_best"
     if not outpath.exists():
         outpath.mkdir(parents=True)
-    path = outpath / f"{src_file.stem}_{trg_file.stem}_align_best"
-    reverse_path = outpath / f"{trg_file.stem}_{src_file.stem}_align_best"
+    path = outpath / f"{src_path.stem}_{trg_path.stem}_align_best"
+    reverse_path = outpath / f"{trg_path.stem}_{src_path.stem}_align_best"
 
     # if dir doesn't exist, create it
     if not path.exists():
@@ -168,8 +168,8 @@ def run_best_align(
     reverse_vref_df.to_csv(reverse_path / "best_vref_scores.csv")
 
     # delete temp files
-    os.remove("src_condensed.txt")
-    os.remove("trg_condensed.txt")
+    (src_path.parent / "src_condensed.txt").unlink()
+    (trg_path.parent / "trg_condensed.txt").unlink()
 
 
 if __name__ == "__main__":

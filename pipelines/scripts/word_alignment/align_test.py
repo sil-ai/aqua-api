@@ -8,28 +8,28 @@ import pandas as pd
 from machine.translation.thot import ThotSymmetrizedWordAlignmentModel
 
 @pytest.mark.parametrize("source,target,expected", [
-                                                    ("fixtures/src.txt", "fixtures/trg.txt", None), 
-                                                    ("fixtures/de-LU1912.txt", "fixtures/en-KJV.txt", None),
-                                                    ("fixtures/de-LU1912_some_missing.txt", "fixtures/en-KJV_some_missing.txt", None),
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt"), None), 
+                                                    (Path("fixtures/de-LU1912.txt"), Path("fixtures/en-KJV.txt"), None),
+                                                    (Path("fixtures/de-LU1912_some_missing.txt"), Path("fixtures/en-KJV_some_missing.txt"), None),
                                                     ])
 def test_write_condensed_files(source, target, expected):
 
-    align.write_condensed_files(Path(source), Path(target))
+    align.write_condensed_files(source, target)
 
     # check that files exist
-    assert os.path.exists("fixtures/src.txt")
-    assert os.path.exists("fixtures/trg.txt")
-    assert os.path.exists("src_condensed.txt")
-    assert os.path.exists("trg_condensed.txt")
+    assert os.path.exists(source)
+    assert os.path.exists(target)
+    assert os.path.exists(source.parent / "src_condensed.txt")
+    assert os.path.exists(target.parent /  "trg_condensed.txt")
 
     # open the files
     with open(source, "r") as f:
         src_data = f.readlines()
     with open(target, "r") as f:
         trg_data = f.readlines()
-    with open("src_condensed.txt", "r") as f:
+    with open(source.parent / "src_condensed.txt", "r") as f:
         src_data_c = f.readlines()
-    with open("trg_condensed.txt", "r") as f:
+    with open(target.parent / "trg_condensed.txt", "r") as f:
         trg_data_c = f.readlines()
 
     # check that the condensed files are shorter
@@ -46,8 +46,8 @@ def test_write_condensed_files(source, target, expected):
         assert line != "\n"
 
     # remove the condensed files
-    os.remove("src_condensed.txt")
-    os.remove("trg_condensed.txt")
+    os.remove(source.parent / "src_condensed.txt")
+    os.remove(target.parent / "trg_condensed.txt")
 
 @pytest.mark.parametrize("source,target", [
                                                     ("fixtures/src.txt", "fixtures/trg.txt"), 
@@ -86,10 +86,8 @@ def test_get_alignment_scores(source, target):
     corpus = align.create_corpus(Path(source), Path(target))
     model = align.train_model(corpus)
     alignments = align.get_alignment_scores(model, corpus, vrefs)
-    # reverse_alignments = align.get_alignment_scores(model.inverse_word_alignment_model, corpus.invert(), vrefs)
     assert isinstance(alignments, pd.DataFrame)
     assert len(alignments) > 0
-    # assert alignments == reverse_alignments
 
 
 def test_get_vrefs():
@@ -102,18 +100,20 @@ def test_get_vrefs():
     assert type(vrefs) == list
     assert len(vrefs) == len(src_data)
 
-
-def test_run_align():
-    src_file = Path("fixtures/src.txt")
-    trg_file = Path("fixtures/trg.txt")
+@pytest.mark.parametrize("source,target", [
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+                                                    ])
+def test_run_align(source, target):
+    src_file = source
+    trg_file = target
     threshold = 0.5
-    outpath = Path("fixtures")
+    outpath = source.parent
     is_bible = False
 
     # make out dir
-    outdir = Path("fixtures/src_trg_align")
+    outdir = outpath / "src_trg_align"
     outdir.mkdir(parents=True, exist_ok=True)
-    reverse_outdir = Path("fixtures/trg_src_align")
+    reverse_outdir = outpath / "trg_src_align"
     reverse_outdir.mkdir(parents=True, exist_ok=True)
 
     align.run_align(src_file, trg_file, threshold, outpath, is_bible)
