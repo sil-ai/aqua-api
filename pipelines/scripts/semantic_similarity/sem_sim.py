@@ -75,7 +75,7 @@ if __name__ == '__main__':
     try:
         ss = SemanticSimilarity()
         chunks = ss.get_chunks()
-        sem_sims = ss.process_sem_sim(chunks[:2])
+        sem_sims = ss.process_sem_sim(chunks)
     except (ValueError, OSError,
             KeyError, AttributeError,
             FileNotFoundError) as err:
