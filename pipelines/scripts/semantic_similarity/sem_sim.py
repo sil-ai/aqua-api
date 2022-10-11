@@ -1,6 +1,8 @@
 import os
 import re
+import json
 import argparse
+from datetime import datetime
 import logging
 logging.getLogger().setLevel('DEBUG')
 #import torch
@@ -21,6 +23,7 @@ class SemanticSimilarity:
         self.out_path = args.out
         #gets model locally or from huggingface
         self.sem_sim = SemanticSimBa()
+        logging.info('Semantic model initialized...')
         self.list_of_chunks = self.get_chunks()
 
     @staticmethod
@@ -46,6 +49,7 @@ class SemanticSimilarity:
             chunk_id = int(regex.search(chunked_file).groups()[0])
             chunk_df = pd.read_csv(self.chunked_folder + '/' + chunked_file)
             chunk_df.name = chunk_id
+            logging.debug(f'Chunk {chunk_id} loaded ...')
             list_of_chunks.append(chunk_df)
         #sort the list of chunks by chunk_id
         return sorted(list_of_chunks, key=lambda item:item.name)
@@ -68,14 +72,24 @@ class SemanticSimilarity:
         sem_sims = []        
         for chunk in chunks:
             sem_sim = self.get_sem_sim(chunk)
+            logging.debug(f'Sem sims processed for Chunk {chunk.name}')
             sem_sims.extend(sem_sim)
+        logging.info('Sem sims processed ...')
         return sem_sims
+
+    def output_sem_sims(self,sem_sims):
+        today = datetime.now()
+        v1,v2 = os.listdir(self.chunked_folder)[0].split('_')[:2]
+        file_name = f'{v1}_{v2}_semsim_{today.month}_{today.day}.json'
+        json.dump(sem_sims,open('/'.join([self.out_path,file_name]),'w'))
+        logging.info(f'File {file_name} output to {self.out_path}')
 
 if __name__ == '__main__':
     try:
         ss = SemanticSimilarity()
         chunks = ss.get_chunks()
         sem_sims = ss.process_sem_sim(chunks)
+        ss.output_sem_sims(sem_sims)
     except (ValueError, OSError,
             KeyError, AttributeError,
             FileNotFoundError) as err:
