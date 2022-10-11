@@ -7,6 +7,7 @@ def main():
     word_score_threshold = 0.0
     jaccard_similarity_threshold = 0.01
     count_threshold = 0
+    is_bible = True
     refresh_cache = False
     outpath = Path('pfs/out')
     ref_dir = Path('pfs/ref_data')
@@ -26,17 +27,16 @@ def main():
                             print(out_file)
                             if not out_file.exists():
                                 run_fa(
-                                    Path(os.path.join(dirpath, file)), 
-                                    Path(os.path.join(ref_dirpath, ref_file)), 
-                                    word_score_threshold, 
-                                    Path(outpath), 
-                                    refresh_cache,
-                                    align_best_alignment=True,
+                                    Path(dirpath) / file, 
+                                    Path(ref_dirpath) / ref_file, 
+                                    outpath, 
+                                    word_score_threshold=word_score_threshold, 
+                                    is_bible=is_bible,
                                     )
                             run_match_words(
-                                            Path(os.path.join(dirpath, file)), 
-                                            Path(os.path.join(ref_dirpath, ref_file)), 
-                                            Path(outpath), 
+                                            Path(dirpath) / file, 
+                                            Path(ref_dirpath) / ref_file, 
+                                            outpath, 
                                             jaccard_similarity_threshold=jaccard_similarity_threshold, 
                                             count_threshold=count_threshold,
                                             refresh_cache=refresh_cache,

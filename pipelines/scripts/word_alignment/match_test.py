@@ -1,6 +1,8 @@
 import pandas as pd
 import match
 import json
+import pytest
+from pathlib import Path
 
 
 def test_text_to_words():
@@ -8,14 +10,25 @@ def test_text_to_words():
     words = match.text_to_words(text)
     assert words == ["this", "is", "a", "test"]
 
+@pytest.mark.parametrize("word,expected", [
+                                            (None, ''),
+                                            ('מַלְכִּיאֵֽל', 'מלכיאל')
+                                           ])
+def test_normalize_word(word, expected):
+    assert match.normalize_word(word) == expected
+
 
 def test_get_bible_data():
     df = match.get_bible_data("fixtures/en-KJV.txt")
-    assert len(df) > 0
-    assert type(df) == pd.DataFrame
+    assert len(df) > 5000
+    assert isinstance(df, pd.DataFrame)
+    assert 'god' in df['words'].explode().unique()
 
+@pytest.mark.parametrize("index_cache_keys,index_cache_values", [
+                                                    (Path("fixtures/en-NIV84-index-cache.json"), Path("fixtures/hbo-MaculaHebTok-index-cache.json")), 
 
-def test_update_matches_for_lists():
+                                                    ])
+def test_update_matches_for_lists(index_cache_keys, index_cache_values):
     keys_list = [
         "",
         "ishvi",
@@ -57,9 +70,9 @@ def test_update_matches_for_lists():
     ]
     js_cache = {}
     matches = {}
-    with open("fixtures/en-NIV84-index-cache.json") as f:
+    with open(index_cache_keys) as f:
         keys_index = json.load(f)
-    with open("fixtures/hbo-MaculaHebTok-index-cache.json") as f:
+    with open(index_cache_values) as f:
         values_index = json.load(f)
     jaccard_similarity_threshold = 0.0
     count_threshold = 0
@@ -77,5 +90,55 @@ def test_update_matches_for_lists():
     assert len(matches) > 0
     assert len(matches["the"]) > 0
     assert len(js_cache) > 0
-    assert type(matches) == dict
-    assert type(js_cache) == dict
+    assert isinstance(matches, dict)
+    assert isinstance(js_cache, dict)
+
+
+@pytest.mark.parametrize("source,target,source_word,target_word", [
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt"), 'televisión', 'reservation'), 
+                                                    (Path("fixtures/de-LU1912_mini.txt"), Path("fixtures/en-KJV_mini.txt"), 'licht', 'good'), 
+
+                                                    ])
+def test_run_match(source, target, source_word, target_word):
+    outpath = Path('fixtures/out')
+    match.run_match(
+        source,
+        target,
+        outpath = outpath,
+        logging_level='INFO',
+        jaccard_similarity_threshold=0.0,
+        count_threshold=0,
+        refresh_cache=True,
+    )
+    df = pd.read_csv(outpath / f'{source.stem}_{target.stem}_match/{source.stem}_{target.stem}_ref_df.csv')
+    assert len(df) > 0
+    assert len(df.loc[0, 'keys']) > 0
+    assert len(df.loc[0, 'values']) > 0
+    
+    with open(outpath / f'{source.stem}_{target.stem}_match/{source.stem}_{target.stem}-dictionary.json') as f:
+        dictionary = json.load(f)
+    assert(len(dictionary) > 0)
+    assert source_word in dictionary
+    
+    with open(outpath / 'cache' / f'{source.stem}-{target.stem}-freq-cache.json') as f:
+        freq_cache = json.load(f)
+    assert f'{source_word}-{target_word}' in freq_cache
+    
+    with open(outpath / 'cache' / f'{source.stem}-index-cache.json') as f:
+        keys_index_cache = json.load(f)
+    assert source_word in keys_index_cache
+    assert isinstance(keys_index_cache[source_word], list)
+    assert len(keys_index_cache[source_word]) > 0
+
+    with open(outpath / 'cache' / f'{target.stem}-index-cache.json') as f:
+        values_index_cache = json.load(f)
+    assert target_word in values_index_cache
+    assert isinstance(values_index_cache[target_word], list)
+    assert len(values_index_cache[target_word]) > 0
+
+    for file in (outpath / 'cache').iterdir():
+        file.unlink()
+    for file in (outpath / f'{source.stem}_{target.stem}_match').iterdir():
+        file.unlink()
+    (outpath / 'cache').rmdir()
+    (outpath / f'{source.stem}_{target.stem}_match').rmdir()
