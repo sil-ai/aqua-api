@@ -134,18 +134,14 @@ def test_apply_threshold(source, target):
                                                     ])
 def test_run_align(source, target):
     threshold = 0.5
-    outpath = source.parent
+    outpath = source.parent / 'out'
     is_bible = False
 
     align_best.run_best_align(source, target, outpath, threshold=threshold, is_bible=is_bible)
 
-    # make out dir
-    outdir = source.parent
-    outdir.mkdir(parents=True, exist_ok=True)
-
     # get forwards and backwards dirs
-    fwd_dir = outdir / "src_trg_align_best"
-    bwd_dir = outdir / "trg_src_align_best"
+    fwd_dir = outpath / f"{source.stem}_{target.stem}_align_best"
+    bwd_dir = outpath / f"{target.stem}_{source.stem}_align_best"
 
     # check forward files exist
     in_context_fwd = Path(fwd_dir, "best_in_context.csv")

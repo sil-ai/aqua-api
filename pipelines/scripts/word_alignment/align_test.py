@@ -107,14 +107,11 @@ def test_run_align(source, target):
     src_file = source
     trg_file = target
     threshold = 0.5
-    outpath = source.parent
+    outpath = source.parent / 'out'
     is_bible = False
 
-    # make out dir
-    outdir = outpath / "src_trg_align"
-    outdir.mkdir(parents=True, exist_ok=True)
-    reverse_outdir = outpath / "trg_src_align"
-    reverse_outdir.mkdir(parents=True, exist_ok=True)
+    outdir = outpath / f"{source.stem}_{target.stem}_align"
+    reverse_outdir = outpath / f"{target.stem}_{source.stem}_align"
 
     align.run_align(src_file, trg_file, outpath, threshold=threshold, is_bible=is_bible)
 
