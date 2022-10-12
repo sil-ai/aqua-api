@@ -164,6 +164,17 @@ def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFr
     return df
 
 
+def run_combine_results(outpath: Path) -> None:
+    # combine results
+    align_path = outpath / "all_sorted.csv"
+    best_path = outpath / "best_sorted.csv"
+    match_path = outpath / f"{args.source.stem}_{args.target.stem}-dictionary.json"
+    df = combine_df(align_path, best_path, match_path)
+
+    # save results
+    df.to_csv(outpath / f"{args.source.stem}_{args.target.stem}_combined.csv")
+
+
 if __name__ == "__main__":
     # #command line args
     parser = argparse.ArgumentParser(description="Argparser")
@@ -186,19 +197,16 @@ if __name__ == "__main__":
     args, unknown = parser.parse_known_args()
     # make output dir
     # s, t, path = make_output_dir(args.source, args.target, args.outpath)
-    path = args.outpath / f"{args.source.stem}_{args.target.stem}"
-    reverse_path = args.outpath / f"{args.target.stem}_{args.source.stem}"
+    outpath = args.outpath / f"{args.source.stem}_{args.target.stem}"
 
-    if not path.exists():
-        path.mkdir(exist_ok=True)
-    if not reverse_path.exists():
-        reverse_path.mkdir(exist_ok=True)
+    if not outpath.exists():
+        outpath.mkdir(exist_ok=True)
 
     # run fast align
     run_fa(
         args.source,
         args.target,
-        path,
+        outpath,
         is_bible=args.is_bible,
     )
 
@@ -206,16 +214,9 @@ if __name__ == "__main__":
     run_match_words(
         args.source,
         args.target,
-        path,
+        outpath,
         args.jaccard_similarity_threshold,
         args.count_threshold,
     )
 
-    # combine results
-    align_path = args.outpath / f"{args.source.stem}_{args.target.stem}/all_sorted.csv"
-    best_path = args.outpath / f"{args.source.stem}_{args.target.stem}/best_sorted.csv"
-    match_path = args.outpath / f"{args.source.stem}_{args.target.stem}/{args.source.stem}_{args.target.stem}-dictionary.json"
-    df = combine_df(align_path, best_path, match_path)
-
-    # save results
-    df.to_csv(path / f"{args.source.stem}_{args.target.stem}_combined.csv")
+    run_combine_results(outpath)

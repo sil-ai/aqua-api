@@ -62,11 +62,11 @@ def test_get_scores_from_match_dict(dictionary_file, source_word, target_word):
     assert match_count > 0
 
 
-@pytest.mark.parametrize("align_path,best_path,match_path", [
-                                                    (Path("fixtures/src_trg_align-all_sorted.csv"), Path("fixtures/src_trg_align_best-best_sorted.csv"), Path("fixtures/src_trg-dictionary.json")), 
-                                                    (Path('fixtures/de-LU1912-mini_en-KJV-mini_align-all_sorted.csv'), Path('fixtures/de-LU1912-mini_en-KJV-mini_align_best-best_sorted.csv'), Path('fixtures/de-LU1912-mini_en-KJV-mini-dictionary.json'))
+@pytest.mark.parametrize("align_path,best_path,match_path,source_word,target_word", [
+                                    (Path("fixtures/src_trg_all_sorted.csv"), Path("fixtures/src_trg_align_best-best_sorted.csv"), Path("fixtures/src_trg-dictionary.json"), 'el', 'the'), 
+                                    (Path('fixtures/de-LU1912-mini_en-KJV-mini_align-all_sorted.csv'), Path('fixtures/de-LU1912-mini_en-KJV-mini_align_best-best_sorted.csv'), Path('fixtures/de-LU1912-mini_en-KJV-mini-dictionary.json'), 'gott', 'god')
                                                     ])
-def test_combine_df(align_path, best_path, match_path):
+def test_combine_df(align_path, best_path, match_path, source_word, target_word):
     df = combined.combine_df(align_path, best_path, match_path)
     assert len(df) > 10
     assert len(df['translation_score'].unique()) > 10
@@ -75,6 +75,9 @@ def test_combine_df(align_path, best_path, match_path):
     assert max(df['avg_aligned']) <= 1
     assert min(df['avg_aligned']) >= 0
     assert len(df['jac_sim'].unique()) > 5
+    assert df[(df['source' == source_word]) & (df['target' == target_word])]['translation_score'] > 0.3
+    assert df[(df['source' == source_word]) & (df['target' == target_word])]['alignment_score'] > 0.3
+    assert df[(df['source' == source_word]) & (df['target' == target_word])]['jac_sim'] > 0.3
 
 
 

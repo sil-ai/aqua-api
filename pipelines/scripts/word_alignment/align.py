@@ -64,6 +64,7 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> None:
     with open(outpath / f"{target.stem}_condensed.txt", "w") as f:
         for line in df["trg"]:
             f.write(line)
+    return (outpath / f"{source.stem}_condensed.txt", outpath / f"{target.stem}_condensed.txt")
 
 
 def create_corpus(src_file: Path, trg_file: Path) -> TextFileTextCorpus:
