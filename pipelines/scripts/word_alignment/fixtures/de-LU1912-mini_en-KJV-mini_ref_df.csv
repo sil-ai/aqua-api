@@ -1,0 +1,11 @@
+,text,words,keys,values
+0,"Am Anfang schuf Gott Himmel und Erde.
+","['am', 'anfang', 'schuf', 'gott', 'himmel', 'und', 'erde']","['am', 'anfang', 'schuf', 'gott', 'himmel', 'und', 'erde']","['in', 'the', 'beginning', 'god', 'created', 'the', 'heaven', 'and', 'the', 'earth']"
+1,"Und die Erde war wüst und leer, und es war finster auf der Tiefe; und der Geist Gottes schwebte auf dem Wasser.
+","['und', 'die', 'erde', 'war', 'wüst', 'und', 'leer', 'und', 'es', 'war', 'finster', 'auf', 'der', 'tiefe', 'und', 'der', 'geist', 'gottes', 'schwebte', 'auf', 'dem', 'wasser']","['und', 'die', 'erde', 'war', 'wüst', 'und', 'leer', 'und', 'es', 'war', 'finster', 'auf', 'der', 'tiefe', 'und', 'der', 'geist', 'gottes', 'schwebte', 'auf', 'dem', 'wasser']","['and', 'the', 'earth', 'was', 'without', 'form', 'and', 'void', 'and', 'darkness', 'was', 'upon', 'the', 'face', 'of', 'the', 'deep', 'and', 'the', 'spirit', 'of', 'god', 'moved', 'upon', 'the', 'face', 'of', 'the', 'waters']"
+2,"Und Gott sprach: Es werde Licht! und es ward Licht.
+","['und', 'gott', 'sprach', 'es', 'werde', 'licht', 'und', 'es', 'ward', 'licht']","['und', 'gott', 'sprach', 'es', 'werde', 'licht', 'und', 'es', 'ward', 'licht']","['and', 'god', 'said', 'let', 'there', 'be', 'light', 'and', 'there', 'was', 'light']"
+3,"Und Gott sah, daß das Licht gut war. Da schied Gott das Licht von der Finsternis
+","['und', 'gott', 'sah', 'daß', 'das', 'licht', 'gut', 'war', 'da', 'schied', 'gott', 'das', 'licht', 'von', 'der', 'finsternis']","['und', 'gott', 'sah', 'daß', 'das', 'licht', 'gut', 'war', 'da', 'schied', 'gott', 'das', 'licht', 'von', 'der', 'finsternis']","['and', 'god', 'saw', 'the', 'light', 'that', 'it', 'was', 'good', 'and', 'god', 'divided', 'the', 'light', 'from', 'the', 'darkness']"
+4,"und nannte das Licht Tag und die Finsternis Nacht. Da ward aus Abend und Morgen der erste Tag.
+","['und', 'nannte', 'das', 'licht', 'tag', 'und', 'die', 'finsternis', 'nacht', 'da', 'ward', 'aus', 'abend', 'und', 'morgen', 'der', 'erste', 'tag']","['und', 'nannte', 'das', 'licht', 'tag', 'und', 'die', 'finsternis', 'nacht', 'da', 'ward', 'aus', 'abend', 'und', 'morgen', 'der', 'erste', 'tag']","['and', 'god', 'called', 'the', 'light', 'day', 'and', 'the', 'darkness', 'he', 'called', 'night', 'and', 'the', 'evening', 'and', 'the', 'morning', 'were', 'the', 'first', 'day']"

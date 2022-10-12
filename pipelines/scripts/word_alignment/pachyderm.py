@@ -4,7 +4,6 @@ from combined import run_fa, run_match_words, combine_df
 import os
 
 def main():
-    word_score_threshold = 0.0
     jaccard_similarity_threshold = 0.01
     count_threshold = 0
     is_bible = True
@@ -30,7 +29,6 @@ def main():
                                     Path(dirpath) / file, 
                                     Path(ref_dirpath) / ref_file, 
                                     outpath, 
-                                    word_score_threshold=word_score_threshold, 
                                     is_bible=is_bible,
                                     )
                             run_match_words(

@@ -119,11 +119,10 @@ def update_matches_for_lists(
     values_list: list,
     js_cache: dict,
     matches: dict,
-    # reverse_matches: dict,
     keys_index: dict,
     values_index: dict,
-    jaccard_similarity_threshold: float = 0.5,
-    count_threshold: int = 5,
+    jaccard_similarity_threshold: float = 0.0,
+    count_threshold: int = 0,
 ) -> Tuple[dict, dict]:
     """
     Updates the matches dictionary with any matches between the keys and values in a verse that pass the thresholds for significance.
@@ -272,7 +271,8 @@ def get_combined_df(
     Outputs:
         ref_df:     A dataframe that combines the keys and values data into a single dataframe by Bible verse
     """
-    p = outpath / f"{keys_list_name}_{values_list_name}_match"
+    if not outpath.exists():
+        outpath.mkdir(exist_ok=True)
 
     keys_ref_df = get_single_df(
         source,
@@ -286,7 +286,7 @@ def get_combined_df(
     values_ref_series = values_ref_df["values"]
     ref_df = pd.concat([keys_ref_df, values_ref_series], axis=1)
     ref_df = ref_df.dropna(subset=["keys", "values"])
-    ref_df.to_csv(p / f"{keys_list_name}_{values_list_name}_ref_df.csv")
+    ref_df.to_csv(outpath / f"{keys_list_name}_{values_list_name}_ref_df.csv")
     logging.info(ref_df.head())
     return ref_df
 
@@ -296,16 +296,15 @@ def run_match(
     target: Path,
     outpath: Path,
     logging_level: str,
-    jaccard_similarity_threshold: float,
-    count_threshold: int,
+    jaccard_similarity_threshold: float = 0.0,
+    count_threshold: int = 0,
     refresh_cache: bool = False,
 ) -> None:
     keys_list_name = source.stem
     values_list_name = target.stem
 
-    path = outpath / f"{keys_list_name}_{values_list_name}_match"
-    reverse_path = outpath / f"{values_list_name}_{keys_list_name}_match"
-
+    path = outpath # / f"{keys_list_name}_{values_list_name}_match"
+    # reverse_path = outpath / f"{values_list_name}_{keys_list_name}_match"
     if not path.exists():
         path.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(

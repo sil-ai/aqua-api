@@ -20,7 +20,7 @@ from machine.translation.thot import (
 from pathlib import Path
 
 
-def get_alignments(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: List[str] = None) -> pd.DataFrame:
+def get_best_alignment_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: List[str] = None) -> pd.DataFrame:
     """
     Takes a corpus and a word alignment model and calculates word alignments for each aligned line.
     Returns a dataframe with words that have been aligned by the model.
@@ -38,21 +38,23 @@ def get_alignments(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTex
         verse_score         The average alignment score for the line in question
         vref                The verse reference for that line,     if a vref file has been supplied.
     """
-    data = {"vref": [], "source": [], "target": [], "alignment_count": [], "verse_score": []}
+    data = {"vref": [], "source": [], "target": [], "alignment_count": [], "verse_score": [], "alignment_score": []}
     alignments = model.get_best_alignment_batch(corpus.lowercase().to_tuples())
     c = 0
     for source_segment, target_segment, alignment in tqdm(alignments):
-        pair_indices = alignment.to_aligned_word_pairs()
+        word_pairs = alignment.to_aligned_word_pairs()
+        model.compute_aligned_word_pair_scores(source_segment, target_segment, word_pairs)
+
         verse_score = model.get_avg_translation_score(
             source_segment, target_segment, alignment
         )
         vref = vrefs[c] if vrefs else None
         c = c + 1
-        for pair in pair_indices:
+        for pair in word_pairs:
             data["source"].append(source_segment[pair.source_index])
             data["target"].append(target_segment[pair.target_index])
-            # data["word score"].append(score)
             data["alignment_count"] = 1
+            data["alignment_score"].append(pair.alignment_score)
             data["verse_score"].append(verse_score)
             data["vref"].append(vref)
 
@@ -76,10 +78,10 @@ def get_vref_scores(df: pd.DataFrame) -> pd.DataFrame:
     vref_df = df[["vref", "verse_score"]]
     return vref_df
 
-def apply_threshold(df: pd.DataFrame, threshold: int) -> pd.DataFrame:
+def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     """
     Takes a dataframe of aligned matches, removes duplicate source word / target word combinations,
-    discards those below the threshold and returns the dataframe.
+    returns the dataframe.
 
     Inputs:
     df          A dataframe of alignment matches
@@ -92,15 +94,13 @@ def apply_threshold(df: pd.DataFrame, threshold: int) -> pd.DataFrame:
     dups = df.groupby(["source", "target"]).size().reset_index()
     avgs = df.groupby(["source", "target"]).mean().reset_index()
     no_dups = pd.merge(dups, avgs)
-    no_dups.rename(columns={0: "align_count"}, inplace=True)
-
-    # apply threshold
-    no_dups = no_dups[no_dups["align_count"] >= threshold]
+    no_dups.drop(columns=['alignment_count'], inplace=True)
+    no_dups.rename(columns={0: "alignment_count"}, inplace=True)
     return no_dups
 
 
 def run_best_align(
-    src_path: Path, trg_path: Path, outpath: Path, threshold: float=0.0, is_bible: bool=False, parallel_corpus = None, symmetrized_model = None
+    src_path: Path, trg_path: Path, outpath: Path, is_bible: bool=False, parallel_corpus = None, symmetrized_model = None
     ) -> Tuple[TextFileTextCorpus, ThotSymmetrizedWordAlignmentModel]:
     """
     Takes two input text files, runs get_alignments on them, and saves the resulting dataframe
@@ -118,14 +118,14 @@ def run_best_align(
     ThotSymmetrizedWordAlignmentModel       In case you want to re-use it without training from scratch
     """
     # remove empty lines
-    write_condensed_files(src_path, trg_path)
+    write_condensed_files(src_path, trg_path, outpath)
 
     # get vrefs
     vrefs = get_vrefs(src_path, trg_path, is_bible)
 
     # create parallel corpus
     if not parallel_corpus:
-        parallel_corpus = create_corpus(src_path.parent / "src_condensed.txt", trg_path.parent / "trg_condensed.txt")
+        parallel_corpus = create_corpus(outpath / f"{src_path.stem}_condensed.txt", outpath / f"{trg_path.stem}_condensed.txt")
 
     # Train fast_align model
     if not symmetrized_model:
@@ -133,46 +133,32 @@ def run_best_align(
 
     # Get alignments
     print("Getting alignments...")
-    df = get_alignments(symmetrized_model, parallel_corpus, vrefs)
+    df = get_best_alignment_scores(symmetrized_model, parallel_corpus, vrefs)
 
     print("Getting reverse alignments...")
-    reverse_df = get_alignments(
+    reverse_df = get_best_alignment_scores(
         symmetrized_model.inverse_word_alignment_model, parallel_corpus.invert(), vrefs
     )
 
     # Get verse scores
     vref_df = get_vref_scores(df)
-    reverse_vref_df = get_vref_scores(reverse_df)
-
     # Apply threshold
-    no_dups = apply_threshold(df, threshold)
-    reverse_no_dups = apply_threshold(reverse_df, threshold)
+    no_dups = remove_duplicates(df)
 
     # write results to csv
     # outpath = outpath / f"{src_file.stem}{trg_file.stem}_align_best"
     if not outpath.exists():
         outpath.mkdir(parents=True)
-    path = outpath / f"{src_path.stem}_{trg_path.stem}_align_best"
-    reverse_path = outpath / f"{trg_path.stem}_{src_path.stem}_align_best"
 
-    # if dir doesn't exist, create it
-    if not path.exists():
-        path.mkdir()
-    if not reverse_path.exists():
-        reverse_path.mkdir()
+    no_dups.to_csv(outpath / "best_sorted.csv")
 
-    no_dups.to_csv(path / "best_sorted.csv")
-    reverse_no_dups.to_csv(reverse_path / "best_sorted.csv")
+    df.to_csv(outpath / "best_in_context.csv")
 
-    df.to_csv(path / "best_in_context.csv")
-    reverse_df.to_csv(reverse_path / "best_in_context.csv")
-
-    vref_df.to_csv(path / "best_vref_scores.csv")
-    reverse_vref_df.to_csv(reverse_path / "best_vref_scores.csv")
+    vref_df.to_csv(outpath / "best_vref_scores.csv")
 
     # delete temp files
-    (src_path.parent / "src_condensed.txt").unlink()
-    (trg_path.parent / "trg_condensed.txt").unlink()
+    (outpath / f"{src_path.stem}_condensed.txt").unlink()
+    (outpath / f"{trg_path.stem}_condensed.txt").unlink()
 
     return parallel_corpus, symmetrized_model
 
@@ -181,9 +167,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Argparser")
     parser.add_argument("--source", type=Path, help="source translation")
     parser.add_argument("--target", type=Path, help="target translation")
-    parser.add_argument(
-        "--threshold", type=float, default=0.5, help="word score threshold {0,1}"
-    )
     parser.add_argument("--outpath", type=Path, help="where to write results")
     parser.add_argument("--is-bible", type=bool, action='store_true', help="is bible data")
     args, unknown = parser.parse_known_args()

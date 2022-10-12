@@ -1,0 +1,3287 @@
+{
+    "himmel": [
+        {
+            "value": "beginning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "created",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "in",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "heaven",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "am": [
+        {
+            "value": "beginning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "created",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "in",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "heaven",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "schuf": [
+        {
+            "value": "beginning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "created",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "in",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "heaven",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "gott": [
+        {
+            "value": "beginning",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "created",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "in",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "heaven",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "there",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "let",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "be",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "said",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "good",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "erde": [
+        {
+            "value": "beginning",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "created",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "in",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "heaven",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "waters",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        }
+    ],
+    "und": [
+        {
+            "value": "beginning",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.8,
+            "count": 4
+        },
+        {
+            "value": "created",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 1.0,
+            "count": 5
+        },
+        {
+            "value": "in",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "heaven",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 1.0,
+            "count": 5
+        },
+        {
+            "value": "waters",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "there",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "let",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "be",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "said",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "good",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "anfang": [
+        {
+            "value": "beginning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "created",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "in",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "heaven",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "gottes": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "leer": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "geist": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "finster": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "wüst": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "auf": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "die": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "der": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.75,
+            "count": 3
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 1.0,
+            "count": 3
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "good",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "tiefe": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "schwebte": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "war": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "good",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "dem": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "wasser": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "es": [
+        {
+            "value": "waters",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "of",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "form",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "spirit",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "void",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "deep",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "without",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "upon",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "face",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "earth",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "moved",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "there",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "let",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "be",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "said",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "ward": [
+        {
+            "value": "light",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "there",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "let",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "be",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "said",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "sprach": [
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "there",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "let",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "be",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "said",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "licht": [
+        {
+            "value": "light",
+            "jaccard_similarity": 1.0,
+            "count": 3
+        },
+        {
+            "value": "there",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "let",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "be",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "said",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "good",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "werde": [
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "there",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "let",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "be",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "said",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "daß": [
+        {
+            "value": "good",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "finsternis": [
+        {
+            "value": "good",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "schied": [
+        {
+            "value": "good",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "das": [
+        {
+            "value": "good",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "da": [
+        {
+            "value": "good",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "von": [
+        {
+            "value": "good",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "sah": [
+        {
+            "value": "good",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "gut": [
+        {
+            "value": "good",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "divided",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "it",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "saw",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "that",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "from",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "was",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "nacht": [
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "erste": [
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "tag": [
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "abend": [
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "nannte": [
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "morgen": [
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "aus": [
+        {
+            "value": "the",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "he",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "light",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "first",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "called",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "day",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "and",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "evening",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "darkness",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "night",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "were",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "morning",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "god",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ]
+}

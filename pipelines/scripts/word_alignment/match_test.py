@@ -96,11 +96,11 @@ def test_update_matches_for_lists(index_cache_keys, index_cache_values):
 
 @pytest.mark.parametrize("source,target,source_word,target_word", [
                                                     (Path("fixtures/src.txt"), Path("fixtures/trg.txt"), 'televisión', 'reservation'), 
-                                                    (Path("fixtures/de-LU1912_mini.txt"), Path("fixtures/en-KJV_mini.txt"), 'licht', 'good'), 
+                                                    (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), 'licht', 'good'), 
 
                                                     ])
-def test_run_match(source, target, source_word, target_word):
-    outpath = Path('fixtures/out')
+def test_run_match(source, target, source_word, target_word, remove_files = False):
+    outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
     match.run_match(
         source,
         target,
@@ -110,12 +110,8 @@ def test_run_match(source, target, source_word, target_word):
         count_threshold=0,
         refresh_cache=True,
     )
-    df = pd.read_csv(outpath / f'{source.stem}_{target.stem}_match/{source.stem}_{target.stem}_ref_df.csv')
-    assert len(df) > 0
-    assert len(df.loc[0, 'keys']) > 0
-    assert len(df.loc[0, 'values']) > 0
     
-    with open(outpath / f'{source.stem}_{target.stem}_match/{source.stem}_{target.stem}-dictionary.json') as f:
+    with open(outpath / f'{source.stem}_{target.stem}-dictionary.json') as f:
         dictionary = json.load(f)
     assert(len(dictionary) > 0)
     assert source_word in dictionary
@@ -136,9 +132,8 @@ def test_run_match(source, target, source_word, target_word):
     assert isinstance(values_index_cache[target_word], list)
     assert len(values_index_cache[target_word]) > 0
 
-    for file in (outpath / 'cache').iterdir():
-        file.unlink()
-    for file in (outpath / f'{source.stem}_{target.stem}_match').iterdir():
-        file.unlink()
-    (outpath / 'cache').rmdir()
-    (outpath / f'{source.stem}_{target.stem}_match').rmdir()
+    if remove_files:
+        for file in (outpath / 'cache').iterdir():
+            file.unlink()
+        for file in (outpath / f'{source.stem}_{target.stem}').iterdir():
+            file.unlink()

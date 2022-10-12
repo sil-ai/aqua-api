@@ -91,14 +91,14 @@ vrefs are from [here](https://github.com/sil-ai/aqua-api/tree/master/fixtures)
 `python combined.py --source path/to/source/file --target path/to/target/file --is-bible --outpath /path/to/output/location`
 
 ### Output:
-A directory containing:
+A directory named `<source>_<target>` containing:
 
 1) a directory with align data (in `_align` directory)
 2) a directory with align_best "best" data (in `_align_best` directory)
 2) a directory with match data (in `_match` directory)
-3) a csv with the combined data from both algorithms (in `_combined` directory)
+3) a csv with the combined data from both algorithms in the main directory
 
-Note that the main output is the `_combined.csv` file in the `_combined` directory. This file lists all source-target combinations, with three metrics:
+Note that the main output is the `_combined.csv` file in the main directory. This file lists all source-target combinations, with three metrics:
     
 * `FA_translation_score`:     The translation score the Fast Align trained model gives for these two words
 * `avg_aligned`:              The proportion of times the Fast Align trained model aligned these two words when they appeared together.
@@ -113,8 +113,6 @@ These three metrics are somewhat independent of each other, and can be combined 
 `--target`  Target text file
 
 `--align-best-only`  (default=`False`) Runs `align_best.py` if `True`, `align.py` otherwise
-
-`--word-score-threshold`  (default=`0.5`)  The fast_align word score threshold
 
 `--jaccard-similarity-threshold`  (default=`0.5`)  The Jaccard similarity threshold
 

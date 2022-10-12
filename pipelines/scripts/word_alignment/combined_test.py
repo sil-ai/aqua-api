@@ -1,70 +1,84 @@
 import os
 from pathlib import Path
 import pytest
+import json
 
 import combined
 
-@pytest.mark.parametrize("source,target", [
-                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+@pytest.mark.parametrize("source,target,is_bible", [
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt"), False),
+                                                    (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), True), 
                                                     ])
-def test_run_fa(source, target):
+def test_run_fa(source, target, is_bible, remove_files=True):
     # align all
+    outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
     combined.run_fa(
         source,
         target,
-        source.parent,
-        0.5,
-        is_bible=False,
+        outpath,
+        is_bible=is_bible,
     )
-    assert os.path.exists(source.parent / "src_trg_align/all_sorted.csv")
-    assert os.path.exists(source.parent / "src_trg_align/all_in_context.csv")
-    os.remove(source.parent / "src_trg_align/all_sorted.csv")
-    os.remove(source.parent / "src_trg_align/all_in_context.csv")
-    os.rmdir(source.parent / "src_trg_align")
+    assert os.path.exists(outpath / "all_sorted.csv")
+    assert os.path.exists(outpath / "all_in_context.csv")
+    assert os.path.exists(outpath / "best_sorted.csv")
+    assert os.path.exists(outpath / "best_in_context.csv")
+    assert os.path.exists(outpath / "best_vref_scores.csv")
+    
+    if remove_files:
+        os.remove(outpath / "all_sorted.csv")
+        os.remove(outpath / "all_in_context.csv")
+        os.remove(outpath / "best_sorted.csv")
+        os.remove(outpath / "best_in_context.csv")
+        os.remove(outpath / "best_vref_scores.csv")
 
-    # align best
-    combined.run_fa(
-        source,
-        target,
-        source.parent,
-        0.5,
-        is_bible=False,
-    )
-    assert os.path.exists(source.parent / "src_trg_align_best/best_sorted.csv")
-    assert os.path.exists(
-        source.parent / "src_trg_align_best/best_in_context.csv"
-    )
-    assert os.path.exists(
-        source.parent / "src_trg_align_best/best_vref_scores.csv"
-    )
-    assert os.path.exists(source.parent / "trg_src_align_best/best_sorted.csv")
-    assert os.path.exists(
-        source.parent / "trg_src_align_best/best_in_context.csv"
-    )
-    assert os.path.exists(
-        source.parent / "trg_src_align_best/best_vref_scores.csv"
-    )
 
-    # remove all files and dirs
-    for f in (source.parent / "src_trg_align_best").iterdir():
-        f.unlink()
-    for f in (source.parent / "trg_src_align_best").iterdir():
-        f.unlink()
-    os.rmdir(source.parent / "src_trg_align_best")
-    os.rmdir(source.parent / "trg_src_align_best")
-    # os.rmdir("fixtures")
 
-@pytest.mark.parametrize("source,target", [
-                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt")), 
+@pytest.mark.parametrize("source,target,is_bible", [
+                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt"), False), 
+                                                    (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), True), 
                                                     ])
-def test_run_match_words(source, target):
-    outpath = source.parent
-    combined.run_match_words(source, target, outpath, 0.5, 5, False)
-    assert os.path.exists(source.parent / "src_trg_match/src_trg-dictionary.json")
-    # empty contents of dir and delete
-    for f in (source.parent / "src_trg_match").iterdir():
-        f.unlink()
-    for f in (source.parent / "cache").iterdir():
-        f.unlink()
-    os.rmdir("fixtures/src_trg_match")
-    os.rmdir("fixtures/cache")
+def test_run_match_words(source, target, is_bible, remove_files=True):
+    outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
+    combined.run_match_words(source, target, outpath, 0.0, 0, False)
+    assert (outpath / f"{source.stem}_{target.stem}-dictionary.json").exists()
+    assert (outpath / f"{source.stem}_{target.stem}_ref_df.csv").exists()
+    if remove_files:
+        os.remove(outpath / f"{source.stem}_{target.stem}-dictionary.json")
+        (outpath / f"{source.stem}_{target.stem}_ref_df.csv").unlink()
+
+@pytest.mark.parametrize("dictionary_file,source_word,target_word", [
+                                                    (Path(f"fixtures/de-LU1912-mini_en-KJV-mini-dictionary.json"), 'gott', 'god'), 
+                                                    (Path(f"fixtures/src_trg-dictionary.json"), 'le', 'the'), 
+
+                                                    ])
+def test_get_scores_from_match_dict(dictionary_file, source_word, target_word):
+    with open(dictionary_file) as f:
+        dictionary = json.load(f)
+    assert source_word in dictionary
+    jac_sim, match_count = combined.get_scores_from_match_dict(dictionary, source_word, target_word)
+    assert isinstance(dictionary, dict)
+    assert len(dictionary) > 10
+    assert jac_sim > 0 and jac_sim <= 1
+    assert match_count > 0
+
+
+@pytest.mark.parametrize("align_path,best_path,match_path", [
+                                                    (Path("fixtures/src_trg_align-all_sorted.csv"), Path("fixtures/src_trg_align_best-best_sorted.csv"), Path("fixtures/src_trg-dictionary.json")), 
+                                                    (Path('fixtures/de-LU1912-mini_en-KJV-mini_align-all_sorted.csv'), Path('fixtures/de-LU1912-mini_en-KJV-mini_align_best-best_sorted.csv'), Path('fixtures/de-LU1912-mini_en-KJV-mini-dictionary.json'))
+                                                    ])
+def test_combine_df(align_path, best_path, match_path):
+    df = combined.combine_df(align_path, best_path, match_path)
+    assert len(df) > 10
+    assert len(df['translation_score'].unique()) > 10
+    assert len(df['alignment_count'].unique()) > 5
+    assert len(df['avg_aligned'].unique()) > 10
+    assert max(df['avg_aligned']) <= 1
+    assert min(df['avg_aligned']) >= 0
+    assert len(df['jac_sim'].unique()) > 5
+
+
+
+
+
+# align_path, best_path, match_path = (Path('fixtures/de-LU1912-mini_en-KJV-mini_align-all_sorted.csv'), Path('fixtures/de-LU1912-mini_en-KJV-mini_align_best-best_sorted.csv'), Path('fixtures/de-LU1912-mini_en-KJV-mini-dictionary.json'))
+# test_combine_df(align_path, best_path, match_path)

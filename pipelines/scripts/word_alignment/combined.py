@@ -20,7 +20,6 @@ def run_fa(
             source: Path, 
             target: Path, 
             outpath: Path, 
-            word_score_threshold: float=0.0, 
             is_bible: bool=False,
             ) -> None:
     """
@@ -31,14 +30,13 @@ def run_fa(
     source              Path to the source file
     target              Path to the target file
     outpath             Path to the output directory
-    word_score_threshold    Threshold for results to be kept
     is_bible            Boolean for whether the lines correspond to Bible verses
     """
     # Get all alignment scores
-    corpus, model = align.run_align(source, target, outpath, threshold=word_score_threshold, is_bible=is_bible)
+    corpus, model = align.run_align(source, target, outpath, is_bible=is_bible)
     
     # Get count of best alignments
-    align_best.run_best_align(source, target, outpath, threshold=word_score_threshold, is_bible=is_bible, parallel_corpus=corpus, symmetrized_model=model)
+    align_best.run_best_align(source, target, outpath, is_bible=is_bible, parallel_corpus=corpus, symmetrized_model=model)
 
 
 # run match words
@@ -46,8 +44,8 @@ def run_match_words(
     source: Path,
     target: Path,
     outpath: Path,
-    jaccard_similarity_threshold: float,
-    count_threshold: int,
+    jaccard_similarity_threshold: float = 0.0,
+    count_threshold: int = 0,
     refresh_cache: bool=False,
     ) -> None:
     """
@@ -95,7 +93,7 @@ def get_scores_from_match_dict(
 
 
 # combine results
-def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
+def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFrame:
     """
     Reads the outputs saved to file from match.run_match(), align.run_align() and best_align.run_best_align() and saves to a single df
     Inputs:
@@ -107,27 +105,26 @@ def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
     df                  A dataframe containing pairs of source and target words, with metrics from the three algorithms
     """
     # open results
-    print(f"Combining results from the two algorithms from {s} to {t}")
-    align_path = outpath / f"{s}_{t}_align/all_sorted.csv"
-    best_path = outpath / f"{s}_{t}_align_best/best_sorted.csv"
-    match_path = outpath / f"{s}_{t}_match/{s}_{t}-dictionary.json"
+    print(f"Combining results from the three algorithms from {align_path}, {best_path} and {match_path}")
+    
 
     all_results = pd.read_csv(align_path)
     best_results = pd.read_csv(best_path)
     all_results = all_results.merge(best_results, how='left', on=['source', 'target'])
     all_results = all_results.rename(columns = {
-                                                'align_count_x': 'co-occurrences', 
-                                                'word_score': 'FA_translation_score', 
-                                                'align_count_y': 'FA_align_count', 
-                                                'verse_score': 'FA_verse_score',
+                                                # 'align_count_x': 'co-occurrences', 
+                                                # 'word_score': 'FA_translation_score', 
+                                                # 'align_count_y': 'FA_align_count', 
+                                                # 'verse_score': 'FA_verse_score',
                                                 })
+    # print(all_results)
     all_results.loc[:, ['avg_aligned']] = all_results.apply(
-        lambda row: row['FA_align_count'] / row['co-occurrences'], axis = 1
+        lambda row: row['alignment_count'] / row['co-occurrence_count'], axis = 1
         )
-    all_results.loc[:, 'FA_align_count'] = all_results.loc[:, 'FA_align_count'].apply(
+    all_results.loc[:, 'alignment_count'] = all_results.loc[:, 'alignment_count'].apply(
         lambda x: 0 if pd.isnull(x) else x
         )
-    all_results.loc[:, 'verse _score'] = all_results.loc[:, 'FA_verse_score'].apply(
+    all_results.loc[:, 'verse_score'] = all_results.loc[:, 'verse_score'].apply(
         lambda x: 0 if pd.isnull(x) else x
         )
     all_results.loc[:, 'avg_aligned'] = all_results.loc[:, 'avg_aligned'].apply(
@@ -136,7 +133,7 @@ def combine_df(outpath: Path, s: str, t: str) -> pd.DataFrame:
     all_results.loc[:, 'alignment_count'] = all_results.loc[:, 'alignment_count'].apply(
         lambda x: 0 if pd.isnull(x) else x
         )
-    all_results.loc[:, 'FA_translation_score'] = all_results.loc[:, 'FA_translation_score'].apply(
+    all_results.loc[:, 'translation_score'] = all_results.loc[:, 'translation_score'].apply(
         lambda x: 0 if x < 0.00001 else x
         )
     all_results.loc[:, "normalized_source"] = all_results["source"].apply(
@@ -173,12 +170,6 @@ if __name__ == "__main__":
     parser.add_argument("--source", type=Path, help="source bible")
     parser.add_argument("--target", type=Path, help="target bible")
     parser.add_argument(
-        "--word-score-threshold",
-        type=float,
-        default=0.5,
-        help="word score threshold {0,1}",
-    )
-    parser.add_argument(
         "--jaccard-similarity-threshold",
         type=float,
         help="Threshold for Jaccard Similarity score to be significant",
@@ -208,7 +199,6 @@ if __name__ == "__main__":
         args.source,
         args.target,
         path,
-        word_score_threshold=args.word_score_threshold,
         is_bible=args.is_bible,
     )
 
@@ -222,11 +212,10 @@ if __name__ == "__main__":
     )
 
     # combine results
-    df = combine_df(args.outpath, args.source.stem, args.target.stem)
-    reverse_df = combine_df(args.outpath, args.target.stem, args.source.stem)
+    align_path = args.outpath / f"{args.source.stem}_{args.target.stem}/all_sorted.csv"
+    best_path = args.outpath / f"{args.source.stem}_{args.target.stem}/best_sorted.csv"
+    match_path = args.outpath / f"{args.source.stem}_{args.target.stem}/{args.source.stem}_{args.target.stem}-dictionary.json"
+    df = combine_df(align_path, best_path, match_path)
 
     # save results
     df.to_csv(path / f"{args.source.stem}_{args.target.stem}_combined.csv")
-    reverse_df.to_csv(
-        reverse_path / f"{args.target.stem}_{args.source.stem}_combined.csv"
-    )
