@@ -168,11 +168,11 @@ def run_combine_results(outpath: Path) -> None:
     # combine results
     align_path = outpath / "all_sorted.csv"
     best_path = outpath / "best_sorted.csv"
-    match_path = outpath / f"{args.source.stem}_{args.target.stem}-dictionary.json"
+    match_path = outpath / "dictionary.json"
     df = combine_df(align_path, best_path, match_path)
 
     # save results
-    df.to_csv(outpath / f"{args.source.stem}_{args.target.stem}_combined.csv")
+    df.to_csv(outpath / "combined.csv")
 
 
 if __name__ == "__main__":

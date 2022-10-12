@@ -95,7 +95,7 @@ def test_update_matches_for_lists(index_cache_keys, index_cache_values):
 
 
 @pytest.mark.parametrize("source,target,source_word,target_word", [
-                                                    (Path("fixtures/src.txt"), Path("fixtures/trg.txt"), 'televisión', 'reservation'), 
+                                                    (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt"), 'televisión', 'reservation'), 
                                                     (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), 'licht', 'good'), 
 
                                                     ])
@@ -111,7 +111,7 @@ def test_run_match(source, target, source_word, target_word, remove_files = Fals
         refresh_cache=True,
     )
     
-    with open(outpath / f'{source.stem}_{target.stem}-dictionary.json') as f:
+    with open(outpath / 'dictionary.json') as f:
         dictionary = json.load(f)
     assert(len(dictionary) > 0)
     assert source_word in dictionary
@@ -132,8 +132,5 @@ def test_run_match(source, target, source_word, target_word, remove_files = Fals
     assert isinstance(values_index_cache[target_word], list)
     assert len(values_index_cache[target_word]) > 0
 
-    if remove_files:
-        for file in (outpath / 'cache').iterdir():
-            file.unlink()
-        for file in (outpath / f'{source.stem}_{target.stem}').iterdir():
-            file.unlink()
+    (outpath / 'dictionary.json').unlink()
+    (outpath / f'{source.stem}_{target.stem}_ref_df.csv').unlink()

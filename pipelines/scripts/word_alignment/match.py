@@ -324,8 +324,7 @@ def run_match(
     keys_index_cache_file = cache_dir / f"{keys_list_name}-index-cache.json"
     values_index_cache_file = cache_dir / f"{values_list_name}-index-cache.json"
 
-    matches_file = path / f"{keys_list_name}_{values_list_name}-dictionary.json"
-    # reverse_matches_file = reverse_path / f"{values_list_name}_{keys_list_name}-dictionary.json"
+    matches_file = path / "dictionary.json"
 
     ref_df = get_combined_df(source, target, keys_list_name, values_list_name, outpath)
     logging.info(f"Total verses: {len(ref_df)}")
