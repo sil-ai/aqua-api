@@ -112,8 +112,6 @@ These three metrics are somewhat independent of each other, and can be combined 
 
 `--target`  Target text file
 
-`--align-best-only`  (default=`False`) Runs `align_best.py` if `True`, `align.py` otherwise
-
 `--jaccard-similarity-threshold`  (default=`0.5`)  The Jaccard similarity threshold
 
 `--is-bible`  Boolean: if present, output will refer to lines by their verse references
