@@ -164,7 +164,7 @@ def get_translation_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: Tex
             vref = vrefs[c] if vrefs else None
             c = c + 1
             for word1 in source_verse:
-                for word2 in target_verse:
+                for word2 in set(target_verse):
                     data["source"].append(word1)
                     data["target"].append(word2)
                     data["translation_score"].append(model.get_translation_score(word1, word2))
