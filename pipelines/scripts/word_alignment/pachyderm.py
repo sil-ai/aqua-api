@@ -4,18 +4,18 @@ from combined import run_fa, run_match_words, run_combine_results
 import os
 import argparse
 
-def main(args):
 
-    jaccard_similarity_threshold = args.jaccard_similarity_threshold
-    count_threshold = args.count_threshold
-    is_bible = args.is_bible
-    refresh_cache = args.refresh_cache
-    outpath = args.outpath
-    ref_dir = args.ref_dir
-    data_dir = args.data_dir
+def run_pachyderm(
+    data_dir: Path,
+    ref_dir: Path,
+    outpath: Path,
+    jaccard_similarity_threshold: float=0.0,
+    count_threshold: int=0,
+    is_bible: bool=True,
+    refresh_cache: bool=True,
+    ) -> None: 
     for file in data_dir.iterdir():
         print(f"File 1: {file}")
-
         file = Path(file)
         for ref_file in ref_dir.iterdir():
             if ref_file.stem != 'vref':
@@ -38,6 +38,18 @@ def main(args):
                                     refresh_cache=refresh_cache,
                                     )
                 run_combine_results(outpath)
+
+
+def main(args):
+    run_pachyderm(
+    data_dir = args.data_dir,
+    ref_dir = args.ref_dir,
+    outpath = args.outpath,
+    jaccard_similarity_threshold = args.jaccard_similarity_threshold,
+    count_threshold = args.count_threshold,
+    is_bible = args.is_bible,
+    refresh_cache = args.refresh_cache,
+    )
 
 
 if __name__ == "__main__":
