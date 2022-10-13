@@ -2,3 +2,7 @@ pytest==7.1.2
 pandas==1.4.3
 ipython
 mock
+torch
+transformers
+fuzzywuzzy
+python-Levenshtein

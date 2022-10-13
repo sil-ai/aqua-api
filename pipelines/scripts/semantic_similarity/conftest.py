@@ -3,7 +3,7 @@ import pytest
 
 @pytest.fixture(scope='session')
 def valid_paths():
-    return {'chunked': '../split_revision/out', 'out': '.'}
+    return {'chunked': './out', 'out': '.'}
 
 @pytest.fixture(scope='session')
 def json_output():
