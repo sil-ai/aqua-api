@@ -146,7 +146,7 @@ def run_best_align(
     df = get_best_alignment_scores(symmetrized_model, parallel_corpus, vrefs)
 
     # Get verse scores
-    vref_df = get_vref_scores(df)
+    # vref_df = get_vref_scores(df)
     # Apply threshold
     no_dups = remove_duplicates(df)
 
@@ -159,7 +159,7 @@ def run_best_align(
 
     df.to_csv(outpath / "best_in_context.csv")
 
-    vref_df.to_csv(outpath / "best_vref_scores.csv")
+    # vref_df.to_csv(outpath / "best_vref_scores.csv")
 
     # delete temp files
     (outpath / f"{source.stem}_condensed.txt").unlink()

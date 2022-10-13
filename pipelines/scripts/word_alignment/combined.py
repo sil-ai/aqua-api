@@ -184,6 +184,22 @@ def run_combine_results(outpath: Path) -> None:
     df.to_csv(outpath / "combined.csv")
 
 
+def add_scores_to_alignments(outpath: Path) -> None:
+    df = pd.read_csv(outpath / 'best_in_context.csv')
+    all_sorted = pd.read_csv(outpath / 'all_sorted.csv')
+    combined = pd.read_csv(outpath / 'combined.csv')
+    df = pd.merge(df, combined, on=['source', 'target'], how='left')
+    df = df.drop(columns=['alignment_count_x', 'Unnamed: 0_x', 'Unnamed: 0_y', 'alignment_count_y', 'normalized_source', 'normalized_target'])
+    df = df.rename(columns={
+        'verse_score_x': 'FA_verse_score',
+        'alignment_score_x': 'FA_alignment_score',
+        'alignment_score_y': 'avg_FA_alignment_score',
+    })
+    df.loc[:, 'total_score'] = df.apply(lambda row: 4 * row['translation_score'] * row['avg_FA_alignment_score'] * row['jac_sim'], axis=1)
+    verse_scores = df.loc[:, ['vref', 'FA_verse_score', 'total_score']].groupby('vref').mean()
+    verse_scores.to_csv(outpath / 'verse_scores.csv')
+
+
 if __name__ == "__main__":
     # #command line args
     parser = argparse.ArgumentParser(description="Argparser")
@@ -229,3 +245,4 @@ if __name__ == "__main__":
     )
 
     run_combine_results(outpath)
+    add_scores_to_alignments(outpath)
