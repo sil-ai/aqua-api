@@ -138,12 +138,12 @@ def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
         trg_data = f.readlines()
 
     if is_bible:
-        assert len(src_data) == 41899
-        assert len(trg_data) == 41899
+        assert len(src_data) == 41899, "is_bible requires your source input to be 41899 lines in length"
+        assert len(trg_data) == 41899, "is_bible requires your target input to be 41899 lines in length"
         with open("vref.txt", "r") as f:
             vrefs = f.readlines()
         vrefs = [line.strip() for line in vrefs]
-        assert len(vrefs) == 41899
+        assert len(vrefs) == 41899,  "the vref.txt file must be 41899 lines in length"
 
     else:
         vrefs = [str(i) for i in range(len(src_data))]
