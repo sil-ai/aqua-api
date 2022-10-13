@@ -62,7 +62,7 @@ A modified version of Mark Woodward's [match_words_in_aligned_verse](https://git
 
 ### Output
 
-A directory containing cache, a log, and a `dictionaty.json` file with the word alignments. 
+A directory containing cache, a log, and a `dictionary.json` file with the word alignments. 
 
 ### Arguments:
 
