@@ -5,18 +5,18 @@ Word alignment scripts. These scripts work for any two aligned text files; they 
 **`--source` and `--target` must be aligned `.txt` files!** 
 
 ## align.py
-An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align. Returns alignment scores for all possible alignments in a line. Ignores word order. 
+An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align. Returns translation scores for all possible alignments in a line. Ignores word order, since the translation scores are calculated for two words over the whole corpus.
 ### Suggested Usage:
 
-`python align.py --source path/to/source/file --target path/to/target/file --threshold 0.5 --outpath /path/to/output/location`
+`python align.py --source path/to/source/file --target path/to/target/file --outpath /path/to/output/location`
 
 ### Output
 
 A directory containing two files:
 
-`in_context.csv`  All possible alignment pairs in the order they appear in `--source` and `target`. The word score threshold is not applied.
+`all_in_context.csv`  All possible alignment pairs in the order they appear in `--source` and `target`.
 
-`sorted.csv`  All possible alignment pairs sorted alphabetically. Pairs are counted, duplicated are removed, word scores are averaged, and the word score threshold is applied.
+`all_sorted.csv`  All possible alignment pairs sorted alphabetically with their translation scores.
 
 ### Arguments:
 
@@ -24,27 +24,25 @@ A directory containing two files:
 
 `--target`  Target text file
 
-`--threshold`  (default=`0.5`)  The fast_align word score threshold
-
 `--outpath`  Output location for the resulting directory   
 
-`--is-bible`  (default=`False`)  If `True`, will refer to lines by their verse references in the fast_align output files
+`--is-bible`  Boolean: if present, output will refer to lines by their verse references. Requires input text files to be 41,899 lines long.
 
 ## align_best.py
 An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align. Returns only the best alignment for each word in each line. Takes word order into account. 
 ### Suggested Usage:
 
-`python align_best.py --source path/to/source/file --target path/to/target/file --threshold 0.5 --outpath /path/to/output/location`
+`python align_best.py --source path/to/source/file --target path/to/target/file --outpath /path/to/output/location`
 
 ### Output
 
 A directory containing two directories (one for each alignment direction), each containing three files:
 
-`in_context.csv`  Best alignment pairs in the order they appear in `--source` and `target`. The word score threshold is not applied.
+`best_in_context.csv`  Best alignment pairs in the order they appear in `--source` and `target`, with their alignment score in that particular context.
 
-`sorted.csv`  Best alignment pairs sorted alphabetically. Pairs are counted, duplicated are removed, word and verse scores are averaged, and the word score threshold is applied.
+`best_sorted.csv`  Best alignment pairs sorted alphabetically. Pairs are grouped, and alignment scores and verse scores are averaged.
 
-`vref_scores.csv` Average alignment scores for each line (or verse, if `--is-bible` is `True`)
+`best_vref_scores.csv` Average alignment scores for each line (or verse, if `--is-bible`)
 
 ### Arguments:
 
@@ -52,11 +50,9 @@ A directory containing two directories (one for each alignment direction), each 
 
 `--target`  Target text file
 
-`--threshold`  (default=`0.5`)  The fast_align word score threshold
-
 `--outpath`  Output location for the resulting directory   
 
-`--is-bible`  (default=`False`)  If `True`, will refer to lines by their verse references in the fast_align output files
+`--is-bible`  Boolean: if present, output will refer to lines by their verse references. Requires input text files to be 41,899 lines long.
 
 ## match.py
 A modified version of Mark Woodward's [match_words_in_aligned_verse](https://github.com/sil-ai/new2old) algorithm
@@ -66,7 +62,7 @@ A modified version of Mark Woodward's [match_words_in_aligned_verse](https://git
 
 ### Output
 
-A directory containing cache, a log, and a json file with the word alignments. 
+A directory containing cache, a log, and a `dictionaty.json` file with the word alignments. 
 
 ### Arguments:
 
@@ -74,11 +70,11 @@ A directory containing cache, a log, and a json file with the word alignments.
 
 `--values-name`  The name of the second dataset. This dataset will provide the "keys" in the output dictionary.
 
-`--jaccard-similarity-threshold`  (default=`0.5`) The threshold for Jaccard Similarity for a match to be logged as significant and entered into the output dictionary (if it also meets the count-threshold).
+`--jaccard-similarity-threshold`  (default=`0.0`) The threshold for Jaccard Similarity for a match to be logged as significant and entered into the output dictionary (if it also meets the count-threshold).
 
-`--count-threshold`  (default=`1`)  The threshold for count (number of occurences of the two items in the same verse) for a match to be logged as significant and entered into the output dictionary (if it also meets the jaccard-similarity-threshold).
+`--count-threshold`  (default=`0`)  The threshold for count (number of occurences of the two items in the same verse) for a match to be logged as significant and entered into the output dictionary (if it also meets the jaccard-similarity-threshold).
 
-`--logging-level`  (default=`info`)
+`--logging-level`  (default=`INFO`)
 
 `--refresh-cache`  Ignore any saved index caches or frequency caches.
 
