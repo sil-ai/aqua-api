@@ -19,7 +19,7 @@ def test_normalize_word(word, expected):
 
 
 def test_get_bible_data():
-    df = match.get_bible_data("fixtures/en-KJV.txt")
+    df = match.get_text_data("fixtures/en-KJV.txt")
     assert len(df) > 5000
     assert isinstance(df, pd.DataFrame)
     assert 'god' in df['words'].explode().unique()
@@ -133,4 +133,4 @@ def test_run_match(source, target, source_word, target_word, remove_files = Fals
     assert len(values_index_cache[target_word]) > 0
 
     (outpath / 'dictionary.json').unlink()
-    (outpath / f'{source.stem}_{target.stem}_ref_df.csv').unlink()
+    (outpath / 'ref_df.csv').unlink()

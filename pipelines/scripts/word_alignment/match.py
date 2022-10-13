@@ -1,7 +1,6 @@
 import logging
 import json
 import argparse
-import os
 import re
 from typing import Iterable, Tuple, List
 
@@ -10,14 +9,17 @@ from tqdm import tqdm
 from collections import Counter
 from pathlib import Path
 from machine.tokenization import LatinWordTokenizer
-import unicodedata
 
 
 def write_dictionary_to_file(
     dictionary: dict, filename: str, to_strings: bool = False
 ) -> None:
     """
-    Takes a dictionary and writes it to a json file
+    Takes a dictionary and writes it to a json file.
+    Inputs:
+    dictionary          Dictionary to be written
+    filename            Filename to write to
+    to_strings          Whether the keys should be converted to strings, e.g. because json doesn't support tuple keys
     
     """
     if to_strings:
@@ -29,6 +31,7 @@ def write_dictionary_to_file(
 
 def text_to_words(text: str) -> List[str]:
     """
+    Takes a sentence, line or verse of text, tokenizes and "normalizes" it and returns a list of words.
     Inputs:
         text:   Normally a sentence, or Bible verse
     Outputs:
@@ -42,29 +45,36 @@ def text_to_words(text: str) -> List[str]:
     return word_list
 
 
-def normalize_word(word):
-    return (
-        re.sub("[^\w\s]", "", word.lower()) if word else ""
-    )  #  Gives 18,159 unique words in the OT
-    # return unicodedata.normalize('NFD', word)  # This does much less normalisation, and still gives 87,564 unique words in the OT
-
-
-def get_bible_data(bible: Path) -> pd.DataFrame:
+def normalize_word(word: str) -> str:
     """
-    Takes the Bible version as an input, and returns a dataframe of the text.
+    Strips the punctuation from words. Note that in some languages this punctuation includes important meaning from the word!
+    But this is used to "normalize" words, and group together words that are similar (and often have similar meanings) but not identical.
     Inputs:
-        bible:      Path to input txt file
+    word        The string to normalize
+
+    Outputs:
+    word        Normalized string
+    """
+    word = re.sub("[^\w\s]", "", word.lower()) if word else ""    #  Gives 18,159 unique Hebrew ords in the OT, rather than 87,000
+    return word
+
+
+def get_text_data(source: Path) -> pd.DataFrame:
+    """
+    Takes the text source as an input, and returns a dataframe of the text.
+    Inputs:
+        source:      Path to input txt file
     Outputs:
         df:         A dataframe with the text in one column and the separate words in another
     """
-    with open(bible, "r") as f:
-        bible_data = f.readlines()
-    words = [text_to_words(line) for line in bible_data]
+    with open(source, "r") as f:
+        data = f.readlines()
+    words = [text_to_words(line) for line in data]
     normalized_words = [
         [normalize_word(word) for word in word_list] for word_list in words
     ]
     df = pd.DataFrame(
-        {"text": bible_data, "words": words, "normalized_words": normalized_words}
+        {"text": data, "words": words, "normalized_words": normalized_words}
     )
     df = df[df["text"].apply(lambda x: len(x) > 2)]
     df = df[df["text"] != "b'\n'"]
@@ -75,10 +85,11 @@ def get_indices_with_item(item: str, list_series: pd.Series) -> List[pd.Index]:
     """
     Returns indices from a series of lists, filtered by rows whose list contains a particular item
     Inputs:
-        item:   A single item from list_series
-        list_series:     A series containing the lists to filter by list_item
+    item:           A single item from list_series
+    list_series:     A series containing the lists to filter by list_item
+    
     Outputs:
-        A list of indices for the list_series series, corresponding to rows that contain item
+    index_list    A list of indices for the list_series series, corresponding to rows that contain item
     """
     index_list = list(
         list_series[
@@ -90,11 +101,19 @@ def get_indices_with_item(item: str, list_series: pd.Series) -> List[pd.Index]:
 
 def get_jaccard_similarity(list1: list, list2: list) -> float:
     """
-    Gets the jacard similarity between two lists
+    Gets the jacard similarity between two lists.
+    Inputs:
+    list1           First list
+    list2           Second list
+
+    Outputs:
+    jac_sim         The Jaccard Similarity between the two sets - i.e. the size of the intersection divided by the
+                    size of the union.
     """
     intersection = len(list(set(list1).intersection(list2)))
     union = (len(set(list1)) + len(set(list2))) - intersection
-    return float(intersection) / union if union != 0 else 0
+    jac_sim = float(intersection) / union if union != 0 else 0
+    return jac_sim
 
 
 def get_correlations_between_sets(
@@ -102,6 +121,7 @@ def get_correlations_between_sets(
     indexes_set_2: set,
 ) -> Tuple[float, int]:
     """
+    Returns both the Jaccard Similarity between two sets, and the size of their intersection.
     Inputs:
     indexes_set_1:      A set of indexes, to be compared for correlation
     indexes_set_2:      A set of indexes, to be compared for correlation
@@ -134,13 +154,13 @@ def update_matches_for_lists(
         matches:        A dictionary containing those matches which pass the thresholds for significance
         keys_index:     A cache of the indices of ref_df where keys_item appears
         values_index:     A cache of the indices of ref_df where values_item appears
-        jaccard_similarity_threshold: (Default 0.5) The threshold for Jaccard Similarity for a match to be logged as significant
+        jaccard_similarity_threshold: (Default 0.0) The threshold for Jaccard Similarity for a match to be logged as significant
                                 and entered into the matches dictionary
-        count_threshold: (Default 5)    The threshold for count (number of occurences of the two items in the same verse) for a
+        count_threshold: (Default 0)    The threshold for count (number of occurences of the two items in the same verse) for a
                              match to be logged as significant and entered into the matches dictionary
     Outputs:
-        matches:        A dictionary containing those matches which pass the thresholds for significance
-        js_cache:         A dictionary cache of the Jaccard similarities between pairs of items already calculated
+        matches:        An updated dictionary containing those matches which pass the thresholds for significance
+        js_cache:         An updated dictionary cache of the Jaccard similarities between pairs of items already calculated
     """
     cache_counter = Counter()
     for keys_item in keys_list:
@@ -236,21 +256,19 @@ def initialize_cache(
 
 
 def get_single_df(
-    # df_path:Path,
-    text_file_path: Path,
+    source: Path,
     list_name: str = "keys",
 ) -> pd.DataFrame:
     """
-    Reads a dataframe corresponding to either the keys or values being investigated
+    Reads a text file and creates a dataframe corresponding to either the keys or values being investigated.
+    The 'normalized_words' columns of the dataframe is renamed to either 'keys' or 'values'.
     Inputs:
-        # df_path:    Path to the df parquet file, which may or may not currently exist. The dataframe is saved to this path.
-        df_name:    Name of the dataframe
+        source:    Name of the dataframe
         list_name:  The name that should be used for the df column with the relevant verse lists. Normally 'keys' or 'values'.
     Outputs:
-        df:         The dataframe containing Bible verses, and either a 'keys' or 'values' column with the relevant list data.
+        df:         The dataframe containing text, and either a 'keys' or 'values' column with the relevant list data.
     """
-    df = get_bible_data(text_file_path)
-    # df.to_parquet(df_path)
+    df = get_text_data(source)
     df = df.rename(columns={"normalized_words": list_name})
     return df
 
@@ -258,19 +276,16 @@ def get_single_df(
 def get_combined_df(
     source: Path,
     target: Path,
-    keys_list_name: str,
-    values_list_name: str,
     outpath: Path,
 ) -> pd.DataFrame:
     """
-    Takes the names of the keys_list and values_list and creates ref_df - the dataframe that will be used in the rest of the script.
+    Takes the source and target text files and creates ref_df - a single dataframe with aligned words from both inputs.
     Inputs:
-        source: Path to the source file
-        target: Path to the target file
-        keys_list_name:     Name of the keys_list. Either a Bible text name or "OT_domains", "NT_domains", "greek" or "hebrew".
-        values_list_name:   Name of the values_list. Either a Bible text name or "OT_domains", "NT_domains" or "greek" or "hebrew".
+        source: Path to the source txt file
+        target: Path to the target txt file
+        outpath:            The output file path
     Outputs:
-        ref_df:     A dataframe that combines the keys and values data into a single dataframe by Bible verse
+        ref_df:     A dataframe that combines the keys and values data into a single dataframe by line
     """
     if not outpath.exists():
         outpath.mkdir(exist_ok=True)
@@ -287,31 +302,41 @@ def get_combined_df(
     values_ref_series = values_ref_df["values"]
     ref_df = pd.concat([keys_ref_df, values_ref_series], axis=1)
     ref_df = ref_df.dropna(subset=["keys", "values"])
-    ref_df.to_csv(outpath / f"{keys_list_name}_{values_list_name}_ref_df.csv")
+    ref_df.to_csv(outpath / "ref_df.csv")
     logging.info(ref_df.head())
     return ref_df
 
 
 def run_match(
-    source: Path,
-    target: Path,
-    outpath: Path,
-    logging_level: str = 'INFO',
-    jaccard_similarity_threshold: float = 0.0,
-    count_threshold: int = 0,
-    refresh_cache: bool = False,
-) -> None:
+            source: Path,
+            target: Path,
+            outpath: Path,
+            logging_level: str = 'INFO',
+            jaccard_similarity_threshold: float = 0.0,
+            count_threshold: int = 0,
+            refresh_cache: bool = False,
+            ) -> None:
+    """
+    Runs the matching algorithm, taking source and target text files and returning a dictionary.json file of matches.
+    Inputs:
+    source          Path to source txt file
+    target          Path to target txt file
+    outpath         Output path
+    logging_level   Logging level. Default is 'INFO'
+    jaccard_similarity_threshold    Jaccard Similarity threshold for being included in the dictionary
+    count_threshold                 Count threshold for being included in the dictionary
+    refresh_cache    Whether to force a cache refresh or use any cached data from previous runs on this source and/or target
+
+    """
     keys_list_name = source.stem
     values_list_name = target.stem
 
-    path = outpath # / f"{keys_list_name}_{values_list_name}_match"
-    # reverse_path = outpath / f"{values_list_name}_{keys_list_name}_match"
-    if not path.exists():
-        path.mkdir(parents=True, exist_ok=True)
+    if not outpath.exists():
+        outpath.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         format="%(asctime)s - %(funcName)20s() - %(message)s",
         level=logging_level.upper(),
-        filename=f"{path}/match_words_in_aligned_verse.log",
+        filename=f"{outpath}/match_words_in_aligned_verse.log",
         filemode="a",
     )
     logging.info("START RUN")
@@ -325,10 +350,10 @@ def run_match(
     keys_index_cache_file = cache_dir / f"{keys_list_name}-index-cache.json"
     values_index_cache_file = cache_dir / f"{values_list_name}-index-cache.json"
 
-    matches_file = path / "dictionary.json"
+    matches_file = outpath / "dictionary.json"
 
-    ref_df = get_combined_df(source, target, keys_list_name, values_list_name, outpath)
-    logging.info(f"Total verses: {len(ref_df)}")
+    ref_df = get_combined_df(source, target, outpath)
+    logging.info(f"Total lines: {len(ref_df)}")
 
     js_cache = initialize_cache(js_cache_file, to_tuples=True, refresh=refresh_cache)
     js_cache_reverse = initialize_cache(
@@ -354,28 +379,23 @@ def run_match(
     else:
         values_index = initialize_cache(values_index_cache_file, refresh=False)
 
-    ref_df = ref_df.dropna(
-        subset=["keys", "values"]
-    )  # Reduce ref_df to only verses present in both texts
+    ref_df = ref_df.dropna(subset=["keys", "values"])  # Reduce ref_df to only lines present in both texts
     logging.info(f"ref_df: {ref_df}")
-
-    ref_df_indexes = list(ref_df.index)
+    
+    ref_df_indexes = list(ref_df.index)  
+    # Reduce the keys_index and values_index dicts to only those lines present in the reduced ref_df
     print("Getting keys_index")
-    # Reduce the keys_index dict to only those verses present in the reduced ref_df
     keys_index = {
         key: [item for item in values if item in ref_df_indexes]
         for key, values in tqdm(keys_index.items())
     }
     print("Getting values_index")
-    # Reduce the values_index dict to only those verses present in the reduced ref_df
     values_index = {
         key: [item for item in values if item in ref_df_indexes]
         for key, values in tqdm(values_index.items())
     }
 
     matches = {}
-    # reverse_matches={}
-
     print("Getting matches...")
     for index, row in tqdm(ref_df.iterrows(), total=ref_df.shape[0]):
         keys: List[str] = list(set(row["keys"]))
@@ -390,11 +410,8 @@ def run_match(
             jaccard_similarity_threshold=jaccard_similarity_threshold,
             count_threshold=count_threshold,
         )
-
     write_dictionary_to_file(js_cache, js_cache_file, to_strings=True)
     write_dictionary_to_file(matches, matches_file)
-    # write_dictionary_to_file(reverse_matches, reverse_matches_file)
-
     logging.info("END RUN")
 
 

@@ -43,9 +43,9 @@ def test_run_match_words(source, target, is_bible, remove_files=True):
     outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
     combined.run_match_words(source, target, outpath, 0.0, 0, False)
     assert (outpath / "dictionary.json").exists()
-    assert (outpath / f"{source.stem}_{target.stem}_ref_df.csv").exists()
+    assert (outpath / "ref_df.csv").exists()
     if remove_files:
-        (outpath / f"{source.stem}_{target.stem}_ref_df.csv").unlink()
+        (outpath / "ref_df.csv").unlink()
 
 @pytest.mark.parametrize("source,target,source_word,target_word", [
                                                     (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), 'gott', 'god'), 
@@ -79,8 +79,9 @@ def test_run_combine_results(source, target, source_word, target_word, is_bible)
     assert len(df) > 10
     assert len(df['translation_score'].unique()) > 10
     assert len(df['alignment_count'].unique()) > 5
-    assert len(df['avg_aligned'].unique()) > 10
-    assert max(df['avg_aligned']) <= 1
+    assert len(df['avg_aligned'].unique()) > 5
+    assert max(df['avg_aligned']) <= 3  # This is average num of times aligned divided by average number of verses they co-occur in. Normally
+                                        # less than 1.0, but can occasionally be > 1 if there are multiple aligned occurences in a single verse!
     assert min(df['avg_aligned']) >= 0
     assert len(df['jac_sim'].unique()) > 5
     assert df[(df['source'] == source_word) & (df['target'] == target_word)]['translation_score'].values[0] > 0.1
@@ -93,4 +94,4 @@ def test_run_combine_results(source, target, source_word, target_word, is_bible)
     (outpath / 'best_vref_scores.csv').unlink()
     (outpath / 'combined.csv').unlink()
     (outpath / 'dictionary.json').unlink()
-    (outpath / f'{source.stem}_{target.stem}_ref_df.csv').unlink()
+    (outpath / 'ref_df.csv').unlink()

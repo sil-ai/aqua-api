@@ -138,10 +138,13 @@ def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
         trg_data = f.readlines()
 
     if is_bible:
+        assert len(src_data) == 41899
+        assert len(trg_data) == 41899
         with open("vref.txt", "r") as f:
             vrefs = f.readlines()
         vrefs = [line.strip() for line in vrefs]
         assert len(vrefs) == 41899
+
     else:
         vrefs = [str(i) for i in range(len(src_data))]
 
@@ -171,8 +174,8 @@ def get_translation_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: Tex
         if len(source_verse) > 0 and len(target_verse) > 0:
             vref = vrefs[c] if vrefs else None
             c = c + 1
-            for word1 in source_verse:
-                for word2 in set(target_verse):
+            for word1 in set(source_verse):
+                for word2 in target_verse:
                     data["source"].append(word1)
                     data["target"].append(word2)
                     data["translation_score"].append(model.get_translation_score(word1, word2))
@@ -196,6 +199,7 @@ def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     dups = df.groupby(["source", "target"]).size().reset_index()
     avgs = df.groupby(["source", "target"]).mean().reset_index()
     no_dups = pd.merge(dups, avgs)
+    print(no_dups)
     no_dups.rename(columns={0: "co-occurrence_count"}, inplace=True)
     return no_dups
 
