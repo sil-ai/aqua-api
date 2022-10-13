@@ -91,14 +91,11 @@ vrefs are from [here](https://github.com/sil-ai/aqua-api/tree/master/fixtures)
 `python combined.py --source path/to/source/file --target path/to/target/file --is-bible --outpath /path/to/output/location`
 
 ### Output:
-A directory named `<source>_<target>` containing:
+A directory named `<source>_<target>` containing various files (mainly for debugging). The main output file is:
 
-1) a directory with align data (in `_align` directory)
-2) a directory with align_best "best" data (in `_align_best` directory)
-2) a directory with match data (in `_match` directory)
-3) a csv with the combined data from both algorithms in the main directory
+* combined.csv
 
-Note that the main output is the `_combined.csv` file in the main directory. This file lists all source-target combinations, with three metrics:
+which lists all source-target combinations, with three metrics:
     
 * `translation_score`:     The translation score the Fast Align trained model gives for these two words
 * `alignment_score`:       The average alignment score from Fast Align when these two words appeared together.
