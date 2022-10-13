@@ -1,8 +1,0 @@
-- name: DO AQuA Postgres (hasura-aqua)
-  kind: postgres
-  configuration:
-    connection_info:
-      database_url: postgresql://doadmin:AVNS_G6H58Gqz3c4cZqH@hasura-aqua-do-user-7925792-0.b.db.ondigitalocean.com:25060/defaultdb
-      isolation_level: read-committed
-      use_prepared_statements: false
-  tables: "!include DO AQuA Postgres (hasura-aqua)/tables/tables.yaml"

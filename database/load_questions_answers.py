@@ -40,7 +40,7 @@ def create_upsert_method(meta: db.MetaData, extra_update_fields: Optional[Dict[s
 
 
 def dataframe_creation():
-    dir = "../fixtures/filtered-human-verified"
+    dir = "../fixtures/comprehension_questions"
     lang_df = {"start_verse": [], "end_verse": [], 
            "language": [], "question": [],"answer": []
            }

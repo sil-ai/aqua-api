@@ -1,7 +1,0 @@
-version: 3
-endpoint: https://hot-bluegill-28.hasura.app
-admin_secret: y7fAAYdlfrFdPYHT6fwcXSnW4YXLpORxFCZ1GzeMpHNpaGSYMGD7DKQSOVxs1CKy
-metadata_directory: metadata
-actions:
-  kind: synchronous
-  handler_webhook_baseurl: http://localhost:3000
