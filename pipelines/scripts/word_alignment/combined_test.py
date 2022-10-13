@@ -5,8 +5,6 @@ import json
 import pandas as pd
 
 import combined
-import align
-import align_best
 
 @pytest.mark.parametrize("source,target,is_bible", [
                                                     (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt"), False), 
