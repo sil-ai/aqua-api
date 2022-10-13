@@ -22,6 +22,7 @@ def run_pachyderm(
                 print(f"File 2: {ref_file}")
                 ref_file = Path(ref_file)
                 outpath = outpath / f"{file.stem}_{ref_file.stem}"
+                outpath.mkdir(parents=True, exist_ok=True)
                 if file != ref_file:
                     run_fa(
                         file, 
