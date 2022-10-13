@@ -12,7 +12,7 @@ from machine.tokenization import LatinWordTokenizer
 
 
 def write_dictionary_to_file(
-    dictionary: dict, filename: str, to_strings: bool = False
+    dictionary: dict, filename: Path, to_strings: bool = False
 ) -> None:
     """
     Takes a dictionary and writes it to a json file.
@@ -99,7 +99,7 @@ def get_indices_with_item(item: str, list_series: pd.Series) -> List[pd.Index]:
     return index_list
 
 
-def get_jaccard_similarity(list1: list, list2: list) -> float:
+def get_jaccard_similarity(set_1: set, set_2: set) -> float:
     """
     Gets the jacard similarity between two lists.
     Inputs:
@@ -110,8 +110,8 @@ def get_jaccard_similarity(list1: list, list2: list) -> float:
     jac_sim         The Jaccard Similarity between the two sets - i.e. the size of the intersection divided by the
                     size of the union.
     """
-    intersection = len(list(set(list1).intersection(list2)))
-    union = (len(set(list1)) + len(set(list2))) - intersection
+    intersection = len(list(set(set_1).intersection(set_2)))
+    union = (len(set_1) + len(set_2)) - intersection
     jac_sim = float(intersection) / union if union != 0 else 0
     return jac_sim
 
