@@ -18,6 +18,7 @@ def write_dictionary_to_file(
 ) -> None:
     """
     Takes a dictionary and writes it to a json file
+    
     """
     if to_strings:
         dictionary = tuple_keys_to_string(dictionary)
@@ -295,7 +296,7 @@ def run_match(
     source: Path,
     target: Path,
     outpath: Path,
-    logging_level: str,
+    logging_level: str = 'INFO',
     jaccard_similarity_threshold: float = 0.0,
     count_threshold: int = 0,
     refresh_cache: bool = False,

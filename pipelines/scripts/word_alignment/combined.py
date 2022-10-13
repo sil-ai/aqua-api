@@ -24,13 +24,15 @@ def run_fa(
             ) -> None:
     """
     Runs both alignment models: getting translation scores from all combinations of words in source and target
-    and getting counts for how many times those words are aligned together.
+    and getting counts for how many times those words are aligned together. Various csv files are outputted to
+    the outpath directory.
 
     Inputs:
     source              Path to the source file
     target              Path to the target file
     outpath             Path to the output directory
-    is_bible            Boolean for whether the lines correspond to Bible verses
+    is_bible            Boolean for whether the lines correspond to Bible verses. If True, the length of both
+                        source and target files must be 41,899 lines.
     """
     # Get all alignment scores
     corpus, model = align.run_align(source, target, outpath, is_bible=is_bible)
@@ -49,7 +51,8 @@ def run_match_words(
     refresh_cache: bool=False,
     ) -> None:
     """
-    Runs match.run_match with the supplied arguments.
+    Runs match.run_match with the supplied arguments to get jaccard similarity scores and counts for pairs of
+    source and target words. These are then saved to dictionary.json in the outpath directory.
     Inputs:
     source      A path to the source text
     target      A path to the target text
@@ -62,18 +65,20 @@ def run_match_words(
         source,
         target,
         outpath,
-        "INFO",
-        jaccard_similarity_threshold,
-        count_threshold,
+        jaccard_similarity_threshold=jaccard_similarity_threshold,
+        count_threshold=count_threshold,
         refresh_cache=refresh_cache,
     )
 
 
 def get_scores_from_match_dict(
-    dictionary: dict, source: str, target: str
+                                dictionary: dict, 
+                                source_word: str, 
+                                target_word: str
     ) -> Tuple[float, float]:
     """
-    Takes a source word and a target word, looks them up in the match dictionary and returns the jaccard similarity and count fields for their match.
+    Takes a source word and a target word, looks them up in the match dictionary and returns the 
+    jaccard similarity and count fields for their match in the dictionary.
     Inputs:
     dictionary          The match dictionary for look up
     source              A string word to look up
@@ -83,8 +88,8 @@ def get_scores_from_match_dict(
     jac_sim             The jaccard similarity between the source and target in the dictionary
     match_count         The count between the source and target in the dictionary
     """
-    list_for_source = dictionary.get(source, [])
-    match_list = [match for match in list_for_source if match.get("value") == target]
+    list_for_source = dictionary.get(source_word, [])
+    match_list = [match for match in list_for_source if match.get("value") == target_word]
     if len(match_list) == 0:
         return 0, 0
     jac_sim = match_list[0]["jaccard_similarity"]
@@ -92,14 +97,13 @@ def get_scores_from_match_dict(
     return jac_sim, match_count
 
 
-# combine results
 def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFrame:
     """
     Reads the outputs saved to file from match.run_match(), align.run_align() and best_align.run_best_align() and saves to a single df
     Inputs:
-    outpath             Path to the output directory
-    s                   Name of the source input (generally the stem of the filename)
-    t                   Name of the target input (generally the stem of the filename)
+    align_path             Path to the all_sorted.csv alignment file
+    best_path              Path to the best_sorted.csv best alignments file
+    match_path             Path to the dictionary.json match dictionary file
 
     Output:
     df                  A dataframe containing pairs of source and target words, with metrics from the three algorithms
@@ -165,7 +169,12 @@ def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFr
 
 
 def run_combine_results(outpath: Path) -> None:
-    # combine results
+    """
+    Runs combined.combine_df to combine the three output files in the outpath directory. They are saved
+    to combined.csv in the same outpath directory.
+    Inputs:
+    outpath         The directory where all three files are located.
+    """
     align_path = outpath / "all_sorted.csv"
     best_path = outpath / "best_sorted.csv"
     match_path = outpath / "dictionary.json"

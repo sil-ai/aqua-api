@@ -88,7 +88,7 @@ def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     threshold   A count threshold
 
     Outputs:
-    no_dups     A dataframe with duplicates removed and align_counts below a threshold removed.
+    no_dups     A dataframe with duplicates removed, grouped by source and target words.
     """
     # remove duplicates and average out verse and word scores
     dups = df.groupby(["source", "target"]).size().reset_index()
@@ -100,32 +100,42 @@ def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_best_align(
-    src_path: Path, trg_path: Path, outpath: Path, is_bible: bool=False, parallel_corpus = None, symmetrized_model = None
-    ) -> Tuple[TextFileTextCorpus, ThotSymmetrizedWordAlignmentModel]:
+                    source: Path, 
+                    target: Path, 
+                    outpath: Path, 
+                    is_bible: bool=False, 
+                    parallel_corpus: TextFileTextCorpus = None, 
+                    symmetrized_model: ThotSymmetrizedWordAlignmentModel = None,
+                    ) -> Tuple[TextFileTextCorpus, ThotSymmetrizedWordAlignmentModel]:
     """
     Takes two input text files, runs get_alignments on them, and saves the resulting dataframe
     to a csv file in a directory within outpath.
 
     Inputs:
-    src_file           Path to a source text file of line-aligned text
-    trg_file           Path to a target text file of line-aligned text
-    threshold          Threshold over which results are kept
+    source           Path to a source text file of line-aligned text
+    target           Path to a target text file of line-aligned text
     outpath            Path to base output directory
     is_bible           Boolean for whether the text is Bible, and hence vref references should be used.
+    parallel_corpus    A corpus to process. Normally the corpus is produced from the source and target,
+                        but if it has already been produced it can optionally be provided here to save
+                        calculating it again.
+    symmetrized_model   The model to use. Normally the model is instantiated and trained with the source and target,
+                        but if it has already been created and trained it can optionally be provided here to save
+                        training it again.
 
     Outputs:
-    TextFileTextCorpus      In case you want to re-use it without training from scratch
+    TextFileTextCorpus      In case you want to re-use it without creating it from scratch
     ThotSymmetrizedWordAlignmentModel       In case you want to re-use it without training from scratch
     """
     # remove empty lines
-    write_condensed_files(src_path, trg_path, outpath)
+    write_condensed_files(source, target, outpath)
 
     # get vrefs
-    vrefs = get_vrefs(src_path, trg_path, is_bible)
+    vrefs = get_vrefs(source, target, is_bible)
 
     # create parallel corpus
     if not parallel_corpus:
-        parallel_corpus = create_corpus(outpath / f"{src_path.stem}_condensed.txt", outpath / f"{trg_path.stem}_condensed.txt")
+        parallel_corpus = create_corpus(outpath / f"{source.stem}_condensed.txt", outpath / f"{target.stem}_condensed.txt")
 
     # Train fast_align model
     if not symmetrized_model:
@@ -134,11 +144,6 @@ def run_best_align(
     # Get alignments
     print("Getting alignments...")
     df = get_best_alignment_scores(symmetrized_model, parallel_corpus, vrefs)
-
-    print("Getting reverse alignments...")
-    reverse_df = get_best_alignment_scores(
-        symmetrized_model.inverse_word_alignment_model, parallel_corpus.invert(), vrefs
-    )
 
     # Get verse scores
     vref_df = get_vref_scores(df)
@@ -157,8 +162,8 @@ def run_best_align(
     vref_df.to_csv(outpath / "best_vref_scores.csv")
 
     # delete temp files
-    (outpath / f"{src_path.stem}_condensed.txt").unlink()
-    (outpath / f"{trg_path.stem}_condensed.txt").unlink()
+    (outpath / f"{source.stem}_condensed.txt").unlink()
+    (outpath / f"{target.stem}_condensed.txt").unlink()
 
     return parallel_corpus, symmetrized_model
 

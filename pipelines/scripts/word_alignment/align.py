@@ -18,14 +18,20 @@ from machine.translation.thot import (
 from pathlib import Path
 
 
-def write_condensed_files(source: Path, target: Path, outpath: Path) -> None:
+def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Path, Path]:
     """
     Takes two input files and writes condensed versions to file, which only include those lines that
     are not blank in both input files.
 
     Inputs:
-    src_path            A Path to the source file
-    trg_path            A Path to the target file
+    source            A Path to the source file
+    target            A Path to the target file
+    outpath           The path where the two condensed files will be written
+
+    Outputs:
+    source_path        The Path where the condensed source file has been written
+    target_path        The Path where the condensed target file has been written
+
     """
     # open files
     with open(source) as f:
@@ -58,27 +64,31 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> None:
     # write to condensed txt files
     if not outpath.exists():
         outpath.mkdir(exist_ok=True)
-    with open(outpath / f"{source.stem}_condensed.txt", "w") as f:
+    source_path = outpath / f"{source.stem}_condensed.txt"
+    target_path = outpath / f"{target.stem}_condensed.txt"
+
+    with open(source_path, "w") as f:
         for line in df["src"]:
             f.write(line)
-    with open(outpath / f"{target.stem}_condensed.txt", "w") as f:
+    with open(target_path, "w") as f:
         for line in df["trg"]:
             f.write(line)
-    return (outpath / f"{source.stem}_condensed.txt", outpath / f"{target.stem}_condensed.txt")
+    return (source_path, target_path)
 
 
-def create_corpus(src_file: Path, trg_file: Path) -> TextFileTextCorpus:
+def create_corpus(condensed_source: Path, condensed_target: Path) -> TextFileTextCorpus:
     """
-    Takes two line-aligned input files and produces a corpus.
+    Takes two line-aligned condensed input files and produces a tokenized corpus. Note that this must be run on the
+    output of write_condensed_files(), which removes the lines that are blank in either file.
     Inputs:
-    src_path            A Path to the source file
-    trg_path            A Path to the target file
+    condensed_source            A Path to the source file
+    condensed_target            A Path to the target file
 
     Outputs:
     parallel_corpus     A tokenized TextFileTextCorpus
     """
-    source_corpus = TextFileTextCorpus(src_file)
-    target_corpus = TextFileTextCorpus(trg_file)
+    source_corpus = TextFileTextCorpus(condensed_source)
+    target_corpus = TextFileTextCorpus(condensed_target)
     parallel_corpus = source_corpus.align_rows(target_corpus).tokenize(
         LatinWordTokenizer()
     )
@@ -87,7 +97,7 @@ def create_corpus(src_file: Path, trg_file: Path) -> TextFileTextCorpus:
 
 def train_model(corpus: TextFileTextCorpus) -> ThotSymmetrizedWordAlignmentModel:
     """
-    Takes an aligned corpus as input, and trains a model on that corpus
+    Takes an aligned corpus as input and trains a model on that corpus
 
     Inputs:
     corpus          A TextFileTextCorpus
@@ -109,39 +119,37 @@ def train_model(corpus: TextFileTextCorpus) -> ThotSymmetrizedWordAlignmentModel
     return symmetrized_model
 
 
-def get_vrefs(src_file: Path, trg_file: Path, is_bible: bool) -> list:
+def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
     """
-    Takes two aligned text files and returns a list of vrefs that are non-empty in both files.
+    Takes two aligned text files and returns a list of vrefs corresponding to lines that are non-empty in both files.
 
     Inputs:
-    src_file            A Path to the source file
-    trg_file            A Path to the target file
+    source            A Path to the source file
+    target            A Path to the target file
+    is_bible          Boolean for whether the text is Bible. If is_bible is true, the length of the text files must be 41,899 lines.
 
     Outputs:
-    df["vref"].tolist()     A list of vrefs that are non-blank in both input files
+    vref_list     A list of vrefs that are non-blank in both input files
     """
-    with open(src_file) as f:
+    with open(source) as f:
         src_data = f.readlines()
 
-    with open(trg_file) as f:
+    with open(target) as f:
         trg_data = f.readlines()
 
     if is_bible:
         with open("vref.txt", "r") as f:
             vrefs = f.readlines()
         vrefs = [line.strip() for line in vrefs]
+        assert len(vrefs) == 41899
     else:
         vrefs = [str(i) for i in range(len(src_data))]
-
-    # min_len = min(len(src_data), len(trg_data), len(vrefs))
-    # src_data = src_data[:min_len]
-    # trg_data = trg_data[:min_len]
-    # vrefs = vrefs[:min_len]
 
     df = pd.DataFrame({"vref": vrefs, "src": src_data, "trg": trg_data})
     df = df[df.src != "\n"]
     df = df[df.trg != "\n"]
-    return df["vref"].tolist()
+    vref_list = df["vref"].tolist()
+    return vref_list
 
 
 def get_translation_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: list = None) -> pd.DataFrame:
@@ -175,8 +183,7 @@ def get_translation_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: Tex
 
 def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Takes a dataframe of sources and targets, groups the data by these sources and targets
-    and optionally only keeps those where the word_score is above a threshold.
+    Takes a dataframe of sources and targets and groups the data by these sources and targets.
 
     Inputs:
     df          A dataframe with "source" and "target" columns
@@ -189,24 +196,45 @@ def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     dups = df.groupby(["source", "target"]).size().reset_index()
     avgs = df.groupby(["source", "target"]).mean().reset_index()
     no_dups = pd.merge(dups, avgs)
-    # no_dups.drop(columns=['Unnamed: 0', 'vref', 'alignment_count'], inplace=True)
-
     no_dups.rename(columns={0: "co-occurrence_count"}, inplace=True)
     return no_dups
 
 
 def run_align(
-    src_path: Path, trg_path: Path, outpath: Path, is_bible: bool=False, parallel_corpus = None, symmetrized_model = None
+    source: Path, target: Path, outpath: Path, is_bible: bool=False, parallel_corpus = None, symmetrized_model = None
 ) -> Tuple[TextFileTextCorpus, ThotSymmetrizedWordAlignmentModel]:
-    # remove empty lines
-    write_condensed_files(src_path, trg_path, outpath)
+    """
+    Takes two input text files, runs get_alignments on them, and saves the resulting dataframe
+    to a csv file in a directory within outpath.
+
+    Inputs:
+    source           Path to a source text file of line-aligned text
+    target           Path to a target text file of line-aligned text
+    outpath            Path to base output directory
+    is_bible           Boolean for whether the text is Bible, and hence vref references should be used. If True, both
+                        input files must be of length 41,899.
+    parallel_corpus    A corpus to process. Normally the corpus is produced from the source and target,
+                        but if it has already been produced it can optionally be provided here to save
+                        calculating it again.
+    symmetrized_model   The model to use. Normally the model is instantiated and trained with the source and target,
+                        but if it has already been created and trained it can optionally be provided here to save
+                        training it again.
+
+    Outputs:
+    TextFileTextCorpus      In case you want to re-use it without creating it from scratch
+    ThotSymmetrizedWordAlignmentModel       In case you want to re-use it without training from scratch
+    
+    """
+    
 
     # get vrefs
-    vrefs = get_vrefs(src_path, trg_path, is_bible)
+    vrefs = get_vrefs(source, target, is_bible)
 
     # create parallel corpus
     if not parallel_corpus:
-        parallel_corpus = create_corpus(outpath / f"{src_path.stem}_condensed.txt", outpath / f"{trg_path.stem}_condensed.txt")
+        # remove empty lines
+        condensed_source, condensed_target = write_condensed_files(source, target, outpath)
+        parallel_corpus = create_corpus(condensed_source, condensed_target)
 
     # Train fast_align model
     if not symmetrized_model:
@@ -220,23 +248,12 @@ def run_align(
     no_dups = remove_duplicates(df)
 
     # write results to csv
-    # if dir doesn't exist, create it
     if not outpath.exists():
         outpath.mkdir()
-    # if not reverse_path.exists():
-        # reverse_path.mkdir()
 
     no_dups.to_csv(outpath / "all_sorted.csv")
-    # no_dups.to_csv(reverse_path / "all_sorted.csv")
-
 
     df.to_csv(outpath / "all_in_context.csv")
-    # df.to_csv(reverse_path / "all_in_context.csv")
-
-
-    # delete temp files
-    (outpath / f"{src_path.stem}_condensed.txt").unlink()
-    (outpath / f"{trg_path.stem}_condensed.txt").unlink()
 
     return (parallel_corpus, symmetrized_model)
 
