@@ -20,7 +20,7 @@ These scores can be found in `combined.csv`, and list every source-target word p
 * `translation_score`: The "translation score" for the pair, from Fast Align. This score is a function of the two words, and does not depend on any particular context.
 * `verse_score`: The average of the Fast Align "average translation score" for the lines in which the pair co-occur.
 * `alignment_score`: The average Fast Align "alignment score" for the pair, when Fast Align aligns them together.
-* ``avg_aligned`: The number of times Fast Align aligns them together as a proportion of the number of lines they co-occur in. (This is normally <=1, but occasionally can be > 1 if they occur, and are aligned, multiple times in a single line.)
+* `avg_aligned`: The number of times Fast Align aligns them together as a proportion of the number of lines they co-occur in. (This is normally <=1, but occasionally can be > 1 if they occur, and are aligned, multiple times in a single line.)
 * `normalized_source`: The "normalized" source word, with punctuation, diacritics, etc removed.
 * `normalized_target`: The "normalized" target word, with punctuation, diacritics, etc removed.
 * `jac_sim`: The Jaccard Similarity of the lines where the source appears and the lines where the target appears.
