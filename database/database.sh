@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export HASURA_URL=$1 HASURA_SECRET=$2 AQUA_DB=$3
+export NEW_HASURA_URL=$1 NEW_HASURA_SECRET=$2 NEW_DB=$3 
 
 python graphql_setup.py
 python load_iso_codes.py
