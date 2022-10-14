@@ -4,6 +4,64 @@ Word alignment scripts. These scripts work for any two aligned text files; they 
 
 **`--source` and `--target` must be aligned `.txt` files!** 
 
+## General usage: combined.py
+Combines `align.py`, `align_best.py` and `match.py`. Takes about 20 minutes to align two bible texts. 
+vrefs are from [here](https://github.com/sil-ai/aqua-api/tree/master/fixtures)
+
+### Suggested Usage:
+`python combined.py --source path/to/source/file --target path/to/target/file --is-bible --outpath /path/to/output/location`
+
+### Output
+All output is placed in a directory named `<source>_<target>` containing various files. The main outputs are:
+
+#### Word by word lexical scores:
+These scores can be found in `combined.csv`, and list every source-target word pair in the corpus, with the following metrics:
+* `co-occurrence_count`: The number of lines in which the pair appear together.
+* `translation_score`: The "translation score" for the pair, from Fast Align. This score is a function of the two words, and does not depend on any particular context.
+* `verse_score`: The average of the Fast Align "average translation score" for the lines in which the pair co-occur.
+* `alignment_score`: The average Fast Align "alignment score" for the pair, when Fast Align aligns them together.
+* ``avg_aligned`: The number of times Fast Align aligns them together as a proportion of the number of lines they co-occur in. (This is normally <=1, but occasionally can be > 1 if they occur, and are aligned, multiple times in a single line.)
+* `normalized_source`: The "normalized" source word, with punctuation, diacritics, etc removed.
+* `normalized_target`: The "normalized" target word, with punctuation, diacritics, etc removed.
+* `jac_sim`: The Jaccard Similarity of the lines where the source appears and the lines where the target appears.
+* `match_counts`: The number of lines in which both the source and target word appear.
+
+#### Word by word alignment scores:
+These scores can be found in `best_in_context.csv`, which goes line by line, listing the Fat Align alignment pairs, along with:
+* `FA_verse_score`: The Fast Align "average translation score" for that verse. This is the mean of `translation_score` for the aligned pairs in that verse.
+* `FA_alignment_score`: The Fast Align "alignment score" for that pair in that verse.
+* `co-occurrence_count`: The number of lines in which the pair appear together.
+* `translation_score`: The "translation score" for the pair, from Fast Align. This score is a function of the two words, and does not depend on any particular context.
+* `avg_FA_alignment_score`: The average Fast Align alignment score for this word pair throughout the corpus, when Fast Align aligns them together.
+* `avg_aligned`: The number of times Fast Align aligns them together as a proportion of the number of lines they co-occur in. (This is normally <=1, but occasionally can be > 1 if they occur, and are aligned, multiple times in a single line.)
+* `jac_sim`: The Jaccard Similarity of the lines where the source appears and the lines where the target appears.
+* `match_counts`: The number of lines in which both the source and target word appear.
+* `total_score`: Experimental combining of the other metrics, which will almost certainly evolve. This could be the output of a model that takes the other features as inputs and predicts how good the alignment pair is.
+
+#### Verse by verse alignment
+These scores can be found in `verse_scores.csv`, which goes verse by verse, listing:
+* `FA_verse_score`: The average of the Fast Align "average translation score" for the lines in which the pair co-occur.
+* `avg_aligned`: The number of times Fast Align aligns a pair together as a proportion of the number of lines they co-occur in, averaged over all aligned pairs in the line.
+* `avg_FA_alignment_score`: The average Fast Align alignment score for the pairs in the line.
+* `jac_sim`: The average Jaccard Similarity of the lines where the source appears and the lines where the target appears, averaged across the aligned pairs in the line.
+* `total_score`: The average of the experimental `total_score` metric for each aligned word pair in the line.
+
+### Arguments:
+
+`--source`  Source text file
+
+`--target`  Target text file
+
+`--jaccard-similarity-threshold`  (default=`0.0`)  The Jaccard similarity threshold
+
+`--count-threshold`  (default=`0`)  The threshold for count in match_words_in_aligned_verse (if it also meets the jaccard-similarity-threshold).
+
+`--is-bible`  Boolean: if present, output will refer to lines by their verse references. Requires input text files to be 41,899 lines long.
+
+`--outpath`  Output location for the resulting directory  
+
+
+
 ## align.py
 An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align. Returns translation scores for all possible alignments in a line. Ignores word order, since the translation scores are calculated for two words over the whole corpus.
 ### Suggested Usage:
@@ -79,37 +137,4 @@ A directory containing cache, a log, and a `dictionary.json` file with the word 
 `--refresh-cache`  Ignore any saved index caches or frequency caches.
 
 `--outpath` Location where resulting files will be saved. 
-
-## combined.py
-Combines `align.py` and `match.py`. Takes about 20 minutes to align two bible texts. 
-vrefs are from [here](https://github.com/sil-ai/aqua-api/tree/master/fixtures)
-### Suggested Usage:
-`python combined.py --source path/to/source/file --target path/to/target/file --is-bible --outpath /path/to/output/location`
-
-### Output:
-A directory named `<source>_<target>` containing various files (mainly for debugging). The main output file is:
-
-* combined.csv
-
-which lists all source-target combinations, with three metrics:
-    
-* `translation_score`:     The translation score the Fast Align trained model gives for these two words
-* `alignment_score`:       The average alignment score from Fast Align when these two words appeared together.
-* `jac_sim`:               The Jaccard Similarity of the lines where the source appears and the lines where the target appears.
-
-These three metrics are somewhat independent of each other, and can be combined to give a score as to how well the two words correlate with each other. They could be combined in different ways to give an overall score, depending on the downstream task. The various scores in this spreadsheet could even be used as inputs to train a model to predict alignments.
-
-### Arguments:
-
-`--source`  Source text file
-
-`--target`  Target text file
-
-`--jaccard-similarity-threshold`  (default=`0.0`)  The Jaccard similarity threshold
-
-`--count-threshold`  (default=`0`)  The threshold for count in match_words_in_aligned_verse (if it also meets the jaccard-similarity-threshold).
-
-`--is-bible`  Boolean: if present, output will refer to lines by their verse references. Requires input text files to be 41,899 lines long.
-
-`--outpath`  Output location for the resulting directory  
 
