@@ -27,7 +27,7 @@ These scores can be found in `combined.csv`, and list every source-target word p
 * `match_counts`: The number of lines in which both the source and target word appear.
 
 #### Word by word alignment scores:
-These scores can be found in `best_in_context.csv`, which goes line by line, listing the Fat Align alignment pairs, along with:
+These scores can be found in `best_in_context.csv`, which goes line by line, listing the Fat Align alignment pairs. Note that `hebrew_key_terms.csv` and `greek_key_terms.csv` contain the same information, filtered by "major key terms", as defined in the [SILNLP repository](https://github.com/sillsdev/silnlp/tree/master/silnlp/assets). These files contain:
 * `FA_verse_score`: The Fast Align "average translation score" for that verse. This is the mean of `translation_score` for the aligned pairs in that verse.
 * `FA_alignment_score`: The Fast Align "alignment score" for that pair in that verse.
 * `co-occurrence_count`: The number of lines in which the pair appear together.
