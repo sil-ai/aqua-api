@@ -8,6 +8,7 @@ import pandas as pd
 import align
 import align_best
 import match
+import key_terms
 from tqdm import tqdm
 
 tqdm.pandas()
@@ -186,17 +187,25 @@ def run_combine_results(outpath: Path) -> None:
 
 def add_scores_to_alignments(outpath: Path) -> None:
     df = pd.read_csv(outpath / 'best_in_context.csv')
-    all_sorted = pd.read_csv(outpath / 'all_sorted.csv')
     combined = pd.read_csv(outpath / 'combined.csv')
     df = pd.merge(df, combined, on=['source', 'target'], how='left')
-    df = df.drop(columns=['alignment_count_x', 'Unnamed: 0_x', 'Unnamed: 0_y', 'alignment_count_y', 'normalized_source', 'normalized_target'])
+    df = df.drop(columns=[
+                        'alignment_count_x', 
+                        'Unnamed: 0_x', 
+                        'Unnamed: 0_y', 
+                        'verse_score_y',
+                        'alignment_count_y', 
+                        'normalized_source', 
+                        'normalized_target',
+                        ])
     df = df.rename(columns={
         'verse_score_x': 'FA_verse_score',
         'alignment_score_x': 'FA_alignment_score',
         'alignment_score_y': 'avg_FA_alignment_score',
     })
-    df.loc[:, 'total_score'] = df.apply(lambda row: 4 * row['translation_score'] * row['avg_FA_alignment_score'] * row['jac_sim'], axis=1)
-    verse_scores = df.loc[:, ['vref', 'FA_verse_score', 'total_score']].groupby('vref').mean()
+    df.loc[:, 'total_score'] = df.apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['avg_FA_alignment_score'] + row['jac_sim']) / 4, axis=1)
+    df.to_csv(outpath / 'best_in_context.csv')
+    verse_scores = df.loc[:, ['vref', 'FA_verse_score', 'avg_aligned', 'avg_FA_alignment_score', 'jac_sim', 'total_score']].groupby('vref', sort=False).mean()
     verse_scores.to_csv(outpath / 'verse_scores.csv')
 
 
@@ -209,14 +218,14 @@ if __name__ == "__main__":
         "--jaccard-similarity-threshold",
         type=float,
         help="Threshold for Jaccard Similarity score to be significant",
-        default=0.5,
+        default=0.0,
     )
     parser.add_argument("--is-bible", action='store_true', help="is bible")
     parser.add_argument(
         "--count-threshold",
         type=int,
         help="Threshold for count (number of co-occurences) score to be significant",
-        default=1,
+        default=0,
     )
     parser.add_argument("--outpath", type=Path, help="where to store results")
     args, unknown = parser.parse_known_args()
@@ -224,8 +233,7 @@ if __name__ == "__main__":
     # s, t, path = make_output_dir(args.source, args.target, args.outpath)
     outpath = args.outpath / f"{args.source.stem}_{args.target.stem}"
 
-    if not outpath.exists():
-        outpath.mkdir(exist_ok=True)
+    outpath.mkdir(parents=True, exist_ok=True)
 
     # run fast align
     run_fa(
@@ -246,3 +254,4 @@ if __name__ == "__main__":
 
     run_combine_results(outpath)
     add_scores_to_alignments(outpath)
+    key_terms.run_get_key_terms(outpath)

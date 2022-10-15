@@ -102,16 +102,13 @@ def test_run_best_align(source, target, is_bible, delete_files=True):
     # check forward files exist
     best_in_context = Path(outpath, "best_in_context.csv")
     best_sorted = Path(outpath, "best_sorted.csv")
-    best_vrefs = Path(outpath, "best_vref_scores.csv")
     assert best_in_context.exists()
     assert best_sorted.exists()
-    assert best_vrefs.exists()
 
     # delete the files
     if delete_files:
         best_in_context.unlink()
         best_sorted.unlink()
-        best_vrefs.unlink()
 
 # source, target, is_bible = (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt"), False)
 # test_get_vref_scores(source, target, is_bible)
