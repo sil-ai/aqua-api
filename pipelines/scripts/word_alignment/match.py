@@ -56,7 +56,7 @@ def normalize_word(word: str) -> str:
     Outputs:
     word        Normalized string
     """
-    word = re.sub("[^\w\s]", "", word.lower()) if word else ""    #  Gives 18,159 unique Hebrew ords in the OT, rather than 87,000
+    word = re.sub("[^\w\s]", "", str(word).lower()) if word else ""    #  Gives 18,159 unique Hebrew ords in the OT, rather than 87,000
     return word
 
 
