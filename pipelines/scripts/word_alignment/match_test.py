@@ -29,7 +29,7 @@ def test_get_bible_data():
 
                                                     ])
 def test_update_matches_for_lists(index_cache_keys, index_cache_values):
-    keys_list = [
+    source_list = [
         "",
         "ishvi",
         "their",
@@ -47,7 +47,7 @@ def test_update_matches_for_lists(index_cache_keys, index_cache_values):
         "serah",
         "of",
     ]
-    values_list = [
+    target_list = [
         "בְנֵ֣י",
         "בְנֵ֣י",
         "אָשֵׁ֗ר",
@@ -68,22 +68,22 @@ def test_update_matches_for_lists(index_cache_keys, index_cache_values):
         "וּ",
         "מַלְכִּיאֵֽל",
     ]
+    source_objects = {word: match.Word(word) for word in source_list}
+    target_objects = {word: match.Word(word) for word in target_list}
+    for word in source_objects.values():
+        word.index_list = [0]
+    for word in target_objects.values():
+        word.index_list = [0]
     js_cache = {}
     matches = {}
-    with open(index_cache_keys) as f:
-        keys_index = json.load(f)
-    with open(index_cache_values) as f:
-        values_index = json.load(f)
     jaccard_similarity_threshold = 0.0
     count_threshold = 0
 
     matches, js_cache = match.update_matches_for_lists(
-        keys_list,
-        values_list,
+        source_objects.values(),
+        target_objects.values(),
         js_cache,
         matches,
-        keys_index,
-        values_index,
         jaccard_similarity_threshold,
         count_threshold,
     )

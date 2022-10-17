@@ -116,7 +116,7 @@ A directory containing two directories (one for each alignment direction), each 
 A modified version of Mark Woodward's [match_words_in_aligned_verse](https://github.com/sil-ai/new2old) algorithm
 ### Suggested Usage:
 
-`python match.py --keys-name path/to/source/file --values-name path/to/target/file --jaccard-similarity-threshold 0.5 --outpath /path/to/output/location`
+`python match.py --source path/to/source/file --target path/to/target/file --jaccard-similarity-threshold 0.5 --outpath /path/to/output/location`
 
 ### Output
 
@@ -124,9 +124,9 @@ A directory containing cache, a log, and a `dictionary.json` file with the word 
 
 ### Arguments:
 
-`--keys-name`  The name of the first dataset. This dataset will provide the "keys" in the output dictionary.
+`--source`  The path to the source txt file.
 
-`--values-name`  The name of the second dataset. This dataset will provide the "keys" in the output dictionary.
+`--target`  The path to the target txt file.
 
 `--jaccard-similarity-threshold`  (default=`0.0`) The threshold for Jaccard Similarity for a match to be logged as significant and entered into the output dictionary (if it also meets the count-threshold).
 

@@ -24,16 +24,11 @@ def test_run_fa(source, target, is_bible, remove_files=True):
     assert os.path.exists(outpath / "best_sorted.csv")
     assert os.path.exists(outpath / "best_in_context.csv")
     
-    combined.add_scores_to_alignments(outpath)
-    
-    assert os.path.exists(outpath / "verse_scores.csv")
-    
     if remove_files:
         os.remove(outpath / "all_sorted.csv")
         os.remove(outpath / "all_in_context.csv")
         os.remove(outpath / "best_sorted.csv")
         os.remove(outpath / "best_in_context.csv")
-        os.remove(outpath / "verse_scores.csv")
 
 
 @pytest.mark.parametrize("source,target,is_bible", [
