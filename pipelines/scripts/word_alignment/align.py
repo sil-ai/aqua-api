@@ -42,10 +42,6 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
     # make into df
     df = pd.DataFrame({"src": src_data, "trg": trg_data})
 
-    # remove lines that contain \n in either src or trg
-    df = df[df.src != "\n"]
-    df = df[df.trg != "\n"]
-
     # remove punctuation
     punctuation_chars = ""
     for i in range(sys.maxunicode):
@@ -60,6 +56,10 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
     # make lowercase
     df["src"] = df["src"].str.lower()
     df["trg"] = df["trg"].str.lower()
+
+    # remove lines that contain \n in either src or trg
+    df = df[df.src != "\n"]
+    df = df[df.trg != "\n"]
 
     # write to condensed txt files
     if not outpath.exists():
