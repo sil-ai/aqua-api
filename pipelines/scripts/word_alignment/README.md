@@ -66,11 +66,11 @@ Compares the output from a source to target alignment with output from other ali
 
 ### Arguments:
 
-`--source` The source text that alignments are coming from.
+`--source` The source text that alignments are coming from. Typically the original biblical language(s).
 
 `--target` The target text that is being examined and compared with other reference targets.
 
-`--reference` A list of other target texts, that `target` will be compared against.
+`--reference` A list of other target texts, that `target` will be compared against. Ideally these are good quality, and ideally somewhat related to `target`.
 
 `--outpath` The base output directory where the each of the data directories is located. If data for any particular alignment is not in this directory, the alignment will be run first.
 
