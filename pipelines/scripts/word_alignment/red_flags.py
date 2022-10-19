@@ -1,8 +1,6 @@
 from pathlib import Path
-import os
 import argparse
 import pandas as pd
-from unicodedata import normalize
 from tqdm import tqdm
 tqdm.pandas()
 
