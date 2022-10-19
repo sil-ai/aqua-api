@@ -214,7 +214,7 @@ def run_align(
     Inputs:
     source           Path to a source text file of line-aligned text
     target           Path to a target text file of line-aligned text
-    outpath            Path to base output directory
+    outpath            Path to output directory
     is_bible           Boolean for whether the text is Bible, and hence vref references should be used. If True, both
                         input files must be of length 41,899.
     parallel_corpus    A corpus to process. Normally the corpus is produced from the source and target,

@@ -4,7 +4,6 @@ import argparse
 import re
 from typing import Iterable, Tuple, List
 
-import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from collections import Counter

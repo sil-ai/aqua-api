@@ -61,6 +61,23 @@ These scores can be found in `verse_scores.csv`, which goes verse by verse, list
 `--outpath`  Output location for the resulting directory  
 
 
+## red_flags.py
+Compares the output from a source to target alignment with output from other alignments from the source to other reference targets, and highlights alignments in the original source-target matching that are significantly lower than the corresponding scores in the source-reference target alignments.
+
+### Arguments:
+
+`--source` The source text that alignments are coming from.
+
+`--target` The target text that is being examined and compared with other reference targets.
+
+`--reference` A list of other target texts, that `target` will be compared against.
+
+`--outpath` The base output directory where the each of the data directories is located. If data for any particular alignment is not in this directory, the alignment will be run first.
+
+### Outputs:
+
+A file `red_flags.csv` file containing `vref`, `source` word, `total_score` from the best target word, and scores from the best target word from each reference translation. This list is filtered according to each `total_score < 0.05`, and each reference score `> 0.4`, with the average reference score being at least 25 times greater than `total_score` from the text in question.
+
 
 ## align.py
 An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/main/machine)'s fast_align. Returns translation scores for all possible alignments in a line. Ignores word order, since the translation scores are calculated for two words over the whole corpus.

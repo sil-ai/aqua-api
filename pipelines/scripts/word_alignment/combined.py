@@ -116,12 +116,6 @@ def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFr
     all_results = pd.read_csv(align_path)
     best_results = pd.read_csv(best_path)
     all_results = all_results.merge(best_results, how='left', on=['source', 'target'])
-    all_results = all_results.rename(columns = {
-                                                # 'align_count_x': 'co-occurrences', 
-                                                # 'word_score': 'FA_translation_score', 
-                                                # 'align_count_y': 'FA_align_count', 
-                                                # 'verse_score': 'FA_verse_score',
-                                                })
     # print(all_results)
     all_results.loc[:, ['avg_aligned']] = all_results.apply(
         lambda row: row['alignment_count'] / row['co-occurrence_count'], axis = 1
@@ -169,6 +163,32 @@ def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFr
     return df
 
 
+def run_all_alignments(
+                        source: Path,
+                        target: Path,
+                        outpath: Path,
+                        is_bible: bool=True,
+                        jaccard_similarity_threshold: float=0.0,
+                        count_threshold: int=0,
+                        ):
+    print(f"Running Fast Align to get alignment scores and translation scores for {source.stem} to {target.stem}")
+    run_fa(
+            source,
+            target,
+            outpath,
+            is_bible=is_bible,
+            )
+
+    print(f"Running Match to get word match scores for {source.stem} to {target.stem}")
+    run_match_words(
+            source,
+            target,
+            outpath,
+            jaccard_similarity_threshold,
+            count_threshold,
+                )
+
+
 def run_combine_results(outpath: Path) -> None:
     """
     Runs combined.combine_df to combine the three output files in the outpath directory. They are saved
@@ -188,25 +208,17 @@ def run_combine_results(outpath: Path) -> None:
 def add_scores_to_alignments(outpath: Path) -> None:
     df = pd.read_csv(outpath / 'best_in_context.csv')
     combined = pd.read_csv(outpath / 'combined.csv')
-    df = pd.merge(df, combined, on=['source', 'target'], how='left')
-    df = df.drop(columns=[
-                        'alignment_count_x', 
-                        'Unnamed: 0_x', 
-                        'Unnamed: 0_y', 
-                        'verse_score_y',
-                        'alignment_count_y', 
-                        'normalized_source', 
-                        'normalized_target',
-                        ])
-    df = df.rename(columns={
-        'verse_score_x': 'FA_verse_score',
-        'alignment_score_x': 'FA_alignment_score',
-        'alignment_score_y': 'avg_FA_alignment_score',
-    })
-    df.loc[:, 'total_score'] = df.apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['avg_FA_alignment_score'] + row['jac_sim']) / 4, axis=1)
-    df.to_csv(outpath / 'best_in_context.csv')
-    verse_scores = df.loc[:, ['vref', 'FA_verse_score', 'avg_aligned', 'avg_FA_alignment_score', 'jac_sim', 'total_score']].groupby('vref', sort=False).mean()
+    df = pd.merge(df.drop(columns=['alignment_count', 'Unnamed: 0', 'alignment_score']), combined.drop(columns=['Unnamed: 0', 'verse_score', 'alignment_count', 'normalized_source', 'normalized_target']), on=['source', 'target'], how='left')
+    df.loc[:, 'total_score'] = df.apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
+    df.to_csv(outpath / 'best_in_context_with_scores.csv')
+    verse_scores = df.loc[:, ['vref', 'verse_score', 'avg_aligned', 'alignment_score', 'jac_sim', 'total_score']].groupby('vref', sort=False).mean()
     verse_scores.to_csv(outpath / 'verse_scores.csv')
+
+    df = pd.read_csv(outpath / 'all_in_context.csv')
+    df = pd.merge(df.drop(columns=['Unnamed: 0', 'translation_score']), combined.drop(columns=['Unnamed: 0']), on=['source', 'target'], how='left')
+    df['alignment_score'].fillna(0, inplace=True)
+    df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
+    df.to_csv(outpath / 'all_in_context_with_scores.csv')
 
 
 if __name__ == "__main__":
@@ -228,30 +240,24 @@ if __name__ == "__main__":
         default=0,
     )
     parser.add_argument("--outpath", type=Path, help="where to store results")
+    parser.add_argument("--combine-only", action='store_true', help="Only combine the results, since the alignment and matching files already exist")
+
     args, unknown = parser.parse_known_args()
     # make output dir
     # s, t, path = make_output_dir(args.source, args.target, args.outpath)
     outpath = args.outpath / f"{args.source.stem}_{args.target.stem}"
 
     outpath.mkdir(parents=True, exist_ok=True)
-
-    # run fast align
-    run_fa(
-        args.source,
-        args.target,
-        outpath,
-        is_bible=args.is_bible,
-    )
-
-    # run match words
-    run_match_words(
-        args.source,
-        args.target,
-        outpath,
-        args.jaccard_similarity_threshold,
-        args.count_threshold,
-    )
+    if not args.combine_only:
+        run_all_alignments(
+                            args.source,
+                            args.target,
+                            outpath,
+                            is_bible=args.is_bible,
+                            jaccard_similarity_threshold=args.jaccard_similarity_threshold,
+                            count_threshold=args.count_threshold,
+                            )
+        
 
     run_combine_results(outpath)
     add_scores_to_alignments(outpath)
-    key_terms.run_get_key_terms(outpath)
