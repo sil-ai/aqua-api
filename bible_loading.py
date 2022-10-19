@@ -9,7 +9,7 @@ import pandas as pd
 # Parse the revision verses into a dataframe.
 def text_dataframe(verses, bibleRevision):
     my_col = ["book", "chapter", "verse"]
-    vref = pd.read_csv("vref.txt", sep=" |:", names=my_col, engine="python")
+    vref = pd.read_csv("fixtures/vref.txt", sep=" |:", names=my_col, engine="python")
 
     vref["text"] = verses
     vref["bibleRevision"] = bibleRevision
