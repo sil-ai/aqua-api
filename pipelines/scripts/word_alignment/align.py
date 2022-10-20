@@ -40,16 +40,23 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
         trg_data = f.readlines()
     # make into df
     df = pd.DataFrame({"src": src_data, "trg": trg_data, "to_drop": [False] * len(src_data)})
-    
+    orig_df = df.copy()
     df = df[df.src != "\n"]
     df = df[df.trg != "\n"]
     
     # merge up lines that contain \n or <range> in either src or trg
+    src_to_append = ''
+    trg_to_append = ''
     for index, row in df[:1:-1].iterrows():
         if row['src'].replace('\n', '').replace('<range>', '') == '' or row['trg'].replace('\n', '').replace('<range>', '') == '':
-            df.loc[index-1, 'src'] = df.loc[index-1, 'src'].replace('\n', ' ') + '_' + row['src'].replace('\n', ' ').replace('<range>', '') + '\n'
-            df.loc[index-1, 'trg'] = df.loc[index-1, 'trg'].replace('\n', ' ') + '_' + row['trg'].replace('\n', ' ').replace('<range>', '') + '\n'
+            src_to_append += row['src'].replace('\n', ' ').replace('<range>', '')
+            trg_to_append += row['trg'].replace('\n', ' ').replace('<range>', '')
+            df.loc[index-1, 'src'] = df.loc[index-1, 'src'].replace('\n', ' ') + src_to_append + '\n'
+            df.loc[index-1, 'trg'] = df.loc[index-1, 'trg'].replace('\n', ' ') + trg_to_append + '\n'
             df.loc[index, 'to_drop'] = True
+        else:
+            src_to_append = ''
+            trg_to_append = ''
     if df.iloc[0].loc['src'].replace('\n', '').replace('<range>', '') == '' or df.iloc[0].loc['trg'].replace('\n', '').replace('<range>', '') == '':
         df.iloc[0].loc['to_drop'] = True
     df = df.drop(df[df['to_drop'] == True].index)

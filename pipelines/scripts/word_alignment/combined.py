@@ -62,6 +62,7 @@ def run_match_words(
     count_threshold                     Count threshold above which word matches will be kept
     refresh_cache           Force a cache refresh, rather than using cache from the last time the source and/or target were run
     """
+    
     match.run_match(
         source,
         target,
@@ -170,6 +171,7 @@ def run_all_alignments(
                         is_bible: bool=True,
                         jaccard_similarity_threshold: float=0.0,
                         count_threshold: int=0,
+                        refresh_cache: bool=False,
                         ):
     print(f"Running Fast Align to get alignment scores and translation scores for {source.stem} to {target.stem}")
     run_fa(
@@ -180,12 +182,14 @@ def run_all_alignments(
             )
 
     print(f"Running Match to get word match scores for {source.stem} to {target.stem}")
+
     run_match_words(
             source,
             target,
             outpath,
             jaccard_similarity_threshold,
             count_threshold,
+            refresh_cache=refresh_cache,
                 )
 
 
@@ -241,6 +245,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--outpath", type=Path, help="where to store results")
     parser.add_argument("--combine-only", action='store_true', help="Only combine the results, since the alignment and matching files already exist")
+    parser.add_argument("--refresh-cache", action='store_true', help="Refresh the cache of match scores")
 
     args, unknown = parser.parse_known_args()
     # make output dir
@@ -256,6 +261,7 @@ if __name__ == "__main__":
                             is_bible=args.is_bible,
                             jaccard_similarity_threshold=args.jaccard_similarity_threshold,
                             count_threshold=args.count_threshold,
+                            refresh_cache = args.refresh_cache,
                             )
         
 

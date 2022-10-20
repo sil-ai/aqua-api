@@ -17,12 +17,12 @@ def identify_red_flags(outpath: Path, ref_df_outpaths:dict):
     df = pd.read_csv(outpath / 'all_in_context_with_scores.csv')
     for language in ref_df_outpaths:
         ref_df_outpaths[language] = pd.read_csv(ref_df_outpaths[language])
-    concerns = df.groupby(['vref', 'source']).agg({'total_score': 'sum', 'target': 'first'}).sort_values('total_score')
-    concerns = concerns[concerns['total_score'] < 0.05]
+    possible_red_flags = df.groupby(['vref', 'source']).agg({'total_score': 'sum', 'target': 'first'}).sort_values('total_score')
+    possible_red_flags = possible_red_flags[possible_red_flags['total_score'] < 0.05]
     language_columns = [f'{key}_score' for key in ref_df_outpaths.keys()]
     red_flags = pd.DataFrame(columns=['vref', 'source', 'total_score', *language_columns])
-    print(concerns)
-    for index, row in tqdm(concerns.iterrows(), total=concerns.shape[0]):
+    print(possible_red_flags)
+    for index, row in tqdm(possible_red_flags.iterrows(), total=possible_red_flags.shape[0]):
         vref = index[0]
         source = index[1]
         if row['target'] == 'range':
