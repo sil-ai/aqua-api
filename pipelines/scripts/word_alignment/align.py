@@ -45,7 +45,7 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
     df = df[df.trg != "\n"]
     
     # merge up lines that contain \n or <range> in either src or trg
-    for index, row in tqdm(df[:1:-1].iterrows()):
+    for index, row in df[:1:-1].iterrows():
         if row['src'].replace('\n', '').replace('<range>', '') == '' or row['trg'].replace('\n', '').replace('<range>', '') == '':
             df.loc[index-1, 'src'] = df.loc[index-1, 'src'].replace('\n', ' ') + '_' + row['src'].replace('\n', ' ').replace('<range>', '') + '\n'
             df.loc[index-1, 'trg'] = df.loc[index-1, 'trg'].replace('\n', ' ') + '_' + row['trg'].replace('\n', ' ').replace('<range>', '') + '\n'
@@ -161,8 +161,11 @@ def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
     df = pd.DataFrame({"vref": vrefs, "src": src_data, "trg": trg_data})
     df = df[df.src != "\n"]
     df = df[df.trg != "\n"]
+    df = df[df.src != "<range>\n"]
+    df = df[df.trg != "<range>\n"]
+
     vref_list = df["vref"].tolist()
-    return vref_list
+    return vref_list, df
 
 
 def get_translation_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: list = None) -> pd.DataFrame:
