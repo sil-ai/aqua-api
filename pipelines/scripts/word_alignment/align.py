@@ -165,7 +165,7 @@ def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
     df = df[df.trg != "<range>\n"]
 
     vref_list = df["vref"].tolist()
-    return vref_list, df
+    return vref_list
 
 
 def get_translation_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: list = None) -> pd.DataFrame:
