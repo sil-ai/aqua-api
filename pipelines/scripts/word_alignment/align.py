@@ -83,7 +83,7 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
     with open(target_path, "w") as f:
         for line in df["trg"]:
             f.write(line)
-    return (source_path, target_path, df)
+    return (source_path, target_path)
 
 
 def create_corpus(condensed_source: Path, condensed_target: Path) -> TextFileTextCorpus:
