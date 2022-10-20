@@ -47,8 +47,8 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
     # merge up lines that contain \n or <range> in either src or trg
     for index, row in tqdm(df[:1:-1].iterrows()):
         if row['src'].replace('\n', '').replace('<range>', '') == '' or row['trg'].replace('\n', '').replace('<range>', '') == '':
-            df.loc[index-1, 'src'] += row['src'].replace('\n', ' ').replace('<range>', '')
-            df.loc[index-1, 'trg'] += row['trg'].replace('\n', ' ').replace('<range>', '')
+            df.loc[index-1, 'src'] = df.loc[index-1, 'src'].replace('\n', ' ') + '_' + row['src'].replace('\n', ' ').replace('<range>', '') + '\n'
+            df.loc[index-1, 'trg'] = df.loc[index-1, 'trg'].replace('\n', ' ') + '_' + row['trg'].replace('\n', ' ').replace('<range>', '') + '\n'
             df.loc[index, 'to_drop'] = True
     if df.iloc[0].loc['src'].replace('\n', '').replace('<range>', '') == '' or df.iloc[0].loc['trg'].replace('\n', '').replace('<range>', '') == '':
         df.iloc[0].loc['to_drop'] = True
@@ -61,7 +61,7 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
             punctuation_chars += chr(i)
 
     df["src"] = df["src"].str.replace("[{}]".format(string.punctuation), "", regex=True)
-    df["asrc"] = df["src"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
+    df["src"] = df["src"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
     df["trg"] = df["trg"].str.replace("[{}]".format(string.punctuation), "", regex=True)
     df["trg"] = df["trg"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
 
@@ -83,7 +83,7 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
     with open(target_path, "w") as f:
         for line in df["trg"]:
             f.write(line)
-    return (source_path, target_path)
+    return (source_path, target_path, df)
 
 
 def create_corpus(condensed_source: Path, condensed_target: Path) -> TextFileTextCorpus:
