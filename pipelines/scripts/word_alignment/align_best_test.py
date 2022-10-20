@@ -1,11 +1,7 @@
-from cgi import test
-import os
-
 from pathlib import Path
 import pytest
 import align_best
 import pandas as pd
-from machine.translation.thot import ThotSymmetrizedWordAlignmentModel
 
 @pytest.mark.parametrize("source,target", [
                                             (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt")), 
@@ -110,5 +106,3 @@ def test_run_best_align(source, target, is_bible, delete_files=True):
         best_in_context.unlink()
         best_sorted.unlink()
 
-# source, target, is_bible = (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt"), False)
-# test_get_vref_scores(source, target, is_bible)

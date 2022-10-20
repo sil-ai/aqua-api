@@ -38,9 +38,21 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
         src_data = f.readlines()
     with open(target) as f:
         trg_data = f.readlines()
-
     # make into df
-    df = pd.DataFrame({"src": src_data, "trg": trg_data})
+    df = pd.DataFrame({"src": src_data, "trg": trg_data, "to_drop": [False] * len(src_data)})
+    
+    df = df[df.src != "\n"]
+    df = df[df.trg != "\n"]
+    
+    # merge up lines that contain \n or <range> in either src or trg
+    for index, row in tqdm(df[:1:-1].iterrows()):
+        if row['src'].replace('\n', '').replace('<range>', '') == '' or row['trg'].replace('\n', '').replace('<range>', '') == '':
+            df.loc[index-1, 'src'] += row['src'].replace('\n', ' ').replace('<range>', '')
+            df.loc[index-1, 'trg'] += row['trg'].replace('\n', ' ').replace('<range>', '')
+            df.loc[index, 'to_drop'] = True
+    if df.iloc[0].loc['src'].replace('\n', '').replace('<range>', '') == '' or df.iloc[0].loc['trg'].replace('\n', '').replace('<range>', '') == '':
+        df.iloc[0].loc['to_drop'] = True
+    df = df.drop(df[df['to_drop'] == True].index)
 
     # remove punctuation
     punctuation_chars = ""
@@ -49,7 +61,7 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
             punctuation_chars += chr(i)
 
     df["src"] = df["src"].str.replace("[{}]".format(string.punctuation), "", regex=True)
-    df["src"] = df["src"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
+    df["asrc"] = df["src"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
     df["trg"] = df["trg"].str.replace("[{}]".format(string.punctuation), "", regex=True)
     df["trg"] = df["trg"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
 
@@ -57,10 +69,8 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
     df["src"] = df["src"].str.lower()
     df["trg"] = df["trg"].str.lower()
 
-    # remove lines that contain \n in either src or trg
-    df = df[df.src != "\n"]
-    df = df[df.trg != "\n"]
-
+    
+    
     # write to condensed txt files
     if not outpath.exists():
         outpath.mkdir(exist_ok=True)
