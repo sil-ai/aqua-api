@@ -27,6 +27,7 @@ class SemanticSimilarity:
         self.out_path = args.out
         #gets model locally or from huggingface
         #TODO: look for a faster way to load this model - maybe keep in memory
+        #!!! https://medium.com/ibm-data-ai/how-to-load-pytorch-models-340-times-faster-with-ray-8be751a6944c
         self.sem_sim = SemanticSimBa()
         logging.info('Semantic model initialized...')
 
@@ -47,7 +48,8 @@ class SemanticSimilarity:
 
     def get_sem_sims(self, precision=2):
         #get sem_sim predictions for input_file
-        sem_sim_object =  self.sem_sim.predict(list(zip(self.input['target'], self.input['reference'])))
+        sem_sim_object =  self.sem_sim.predict(self.input['target'].to_list(),
+                                               self.input['reference'].to_list())
         #prepares vrefs for merging
         vrefs = [[item] for item in self.input['vref'].to_list()]
         #zipping vrefs into sem_sim_object

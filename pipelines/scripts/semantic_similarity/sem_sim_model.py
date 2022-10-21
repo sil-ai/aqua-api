@@ -1,8 +1,8 @@
 import torch
+import torch.nn.functional as F
 from transformers import BertModel, BertTokenizerFast
 import numpy as np
 import pandas as pd
-import torch.nn.functional as F
 
 def similarity(embeddings_1, embeddings_2):
     normalized_embeddings_1 = F.normalize(embeddings_1, p=2)
@@ -39,19 +39,18 @@ class SemanticSimBa(object):
             model = BertModel.from_pretrained("setu4993/LaBSE")
         return model.eval()
 
-    def predict(self, X, col_names=['sent1','sent2']):
+    def predict(self, sents1, sents2):
         """
         Return a prediction.
 
         Parameters
         ----------
-        X : array-like X[0] = sentence 1 X[1] = sentence 2
-        col_names : array of feature names (optional)
+        sents1, sents2 : 2 lists of verse strings to be compared
         
-        returns X plus scores
+        returns sentences plus scores
         """
         #print("Predict called - will run batch similarity function")
-        df = pd.DataFrame(X, columns = col_names)
+        df = pd.DataFrame({'sent1':sents1, 'sent2':sents2})
         df['sent1'] = df['sent1'].astype(str)
         df['sent2'] = df['sent2'].astype(str)
 
