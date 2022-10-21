@@ -49,8 +49,8 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
     trg_to_append = ''
     for index, row in df[:1:-1].iterrows():
         if row['src'].replace('\n', '').replace('<range>', '') == '' or row['trg'].replace('\n', '').replace('<range>', '') == '':
-            src_to_append += row['src'].replace('\n', ' ').replace('<range>', '')
-            trg_to_append += row['trg'].replace('\n', ' ').replace('<range>', '')
+            src_to_append = row['src'].replace('\n', ' ').replace('<range>', '') + src_to_append
+            trg_to_append = row['trg'].replace('\n', ' ').replace('<range>', '') + trg_to_append
             df.loc[index-1, 'src'] = df.loc[index-1, 'src'].replace('\n', ' ') + src_to_append + '\n'
             df.loc[index-1, 'trg'] = df.loc[index-1, 'trg'].replace('\n', ' ') + trg_to_append + '\n'
             df.loc[index, 'to_drop'] = True
@@ -136,7 +136,7 @@ def train_model(corpus: TextFileTextCorpus) -> ThotSymmetrizedWordAlignmentModel
     return symmetrized_model
 
 
-def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
+def get_vrefs(source: Path, target: Path, is_bible: bool, remove_blanks: bool=True) -> list:
     """
     Takes two aligned text files and returns a list of vrefs corresponding to lines that are non-empty in both files.
 
@@ -154,9 +154,11 @@ def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
     with open(target) as f:
         trg_data = f.readlines()
 
+    assert len(src_data) == len(trg_data), "Source and target txt files must be the same length"
+
     if is_bible:
-        assert len(src_data) == 41899, "is_bible requires your source input to be 41899 lines in length"
-        assert len(trg_data) == 41899, "is_bible requires your target input to be 41899 lines in length"
+        assert len(src_data) == 41899, "is_bible requires your source input to be 41,899 lines in length"
+        assert len(trg_data) == 41899, "is_bible requires your target input to be 41,899 lines in length"
         with open("vref.txt", "r") as f:
             vrefs = f.readlines()
         vrefs = [line.strip() for line in vrefs]
@@ -165,6 +167,9 @@ def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
     else:
         vrefs = [str(i) for i in range(len(src_data))]
 
+    if not remove_blanks:
+        return vrefs
+    
     df = pd.DataFrame({"vref": vrefs, "src": src_data, "trg": trg_data})
     df = df[df.src != "\n"]
     df = df[df.trg != "\n"]

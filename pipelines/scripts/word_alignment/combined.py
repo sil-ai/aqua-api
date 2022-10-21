@@ -14,7 +14,7 @@ from tqdm import tqdm
 tqdm.pandas()
 
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, List
 
 # run fast_align
 def run_fa(
@@ -209,20 +209,46 @@ def run_combine_results(outpath: Path) -> None:
     df.to_csv(outpath / "combined.csv")
 
 
-def add_scores_to_alignments(outpath: Path) -> None:
+def add_scores_to_alignments(source: Path, target: Path, outpath: Path, is_bible: bool=True) -> None:
     df = pd.read_csv(outpath / 'best_in_context.csv')
-    combined = pd.read_csv(outpath / 'combined.csv')
-    df = pd.merge(df.drop(columns=['alignment_count', 'Unnamed: 0', 'alignment_score']), combined.drop(columns=['Unnamed: 0', 'verse_score', 'alignment_count', 'normalized_source', 'normalized_target']), on=['source', 'target'], how='left')
+    df['vref'] = df['vref'].astype('str')
+    combined_df = pd.read_csv(outpath / 'combined.csv')
+    all_vrefs = align.get_vrefs(source, target, is_bible, remove_blanks=False) 
+    all_vrefs = pd.DataFrame(all_vrefs, columns = ['vref'], dtype='str')
+    df = pd.merge(df.drop(columns=[
+                'alignment_count', 
+                'Unnamed: 0', 
+                'alignment_score',
+                ]), 
+                combined_df.drop(columns=[
+                    'Unnamed: 0', 
+                    'verse_score', 
+                    'alignment_count', 
+                    'normalized_source', 
+                    'normalized_target'
+                    ])
+                    , on=['source', 'target'], how='left')
+    df = pd.merge(all_vrefs, df, on='vref', how = 'left')    
     df.loc[:, 'total_score'] = df.apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
     df.to_csv(outpath / 'best_in_context_with_scores.csv')
     verse_scores = df.loc[:, ['vref', 'verse_score', 'avg_aligned', 'alignment_score', 'jac_sim', 'total_score']].groupby('vref', sort=False).mean()
+    verse_scores = remove_leading_and_trailing_blanks(verse_scores, 'verse_score')
+    verse_scores = verse_scores.fillna(0)
     verse_scores.to_csv(outpath / 'verse_scores.csv')
 
     df = pd.read_csv(outpath / 'all_in_context.csv')
-    df = pd.merge(df.drop(columns=['Unnamed: 0', 'translation_score']), combined.drop(columns=['Unnamed: 0']), on=['source', 'target'], how='left')
+    df = pd.merge(df.drop(columns=['Unnamed: 0', 'translation_score']), combined_df.drop(columns=['Unnamed: 0']), on=['source', 'target'], how='left')
     df['alignment_score'].fillna(0, inplace=True)
     df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
     df.to_csv(outpath / 'all_in_context_with_scores.csv')
+
+
+def remove_leading_and_trailing_blanks(df:pd.DataFrame, col: str) -> pd.DataFrame:
+    """
+    Takes a dataframe and removes all rows before the first non-blank entry in a column, and after the last non-blank entry.
+    """
+    df = df[(df.loc[:, col].notna().cumsum() > 0) & (df.loc[::-1, col].notna().cumsum() > 0)]
+    return df
 
 
 if __name__ == "__main__":
@@ -266,4 +292,4 @@ if __name__ == "__main__":
         
 
     run_combine_results(outpath)
-    add_scores_to_alignments(outpath)
+    add_scores_to_alignments(args.source, args.target, outpath, args.is_bible)

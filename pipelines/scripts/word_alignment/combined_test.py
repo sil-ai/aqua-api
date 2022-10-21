@@ -71,7 +71,7 @@ def test_run_combine_results(source, target, source_word, target_word, is_bible)
     combined.run_fa(source, target, outpath, is_bible=is_bible)
     combined.run_match_words(source, target, outpath)
     combined.run_combine_results(outpath)
-    combined.add_scores_to_alignments(outpath)
+    combined.add_scores_to_alignments(source, target, outpath, is_bible)
     df = pd.read_csv(outpath / "combined.csv")
     assert len(df) > 10
     assert len(df['translation_score'].unique()) > 10
