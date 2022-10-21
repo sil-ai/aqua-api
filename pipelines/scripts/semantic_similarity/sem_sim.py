@@ -4,11 +4,12 @@ import json
 import argparse
 from datetime import datetime
 import logging
-logging.getLogger().setLevel('DEBUG')
-#import torch
-import pandas as pd
 from itertools import chain
+
+import pandas as pd
 from sem_sim_model import SemanticSimBa
+
+logging.getLogger().setLevel('DEBUG')
 
 class SemanticSimilarity:
 
