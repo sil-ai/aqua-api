@@ -45,8 +45,8 @@ class SemanticSimilarity:
             else:
                 raise ValueError(sys_exit.code) from sys_exit
 
-    def get_sem_sim(self, precision=2):
-        #get sem_sim prediction for input_file
+    def get_sem_sims(self, precision=2):
+        #get sem_sim predictions for input_file
         sem_sim_object =  self.sem_sim.predict(list(zip(self.input['target'], self.input['reference'])))
         #prepares vrefs for merging
         vrefs = [[item] for item in self.input['vref'].to_list()]
@@ -59,19 +59,18 @@ class SemanticSimilarity:
         sem_sims1 = [{**item,**{'score': round(item['score'],precision)}} for item in sem_sims]
         return sem_sims1
 
-    def output_sem_sims(self,sem_sim):
+    def output_sem_sims(self,sem_sims):
         today = datetime.now()
-        import ipdb; ipdb.set_trace()
         v1,v2 = self.input_filename.split('/')[-1].split('_')[:2]
         chunk_name = self.input_filename.split('_')[-1].split('.')[0]
         file_name = f'{v1}_{v2}_semsim_{chunk_name}_{today.month}_{today.day}.json'
-        json.dump(sem_sim,open('/'.join([self.out_path,file_name]),'w'))
+        json.dump(sem_sims,open('/'.join([self.out_path,file_name]),'w'))
         logging.info(f'File {file_name} output to {self.out_path}')
 
 if __name__ == '__main__':
     try:
         ss = SemanticSimilarity()
-        sem_sim = ss.get_sem_sim()
+        sem_sim = ss.get_sem_sims()
         ss.output_sem_sims(sem_sim)
     except (ValueError, OSError,
             KeyError, AttributeError,
