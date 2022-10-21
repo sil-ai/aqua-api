@@ -3,7 +3,7 @@ import pytest
 
 @pytest.fixture(scope='session')
 def valid_paths():
-    return {'chunked': './out', 'out': '.'}
+    return {'input': '2_3_merge_chunk42.csv', 'out': '.'}
 
 @pytest.fixture(scope='session')
 def json_output():
