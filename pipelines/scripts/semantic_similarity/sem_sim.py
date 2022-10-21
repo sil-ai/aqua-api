@@ -34,7 +34,8 @@ class SemanticSimilarity:
     @staticmethod
     def get_args():
         #initializes a command line argument parser
-        parser = argparse.ArgumentParser(description='Checks semantic similarity between revision and reference')
+        parser = argparse.ArgumentParser\
+            (description='Checks semantic similarity between revision and reference')
         parser.add_argument('-i','--input', type=str, help='Input file path', required=True)
         parser.add_argument('-o','--out', type=str, help='Output path', required=True)
         #gets the arguments - will fail if they are of the wrong type
@@ -63,11 +64,11 @@ class SemanticSimilarity:
 
     def output_sem_sims(self,sem_sims):
         today = datetime.now()
-        v1,v2 = self.input_filename.split('/')[-1].split('_')[:2]
+        ver1,ver2 = self.input_filename.split('/')[-1].split('_')[:2]
         chunk_name = self.input_filename.split('_')[-1].split('.')[0]
-        file_name = f'{v1}_{v2}_semsim_{chunk_name}_{today.month}_{today.day}.json'
+        file_name = f'{ver1}_{ver2}_semsim_{chunk_name}_{today.month}_{today.day}.json'
         json.dump(sem_sims,open('/'.join([self.out_path,file_name]),'w'))
-        logging.info(f'File {file_name} output to {self.out_path}')
+        logging.info('File %s output to %s', file_name ,self.out_path)
 
 if __name__ == '__main__':
     try:
