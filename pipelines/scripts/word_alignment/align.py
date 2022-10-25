@@ -38,13 +38,28 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
         src_data = f.readlines()
     with open(target) as f:
         trg_data = f.readlines()
-
     # make into df
-    df = pd.DataFrame({"src": src_data, "trg": trg_data})
-
-    # remove lines that contain \n in either src or trg
+    df = pd.DataFrame({"src": src_data, "trg": trg_data, "to_drop": [False] * len(src_data)})
+    orig_df = df.copy()
     df = df[df.src != "\n"]
     df = df[df.trg != "\n"]
+    
+    # merge up lines that contain \n or <range> in either src or trg
+    src_to_append = ''
+    trg_to_append = ''
+    for index, row in df[:1:-1].iterrows():
+        if row['src'].replace('\n', '').replace('<range>', '') == '' or row['trg'].replace('\n', '').replace('<range>', '') == '':
+            src_to_append = row['src'].replace('\n', ' ').replace('<range>', '') + src_to_append
+            trg_to_append = row['trg'].replace('\n', ' ').replace('<range>', '') + trg_to_append
+            df.loc[index-1, 'src'] = df.loc[index-1, 'src'].replace('\n', ' ') + src_to_append + '\n'
+            df.loc[index-1, 'trg'] = df.loc[index-1, 'trg'].replace('\n', ' ') + trg_to_append + '\n'
+            df.loc[index, 'to_drop'] = True
+        else:
+            src_to_append = ''
+            trg_to_append = ''
+    if df.iloc[0].loc['src'].replace('\n', '').replace('<range>', '') == '' or df.iloc[0].loc['trg'].replace('\n', '').replace('<range>', '') == '':
+        df.iloc[0].loc['to_drop'] = True
+    df = df.drop(df[df['to_drop'] == True].index)
 
     # remove punctuation
     punctuation_chars = ""
@@ -61,6 +76,8 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
     df["src"] = df["src"].str.lower()
     df["trg"] = df["trg"].str.lower()
 
+    
+    
     # write to condensed txt files
     if not outpath.exists():
         outpath.mkdir(exist_ok=True)
@@ -119,7 +136,7 @@ def train_model(corpus: TextFileTextCorpus) -> ThotSymmetrizedWordAlignmentModel
     return symmetrized_model
 
 
-def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
+def get_vrefs(source: Path, target: Path, is_bible: bool, remove_blanks: bool=True) -> list:
     """
     Takes two aligned text files and returns a list of vrefs corresponding to lines that are non-empty in both files.
 
@@ -137,9 +154,11 @@ def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
     with open(target) as f:
         trg_data = f.readlines()
 
+    assert len(src_data) == len(trg_data), "Source and target txt files must be the same length"
+
     if is_bible:
-        assert len(src_data) == 41899, "is_bible requires your source input to be 41899 lines in length"
-        assert len(trg_data) == 41899, "is_bible requires your target input to be 41899 lines in length"
+        assert len(src_data) == 41899, "is_bible requires your source input to be 41,899 lines in length"
+        assert len(trg_data) == 41899, "is_bible requires your target input to be 41,899 lines in length"
         with open("vref.txt", "r") as f:
             vrefs = f.readlines()
         vrefs = [line.strip() for line in vrefs]
@@ -148,9 +167,15 @@ def get_vrefs(source: Path, target: Path, is_bible: bool) -> list:
     else:
         vrefs = [str(i) for i in range(len(src_data))]
 
+    if not remove_blanks:
+        return vrefs
+    
     df = pd.DataFrame({"vref": vrefs, "src": src_data, "trg": trg_data})
     df = df[df.src != "\n"]
     df = df[df.trg != "\n"]
+    df = df[df.src != "<range>\n"]
+    df = df[df.trg != "<range>\n"]
+
     vref_list = df["vref"].tolist()
     return vref_list
 
@@ -214,7 +239,7 @@ def run_align(
     Inputs:
     source           Path to a source text file of line-aligned text
     target           Path to a target text file of line-aligned text
-    outpath            Path to base output directory
+    outpath            Path to output directory
     is_bible           Boolean for whether the text is Bible, and hence vref references should be used. If True, both
                         input files must be of length 41,899.
     parallel_corpus    A corpus to process. Normally the corpus is produced from the source and target,

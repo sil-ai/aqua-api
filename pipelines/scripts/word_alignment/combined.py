@@ -8,12 +8,13 @@ import pandas as pd
 import align
 import align_best
 import match
+import key_terms
 from tqdm import tqdm
 
 tqdm.pandas()
 
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, List
 
 # run fast_align
 def run_fa(
@@ -61,6 +62,7 @@ def run_match_words(
     count_threshold                     Count threshold above which word matches will be kept
     refresh_cache           Force a cache refresh, rather than using cache from the last time the source and/or target were run
     """
+    
     match.run_match(
         source,
         target,
@@ -115,12 +117,6 @@ def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFr
     all_results = pd.read_csv(align_path)
     best_results = pd.read_csv(best_path)
     all_results = all_results.merge(best_results, how='left', on=['source', 'target'])
-    all_results = all_results.rename(columns = {
-                                                # 'align_count_x': 'co-occurrences', 
-                                                # 'word_score': 'FA_translation_score', 
-                                                # 'align_count_y': 'FA_align_count', 
-                                                # 'verse_score': 'FA_verse_score',
-                                                })
     # print(all_results)
     all_results.loc[:, ['avg_aligned']] = all_results.apply(
         lambda row: row['alignment_count'] / row['co-occurrence_count'], axis = 1
@@ -168,6 +164,35 @@ def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFr
     return df
 
 
+def run_all_alignments(
+                        source: Path,
+                        target: Path,
+                        outpath: Path,
+                        is_bible: bool=True,
+                        jaccard_similarity_threshold: float=0.0,
+                        count_threshold: int=0,
+                        refresh_cache: bool=False,
+                        ):
+    print(f"Running Fast Align to get alignment scores and translation scores for {source.stem} to {target.stem}")
+    run_fa(
+            source,
+            target,
+            outpath,
+            is_bible=is_bible,
+            )
+
+    print(f"Running Match to get word match scores for {source.stem} to {target.stem}")
+
+    run_match_words(
+            source,
+            target,
+            outpath,
+            jaccard_similarity_threshold,
+            count_threshold,
+            refresh_cache=refresh_cache,
+                )
+
+
 def run_combine_results(outpath: Path) -> None:
     """
     Runs combined.combine_df to combine the three output files in the outpath directory. They are saved
@@ -184,20 +209,46 @@ def run_combine_results(outpath: Path) -> None:
     df.to_csv(outpath / "combined.csv")
 
 
-def add_scores_to_alignments(outpath: Path) -> None:
+def add_scores_to_alignments(source: Path, target: Path, outpath: Path, is_bible: bool=True) -> None:
     df = pd.read_csv(outpath / 'best_in_context.csv')
-    all_sorted = pd.read_csv(outpath / 'all_sorted.csv')
-    combined = pd.read_csv(outpath / 'combined.csv')
-    df = pd.merge(df, combined, on=['source', 'target'], how='left')
-    df = df.drop(columns=['alignment_count_x', 'Unnamed: 0_x', 'Unnamed: 0_y', 'alignment_count_y', 'normalized_source', 'normalized_target'])
-    df = df.rename(columns={
-        'verse_score_x': 'FA_verse_score',
-        'alignment_score_x': 'FA_alignment_score',
-        'alignment_score_y': 'avg_FA_alignment_score',
-    })
-    df.loc[:, 'total_score'] = df.apply(lambda row: 4 * row['translation_score'] * row['avg_FA_alignment_score'] * row['jac_sim'], axis=1)
-    verse_scores = df.loc[:, ['vref', 'FA_verse_score', 'total_score']].groupby('vref').mean()
+    df['vref'] = df['vref'].astype('str')
+    combined_df = pd.read_csv(outpath / 'combined.csv')
+    all_vrefs = align.get_vrefs(source, target, is_bible, remove_blanks=False) 
+    all_vrefs = pd.DataFrame(all_vrefs, columns = ['vref'], dtype='str')
+    df = pd.merge(df.drop(columns=[
+                'alignment_count', 
+                'Unnamed: 0', 
+                'alignment_score',
+                ]), 
+                combined_df.drop(columns=[
+                    'Unnamed: 0', 
+                    'verse_score', 
+                    'alignment_count', 
+                    'normalized_source', 
+                    'normalized_target'
+                    ])
+                    , on=['source', 'target'], how='left')
+    df = pd.merge(all_vrefs, df, on='vref', how = 'left')    
+    df.loc[:, 'total_score'] = df.apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
+    df.to_csv(outpath / 'best_in_context_with_scores.csv')
+    verse_scores = df.loc[:, ['vref', 'verse_score', 'avg_aligned', 'alignment_score', 'jac_sim', 'total_score']].groupby('vref', sort=False).mean()
+    verse_scores = remove_leading_and_trailing_blanks(verse_scores, 'verse_score')
+    verse_scores = verse_scores.fillna(0)
     verse_scores.to_csv(outpath / 'verse_scores.csv')
+
+    df = pd.read_csv(outpath / 'all_in_context.csv')
+    df = pd.merge(df.drop(columns=['Unnamed: 0', 'translation_score']), combined_df.drop(columns=['Unnamed: 0']), on=['source', 'target'], how='left')
+    df['alignment_score'].fillna(0, inplace=True)
+    df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
+    df.to_csv(outpath / 'all_in_context_with_scores.csv')
+
+
+def remove_leading_and_trailing_blanks(df:pd.DataFrame, col: str) -> pd.DataFrame:
+    """
+    Takes a dataframe and removes all rows before the first non-blank entry in a column, and after the last non-blank entry.
+    """
+    df = df[(df.loc[:, col].notna().cumsum() > 0) & (df.loc[::-1, col].notna().cumsum() > 0)]
+    return df
 
 
 if __name__ == "__main__":
@@ -209,40 +260,36 @@ if __name__ == "__main__":
         "--jaccard-similarity-threshold",
         type=float,
         help="Threshold for Jaccard Similarity score to be significant",
-        default=0.5,
+        default=0.0,
     )
     parser.add_argument("--is-bible", action='store_true', help="is bible")
     parser.add_argument(
         "--count-threshold",
         type=int,
         help="Threshold for count (number of co-occurences) score to be significant",
-        default=1,
+        default=0,
     )
     parser.add_argument("--outpath", type=Path, help="where to store results")
+    parser.add_argument("--combine-only", action='store_true', help="Only combine the results, since the alignment and matching files already exist")
+    parser.add_argument("--refresh-cache", action='store_true', help="Refresh the cache of match scores")
+
     args, unknown = parser.parse_known_args()
     # make output dir
     # s, t, path = make_output_dir(args.source, args.target, args.outpath)
     outpath = args.outpath / f"{args.source.stem}_{args.target.stem}"
 
-    if not outpath.exists():
-        outpath.mkdir(exist_ok=True)
-
-    # run fast align
-    run_fa(
-        args.source,
-        args.target,
-        outpath,
-        is_bible=args.is_bible,
-    )
-
-    # run match words
-    run_match_words(
-        args.source,
-        args.target,
-        outpath,
-        args.jaccard_similarity_threshold,
-        args.count_threshold,
-    )
+    outpath.mkdir(parents=True, exist_ok=True)
+    if not args.combine_only:
+        run_all_alignments(
+                            args.source,
+                            args.target,
+                            outpath,
+                            is_bible=args.is_bible,
+                            jaccard_similarity_threshold=args.jaccard_similarity_threshold,
+                            count_threshold=args.count_threshold,
+                            refresh_cache = args.refresh_cache,
+                            )
+        
 
     run_combine_results(outpath)
-    add_scores_to_alignments(outpath)
+    add_scores_to_alignments(args.source, args.target, outpath, args.is_bible)

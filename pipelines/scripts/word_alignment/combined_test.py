@@ -23,14 +23,12 @@ def test_run_fa(source, target, is_bible, remove_files=True):
     assert os.path.exists(outpath / "all_in_context.csv")
     assert os.path.exists(outpath / "best_sorted.csv")
     assert os.path.exists(outpath / "best_in_context.csv")
-    assert os.path.exists(outpath / "best_vref_scores.csv")
     
     if remove_files:
         os.remove(outpath / "all_sorted.csv")
         os.remove(outpath / "all_in_context.csv")
         os.remove(outpath / "best_sorted.csv")
         os.remove(outpath / "best_in_context.csv")
-        os.remove(outpath / "best_vref_scores.csv")
 
 
 @pytest.mark.parametrize("source,target,is_bible", [
@@ -73,6 +71,7 @@ def test_run_combine_results(source, target, source_word, target_word, is_bible)
     combined.run_fa(source, target, outpath, is_bible=is_bible)
     combined.run_match_words(source, target, outpath)
     combined.run_combine_results(outpath)
+    combined.add_scores_to_alignments(source, target, outpath, is_bible)
     df = pd.read_csv(outpath / "combined.csv")
     assert len(df) > 10
     assert len(df['translation_score'].unique()) > 10
@@ -89,7 +88,7 @@ def test_run_combine_results(source, target, source_word, target_word, is_bible)
     (outpath / 'all_sorted.csv').unlink()
     (outpath / 'best_in_context.csv').unlink()
     (outpath / 'best_sorted.csv').unlink()
-    (outpath / 'best_vref_scores.csv').unlink()
+    (outpath / 'verse_scores.csv').unlink()
     (outpath / 'combined.csv').unlink()
     (outpath / 'dictionary.json').unlink()
     (outpath / 'ref_df.csv').unlink()

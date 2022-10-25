@@ -27,7 +27,7 @@ These scores can be found in `combined.csv`, and list every source-target word p
 * `match_counts`: The number of lines in which both the source and target word appear.
 
 #### Word by word alignment scores:
-These scores can be found in `best_in_context.csv`, which goes line by line, listing the Fat Align alignment pairs, along with:
+These scores can be found in `best_in_context.csv`, which goes line by line, listing the Fat Align alignment pairs. Note that `hebrew_key_terms.csv` and `greek_key_terms.csv` contain the same information, filtered by "major key terms", as defined in the [SILNLP repository](https://github.com/sillsdev/silnlp/tree/master/silnlp/assets). These files contain:
 * `FA_verse_score`: The Fast Align "average translation score" for that verse. This is the mean of `translation_score` for the aligned pairs in that verse.
 * `FA_alignment_score`: The Fast Align "alignment score" for that pair in that verse.
 * `co-occurrence_count`: The number of lines in which the pair appear together.
@@ -60,6 +60,23 @@ These scores can be found in `verse_scores.csv`, which goes verse by verse, list
 
 `--outpath`  Output location for the resulting directory  
 
+
+## red_flags.py
+Compares the output from a source to target alignment with output from other alignments from the source to other reference targets, and highlights alignments in the original source-target matching that are significantly lower than the corresponding scores in the source-reference target alignments.
+
+### Arguments:
+
+`--source` The source text that alignments are coming from. Typically the original biblical language(s).
+
+`--target` The target text that is being examined and compared with other reference targets.
+
+`--reference` A list of other target texts, that `target` will be compared against. Ideally these are good quality, and ideally somewhat related to `target`.
+
+`--outpath` The base output directory where the each of the data directories is located. If data for any particular alignment is not in this directory, the alignment will be run first.
+
+### Outputs:
+
+A file `red_flags.csv` file containing `vref`, `source` word, `total_score` from the best target word, and scores from the best target word from each reference translation. This list is filtered according to each `total_score < 0.05`, and each reference score `> 0.4`, with the average reference score being at least 25 times greater than `total_score` from the text in question.
 
 
 ## align.py
@@ -116,7 +133,7 @@ A directory containing two directories (one for each alignment direction), each 
 A modified version of Mark Woodward's [match_words_in_aligned_verse](https://github.com/sil-ai/new2old) algorithm
 ### Suggested Usage:
 
-`python match.py --keys-name path/to/source/file --values-name path/to/target/file --jaccard-similarity-threshold 0.5 --outpath /path/to/output/location`
+`python match.py --source path/to/source/file --target path/to/target/file --jaccard-similarity-threshold 0.5 --outpath /path/to/output/location`
 
 ### Output
 
@@ -124,9 +141,9 @@ A directory containing cache, a log, and a `dictionary.json` file with the word 
 
 ### Arguments:
 
-`--keys-name`  The name of the first dataset. This dataset will provide the "keys" in the output dictionary.
+`--source`  The path to the source txt file.
 
-`--values-name`  The name of the second dataset. This dataset will provide the "keys" in the output dictionary.
+`--target`  The path to the target txt file.
 
 `--jaccard-similarity-threshold`  (default=`0.0`) The threshold for Jaccard Similarity for a match to be logged as significant and entered into the output dictionary (if it also meets the count-threshold).
 
