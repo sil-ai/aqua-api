@@ -6,11 +6,11 @@ import sqlalchemy as db
 import pandas as pd
 
 
-vref_filename = "vref.txt"
+vref_filename = "../fixtures/vref.txt"
 my_col = ["book", "chapter", "verse"]
 vref = pd.read_csv(vref_filename, sep=" |:", names=my_col, engine="python")
 
-with open("bible_books.json", "r") as f:
+with open("../fixtures/bible_books.json", "r") as f:
     books_json = json.load(f)
 
 def create_upsert_method(meta: db.MetaData, extra_update_fields: Optional[Dict[str, str]]):
