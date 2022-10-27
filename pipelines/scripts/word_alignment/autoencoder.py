@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-import match
+from match import get_correlations_between_sets, initialize_cache, get_combined_df, write_dictionary_to_file
 pd.set_option('display.max_rows', 500)
 
 
@@ -24,7 +24,7 @@ def create_words(language_paths: dict[str, Path], index_cache_paths, outpath, re
     for language in language_paths:
         index_cache_files[language] = index_cache_paths[language] / f'{language}-index-cache.json'
         if index_cache_files[language].exists() and not refresh_cache:
-            index_lists[language] = match.initialize_cache(index_cache_files[language], refresh=False)
+            index_lists[language] = initialize_cache(index_cache_files[language], refresh=False)
             word_dict[language] = {word: Word(word) for word in index_lists[language]}
             for word in word_dict[language].values():
                 word.index_list = index_lists[language][word.word]
@@ -32,13 +32,13 @@ def create_words(language_paths: dict[str, Path], index_cache_paths, outpath, re
         else:
             index_cache_files[language].mkdir(parents=True, exist_ok=True)
             print(f"Getting sentences that contain each word in {language}")
-            ref_df = match.get_combined_df(language_paths[language], language_paths[language], outpath)
+            ref_df = get_combined_df(language_paths[language], language_paths[language], outpath)
             word_dict[language] = {word: Word(word) for word in ref_df['target'].explode().unique()}
             for word in tqdm(word_dict[language].values()):
                 word.get_indices(ref_df['target'])
                 word.get_ohe()
             index_lists[language] = {word.word: word.index_list for word in word_dict[language].values()}
-            match.write_dictionary_to_file(index_lists[language], index_cache_files[language])
+            write_dictionary_to_file(index_lists[language], index_cache_files[language])
     return word_dict
 
 class Word():
@@ -54,7 +54,7 @@ class Word():
         self.index_list = list(list_series[list_series.apply(lambda x: self.word in x if isinstance(x, Iterable) else False)].index)
 
     def get_matches(self, word):
-        jac_sim, count = match.get_correlations_between_sets(set(self.index_list), set(word.index_list))
+        jac_sim, count = get_correlations_between_sets(set(self.index_list), set(word.index_list))
         return (jac_sim, count)
     
     def get_encoding(self, model):
