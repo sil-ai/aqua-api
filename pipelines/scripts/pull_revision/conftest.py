@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 @pytest.fixture(scope='session')
 def aqua_connection_string():
-    return os.environ['AQUA_DB']
+    return os.environ['AQUA_CONNECTION_STRING']
 
 @pytest.fixture(scope='session')
 def engine(aqua_connection_string):
