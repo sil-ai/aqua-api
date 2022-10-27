@@ -222,7 +222,7 @@ def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     """
     # remove duplicates and average out verse and word scores
     dups = df.groupby(["source", "target"]).size().reset_index()
-    avgs = df.groupby(["source", "target"]).mean().reset_index()
+    avgs = df.groupby(["source", "target"]).mean(numeric_only=True).reset_index()
     no_dups = pd.merge(dups, avgs)
     print(no_dups)
     no_dups.rename(columns={0: "co-occurrence_count"}, inplace=True)

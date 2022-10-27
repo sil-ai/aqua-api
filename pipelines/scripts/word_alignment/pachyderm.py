@@ -1,15 +1,14 @@
 from pathlib import Path
-import logging
-from combined import run_fa, run_match_words, run_combine_results
-import os
 import argparse
+
+import combined
 
 
 def run_pachyderm(
     data_dir: Path,
     ref_dir: Path,
     outpath: Path,
-    jaccard_similarity_threshold: float=0.0,
+    jaccard_similarity_threshold: float=0.05,
     count_threshold: int=0,
     is_bible: bool=True,
     refresh_cache: bool=True,
@@ -24,13 +23,13 @@ def run_pachyderm(
                 outpath = outpath / f"{file.stem}_{ref_file.stem}"
                 outpath.mkdir(parents=True, exist_ok=True)
                 if file != ref_file:
-                    run_fa(
+                    combined.run_fa(
                         file, 
                         ref_file, 
                         outpath, 
                         is_bible=is_bible,
                         )
-                    run_match_words(
+                    combined.run_match_words(
                                     file, 
                                     ref_file, 
                                     outpath, 
@@ -38,7 +37,7 @@ def run_pachyderm(
                                     count_threshold=count_threshold,
                                     refresh_cache=refresh_cache,
                                     )
-                run_combine_results(outpath)
+                combined.run_combine_results(outpath)
 
 
 def main(args):
