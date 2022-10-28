@@ -216,7 +216,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Argparser")
     parser.add_argument('--train-langs', nargs='+', type=Path, help="A list of texts to train the model on."
         )
-    parser.add_argument("--num_epochs", type=int, help="Number of epochs to train for", default=1)
+    parser.add_argument("--num-epochs", type=int, help="Number of epochs to train for", default=1)
     parser.add_argument("--batch-size", type=int, help="Batch size for training", default=128)
     parser.add_argument("--lr", type=int, help="Learning rate for training", default=0.001)
     parser.add_argument("--weight-decay", type=int, help="Weight decay for training", default=1e-6)
