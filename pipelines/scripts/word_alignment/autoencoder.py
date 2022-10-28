@@ -30,7 +30,7 @@ def create_words(language_paths: Dict[str, Path], index_cache_paths, outpath, re
                 word.index_list = index_lists[language][word.word]
                 word.get_ohe()
         else:
-            index_cache_files[language].mkdir(parents=True, exist_ok=True)
+            index_cache_files[language].parent.mkdir(parents=True, exist_ok=True)
             print(f"Getting sentences that contain each word in {language}")
             ref_df = get_combined_df(language_paths[language], language_paths[language], outpath)
             word_dict[language] = {word: Word(word) for word in ref_df['target'].explode().unique()}
