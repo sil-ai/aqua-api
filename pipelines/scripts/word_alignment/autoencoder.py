@@ -115,7 +115,7 @@ def X_gen(word_dict, languages, batch_size=32):
         words = list(word_dict[language].values())
         random.shuffle(words)
         for i in range(len(word_dict[language]) // batch_size):
-            yield torch.tensor(np.array([word.index_ohe for word in words[i*batch_size:(i+1)*batch_size]])).float().to(torch.device(dev))
+            yield torch.tensor(np.array([word.index_ohe for word in words[i*batch_size:(i+1)*batch_size]])).float()  #.to(torch.device(dev))
 
 
 def run_training(word_dict: Dict[str, Dict[str, Word]], languages: List[str], X_gen, model, criterion, optimizer, num_epochs, batch_size=16):
@@ -155,7 +155,7 @@ def train_model(word_dict, languages, generator, loss_fn=nn.BCELoss(), num_epoch
         dev = "cpu"  
     print(f"dev: {dev}")
     model = Autoencoder()
-    model.to(torch.device(dev))
+    #  model.to(torch.device(dev))
     loss_fn = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     num_epochs = num_epochs
