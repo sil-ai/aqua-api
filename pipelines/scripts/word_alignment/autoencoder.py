@@ -127,6 +127,7 @@ def run_training(word_dict: Dict[str, Dict[str, Word]], languages: List[str], X_
             loss.backward()
             optimizer.step()
         print(f'Epoch:{epoch+1}, Loss:{epoch_loss.mean():.6f}')
+        clearml.Logger.current_logger().report_scalar("training loss", "training loss", iteration=i+1, value=epoch_loss.mean())
         outputs.append((epoch, epoch_loss.mean()))
     return model, outputs
 
