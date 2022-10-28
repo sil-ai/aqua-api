@@ -158,7 +158,7 @@ def train_model(word_dict, languages, generator, loss_fn=nn.BCELoss(), num_epoch
       auto_resource_monitoring=True,
       auto_connect_streams=True,    
     )
-    model = Autoencoder().to(dev)
+    model = Autoencoder()
     if torch.cuda.is_available():  
         model = model.cuda()
     # loss_fn = nn.BCELoss()
