@@ -90,14 +90,22 @@ class Autoencoder(nn.Module):
     def __init__(self):
         super().__init__()
         self.encoder = nn.Sequential(
-            nn.Linear(41899, 200),
+            nn.Linear(41899, 10000),
             nn.ReLU(),
-            nn.Linear(200, 200),
+            nn.Linear(10000, 2000),
+            nn.ReLU(),
+            nn.Linear(2000, 500),
+            nn.ReLU(),
+            nn.Linear(500, 200),
         )
         self.decoder = nn.Sequential(
-            nn.Linear(200, 200),
+            nn.Linear(200, 500),
             nn.ReLU(),
-            nn.Linear(200, 41899),
+            nn.Linear(500, 2000),
+            nn.ReLU(),
+            nn.Linear(2000, 10000),
+            nn.ReLU(),
+            nn.Linear(10000, 41899),
             # nn.Sigmoid(),
         )
         
