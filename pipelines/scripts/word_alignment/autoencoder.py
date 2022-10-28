@@ -126,7 +126,9 @@ def run_training(word_dict: Dict[str, Dict[str, Word]], languages: List[str], X_
         for batch_X in tqdm(gen):
             optimizer.zero_grad()
             recon = model(batch_X)
+            print(recon)
             loss = criterion(recon, batch_X)
+            print(loss.detach().numpy())
             epoch_loss = np.append(epoch_loss, loss.detach().numpy())
             loss.backward()
             optimizer.step()
@@ -158,8 +160,6 @@ def train_model(word_dict, languages, generator, loss_fn=nn.BCELoss(), num_epoch
     #  model.to(torch.device(dev))
     loss_fn = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    num_epochs = num_epochs
-    batch_size = batch_size
     model, outputs = run_training(word_dict, languages, generator, model, loss_fn, optimizer, num_epochs=num_epochs, batch_size=batch_size)
     return model, outputs
 
