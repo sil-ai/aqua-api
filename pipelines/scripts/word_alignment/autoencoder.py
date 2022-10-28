@@ -3,7 +3,7 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 import random
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Dict, List
 import time
 import argparse
 
@@ -17,7 +17,7 @@ from match import get_correlations_between_sets, initialize_cache, get_combined_
 pd.set_option('display.max_rows', 500)
 
 
-def create_words(language_paths: dict[str, Path], index_cache_paths, outpath, refresh_cache: bool=False):
+def create_words(language_paths: Dict[str, Path], index_cache_paths, outpath, refresh_cache: bool=False):
     index_lists = {}
     word_dict = {}
     index_cache_files = {} 
@@ -114,7 +114,7 @@ def X_gen(word_dict, languages, batch_size=32):
             yield torch.tensor(np.array([word.index_ohe for word in words[i*batch_size:(i+1)*batch_size]])).float()
 
 
-def run_training(word_dict: dict[str, dict[str, Word]], languages: list[str], X_gen, model, criterion, optimizer, num_epochs, batch_size=16):
+def run_training(word_dict: Dict[str, Dict[str, Word]], languages: List[str], X_gen, model, criterion, optimizer, num_epochs, batch_size=16):
     outputs = []
     for epoch in range(num_epochs):
         epoch_loss = np.array([])
@@ -160,7 +160,7 @@ def load_model(filepath: Path) -> Autoencoder:
     return model
 
 
-def get_encodings(word_dict_lang:dict[str,Word], model: Autoencoder) -> None:
+def get_encodings(word_dict_lang:Dict[str,Word], model: Autoencoder) -> None:
     for word in tqdm(word_dict_lang.values()):
             word.get_encoding(model)
 
