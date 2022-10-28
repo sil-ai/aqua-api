@@ -144,7 +144,7 @@ def run_training(word_dict: Dict[str, Dict[str, Word]], languages: List[str], X_
     return model, outputs
 
 def train_model(word_dict, languages, generator, loss_fn=nn.BCELoss(), num_epochs=100, batch_size=128, lr=0.001, weight_decay=1e-7):
-    clearml.Task.add_requirements("./requirements.txt")
+    clearml.Task.add_requirements("-r./requirements.txt")
     task = clearml.Task.init(
       project_name='Word-alignment-autoencoder',    # project name of at least 3 characters
       task_name='autoencoder-train-' + str(int(time.time())), # task name of at least 3 characters
