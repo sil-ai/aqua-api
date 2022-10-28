@@ -58,7 +58,7 @@ class Word():
         return (jac_sim, count)
     
     def get_encoding(self, model):
-        self.encoding = model.encoder(torch.tensor(self.index_ohe).float()).detach().numpy()        
+        self.encoding = model.encoder(torch.tensor(self.index_ohe).float()).cpu().detach().numpy()        
     
     def get_ohe(self, max_num=41899):
         a = np.zeros(max_num)
@@ -135,7 +135,7 @@ def run_training(word_dict: Dict[str, Dict[str, Word]], languages: List[str], X_
             optimizer.zero_grad()
             recon = model(batch_X)
             loss = criterion(recon, batch_X)
-            epoch_loss = np.append(epoch_loss, loss.detach().numpy())
+            epoch_loss = np.append(epoch_loss, loss.cpu().detach().numpy())
             loss.backward()
             optimizer.step()
         print(f'Epoch:{epoch+1}, Loss:{epoch_loss.mean():.6f}')
