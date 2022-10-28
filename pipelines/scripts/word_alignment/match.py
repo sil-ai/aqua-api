@@ -12,7 +12,7 @@ from machine.tokenization import LatinWordTokenizer
 
 
 def write_dictionary_to_file(
-    dictionary: dict, filename: Path, to_strings: bool = False
+    dictionary: dict, filepath: Path, to_strings: bool = False
 ) -> None:
     """
     Takes a dictionary and writes it to a json file.
@@ -24,9 +24,10 @@ def write_dictionary_to_file(
     """
     if to_strings:
         dictionary = tuple_keys_to_string(dictionary)
-    with open(filename, "w", encoding="utf8") as f:
+    with open(filepath, "w", encoding="utf8") as f:
+        filepath.mkdir(parents=True, exist_ok=True)
         json.dump(dictionary, f, ensure_ascii=False, indent=4)
-    logging.info(f"Written file {filename}")
+    logging.info(f"Written file {filepath}")
 
 
 def text_to_words(text: str) -> List[str]:

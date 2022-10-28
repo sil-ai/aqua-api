@@ -145,7 +145,13 @@ def train_model(word_dict, languages, generator, loss_fn=nn.BCELoss(), num_epoch
       auto_resource_monitoring=True,
       auto_connect_streams=True,    
     )
+    if torch.cuda.is_available():  
+        dev = "cuda:0" 
+    else:  
+        dev = "cpu"  
+    print(f"dev: {dev}")
     model = Autoencoder()
+    model.to(torch.device(dev))
     loss_fn = nn.BCELoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     num_epochs = num_epochs
