@@ -119,12 +119,10 @@ def run_training(word_dict: Dict[str, Dict[str, Word]], languages: List[str], X_
     for epoch in range(num_epochs):
         epoch_loss = np.array([])
         gen = X_gen(word_dict, languages, batch_size=batch_size)
-        for batch_X in tqdm(gen):
+        for batch_X in gen:
             optimizer.zero_grad()
             recon = model(batch_X)
-            print(recon)
             loss = criterion(recon, batch_X)
-            print(loss.detach().numpy())
             epoch_loss = np.append(epoch_loss, loss.detach().numpy())
             loss.backward()
             optimizer.step()
