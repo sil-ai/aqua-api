@@ -24,7 +24,7 @@ def write_dictionary_to_file(
     """
     if to_strings:
         dictionary = tuple_keys_to_string(dictionary)
-    filepath.mkdir(parents=True, exist_ok=True)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf8") as f:
         json.dump(dictionary, f, ensure_ascii=False, indent=4)
     logging.info(f"Written file {filepath}")
