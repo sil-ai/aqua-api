@@ -115,11 +115,15 @@ class Autoencoder(nn.Module):
         return decoded
 
 def X_gen(word_dict, languages, batch_size=32):
+    if torch.cuda.is_available():  
+        dev = "cuda" 
+    else:  
+        dev = "cpu"  
     for language in languages:
         words = list(word_dict[language].values())
         random.shuffle(words)
         for i in range(len(word_dict[language]) // batch_size):
-            yield torch.tensor(np.array([word.index_ohe for word in words[i*batch_size:(i+1)*batch_size]])).float()  #.to(torch.device(dev))
+            yield torch.tensor(np.array([word.index_ohe for word in words[i*batch_size:(i+1)*batch_size]])).float().to(dev)
 
 
 def run_training(word_dict: Dict[str, Dict[str, Word]], languages: List[str], X_gen, model, criterion, optimizer, num_epochs, batch_size=16):
@@ -154,7 +158,9 @@ def train_model(word_dict, languages, generator, loss_fn=nn.BCELoss(), num_epoch
       auto_resource_monitoring=True,
       auto_connect_streams=True,    
     )
-    model = Autoencoder()
+    model = Autoencoder().to(dev)
+    if torch.cuda.is_available():  
+        model = model.cuda()
     # loss_fn = nn.BCELoss()
     loss_fn = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
