@@ -1,3 +1,4 @@
+import json
 import argparse
 import logging
 import itertools
@@ -55,11 +56,17 @@ class ApiSwitchboard:
 
     def switch(self):
         if self.assess_type == 'semsim':
-            print(self.job_id, 'semsim')
+            #output a semantic similarity json file
+            #TODO: figure out why this file is not written to the volume
+            with open(f'{self.job_id}_semsim.json','w') as semsim_file:
+                semsim_file.write({"job_id":self.job_id,"reference": self.ref, "target": self.target})
+            logging.info(f"Assessment {self.job_id} - Semantic Similarity has begun")
         elif self.assess_type == 'subwords':
-            print(self.job_id, 'subwords')
+            #TODO: subwords stage output here
+            logging.info(f"Assessment {self.job_id} - Subwords has begun")
         elif self.assess_type == 'comp':
-            print(self.job_id, 'comp')
+            #TODO: comprehension stage output here
+            logging.info(f"Assessment {self.job_id} - Comprehension has begun")
         else:
             #should not get here
             raise ValueError(f"{self.assess_type} is not a valid assessment type")
