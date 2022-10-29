@@ -39,7 +39,7 @@ def create_words(language_paths: Dict[str, Path], index_cache_paths, outpath, re
                 word.get_indices(ref_df['target'])
                 word.get_ohe()
             # Save the full index list to cache (not just the reduced index list which pairs with the other language non-blank lines)
-            ref_dict[language] = {word: Word(word) for word in source_ref_df['target'].explode().unique()}
+            ref_dict[language] = {word: Word(word) for word in source_ref_df['text'].explode().unique()}
             index_lists[language] = {word.word: word.index_list for word in ref_dict[language].values()}
             write_dictionary_to_file(index_lists[language], index_cache_files[language])
     return word_dict
