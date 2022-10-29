@@ -87,38 +87,38 @@ class Word():
 
 
 class Autoencoder(nn.Module):
-    def __init__(self):
+    def __init__(self, in_size: int=41899, out_size: int=200, hidden_sizes: Optional[list]=None):
         super().__init__()
-        self.encoder = nn.Sequential(
-            nn.Linear(41899, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 2000),
-            nn.ReLU(),
-            nn.Linear(2000, 500),
-            nn.ReLU(),
-            nn.Linear(500, 200),
-        )
-        self.decoder = nn.Sequential(
-            nn.Linear(200, 500),
-            nn.ReLU(),
-            nn.Linear(500, 2000),
-            nn.ReLU(),
-            nn.Linear(2000, 10000),
-            nn.ReLU(),
-            nn.Linear(10000, 41899),
-            # nn.Sigmoid(),
-        )
+        self.hidden_sizes = hidden_sizes if hidden_sizes else []
+        self.encoder_layers = nn.ModuleList()
+        self.decoder_layers = nn.ModuleList()
+        self.in_size = in_size
+        self.out_size = out_size
         
+        # Encoder
+        for size in self.hidden_sizes:
+            self.encoder_layers.append(nn.Linear(in_size, size))
+            self.encoder_layers.append(nn.ReLU())
+            in_size = size
+        self.encoder_layers.append(nn.Linear(in_size, self.out_size))
+        
+        #Decoder
+        for size in self.hidden_sizes[::-1]:
+            self.decoder_layers.append(nn.Linear(out_size, size))
+            self.decoder_layers.append(nn.ReLU())
+            out_size = size
+        self.decoder_layers.append(nn.Linear(out_size, self.in_size))
+
+        self.encoder = nn.Sequential(*self.encoder_layers)
+        self.decoder = nn.Sequential(*self.decoder_layers)
+    
     def forward(self, x):
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
         return decoded
 
 def X_gen(word_dict, languages, batch_size=32):
-    if torch.cuda.is_available():  
-        dev = "cuda" 
-    else:  
-        dev = "cpu"  
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
     for language in languages:
         words = list(word_dict[language].values())
         random.shuffle(words)
@@ -143,7 +143,19 @@ def run_training(word_dict: Dict[str, Dict[str, Word]], languages: List[str], X_
         outputs.append((epoch, epoch_loss.mean()))
     return model, outputs
 
-def train_model(word_dict, languages, generator, loss_fn=nn.BCELoss(), num_epochs=100, batch_size=128, lr=0.001, weight_decay=1e-7):
+def train_model(
+                word_dict, 
+                languages, 
+                generator, 
+                in_size, 
+                out_size,
+                hidden_sizes,
+                loss_fn=nn.BCELoss(), 
+                num_epochs=100, 
+                batch_size=128, 
+                lr=0.001, 
+                weight_decay=1e-7
+                ):
     clearml.Task.add_requirements("./requirements.txt")
     task = clearml.Task.init(
       project_name='Word-alignment-autoencoder',    # project name of at least 3 characters
@@ -158,10 +170,8 @@ def train_model(word_dict, languages, generator, loss_fn=nn.BCELoss(), num_epoch
       auto_resource_monitoring=True,
       auto_connect_streams=True,    
     )
-    model = Autoencoder()
-    if torch.cuda.is_available():  
-        model = model.cuda()
-    # loss_fn = nn.BCELoss()
+    model = Autoencoder(in_size=in_size, out_size=out_size, hidden_sizes=hidden_sizes)
+    model = model.cuda() if torch.cuda.is_available() else model
     loss_fn = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     model, outputs = run_training(word_dict, languages, generator, model, loss_fn, optimizer, num_epochs=num_epochs, batch_size=batch_size)
@@ -211,7 +221,19 @@ def main(args):
     for language in training_language_paths:
         index_cache_paths[language] = outpath  / 'cache'
     word_dict = create_words(training_language_paths, index_cache_paths, outpath, refresh_cache=args.refresh_cache)
-    model, outputs = train_model(word_dict, training_language_paths, X_gen, loss_fn=nn.BCELoss(), num_epochs=args.num_epochs, batch_size=args.batch_size, lr=args.lr, weight_decay=args.weight_decay)
+    model, outputs = train_model(
+                                word_dict, 
+                                training_language_paths, 
+                                X_gen, 
+                                in_size=args.in_size, 
+                                out_size=args.out_size,
+                                hidden_sizes=args.hidden_sizes,
+                                loss_fn=nn.BCELoss(), 
+                                num_epochs=args.num_epochs, 
+                                batch_size=args.batch_size, 
+                                lr=args.lr, 
+                                weight_decay=args.weight_decay
+                                )
     timestr = time.strftime("%Y%m%d-%H%M%S")
     torch.save(model.state_dict(), outpath / f'model_{len(training_language_paths)}_{timestr}')
 
@@ -222,6 +244,9 @@ if __name__ == "__main__":
         )
     parser.add_argument("--num-epochs", type=int, help="Number of epochs to train for", default=1)
     parser.add_argument("--batch-size", type=int, help="Batch size for training", default=128)
+    parser.add_argument("--in-size", type=int, help="Input size", default=41899)
+    parser.add_argument("--out-size", type=int, help="Output size", default=200)
+    parser.add_argument("--hidden-sizes", nargs="+", type=int, help="Hidden sizes", default=None)
     parser.add_argument("--lr", type=float, help="Learning rate for training", default=0.001)
     parser.add_argument("--weight-decay", type=float, help="Weight decay for training", default=1e-6)
     parser.add_argument("--outpath", type=Path, help="where to store results")
