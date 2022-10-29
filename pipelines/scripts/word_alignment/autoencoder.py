@@ -153,7 +153,8 @@ def run_training(word_dict: Dict[str, Dict[str, Word]], train_languages: List[st
 
 def train_model(
                 word_dict, 
-                languages, 
+                train_languages, 
+                val_languages,
                 generator, 
                 in_size, 
                 out_size,
@@ -182,7 +183,7 @@ def train_model(
     model = model.cuda() if torch.cuda.is_available() else model
     loss_fn = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    model, outputs = run_training(word_dict, languages, generator, model, loss_fn, optimizer, num_epochs=num_epochs, batch_size=batch_size)
+    model, outputs = run_training(word_dict, train_languages, val_languages, generator, model, loss_fn, optimizer, num_epochs=num_epochs, batch_size=batch_size)
     return model, outputs
 
 
@@ -220,6 +221,8 @@ def main(args):
     # cache_dir = outpath / "cache"
     # cache_dir.mkdir(exist_ok=True)
     training_language_paths = {language.stem: language for language in args.train_langs}
+    val_language_paths = {language.stem: language for language in args.val_langs}
+    
 #                 'en-NLT07', 
 #                 'fr-LBS21', 
 #                 'swh-ONEN',
@@ -231,7 +234,8 @@ def main(args):
     word_dict = create_words(training_language_paths, index_cache_paths, outpath, refresh_cache=args.refresh_cache)
     model, outputs = train_model(
                                 word_dict, 
-                                training_language_paths, 
+                                training_language_paths,
+                                val_language_paths,
                                 X_gen, 
                                 in_size=args.in_size, 
                                 out_size=args.out_size,
@@ -248,8 +252,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Argparser")
-    parser.add_argument('--train-langs', nargs='+', type=Path, help="A list of texts to train the model on."
-        )
+    parser.add_argument('--train-langs', nargs='+', type=Path, help="A list of texts to train the model on.")
+    parser.add_argument('--val-langs', nargs='+', type=Path, help="A list of texts to use for validation scores.")
     parser.add_argument("--num-epochs", type=int, help="Number of epochs to train for", default=1)
     parser.add_argument("--batch-size", type=int, help="Batch size for training", default=128)
     parser.add_argument("--in-size", type=int, help="Input size", default=41899)
