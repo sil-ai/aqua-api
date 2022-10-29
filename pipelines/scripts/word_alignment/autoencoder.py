@@ -153,13 +153,13 @@ def run_training(word_dict: Dict[str, Dict[str, Word]], train_languages: List[st
 
 def train_model(
                 word_dict, 
-                train_languages, 
-                val_languages,
+                train_languages: List[str], 
+                val_languages: List[str],
                 generator, 
                 in_size, 
                 out_size,
                 hidden_sizes,
-                loss_fn=nn.BCELoss(), 
+                loss_fn=nn.BCEWithLogitsLoss(), 
                 num_epochs=100, 
                 batch_size=128, 
                 lr=0.001, 
@@ -181,7 +181,6 @@ def train_model(
     )
     model = Autoencoder(in_size=in_size, out_size=out_size, hidden_sizes=hidden_sizes)
     model = model.cuda() if torch.cuda.is_available() else model
-    loss_fn = nn.BCEWithLogitsLoss()
     optimizer = optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     model, outputs = run_training(word_dict, train_languages, val_languages, generator, model, loss_fn, optimizer, num_epochs=num_epochs, batch_size=batch_size)
     return model, outputs
@@ -229,18 +228,19 @@ def main(args):
 #                 'es-NTV',
     # languages = [args.source.stem, args.target.stem, *training_languages]
     index_cache_paths = {}
-    for language in training_language_paths:
+    for language in [*training_language_paths, *val_language_paths]:
         index_cache_paths[language] = outpath  / 'cache'
-    word_dict = create_words(training_language_paths, index_cache_paths, outpath, refresh_cache=args.refresh_cache)
+    word_dict = create_words({**training_language_paths, **val_language_paths}, index_cache_paths, outpath, refresh_cache=args.refresh_cache)
+    
     model, outputs = train_model(
                                 word_dict, 
-                                training_language_paths,
-                                val_language_paths,
+                                training_language_paths.keys(),
+                                val_language_paths.keys(),
                                 X_gen, 
                                 in_size=args.in_size, 
                                 out_size=args.out_size,
                                 hidden_sizes=args.hidden_sizes,
-                                loss_fn=nn.BCELoss(), 
+                                loss_fn=nn.BCEWithLogitsLoss(), 
                                 num_epochs=args.num_epochs, 
                                 batch_size=args.batch_size, 
                                 lr=args.lr, 
