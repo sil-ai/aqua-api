@@ -126,21 +126,29 @@ def X_gen(word_dict, languages, batch_size=32):
             yield torch.tensor(np.array([word.index_ohe for word in words[i*batch_size:(i+1)*batch_size]])).float().to(dev)
 
 
-def run_training(word_dict: Dict[str, Dict[str, Word]], languages: List[str], X_gen, model, criterion, optimizer, num_epochs, batch_size=16):
+def run_training(word_dict: Dict[str, Dict[str, Word]], train_languages: List[str], val_languages: List[str], X_gen, model, criterion, optimizer, num_epochs, batch_size=16):
     outputs = []
     for epoch in range(num_epochs):
-        epoch_loss = np.array([])
-        gen = X_gen(word_dict, languages, batch_size=batch_size)
-        for batch_X in gen:
+        epoch_train_loss = np.array([])
+        epoch_val_loss = np.array([])
+        train_gen = X_gen(word_dict, train_languages, batch_size=batch_size)
+        for batch_X in train_gen:
             optimizer.zero_grad()
             recon = model(batch_X)
             loss = criterion(recon, batch_X)
-            epoch_loss = np.append(epoch_loss, loss.cpu().detach().numpy())
+            epoch_train_loss = np.append(epoch_train_loss, loss.cpu().detach().numpy())
             loss.backward()
             optimizer.step()
-        print(f'Epoch:{epoch+1}, Loss:{epoch_loss.mean():.6f}')
-        clearml.Logger.current_logger().report_scalar("training loss", "training loss", iteration=epoch+1, value=epoch_loss.mean())
-        outputs.append((epoch, epoch_loss.mean()))
+        val_gen = X_gen(word_dict, val_languages, batch_size=batch_size) 
+        for batch_val in val_gen:
+            recon = model(batch_val)
+            loss = criterion(recon, batch_val)
+            epoch_val_loss = np.append(epoch_val_loss, loss.cpu().detach().numpy())
+        print(f'Epoch:{epoch+1}, Train loss:{epoch_train_loss.mean():.6f}, Validation loss:{epoch_val_loss.mean():.6f}')
+        clearml.Logger.current_logger().report_scalar("training/validation loss", "training loss", iteration=epoch+1, value=epoch_train_loss.mean())
+        clearml.Logger.current_logger().report_scalar("training/validation loss", "validation loss", iteration=epoch+1, value=epoch_val_loss.mean())
+
+        outputs.append((epoch, epoch_train_loss.mean()))
     return model, outputs
 
 def train_model(
