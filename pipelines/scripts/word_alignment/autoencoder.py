@@ -20,6 +20,7 @@ pd.set_option('display.max_rows', 500)
 def create_words(language_paths: Dict[str, Path], index_cache_paths, outpath, refresh_cache: bool=False):
     index_lists = {}
     word_dict = {}
+    ref_dict = {}
     index_cache_files = {} 
     for language in language_paths:
         index_cache_files[language] = index_cache_paths[language] / f'{language}-index-cache.json'
@@ -32,12 +33,14 @@ def create_words(language_paths: Dict[str, Path], index_cache_paths, outpath, re
         else:
             index_cache_files[language].parent.mkdir(parents=True, exist_ok=True)
             print(f"Getting sentences that contain each word in {language}")
-            ref_df = get_combined_df(language_paths[language], language_paths[language], outpath)
+            source_ref_df, _, ref_df = get_combined_df(language_paths[language], language_paths[language], outpath)
             word_dict[language] = {word: Word(word) for word in ref_df['target'].explode().unique()}
             for word in tqdm(word_dict[language].values()):
                 word.get_indices(ref_df['target'])
                 word.get_ohe()
-            index_lists[language] = {word.word: word.index_list for word in word_dict[language].values()}
+            # Save the full index list to cache (not just the reduced index list which pairs with the other language non-blank lines)
+            ref_dict[language] = {word: Word(word) for word in source_ref_df['target'].explode().unique()}
+            index_lists[language] = {word.word: word.index_list for word in ref_dict[language].values()}
             write_dictionary_to_file(index_lists[language], index_cache_files[language])
     return word_dict
 

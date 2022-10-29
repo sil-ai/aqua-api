@@ -292,7 +292,7 @@ def get_combined_df(
     ref_df = ref_df.dropna(subset=["source", "target"])
     ref_df.to_csv(outpath / "ref_df.csv")
     logging.info(ref_df.head())
-    return ref_df
+    return (source_ref_df, target_ref_df, ref_df)
 
 
 class Word():
@@ -343,7 +343,7 @@ def run_match(
     )
     logging.info("START RUN")
 
-    cache_dir = outpath / "cache"
+    cache_dir = outpath.parent / "cache"
     cache_dir.mkdir(exist_ok=True)
     js_cache_file = cache_dir / f"{source_list_name}-{target_list_name}-freq-cache.json"
     reverse_freq_cache_file = (
@@ -354,7 +354,7 @@ def run_match(
 
     matches_file = outpath / "dictionary.json"
 
-    ref_df = get_combined_df(source, target, outpath)
+    source_ref_df, target_ref_df, ref_df = get_combined_df(source, target, outpath)
     logging.info(f"Total lines: {len(ref_df)}")
 
     js_cache = initialize_cache(js_cache_file, to_tuples=True, refresh=refresh_cache)
@@ -363,59 +363,63 @@ def run_match(
     )
     js_cache = {**js_cache, **js_cache_reverse}
 
-    all_source_words = list(ref_df["source"].explode().unique())
-    all_target_words = list(ref_df["target"].explode().unique())
-    source_objects = {word: Word(word) for word in all_source_words}
-    target_objects = {word: Word(word) for word in all_target_words}
+    # source_words = list(ref_df["source"].explode().unique())
+    # target_words = list(ref_df["target"].explode().unique())
+    all_source_words = list(source_ref_df["source"].explode().unique())
+    all_target_words = list(target_ref_df["target"].explode().unique())
+    # source_objects = {word: Word(word) for word in source_words}
+    # target_objects = {word: Word(word) for word in target_words}
+    all_source_objects = {word: Word(word) for word in all_source_words}
+    all_target_objects = {word: Word(word) for word in all_target_words}
     
     if refresh_cache or not source_index_cache_file.exists():
         print("Getting sentences that contain each word in source_objects")
-        for word in tqdm(source_objects.values()):
-            word.get_indices(ref_df['source'])
-        source_index = {word.word: word.index_list for word in source_objects.values()}
-        write_dictionary_to_file(source_index, source_index_cache_file)
+        for word in tqdm(all_source_objects.values()):
+            word.get_indices(source_ref_df['source'])
+        all_source_index = {word.word: word.index_list for word in all_source_objects.values()}
+        write_dictionary_to_file(all_source_index, source_index_cache_file)
     else:
-        source_index = initialize_cache(source_index_cache_file, refresh=False)
-        source_objects = {word: Word(word) for word in source_index.keys()}
-        for word in source_objects.values():
-            word.index_list = source_index[word.word]
+        all_source_index = initialize_cache(source_index_cache_file, refresh=False)
+        all_source_objects = {word: Word(word) for word in all_source_index.keys()}
+        for word in all_source_objects.values():
+            word.index_list = all_source_index[word.word]
     
     if refresh_cache or not target_index_cache_file.exists():
         print("Getting sentences that contain each word in target_objects")
-        for word in tqdm(target_objects.values()):
-            word.get_indices(ref_df['target'])
-        target_index = {word.word: word.index_list for word in target_objects.values()}
-        write_dictionary_to_file(target_index, target_index_cache_file)
+        for word in tqdm(all_target_objects.values()):
+            word.get_indices(target_ref_df['target'])
+        all_target_index = {word.word: word.index_list for word in all_target_objects.values()}
+        write_dictionary_to_file(all_target_index, target_index_cache_file)
     else:
-        target_index = initialize_cache(target_index_cache_file, refresh=False)
-        target_objects = {word: Word(word) for word in target_index.keys()}
-        for word in target_objects.values():
-            word.index_list = target_index[word.word]
+        all_target_index = initialize_cache(target_index_cache_file, refresh=False)
+        all_target_objects = {word: Word(word) for word in all_target_index.keys()}
+        for word in all_target_objects.values():
+            word.index_list = all_target_index[word.word]
 
     ref_df = ref_df.dropna(subset=["source", "target"])  # Reduce ref_df to only lines present in both texts
     logging.info(f"ref_df: {ref_df}")
     
     ref_df_indexes = list(ref_df.index)  
     # Reduce the keys_index and values_index dicts to only those lines present in the reduced ref_df
-    print("Getting keys_index")
-    source_index = {
-        key: set(value).intersection(set(ref_df_indexes))
-        for key, value in tqdm(source_index.items())
-    }
+    # print("Getting keys_index")
+    # source_index = {
+    #     key: set(value).intersection(set(ref_df_indexes))
+    #     for key, value in tqdm(all_source_index.items())
+    # }
     
-    print("Getting values_index")
-    target_index = {
-        key: set(value).intersection(set(ref_df_indexes))
-        for key, value in tqdm(target_index.items())
-    }
+    # print("Getting values_index")
+    # target_index = {
+    #     key: set(value).intersection(set(ref_df_indexes))
+    #     for key, value in tqdm(all_target_index.items())
+    # }
     matches = {}
     print("Getting matches...")
     for _, row in tqdm(ref_df.iterrows(), total=ref_df.shape[0]):
-        all_source_words: List[Word] = list(set([source_objects[x] for x in row["source"]]))
-        all_target_words: List[Word] = list(set([target_objects[x] for x in row["target"]]))
+        source_words: List[Word] = list(set([all_source_objects[x] for x in row["source"]]))
+        target_words: List[Word] = list(set([all_target_objects[x] for x in row["target"]]))
         matches, js_cache = update_matches_for_lists(
-            all_source_words,
-            all_target_words,
+            source_words,
+            target_words,
             matches=matches,
             js_cache=js_cache,
             jaccard_similarity_threshold=jaccard_similarity_threshold,

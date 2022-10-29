@@ -2,7 +2,7 @@ import argparse
 import string
 import os
 import sys
-from typing import Tuple
+from typing import Tuple, Optional
 
 from unicodedata import category
 import pandas as pd
@@ -18,7 +18,7 @@ from machine.translation.thot import (
 from pathlib import Path
 
 
-def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Path, Path]:
+def write_condensed_files(source: Path, target: Path, outpath: Path, blank_line_chars: Optional[list]=None) -> Tuple[Path, Path]:
     """
     Takes two input files and writes condensed versions to file, which only include those lines that
     are not blank in both input files.
@@ -40,21 +40,26 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
         trg_data = f.readlines()
     # make into df
     df = pd.DataFrame({"src": src_data, "trg": trg_data, "to_drop": [False] * len(src_data)})
-    orig_df = df.copy()
-    df = df[df.src != "\n"]
-    df = df[df.trg != "\n"]
-    
+    # orig_df = df.copy()
+    # blank_line_chars = blank_line_chars if blank_line_chars else ['', '¿?', '-', '...', ')', '(']
+    # blank_line_chars = [char + '\n' for char in blank_line_chars]
+    # df = df[df.src.apply(lambda x: x not in blank_line_chars)]
+    # df = df[df.trg.apply(lambda x: x not in blank_line_chars)]
+    df = df[df['src'] != '\n']
+    df = df[df['trg'] != '\n']
     # merge up lines that contain \n or <range> in either src or trg
     src_to_append = ''
     trg_to_append = ''
     for index, row in df[:1:-1].iterrows():
-        if row['src'].replace('\n', '').replace('<range>', '') == '' or row['trg'].replace('\n', '').replace('<range>', '') == '':
-            src_to_append = row['src'].replace('\n', ' ').replace('<range>', '') + src_to_append
+        if row['src'].replace('\n', '').replace('<range>', '') == '':
             trg_to_append = row['trg'].replace('\n', ' ').replace('<range>', '') + trg_to_append
-            df.loc[index-1, 'src'] = df.loc[index-1, 'src'].replace('\n', ' ') + src_to_append + '\n'
             df.loc[index-1, 'trg'] = df.loc[index-1, 'trg'].replace('\n', ' ') + trg_to_append + '\n'
             df.loc[index, 'to_drop'] = True
-        else:
+        if row['trg'].replace('\n', '').replace('<range>', '') == '':
+            src_to_append = row['src'].replace('\n', ' ').replace('<range>', '') + src_to_append
+            df.loc[index-1, 'src'] = df.loc[index-1, 'src'].replace('\n', ' ') + src_to_append + '\n'
+            df.loc[index, 'to_drop'] = True
+        if len(row['src'].replace('\n', '').replace('<range>', '')) > 0 and len(row['trg'].replace('\n', '').replace('<range>', '')) > 0:
             src_to_append = ''
             trg_to_append = ''
     if df.iloc[0].loc['src'].replace('\n', '').replace('<range>', '') == '' or df.iloc[0].loc['trg'].replace('\n', '').replace('<range>', '') == '':
@@ -62,21 +67,10 @@ def write_condensed_files(source: Path, target: Path, outpath: Path) -> Tuple[Pa
     df = df.drop(df[df['to_drop'] == True].index)
 
     # remove punctuation
-    punctuation_chars = ""
-    for i in range(sys.maxunicode):
-        if category(chr(i)).startswith("P"):
-            punctuation_chars += chr(i)
+    df = remove_blanks_and_ranges(df)
 
-    df["src"] = df["src"].str.replace("[{}]".format(string.punctuation), "", regex=True)
-    df["src"] = df["src"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
-    df["trg"] = df["trg"].str.replace("[{}]".format(string.punctuation), "", regex=True)
-    df["trg"] = df["trg"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
-
-    # make lowercase
     df["src"] = df["src"].str.lower()
     df["trg"] = df["trg"].str.lower()
-
-    
     
     # write to condensed txt files
     if not outpath.exists():
@@ -136,7 +130,7 @@ def train_model(corpus: TextFileTextCorpus) -> ThotSymmetrizedWordAlignmentModel
     return symmetrized_model
 
 
-def get_vrefs(source: Path, target: Path, is_bible: bool, remove_blanks: bool=True) -> list:
+def get_vrefs(source: Path, target: Path, is_bible: bool, blank_line_chars: Optional[list] = None, remove_blanks: bool=True) -> list:
     """
     Takes two aligned text files and returns a list of vrefs corresponding to lines that are non-empty in both files.
 
@@ -170,15 +164,38 @@ def get_vrefs(source: Path, target: Path, is_bible: bool, remove_blanks: bool=Tr
     if not remove_blanks:
         return vrefs
     
+    # blank_line_chars = blank_line_chars if blank_line_chars else ['', '¿?', '-', '...', ')', '(']
+    # blank_line_chars = [char + '\n' for char in blank_line_chars]
+
+
     df = pd.DataFrame({"vref": vrefs, "src": src_data, "trg": trg_data})
-    df = df[df.src != "\n"]
-    df = df[df.trg != "\n"]
-    df = df[df.src != "<range>\n"]
-    df = df[df.trg != "<range>\n"]
+    # df = df[df.src.apply(lambda x: x not in blank_line_chars)]
+    # df = df[df.trg.apply(lambda x: x not in blank_line_chars)]
+        # remove punctuation
+    df = remove_blanks_and_ranges(df)
 
     vref_list = df["vref"].tolist()
     return vref_list
 
+
+def remove_blanks_and_ranges(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Takes a df of source and target texts, removes the punctuation, then removes any lines that are just new line chars
+    or '<range>'.
+    """
+    punctuation_chars = ""
+    for i in range(sys.maxunicode):
+        if category(chr(i)).startswith("P"):
+            punctuation_chars += chr(i)
+    df["src"] = df["src"].str.replace("[{}]".format(string.punctuation), "", regex=True)
+    df["src"] = df["src"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
+    df["trg"] = df["trg"].str.replace("[{}]".format(string.punctuation), "", regex=True)
+    df["trg"] = df["trg"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
+    df = df[df.src != "\n"]
+    df = df[df.trg != "\n"]
+    df = df[df.src != "<range>\n"]
+    df = df[df.trg != "<range>\n"]
+    return df
 
 def get_translation_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: list = None) -> pd.DataFrame:
     """
