@@ -365,8 +365,8 @@ def run_match(
 
     # source_words = list(ref_df["source"].explode().unique())
     # target_words = list(ref_df["target"].explode().unique())
-    all_source_words = list(source_ref_df["source"].explode().unique())
-    all_target_words = list(target_ref_df["target"].explode().unique())
+    all_source_words = list(source_ref_df["text"].explode().unique())
+    all_target_words = list(target_ref_df["text"].explode().unique())
     # source_objects = {word: Word(word) for word in source_words}
     # target_objects = {word: Word(word) for word in target_words}
     all_source_objects = {word: Word(word) for word in all_source_words}
@@ -375,7 +375,7 @@ def run_match(
     if refresh_cache or not source_index_cache_file.exists():
         print("Getting sentences that contain each word in source_objects")
         for word in tqdm(all_source_objects.values()):
-            word.get_indices(source_ref_df['source'])
+            word.get_indices(source_ref_df['text'])
         all_source_index = {word.word: word.index_list for word in all_source_objects.values()}
         write_dictionary_to_file(all_source_index, source_index_cache_file)
     else:
@@ -387,7 +387,7 @@ def run_match(
     if refresh_cache or not target_index_cache_file.exists():
         print("Getting sentences that contain each word in target_objects")
         for word in tqdm(all_target_objects.values()):
-            word.get_indices(target_ref_df['target'])
+            word.get_indices(target_ref_df['text'])
         all_target_index = {word.word: word.index_list for word in all_target_objects.values()}
         write_dictionary_to_file(all_target_index, target_index_cache_file)
     else:
