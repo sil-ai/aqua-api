@@ -48,7 +48,7 @@ class Word():
     def __init__(self, word: str):
         self.word = word
         self.matched = []
-        self.index_list = np.array([])
+        self.index_list = []
         self.index_ohe = np.array([])
         self.norm_ohe = np.array([])
         self.encoding = np.array([])
@@ -65,12 +65,12 @@ class Word():
     
     def get_ohe(self, max_num=41899):
         a = np.zeros(max_num)
-        np.put(a, self.index_list, 1)    
+        np.put(a, np.array(self.index_list), 1)    
         self.index_ohe = a
                        
     def get_norm_ohe(self, max_num=41899):
         a = np.zeros(max_num)
-        np.put(a, self.index_list, 1)  
+        np.put(a, np.array(self.index_list), 1)  
         norm_a = a / np.linalg.norm(a)
         self.norm_ohe = norm_a
         
