@@ -333,8 +333,7 @@ def run_match(
     source_list_name = source.stem
     target_list_name = target.stem
 
-    if not outpath.exists():
-        outpath.mkdir(parents=True, exist_ok=True)
+    outpath.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         format="%(asctime)s - %(funcName)20s() - %(message)s",
         level=logging_level.upper(),
@@ -363,37 +362,39 @@ def run_match(
     )
     js_cache = {**js_cache, **js_cache_reverse}
 
-    # source_words = list(ref_df["source"].explode().unique())
-    # target_words = list(ref_df["target"].explode().unique())
-    all_source_words = list(source_ref_df["text"].explode().unique())
-    all_target_words = list(target_ref_df["text"].explode().unique())
-    # source_objects = {word: Word(word) for word in source_words}
-    # target_objects = {word: Word(word) for word in target_words}
+    source_words = list(ref_df["source"].explode().unique())
+    target_words = list(ref_df["target"].explode().unique())
+    all_source_words = list(source_ref_df["source"].explode().unique())
+    all_target_words = list(target_ref_df["target"].explode().unique())
+    source_objects = {word: Word(word) for word in source_words}
+    target_objects = {word: Word(word) for word in target_words}
     all_source_objects = {word: Word(word) for word in all_source_words}
     all_target_objects = {word: Word(word) for word in all_target_words}
     
     if refresh_cache or not source_index_cache_file.exists():
         print("Getting sentences that contain each word in source_objects")
         for word in tqdm(all_source_objects.values()):
-            word.get_indices(source_ref_df['text'])
+            word.get_indices(source_ref_df['source'])
         all_source_index = {word.word: word.index_list for word in all_source_objects.values()}
+        # source_index = {key: value for key, value in all_source_index.items() if key in source_words}
         write_dictionary_to_file(all_source_index, source_index_cache_file)
     else:
         all_source_index = initialize_cache(source_index_cache_file, refresh=False)
-        all_source_objects = {word: Word(word) for word in all_source_index.keys()}
-        for word in all_source_objects.values():
+        # all_source_objects = {word: Word(word) for word in all_source_index.keys()}
+        for word in source_objects.values():
             word.index_list = all_source_index[word.word]
     
     if refresh_cache or not target_index_cache_file.exists():
         print("Getting sentences that contain each word in target_objects")
         for word in tqdm(all_target_objects.values()):
-            word.get_indices(target_ref_df['text'])
+            word.get_indices(target_ref_df['target'])
         all_target_index = {word.word: word.index_list for word in all_target_objects.values()}
         write_dictionary_to_file(all_target_index, target_index_cache_file)
+        # target_index = {key: value for key, value in all_target_index.items() if key in target_words}
     else:
         all_target_index = initialize_cache(target_index_cache_file, refresh=False)
-        all_target_objects = {word: Word(word) for word in all_target_index.keys()}
-        for word in all_target_objects.values():
+        # all_target_objects = {word: Word(word) for word in all_target_index.keys()}
+        for word in target_objects.values():
             word.index_list = all_target_index[word.word]
 
     ref_df = ref_df.dropna(subset=["source", "target"])  # Reduce ref_df to only lines present in both texts

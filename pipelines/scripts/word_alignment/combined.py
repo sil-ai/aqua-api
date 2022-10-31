@@ -295,5 +295,5 @@ if __name__ == "__main__":
 
     run_combine_results(outpath)
     add_scores_to_alignments(args.source, args.target, outpath, args.is_bible)
-    model = autoencoder.load_model(args.model)
-    autoencoder.add_distances_to_df(args.source, args.target, outpath, model)
+    # model = autoencoder.load_model(args.model)
+    # autoencoder.add_distances_to_df(args.source, args.target, outpath, model)
