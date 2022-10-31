@@ -350,7 +350,6 @@ def run_match(
     )
     source_index_cache_file = cache_dir / f"{source_list_name}-index-cache.json"
     target_index_cache_file = cache_dir / f"{target_list_name}-index-cache.json"
-
     matches_file = outpath / "dictionary.json"
 
     source_ref_df, target_ref_df, ref_df = get_combined_df(source, target, outpath)
@@ -382,7 +381,7 @@ def run_match(
         all_source_index = initialize_cache(source_index_cache_file, refresh=False)
         # all_source_objects = {word: Word(word) for word in all_source_index.keys()}
         for word in all_source_objects.values():
-            word.index_list = all_source_index[word.word]
+            word.index_list = all_source_index.get(word.word, [])
     
     if refresh_cache or not target_index_cache_file.exists():
         print("Getting sentences that contain each word in target_objects")
@@ -395,7 +394,7 @@ def run_match(
         all_target_index = initialize_cache(target_index_cache_file, refresh=False)
         # all_target_objects = {word: Word(word) for word in all_target_index.keys()}
         for word in all_target_objects.values():
-            word.index_list = all_target_index[word.word]
+            word.index_list = all_target_index.get(word.word, [])
 
     ref_df = ref_df.dropna(subset=["source", "target"])  # Reduce ref_df to only lines present in both texts
     logging.info(f"ref_df: {ref_df}")
