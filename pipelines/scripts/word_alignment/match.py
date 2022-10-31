@@ -362,12 +362,12 @@ def run_match(
     )
     js_cache = {**js_cache, **js_cache_reverse}
 
-    source_words = list(ref_df["source"].explode().unique())
-    target_words = list(ref_df["target"].explode().unique())
+    # source_words = list(ref_df["source"].explode().unique())
+    # target_words = list(ref_df["target"].explode().unique())
     all_source_words = list(source_ref_df["source"].explode().unique())
     all_target_words = list(target_ref_df["target"].explode().unique())
-    source_objects = {word: Word(word) for word in source_words}
-    target_objects = {word: Word(word) for word in target_words}
+    # source_objects = {word: Word(word) for word in source_words}
+    # target_objects = {word: Word(word) for word in target_words}
     all_source_objects = {word: Word(word) for word in all_source_words}
     all_target_objects = {word: Word(word) for word in all_target_words}
     
@@ -381,7 +381,7 @@ def run_match(
     else:
         all_source_index = initialize_cache(source_index_cache_file, refresh=False)
         # all_source_objects = {word: Word(word) for word in all_source_index.keys()}
-        for word in source_objects.values():
+        for word in all_source_objects.values():
             word.index_list = all_source_index[word.word]
     
     if refresh_cache or not target_index_cache_file.exists():
@@ -394,7 +394,7 @@ def run_match(
     else:
         all_target_index = initialize_cache(target_index_cache_file, refresh=False)
         # all_target_objects = {word: Word(word) for word in all_target_index.keys()}
-        for word in target_objects.values():
+        for word in all_target_objects.values():
             word.index_list = all_target_index[word.word]
 
     ref_df = ref_df.dropna(subset=["source", "target"])  # Reduce ref_df to only lines present in both texts
@@ -416,16 +416,19 @@ def run_match(
     matches = {}
     print("Getting matches...")
     for _, row in tqdm(ref_df.iterrows(), total=ref_df.shape[0]):
-        source_words: List[Word] = list(set([all_source_objects[x] for x in row["source"]]))
-        target_words: List[Word] = list(set([all_target_objects[x] for x in row["target"]]))
+        paired_source_objects: List[Word] = list(set([all_source_objects[x] for x in row["source"]]))
+        paired_target_objects: List[Word] = list(set([all_target_objects[x] for x in row["target"]]))
+        for word_object in [*paired_source_objects, *paired_target_objects]:
+            word_object.index_list = list(set(word_object.index_list).intersection(set(ref_df.index.values)))
         matches, js_cache = update_matches_for_lists(
-            source_words,
-            target_words,
+            paired_source_objects,
+            paired_target_objects,
             matches=matches,
             js_cache=js_cache,
             jaccard_similarity_threshold=jaccard_similarity_threshold,
             count_threshold=count_threshold,
         )
+    print(matches['jesús'])
     write_dictionary_to_file(js_cache, js_cache_file, to_strings=True)
     write_dictionary_to_file(matches, matches_file)
     logging.info("END RUN")
@@ -477,7 +480,7 @@ if __name__ == "__main__":
     run_match(
         args.source,
         args.target,
-        args.outpath / f'{args.source.stem}-{args.target.stem}',
+        args.outpath / f'{args.source.stem}_{args.target.stem}',
         args.logging_level,
         args.jaccard_similarity_threshold,
         args.count_threshold,
