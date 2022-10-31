@@ -10,6 +10,8 @@ from collections import Counter
 from pathlib import Path
 from machine.tokenization import LatinWordTokenizer
 
+import align
+
 
 def write_dictionary_to_file(
     dictionary: dict, filepath: Path, to_strings: bool = False
@@ -40,10 +42,10 @@ def text_to_words(text: str) -> List[str]:
     """
     word_tokenizer = LatinWordTokenizer()
     word_list = [normalize_word(word) for word in word_tokenizer.tokenize(text)]
-    # remove any blanks
-    word_list = [word for word in word_list if word]
-
+    # remove any blanks and make character replacements from replace_dict
+    word_list = [align.replace_chars(word) for word in word_list]
     return word_list
+
 
 
 def normalize_word(word: str) -> str:
@@ -245,7 +247,7 @@ def initialize_cache(
 
 def get_single_df(
     source: Path,
-    list_name: str = "keys",
+    list_name: str,
 ) -> pd.DataFrame:
     """
     Reads a text file and creates a dataframe corresponding to either the keys or values being investigated.
@@ -287,8 +289,8 @@ def get_combined_df(
         list_name="target",
     )
 
-    values_ref_series = target_ref_df["target"]
-    ref_df = pd.concat([source_ref_df, values_ref_series], axis=1)
+    target_ref_series = target_ref_df["target"]
+    ref_df = pd.concat([source_ref_df, target_ref_series], axis=1)
     ref_df = ref_df.dropna(subset=["source", "target"])
     ref_df.to_csv(outpath / "ref_df.csv")
     logging.info(ref_df.head())

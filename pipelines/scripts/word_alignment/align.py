@@ -2,7 +2,7 @@ import argparse
 import string
 import os
 import sys
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 from unicodedata import category
 import pandas as pd
@@ -16,6 +16,17 @@ from machine.translation.thot import (
     ThotSymmetrizedWordAlignmentModel,
 )
 from pathlib import Path
+
+
+def replace_chars(text: str) -> str:
+    """
+    Takes a list of strings and replaces characters in those strings according to a dictionary.
+    """
+    replace_dict = {
+        'ˮ': '"'
+    }
+    text = ''.join(replace_dict.get(ch, ch) for ch in str(text))
+    return text
 
 
 def write_condensed_files(source: Path, target: Path, outpath: Path, blank_line_chars: Optional[list]=None) -> Tuple[Path, Path]:
@@ -40,11 +51,6 @@ def write_condensed_files(source: Path, target: Path, outpath: Path, blank_line_
         trg_data = f.readlines()
     # make into df
     df = pd.DataFrame({"src": src_data, "trg": trg_data, "to_drop": [False] * len(src_data)})
-    # orig_df = df.copy()
-    # blank_line_chars = blank_line_chars if blank_line_chars else ['', '¿?', '-', '...', ')', '(']
-    # blank_line_chars = [char + '\n' for char in blank_line_chars]
-    # df = df[df.src.apply(lambda x: x not in blank_line_chars)]
-    # df = df[df.trg.apply(lambda x: x not in blank_line_chars)]
     df = df[df['src'] != '\n']
     df = df[df['trg'] != '\n']
     # merge up lines that contain \n or <range> in either src or trg
@@ -195,6 +201,9 @@ def remove_blanks_and_ranges(df: pd.DataFrame) -> pd.DataFrame:
     df = df[df.trg != "\n"]
     df = df[df.src != "<range>\n"]
     df = df[df.trg != "<range>\n"]
+    df['src'] = df['src'].apply(replace_chars)
+    df['trg'] = df['trg'].apply(replace_chars)
+
     return df
 
 def get_translation_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: list = None) -> pd.DataFrame:
