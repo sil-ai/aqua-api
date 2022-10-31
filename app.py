@@ -58,7 +58,7 @@ def create_app():
         return {"Hello": "World"}
 
 
-    @app.get("/list_versions", dependencies=[Depends(api_key_auth)])
+    @app.get("/version", dependencies=[Depends(api_key_auth)])
     async def list_version():
         list_versions = queries.list_versions_query()
 
@@ -72,8 +72,8 @@ def create_app():
                         "id": version["id"], 
                         "name": version["name"], 
                         "abbreviation": version["abbreviation"],
-                        "language": version["language"]["iso639"], 
-                        "script": version["script"]["iso15924"], 
+                        "language": version["isoLanguageByIsolanguage"]["iso639"], 
+                        "script": version["isoScriptByIsoscript"]["iso15924"], 
                         "rights": version["rights"]
                         }
 
@@ -82,7 +82,7 @@ def create_app():
         return version_data
 
    
-    @app.get("/add_version", dependencies=[Depends(api_key_auth)])
+    @app.post("/version", dependencies=[Depends(api_key_auth)])
     async def add_version(
             name: str, isoLanguage: str, isoScript: str,
             abbreviation: str, rights: Union[str, None] = None, 
@@ -137,14 +137,45 @@ def create_app():
                 "id": revision["insert_bibleVersion"]["returning"][0]["id"],
                 "name": revision["insert_bibleVersion"]["returning"][0]["name"],
                 "abbreviation": revision["insert_bibleVersion"]["returning"][0]["abbreviation"],
-                "language": revision["insert_bibleVersion"]["returning"][0]["language"]["name"],
+                "language": revision["insert_bibleVersion"]["returning"][0]["isoLanguageByIsolanguage"]["name"],
                 "rights": revision["insert_bibleVersion"]["returning"][0]["rights"]
                 }
 
         return new_version
 
 
-    @app.post("/upload_bible", dependencies=[Depends(api_key_auth)])
+    @app.delete("/version", dependencies=[Depends(api_key_auth)])
+    async def delete_version(version: str):
+        bibleVersion = '"' + version + '"'
+        fetch_revisions = queries.list_revisions_query(bibleVersion)
+        delete_version = queries.delete_bible_version(bibleVersion)
+        
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            revision_query = gql(fetch_revisions)
+            revision_result = client.execute(revision_query)
+
+            revisions_data = []
+            for revision in revision_result["bibleRevision"]:
+                delete_verses = queries.delete_verses_mutation(revision["id"])
+                verses_mutation = gql(delete_verses)
+                verse_deletion = client.execute(verses_mutation)
+
+                delete_revision = queries.delete_revisions_mutation(revision["id"])
+                revision_mutation = gql(delete_revision)
+                revision_deletion = client.execute(revision_mutation)
+
+            version_delete_mutation = gql(delete_version)
+            version_delete_result = client.execute(version_delete_mutation)        
+
+        delete_response = ("Version " + 
+                version_delete_result["delete_bibleVersion"]["returning"]["name"] +
+                "successfully deleted."
+                )
+
+        return delete_response
+
+
+    @app.post("/revision", dependencies=[Depends(api_key_auth)])
     async def upload_bible(
             version_id: Union[int, None] = None, 
             version_abbreviation: Union[str, None] = None, 
@@ -217,7 +248,7 @@ def create_app():
                 }
 
     
-    @app.get("/list_revisions", dependencies=[Depends(api_key_auth)])
+    @app.get("/revision", dependencies=[Depends(api_key_auth)])
     async def list_revisions(version: str):
         bibleVersion = '"' + version + '"'
         list_revision = queries.list_revisions_query(bibleVersion)
@@ -231,15 +262,15 @@ def create_app():
                 revision_data = {
                         "id": revision["id"],
                         "date": revision["date"],
-                        "versionName": revision["version"]["name"]
+                        "versionName": revision["bibleVersionByBibleversion"]["name"]
                         }
 
                 revisions_data.append(revision_data)
 
-        return revisions_data
+        return revisions_data 
 
 
-    @app.get("/get_chapter", dependencies=[Depends(api_key_auth)])
+    @app.get("/chapter", dependencies=[Depends(api_key_auth)])
     async def get_chapter(revision: int, book: str, chapter: int):
         chapterReference = '"' + book + " " + str(chapter) + '"'
         get_chapters = queries.get_chapter_query(revision, chapterReference)
@@ -254,8 +285,8 @@ def create_app():
                         "id": chapter["id"], 
                         "text": chapter["text"], 
                         "verseReference": chapter["verseReference"],
-                        "revisionDate": chapter["revision"]["date"],
-                        "versionName": chapter["revision"]["version"]["name"]
+                        "revisionDate": chapter["bibleRevisionByBiblerevision"]["date"],
+                        "versionName": chapter["bibleRevisionByBiblerevision"]["bibleVersionByBibleversion"]["name"]
                         }
 
                 chapters_data.append(chapter_data)
@@ -263,7 +294,7 @@ def create_app():
         return chapters_data
     
 
-    @app.get("/get_verse", dependencies=[Depends(api_key_auth)])
+    @app.get("/verse", dependencies=[Depends(api_key_auth)])
     async def get_verse(revision: int, book: str, chapter: int, verse: int):
         verseReference = (
                 '"' + book + " " + str(chapter) + ":" + str(verse) + '"'
@@ -280,8 +311,8 @@ def create_app():
                         "id": verse["id"],
                         "text": verse["text"], 
                         "verseReference": verse["verseReference"],
-                        "revisionDate": verse["revision"]["date"],
-                        "versionName": verse["revision"]["version"]["name"]
+                        "revisionDate": verse["bibleRevisionByBiblerevision"]["date"],
+                        "versionName": verse["bibleRevisionByBiblerevision"]["bibleVersionByBibleversion"]["name"]
                         }
 
                 verses_data.append(verse_data)

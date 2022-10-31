@@ -5,10 +5,10 @@ def list_versions_query():
                     id
                     name
                     abbreviation
-                    language {
+                    isoLanguageByIsolanguage {
                       iso639
                     }
-                    script {
+                    isoScriptByIsoscript {
                       iso15924
                     }
                     rights
@@ -35,7 +35,7 @@ def add_version_query(name, isoLanguage, isoScript,
                         id
                         name
                         abbreviation
-                        language {{
+                        isoLanguageByIsolanguage {{
                           name
                         }}
                         rights
@@ -71,11 +71,46 @@ def delete_bible_version(version_abbv):
                          }}
                        }}) {{
                          affected_rows
+                         returning {{
+                           name
+                         }}
                        }}
                      }}
                      """.format(version_abbv)
 
     return delete_version
+
+
+def delete_verses_mutation(bibleRevision):
+    delete_verses = """ 
+                    mutation MyMutation {{
+                      delete_verseText(where: {{
+                        bibleRevision: {{
+                          _eq: {}
+                        }}
+                      }}) {{
+                        affected_rows
+                      }}
+                    }}
+                    """.format(bibleRevision)
+    
+    return delete_verses
+
+
+def delete_revisions_mutation(bibleRevision):
+    delete_revision = """
+                    mutation MyMutation {{
+                      delete_bibleRevision(where: {{
+                        id: {{
+                          _eq: {}
+                        }}
+                      }}) {{
+                        affected_rows
+                      }}
+                    }}
+                    """.format(bibleRevision)
+
+    return delete_revision
 
 
 def insert_bible_revision(version, date, published):
@@ -110,34 +145,11 @@ def fetch_bible_version(abbreviation):
     return version_id
 
 
-def delete_bibleRevision_text(revision_id):
-    revision_delete = """
-                      mutation MyMutation {{
-                        delete_verseText(where: {{
-                          bibleRevision: {{
-                            _eq: {}
-                          }}
-                        }}) {{
-                          affected_rows
-                        }}
-                        delete_bibleRevision(where: {{
-                          id: {{
-                            _eq: {}
-                          }}
-                        }}) {{
-                          affected_rows
-                        }}
-                      }}
-                      """.format(revision_id, revision_id)
-
-    return revision_delete
-
-
 def list_revisions_query(bibleVersion):
     list_revisions = """
                   query MyQuery {{
                     bibleRevision(where: {{
-                      version: {{
+                      bibleVersionByBibleversion: {{
                         abbreviation: {{
                           _eq: {}
                         }}
@@ -145,7 +157,7 @@ def list_revisions_query(bibleVersion):
                     }}) {{
                       id
                       date
-                      version {{
+                      bibleVersionByBibleversion {{
                         name
                       }}
                     }}
@@ -173,9 +185,9 @@ def get_chapter_query(revision, chapterReference):
                     id
                     text
                     verseReference
-                    revision {{
+                    bibleRevisionByBiblerevision {{
                       date
-                      version {{
+                      bibleVersionByBibleversion {{
                         name
                       }}
                     }}
@@ -200,9 +212,9 @@ def get_verses_query(revision, verseReference):
                   id
                   text
                   verseReference
-                  revision {{
+                  bibleRevisionByBiblerevision {{
                     date
-                    version {{
+                    bibleVersionByBibleversion {{
                       name
                     }}
                   }}
