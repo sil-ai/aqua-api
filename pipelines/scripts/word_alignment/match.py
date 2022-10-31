@@ -428,7 +428,6 @@ def run_match(
             jaccard_similarity_threshold=jaccard_similarity_threshold,
             count_threshold=count_threshold,
         )
-    print(matches['jesús'])
     write_dictionary_to_file(js_cache, js_cache_file, to_strings=True)
     write_dictionary_to_file(matches, matches_file)
     logging.info("END RUN")
