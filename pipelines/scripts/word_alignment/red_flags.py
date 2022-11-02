@@ -25,7 +25,7 @@ def read_dfs(ref_df_outpaths:dict) -> dict:
     print('Loading reference translation data...')
     for language in tqdm(ref_df_outpaths):
         ref_dfs[language] = pd.read_csv(ref_df_outpaths[language] / 'all_in_context_with_scores.csv')
-        ref_dfs[language] = ref_dfs[language].groupby(['vref', 'source', 'target']).agg({'total_score': 'max', 'simple_total': 'max'}).reset_index()
+        ref_dfs[language] = ref_dfs[language].groupby(['vref', 'source', 'target']).agg({k: v for k, v in {'total_score': 'max', 'simple_total': 'max'}.items() if k in ref_dfs[language]}).reset_index()
         ref_dfs[language] = ref_dfs[language].loc[ref_dfs[language].groupby(['vref', 'source'])['simple_total'].idxmax(), :]
     return ref_dfs
 
