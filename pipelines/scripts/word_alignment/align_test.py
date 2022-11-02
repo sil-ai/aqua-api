@@ -6,29 +6,30 @@ import align
 import pandas as pd
 from machine.translation.thot import ThotSymmetrizedWordAlignmentModel
 
-@pytest.mark.parametrize("source,target", [
-                                                    (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt")), 
-                                                    (Path("fixtures/de-LU1912.txt"), Path("fixtures/en-KJV.txt")),
-                                                    (Path("fixtures/de-LU1912-some-missing.txt"), Path("fixtures/en-KJV-some-missing.txt")),
+@pytest.mark.parametrize("source,target,is_bible", [
+                                                    (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt"), False), 
+                                                    (Path("fixtures/de-LU1912.txt"), Path("fixtures/en-KJV.txt"), False),
+                                                    (Path("fixtures/de-LU1912-some-missing.txt"), Path("fixtures/en-KJV-some-missing.txt"), False),
                                                     ])
-def test_write_condensed_files(source, target):
+def test_write_condensed_files(source, target, is_bible):
     outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
-    align.write_condensed_files(source, target, outpath)
+    ref_df = align.get_ref_df(source, target, is_bible=is_bible)
+    condensed_source, condensed_target, _ = align.write_condensed_files(ref_df, outpath)
 
     # check that files exist
     assert os.path.exists(source)
     assert os.path.exists(target)
-    assert os.path.exists(outpath / f"{source.stem}_condensed.txt")
-    assert os.path.exists(outpath / f"{target.stem}_condensed.txt")
+    assert os.path.exists(outpath / f"src_condensed.txt")
+    assert os.path.exists(outpath / f"trg_condensed.txt")
 
     # open the files
     with open(source, "r") as f:
         src_data = f.readlines()
     with open(target, "r") as f:
         trg_data = f.readlines()
-    with open(outpath / f"{source.stem}_condensed.txt", "r") as f:
+    with open(outpath / f"src_condensed.txt", "r") as f:
         src_data_c = f.readlines()
-    with open(outpath / f"{target.stem}_condensed.txt", "r") as f:
+    with open(outpath / f"trg_condensed.txt", "r") as f:
         trg_data_c = f.readlines()
 
     # check that the condensed files are shorter
@@ -45,8 +46,8 @@ def test_write_condensed_files(source, target):
         assert line != "\n"
 
     # remove the condensed files
-    os.remove(outpath / f"{source.stem}_condensed.txt")
-    os.remove(outpath / f"{target.stem}_condensed.txt")
+    condensed_source.unlink()
+    condensed_target.unlink()
 
 @pytest.mark.parametrize("source,target", [
                                                     (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt")), 
@@ -55,8 +56,9 @@ def test_write_condensed_files(source, target):
                                                     ])
 def test_create_corpus(source, target):
     outpath =  source.parent / 'out' / f'{source.stem}_{target.stem}'
-    align.write_condensed_files(source, target, outpath)
-    corpus = align.create_corpus(outpath / f"{source.stem}_condensed.txt", outpath / f"{target.stem}_condensed.txt")
+    ref_df = align.get_ref_df(source, target, is_bible=False)
+    condensed_source, condensed_target, _ = align.write_condensed_files(ref_df, outpath)
+    corpus = align.create_corpus(outpath / f"src_condensed.txt", outpath / f"trg_condensed.txt")
 
     assert corpus is not None
     first_item_source = next(corpus.to_tuples())[0]
@@ -67,8 +69,8 @@ def test_create_corpus(source, target):
         assert isinstance(first_item_source[0], str)
     if len(first_item_target) > 0:
         assert isinstance(first_item_target[0], str)
-    (outpath / f'{source.stem}_condensed.txt').unlink()
-    (outpath / f'{target.stem}_condensed.txt').unlink()
+    condensed_source.unlink()
+    condensed_target.unlink()
 
 @pytest.mark.parametrize("source,target", [
                                             (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt")), 
@@ -76,13 +78,14 @@ def test_create_corpus(source, target):
                                             ])
 def test_train_model(source, target):
     outpath =  source.parent / 'out' / f'{source.stem}_{target.stem}'
-    condensed_source, condensed_target = align.write_condensed_files(source, target, outpath)
+    ref_df = align.get_ref_df(source, target, is_bible=False)
+    condensed_source, condensed_target, _ = align.write_condensed_files(ref_df, outpath)
     corpus = align.create_corpus(condensed_source, condensed_target)
     model = align.train_model(corpus)
     assert model is not None
     assert isinstance(model, ThotSymmetrizedWordAlignmentModel)
-    (outpath / f'{source.stem}_condensed.txt').unlink()
-    (outpath / f'{target.stem}_condensed.txt').unlink()
+    condensed_source.unlink()
+    condensed_target.unlink()
 
 @pytest.mark.parametrize("source,target,is_bible", [
                                                     (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt"), False), 
@@ -90,15 +93,15 @@ def test_train_model(source, target):
                                                     ])
 def test_get_translation_scores(source, target, is_bible):
     outpath =  source.parent / 'out' / f'{source.stem}_{target.stem}'
-    condensed_source, condensed_target = align.write_condensed_files(source, target, outpath)
+    ref_df = align.get_ref_df(source, target, is_bible=is_bible)
+    condensed_source, condensed_target, vrefs = align.write_condensed_files(ref_df, outpath)
     corpus = align.create_corpus(condensed_source, condensed_target)
-    vrefs = align.get_ref_df(source, target, is_bible=is_bible)
     model = align.train_model(corpus)
     df = align.get_translation_scores(model, corpus, vrefs)
     assert isinstance(df, pd.DataFrame)
     assert len(df) > 0
-    (outpath / f'{source.stem}_condensed.txt').unlink()
-    (outpath / f'{target.stem}_condensed.txt').unlink()
+    condensed_source.unlink()
+    condensed_target.unlink()
     df.to_csv(outpath / 'df_translation_scores.csv')
 
 
@@ -118,9 +121,9 @@ def test_remove_duplicates(outpath):
 
 @pytest.mark.parametrize("source,target,is_bible", [
                                                     (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt"), False), 
-                                                    (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), True),
-                                                    (Path("fixtures/de-LU1912.txt"), Path("fixtures/en-KJV.txt"), True),
-                                                    (Path("fixtures/de-LU1912-some-missing.txt"), Path("fixtures/en-KJV-some-missing.txt"), True),
+                                                    (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), False),
+                                                    (Path("fixtures/de-LU1912.txt"), Path("fixtures/en-KJV.txt"), False),
+                                                    (Path("fixtures/de-LU1912-some-missing.txt"), Path("fixtures/en-KJV-some-missing.txt"), False),
                                                     ])
 def test_get_vrefs(source, target, is_bible):
     # get src file length
@@ -130,10 +133,9 @@ def test_get_vrefs(source, target, is_bible):
         trg_data = f.readlines()
     src_non_empty = [line for line in src_data if line != '\n']
     trg_non_empty = [line for line in trg_data if line != '\n']
-
-    vrefs = align.get_ref_df(source, target, is_bible)
-    assert type(vrefs) == list
-    assert len(vrefs) <= min(len(src_non_empty), len(trg_non_empty))
+    ref_df = align.get_ref_df(source, target, is_bible)
+    assert isinstance(ref_df, pd.DataFrame)
+    assert len(ref_df[(ref_df['src']!='\n') & (ref_df['trg']!='\n')]) <= min(len(src_non_empty), len(trg_non_empty))
 
 @pytest.mark.parametrize("source,target,is_bible", [
                                             (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt"), False), 

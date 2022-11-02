@@ -8,7 +8,7 @@ from pathlib import Path
 def test_text_to_words():
     text = "This is a test."
     words = match.text_to_words(text)
-    assert words == ["this", "is", "a", "test"]
+    assert words == ["this", "is", "a", "test", ""]
 
 @pytest.mark.parametrize("word,expected", [
                                             (None, ''),

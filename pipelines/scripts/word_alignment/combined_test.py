@@ -64,14 +64,14 @@ def test_get_scores_from_match_dict(source, target, source_word, target_word):
 
 @pytest.mark.parametrize("source, target,source_word,target_word,is_bible", [
                                                     (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt"), 'el', 'the', False), 
-                                                    (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), 'gott', 'god', True), 
+                                                    (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), 'gott', 'god', False), 
                                                     ])
 def test_run_combine_results(source, target, source_word, target_word, is_bible):
     outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
     combined.run_fa(source, target, outpath, is_bible=is_bible)
     combined.run_match_words(source, target, outpath)
     combined.run_combine_results(outpath)
-    combined.add_scores_to_alignments(source, target, outpath, is_bible)
+    combined.add_scores_to_alignments(source, target, outpath, is_bible=is_bible)
     df = pd.read_csv(outpath / "combined.csv")
     assert len(df) > 10
     assert len(df['translation_score'].unique()) > 10

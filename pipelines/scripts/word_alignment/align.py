@@ -139,7 +139,7 @@ def train_model(corpus: TextFileTextCorpus) -> ThotSymmetrizedWordAlignmentModel
     return symmetrized_model
 
 
-def get_ref_df(source: Path, target: Path, is_bible: bool, remove_blanks: bool=True) -> list:
+def get_ref_df(source: Path, target: Path, is_bible: bool=True, remove_blanks: bool=True) -> list:
     """
     Takes two aligned text files and returns a list of vrefs corresponding to lines that are non-empty in both files.
 
