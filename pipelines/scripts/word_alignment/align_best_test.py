@@ -8,7 +8,7 @@ import pandas as pd
                                             (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt")), 
                                             ])
 def test_get_alignments(source, target):
-    vrefs = align_best.get_vrefs(source, target, False)
+    vrefs = align_best.get_ref_df(source, target, False)
     outpath =  source.parent / 'out' / f'{source.stem}_{target.stem}'
     condensed_source, condensed_target = align_best.write_condensed_files(source, target, outpath)
     corpus = align_best.create_corpus(condensed_source, condensed_target)
@@ -33,7 +33,7 @@ def test_get_alignments(source, target):
 def test_get_vref_scores(source, target, is_bible):
     outpath =  source.parent / 'out' / f'{source.stem}_{target.stem}'
     condensed_source, condensed_target = align_best.write_condensed_files(source, target, outpath)
-    vrefs = align_best.get_vrefs(source, target, is_bible=is_bible)
+    vrefs = align_best.get_ref_df(source, target, is_bible=is_bible)
     corpus = align_best.create_corpus(condensed_source, condensed_target)
     model = align_best.train_model(corpus)
     alignments = align_best.get_best_alignment_scores(model, corpus, vrefs)
@@ -53,7 +53,7 @@ def test_get_best_alignment_scores(source, target):
     outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
     condensed_source, condensed_target = align_best.write_condensed_files(source, target, outpath)
     corpus = align_best.create_corpus(condensed_source, condensed_target)
-    vrefs = align_best.get_vrefs(source, target, is_bible)
+    vrefs = align_best.get_ref_df(source, target, is_bible)
     model = align_best.train_model(corpus)
     df = align_best.get_best_alignment_scores(model, corpus, vrefs)
     assert len(df) > 20

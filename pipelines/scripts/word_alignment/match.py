@@ -405,7 +405,7 @@ def run_match(
     # Reduce the keys_index and values_index dicts to only those lines present in the reduced ref_df
     # print("Getting keys_index")
     # source_index = {
-    #     key: set(value).intersection(set(ref_df_indexes))
+        # key: set(value).intersection(set(ref_df_indexes))
     #     for key, value in tqdm(all_source_index.items())
     # }
     
@@ -419,8 +419,10 @@ def run_match(
     for _, row in tqdm(ref_df.iterrows(), total=ref_df.shape[0]):
         paired_source_objects: List[Word] = list(set([all_source_objects[x] for x in row["source"]]))
         paired_target_objects: List[Word] = list(set([all_target_objects[x] for x in row["target"]]))
+        # for paired_object in [*paired_source_objects, *paired_target_objects]:
+            # paired_object.index_list = set(paired_object.index_list).intersection(set(ref_df_indexes))
         for word_object in [*paired_source_objects, *paired_target_objects]:
-            word_object.index_list = list(set(word_object.index_list).intersection(set(ref_df.index.values)))
+            word_object.index_list = list(set(word_object.index_list).intersection(set(ref_df_indexes)))
         matches, js_cache = update_matches_for_lists(
             paired_source_objects,
             paired_target_objects,

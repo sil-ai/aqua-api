@@ -11,7 +11,7 @@ from tqdm import tqdm
 from machine.corpora import TextFileTextCorpus
 from machine.tokenization import LatinWordTokenizer
 from machine.translation import SymmetrizationHeuristic
-from align import write_condensed_files, create_corpus, train_model, get_vrefs
+from align import write_condensed_files, create_corpus, train_model, get_ref_df
 
 from machine.translation.thot import (
     ThotFastAlignWordAlignmentModel,
@@ -127,15 +127,15 @@ def run_best_align(
     TextFileTextCorpus      In case you want to re-use it without creating it from scratch
     ThotSymmetrizedWordAlignmentModel       In case you want to re-use it without training from scratch
     """
-    # remove empty lines
-    write_condensed_files(source, target, outpath)
-
     # get vrefs
-    vrefs = get_vrefs(source, target, is_bible)
+    ref_df = get_ref_df(source, target, is_bible)
+
+    condensed_source, condensed_target, vrefs = write_condensed_files(ref_df, outpath)
+
 
     # create parallel corpus
     if not parallel_corpus:
-        parallel_corpus = create_corpus(outpath / f"{source.stem}_condensed.txt", outpath / f"{target.stem}_condensed.txt")
+        parallel_corpus = create_corpus(condensed_source, condensed_target)
 
     # Train fast_align model
     if not symmetrized_model:
@@ -162,8 +162,8 @@ def run_best_align(
     # vref_df.to_csv(outpath / "best_vref_scores.csv")
 
     # delete temp files
-    (outpath / f"{source.stem}_condensed.txt").unlink()
-    (outpath / f"{target.stem}_condensed.txt").unlink()
+    (outpath / "src_condensed.txt").unlink()
+    (outpath / "trg_condensed.txt").unlink()
 
     return parallel_corpus, symmetrized_model
 

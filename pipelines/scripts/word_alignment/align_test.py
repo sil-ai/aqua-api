@@ -92,7 +92,7 @@ def test_get_translation_scores(source, target, is_bible):
     outpath =  source.parent / 'out' / f'{source.stem}_{target.stem}'
     condensed_source, condensed_target = align.write_condensed_files(source, target, outpath)
     corpus = align.create_corpus(condensed_source, condensed_target)
-    vrefs = align.get_vrefs(source, target, is_bible=is_bible)
+    vrefs = align.get_ref_df(source, target, is_bible=is_bible)
     model = align.train_model(corpus)
     df = align.get_translation_scores(model, corpus, vrefs)
     assert isinstance(df, pd.DataFrame)
@@ -131,7 +131,7 @@ def test_get_vrefs(source, target, is_bible):
     src_non_empty = [line for line in src_data if line != '\n']
     trg_non_empty = [line for line in trg_data if line != '\n']
 
-    vrefs = align.get_vrefs(source, target, is_bible)
+    vrefs = align.get_ref_df(source, target, is_bible)
     assert type(vrefs) == list
     assert len(vrefs) <= min(len(src_non_empty), len(trg_non_empty))
 

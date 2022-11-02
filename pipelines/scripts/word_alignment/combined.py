@@ -4,6 +4,7 @@ import os
 import json
 import argparse
 import logging
+import math
 
 import pandas as pd
 import align
@@ -11,11 +12,13 @@ import align_best
 import match
 import autoencoder
 from tqdm import tqdm
+import torch
+from xgboost import XGBClassifier
 
 tqdm.pandas()
 
 from pathlib import Path
-from typing import Tuple, List
+from typing import Tuple, Optional
 
 # run fast_align
 def run_fa(
@@ -210,11 +213,13 @@ def run_combine_results(outpath: Path) -> None:
     df.to_csv(outpath / "combined.csv")
 
 
-def add_scores_to_alignments(source: Path, target: Path, outpath: Path, is_bible: bool=True) -> None:
+def add_scores_to_alignments(source: Path, target: Path, outpath: Path, model_path: Optional[Path]=None, is_bible: bool=True) -> None:
+    if model_path is None:
+        model_path = Path('data/models/autoencoder_50')
     df = pd.read_csv(outpath / 'best_in_context.csv')
     df['vref'] = df['vref'].astype('str')
     combined_df = pd.read_csv(outpath / 'combined.csv')
-    all_vrefs = align.get_vrefs(source, target, is_bible, remove_blanks=False) 
+    all_vrefs = align.get_ref_df(source, target, is_bible, remove_blanks=False) 
     all_vrefs = pd.DataFrame(all_vrefs, columns = ['vref'], dtype='str')
     df = pd.merge(df.drop(columns=[
                 'alignment_count', 
@@ -240,7 +245,15 @@ def add_scores_to_alignments(source: Path, target: Path, outpath: Path, is_bible
     df = pd.read_csv(outpath / 'all_in_context.csv')
     df = pd.merge(df.drop(columns=['Unnamed: 0', 'translation_score']), combined_df.drop(columns=['Unnamed: 0']), on=['source', 'target'], how='left')
     df['alignment_score'].fillna(0, inplace=True)
-    df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
+    model = autoencoder.Autoencoder(in_size=41899, out_size=50)
+    model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+    df = autoencoder.add_distances_to_df(source, target, outpath, model, df=df)
+    # df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + math.log1p(row['alignment_count']) * row['alignment_score'] + math.log1p(row['match_counts']) * row['jac_sim'] + row['encoding_score']) / 5, axis=1)
+    # model_xgb = XGBClassifier()
+    # model_xgb.load_model("data/models/xgb_model_4.txt")
+    # X = df[['translation_score', 'alignment_count', 'alignment_score', 'avg_aligned', 'jac_sim', 'match_counts', 'encoding_dist']]
+    # df.loc[:, 'total_score'] = model_xgb.predict_proba(X)[:, 1]
+    df.loc[:, 'simple_total'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
     df.to_csv(outpath / 'all_in_context_with_scores.csv')
 
 
@@ -261,7 +274,7 @@ if __name__ == "__main__":
         "--jaccard-similarity-threshold",
         type=float,
         help="Threshold for Jaccard Similarity score to be significant",
-        default=0.0,
+        default=0.05,
     )
     parser.add_argument("--is-bible", action='store_true', help="is bible")
     parser.add_argument(
@@ -294,6 +307,5 @@ if __name__ == "__main__":
         
 
     run_combine_results(outpath)
-    add_scores_to_alignments(args.source, args.target, outpath, args.is_bible)
-    # model = autoencoder.load_model(args.model)
-    # autoencoder.add_distances_to_df(args.source, args.target, outpath, model)
+    add_scores_to_alignments(args.source, args.target, outpath, args.model, args.is_bible)
+    

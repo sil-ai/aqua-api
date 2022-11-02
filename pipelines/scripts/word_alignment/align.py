@@ -20,16 +20,17 @@ from pathlib import Path
 
 def replace_chars(text: str) -> str:
     """
-    Takes a list of strings and replaces characters in those strings according to a dictionary.
+    Takes a string and replaces characters that string according to a dictionary.
     """
     replace_dict = {
-        'ˮ': '"'
+        'ˮ': '"',
+        "ʼ": "'"
     }
     text = ''.join(replace_dict.get(ch, ch) for ch in str(text))
     return text
 
 
-def write_condensed_files(source: Path, target: Path, outpath: Path, blank_line_chars: Optional[list]=None) -> Tuple[Path, Path]:
+def write_condensed_files(df: pd.DataFrame, outpath: Path) -> Tuple[Path, Path]:
     """
     Takes two input files and writes condensed versions to file, which only include those lines that
     are not blank in both input files.
@@ -45,12 +46,13 @@ def write_condensed_files(source: Path, target: Path, outpath: Path, blank_line_
 
     """
     # open files
-    with open(source) as f:
-        src_data = f.readlines()
-    with open(target) as f:
-        trg_data = f.readlines()
+    # with open(source) as f:
+    #     src_data = f.readlines()
+    # with open(target) as f:
+    #     trg_data = f.readlines()
     # make into df
-    df = pd.DataFrame({"src": src_data, "trg": trg_data, "to_drop": [False] * len(src_data)})
+    # df = pd.DataFrame({"src": src_data, "trg": trg_data, "to_drop": [False] * len(src_data)})
+    df['to_drop'] = [False] * df.shape[0]
     df = df[df['src'] != '\n']
     df = df[df['trg'] != '\n']
     # merge up lines that contain \n or <range> in either src or trg
@@ -81,8 +83,8 @@ def write_condensed_files(source: Path, target: Path, outpath: Path, blank_line_
     # write to condensed txt files
     if not outpath.exists():
         outpath.mkdir(exist_ok=True)
-    source_path = outpath / f"{source.stem}_condensed.txt"
-    target_path = outpath / f"{target.stem}_condensed.txt"
+    source_path = outpath / f"src_condensed.txt"
+    target_path = outpath / f"trg_condensed.txt"
 
     with open(source_path, "w") as f:
         for line in df["src"]:
@@ -90,7 +92,8 @@ def write_condensed_files(source: Path, target: Path, outpath: Path, blank_line_
     with open(target_path, "w") as f:
         for line in df["trg"]:
             f.write(line)
-    return (source_path, target_path)
+    vrefs = list(df['vref'])
+    return (source_path, target_path, vrefs)
 
 
 def create_corpus(condensed_source: Path, condensed_target: Path) -> TextFileTextCorpus:
@@ -136,7 +139,7 @@ def train_model(corpus: TextFileTextCorpus) -> ThotSymmetrizedWordAlignmentModel
     return symmetrized_model
 
 
-def get_vrefs(source: Path, target: Path, is_bible: bool, blank_line_chars: Optional[list] = None, remove_blanks: bool=True) -> list:
+def get_ref_df(source: Path, target: Path, is_bible: bool, remove_blanks: bool=True) -> list:
     """
     Takes two aligned text files and returns a list of vrefs corresponding to lines that are non-empty in both files.
 
@@ -178,10 +181,10 @@ def get_vrefs(source: Path, target: Path, is_bible: bool, blank_line_chars: Opti
     # df = df[df.src.apply(lambda x: x not in blank_line_chars)]
     # df = df[df.trg.apply(lambda x: x not in blank_line_chars)]
         # remove punctuation
-    df = remove_blanks_and_ranges(df)
+    # df = remove_blanks_and_ranges(df)
 
-    vref_list = df["vref"].tolist()
-    return vref_list
+    # vref_list = df["vref"].tolist()
+    return df
 
 
 def remove_blanks_and_ranges(df: pd.DataFrame) -> pd.DataFrame:
@@ -283,12 +286,12 @@ def run_align(
     
 
     # get vrefs
-    vrefs = get_vrefs(source, target, is_bible)
+    ref_df = get_ref_df(source, target, is_bible)
 
     # create parallel corpus
     if not parallel_corpus:
         # remove empty lines
-        condensed_source, condensed_target = write_condensed_files(source, target, outpath)
+        condensed_source, condensed_target, vrefs = write_condensed_files(ref_df, outpath)
         parallel_corpus = create_corpus(condensed_source, condensed_target)
 
     # Train fast_align model

@@ -6,6 +6,7 @@ import random
 from typing import Iterable, Optional, Dict, List
 import time
 import argparse
+import math
 
 import clearml
 
@@ -21,7 +22,7 @@ def create_words(language_paths: Dict[str, Path], index_cache_paths, outpath, re
     index_lists = {}
     word_dict = {}
     ref_dict = {}
-    index_cache_files = {} 
+    index_cache_files = {}
     for language in language_paths:
         index_cache_files[language] = index_cache_paths[language] / f'{language}-index-cache.json'
         if index_cache_files[language].exists() and not refresh_cache:
@@ -52,6 +53,9 @@ class Word():
         self.index_ohe = np.array([])
         self.norm_ohe = np.array([])
         self.encoding = np.array([])
+        self.norm_encoding = np.array([])
+        self.distances = {}
+
     
     def get_indices(self, list_series):
         self.index_list = list(list_series[list_series.apply(lambda x: self.word in x if isinstance(x, Iterable) else False)].index)
@@ -61,7 +65,8 @@ class Word():
         return (jac_sim, count)
     
     def get_encoding(self, model):
-        self.encoding = model.encoder(torch.tensor(self.index_ohe).float()).cpu().detach().numpy()        
+        self.encoding = model.encoder(torch.tensor(self.index_ohe).float()).cpu().detach().numpy()
+        self.norm_encoding = self.encoding / np.linalg.norm(self.encoding)
     
     def get_ohe(self, max_num=41899):
         a = np.zeros(max_num)
@@ -80,13 +85,14 @@ class Word():
         distance = np.linalg.norm(self.encoding - word.encoding)
         return distance
     
-    def get_norm_distance(self, word):
-        if word.encoding.shape != self.encoding.shape:
-            return
-        self.norm_encoding = self.encoding / np.linalg.norm(self.encoding)
-        word.norm_encoding = word.encoding / np.linalg.norm(word.encoding)
-        distance = np.linalg.norm(self.norm_encoding - word.norm_encoding)
-        return distance
+    def get_norm_distance(self, word, language):
+        # if word.encoding.shape != self.encoding.shape:
+            # return 1.0
+        if language not in self.distances:
+            self.distances[language] = {}
+        if word not in self.distances[language]:
+            self.distances[language][word] = np.linalg.norm(self.norm_encoding - word.norm_encoding)
+        return self.distances[language][word]
 
 
 class Autoencoder(nn.Module):
@@ -119,6 +125,7 @@ class Autoencoder(nn.Module):
         encoded = self.encoder(x)
         decoded = self.decoder(encoded)
         return decoded
+
 
 def X_gen(word_dict, languages, batch_size=32):
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -189,21 +196,15 @@ def train_model(
     return model, outputs
 
 
-def load_model(filepath: Path) -> Autoencoder:
-    model = Autoencoder()
-    model.load_state_dict(torch.load(filepath))
-    return model
-
-
 def get_encodings(word_dict_lang:Dict[str,Word], model: Autoencoder) -> None:
     for word in tqdm(word_dict_lang.values()):
             word.get_encoding(model)
 
         
 def add_distances_to_df(source: Path, target: Path, outpath: Path, model: Autoencoder, df: Optional[pd.DataFrame]=None, cache_path: Optional[Path]=None, refresh_cache: bool=False) -> None:
-    if not df:
+    if df is None:
         df = pd.read_csv(outpath / 'all_in_context_with_scores.csv')
-    cache_path = cache_path if cache_path else outpath / 'cache'
+    cache_path = cache_path if cache_path else outpath.parent / 'cache'
     language_paths = {language_path.stem: language_path for language_path in [source, target]}
     index_cache_paths = {}
     for language in language_paths:
@@ -213,8 +214,11 @@ def add_distances_to_df(source: Path, target: Path, outpath: Path, model: Autoen
         print(f"Getting {language} encodings")
         get_encodings(word_dict[language], model)
     print("Adding encoding distances to the data")
-    df.loc[:, 'encoding_dist'] = df.progress_apply(lambda row: word_dict[source.stem].get(row['source'], Word('')).get_norm_distance(word_dict[target.stem].get(row['target'], Word(''))), axis=1)
+    # df.loc[:, 'encoding_dist'] = df.progress_apply(lambda row: word_dict[source.stem].get(row['source'], Word('')).get_norm_distance(word_dict[target.stem].get(row['target'], Word(''))), axis=1)
+    df.loc[:, 'encoding_dist'] = df.progress_apply(lambda row: word_dict[source.stem][row['source']].get_norm_distance(word_dict[target.stem][row['target']], target.stem) if row['source'] in word_dict[source.stem] and row['target'] in word_dict[target.stem] else 2.0, axis=1)
+    # df.loc[:, 'total_with_encoding'] = df.progress_apply(lambda row: 0.8 * row['total_score'] + 0.2 * row['encoding_score'], axis = 1)
     df.to_csv(outpath / 'all_in_context_with_scores.csv')
+    return df
 
 
 def main(args):
