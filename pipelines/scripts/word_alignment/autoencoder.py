@@ -3,7 +3,7 @@ import numpy as np
 from tqdm import tqdm
 from pathlib import Path
 import random
-from typing import Iterable, Optional, Dict, List
+from typing import Iterable, Optional, Dict, List, Generator, Tuple
 import time
 import argparse
 import math
@@ -18,7 +18,23 @@ from match import get_correlations_between_sets, initialize_cache, get_combined_
 pd.set_option('display.max_rows', 500)
 
 
-def create_words(language_paths: Dict[str, Path], index_cache_paths, outpath, refresh_cache: bool=False):
+def create_words(language_paths: Dict[str, Path], index_cache_paths: Dict[str, Path], outpath: Path, refresh_cache: bool=False) -> dict:
+    """
+    Creates a dictionary. Keys are strings of the language. Values are dictionaries where keys are the string of the word and
+    values are Word objects.
+    Inputs:
+    language_paths      Dict where keys are strings of language (corresponding to filename.stem) and values are outpaths to where the
+                        data files are stored for the source-target alignments from source to that language.
+    index_cache_paths   Dict where keys are strings of language (corresponding to filename.stem) and values are the cache directory
+                        used for that language. Normally args.outpath / cache.
+    outpath             The path where data files for source-target alignment are stored. Normally args.outpath / {source.stem}_{target.stem}
+    refresh_cache       Bool. Where to force not using the cache files.
+
+    Outputs:
+    word_dict           Dictionary of   keys: language string (normally {filename.stem})
+                                        values: dictionary of:  keys: word string
+                                                                values: Word object
+    """
     index_lists = {}
     word_dict = {}
     ref_dict = {}
@@ -55,7 +71,6 @@ class Word():
         self.encoding = np.array([])
         self.norm_encoding = np.array([])
         self.distances = {}
-
     
     def get_indices(self, list_series):
         self.index_list = list(list_series[list_series.apply(lambda x: self.word in x if isinstance(x, Iterable) else False)].index)
@@ -70,7 +85,7 @@ class Word():
     
     def get_ohe(self, max_num=41899):
         a = np.zeros(max_num)
-        np.put(a, np.array(self.index_list), 1)    
+        np.put(a, np.array(self.index_list, dtype='int64'), 1)    
         self.index_ohe = a
                        
     def get_norm_ohe(self, max_num=41899):
@@ -86,8 +101,6 @@ class Word():
         return distance
     
     def get_norm_distance(self, word, language):
-        # if word.encoding.shape != self.encoding.shape:
-            # return 1.0
         if language not in self.distances:
             self.distances[language] = {}
         if word not in self.distances[language]:
@@ -127,7 +140,10 @@ class Autoencoder(nn.Module):
         return decoded
 
 
-def X_gen(word_dict, languages, batch_size=32):
+def X_gen(word_dict: Dict[str, dict], languages: List[str], batch_size: int=32) -> Generator[torch.tensor, None, None]:
+    """
+    Generator that yields a tensor of the index_ohe arrays of batch size number of words.
+    """
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     for language in languages:
         words = list(word_dict[language].values())
@@ -136,7 +152,23 @@ def X_gen(word_dict, languages, batch_size=32):
             yield torch.tensor(np.array([word.index_ohe for word in words[i*batch_size:(i+1)*batch_size]])).float().to(dev)
 
 
-def run_training(word_dict: Dict[str, Dict[str, Word]], train_languages: List[str], val_languages: List[str], X_gen, model, criterion, optimizer, num_epochs, batch_size=16):
+def run_training(
+                word_dict: Dict[str, Dict[str, Word]], 
+                train_languages: List[str], 
+                val_languages: List[str], 
+                X_gen: Generator, 
+                model: Autoencoder, 
+                criterion, 
+                optimizer: optim.Optimizer, 
+                num_epochs: int, 
+                batch_size: int=16) -> Tuple[Autoencoder, list]:
+    """
+    Runs training for the model, using the languages from train_languages, giving validation scores from val_languages.
+    Words are in word_dict, which is fed into generator X_gen which yields batches of tensors. Criterion is loss function,
+    optimizer, num_epochs and batch_size should be self-explanatory.
+
+    Returns the final version of the model, as well as a list of the epoch training losses.
+    """
     outputs = []
     for epoch in range(num_epochs):
         epoch_train_loss = np.array([])
@@ -157,24 +189,31 @@ def run_training(word_dict: Dict[str, Dict[str, Word]], train_languages: List[st
         print(f'Epoch:{epoch+1}, Train loss:{epoch_train_loss.mean():.6f}, Validation loss:{epoch_val_loss.mean():.6f}')
         clearml.Logger.current_logger().report_scalar("training/validation loss", "training loss", iteration=epoch+1, value=epoch_train_loss.mean())
         clearml.Logger.current_logger().report_scalar("training/validation loss", "validation loss", iteration=epoch+1, value=epoch_val_loss.mean())
-
         outputs.append((epoch, epoch_train_loss.mean()))
     return model, outputs
 
 def train_model(
-                word_dict, 
+                word_dict: Dict[str, dict], 
                 train_languages: List[str], 
                 val_languages: List[str],
-                generator, 
-                in_size, 
-                out_size,
-                hidden_sizes,
-                loss_fn=nn.BCEWithLogitsLoss(), 
-                num_epochs=100, 
-                batch_size=128, 
-                lr=0.001, 
-                weight_decay=1e-7
-                ):
+                generator: Generator, 
+                in_size: int, 
+                out_size: int,
+                hidden_sizes: Optional[list]=None,
+                loss_fn = nn.BCEWithLogitsLoss(), 
+                num_epochs: int=100, 
+                batch_size: int=128, 
+                lr: float=0.001, 
+                weight_decay: float=1e-7
+                ) -> Tuple[Autoencoder, list]:
+    """
+    Sets up and runs a training run using the languages from train_languages, giving validation scores from val_languages.
+    Words are in word_dict, which is fed into generator X_gen which yields batches of tensors. in_size, out_size and
+    hidden_sizes are the number of nodes in the Autoencoder. loss_fn, num_epochs,  batch_size, lr (learning rate) and
+    weight decay should be self-explanatory.
+
+    Returns the final version of the model, as well as a list of the epoch training losses.
+    """
     clearml.Task.add_requirements("./requirements.txt")
     task = clearml.Task.init(
       project_name='Word-alignment-autoencoder',    # project name of at least 3 characters
@@ -197,13 +236,39 @@ def train_model(
 
 
 def get_encodings(word_dict_lang:Dict[str,Word], model: Autoencoder) -> None:
+    """
+    Takes a dictionary of {word: Word} items and calculates the embedding of each word in the model. This
+    is saved as encoding and norm_encoding attributes of the Word.
+    Inputs:
+    word_dict_lang      A dictionary of word (string) : Word (object)
+    model               Trained Autencoder to providing encodings / embeddings.
+    """
     for word in tqdm(word_dict_lang.values()):
             word.get_encoding(model)
 
         
-def add_distances_to_df(source: Path, target: Path, outpath: Path, model: Autoencoder, df: Optional[pd.DataFrame]=None, cache_path: Optional[Path]=None, refresh_cache: bool=False) -> None:
-    if df is None:
-        df = pd.read_csv(outpath / 'all_in_context_with_scores.csv')
+def add_distances_to_df(
+                        source: Path, 
+                        target: Path, 
+                        outpath: Path, 
+                        model: Autoencoder, 
+                        df: Optional[pd.DataFrame]=None, 
+                        cache_path: Optional[Path]=None, 
+                        refresh_cache: bool=False
+                        ) -> None:
+    """
+    Takes source and target texts, calculates the embeddings for each of the words with respect to the model. Calculates
+    distances between embeddings for each combination of words that co-occur in lines within their aligned corpuses. Saves
+    these distances to the 'encoding_dist' column of a df.
+    Inputs:
+    source          Path to source text
+    target          Path to target text
+    outpath         Path to output files. Normally args.outpath / {source.stem}_{target.stem}
+    model           Trained Autoencoder from which to get embeddings
+    df              Optionally pass in the df to write to, to save reading it from disk, since it is large.
+    cache_path      Cache path, if it is different from default args.cache / cache
+    refresh_cache   Boolean. Whether to force calculating the Word.index_lists from text data rather than from cache
+    """
     cache_path = cache_path if cache_path else outpath.parent / 'cache'
     language_paths = {language_path.stem: language_path for language_path in [source, target]}
     index_cache_paths = {}
@@ -214,9 +279,9 @@ def add_distances_to_df(source: Path, target: Path, outpath: Path, model: Autoen
         print(f"Getting {language} encodings")
         get_encodings(word_dict[language], model)
     print("Adding encoding distances to the data")
-    # df.loc[:, 'encoding_dist'] = df.progress_apply(lambda row: word_dict[source.stem].get(row['source'], Word('')).get_norm_distance(word_dict[target.stem].get(row['target'], Word(''))), axis=1)
+    if df is None:
+        df = pd.read_csv(outpath / 'all_in_context_with_scores.csv')
     df.loc[:, 'encoding_dist'] = df.progress_apply(lambda row: word_dict[source.stem][row['source']].get_norm_distance(word_dict[target.stem][row['target']], target.stem) if row['source'] in word_dict[source.stem] and row['target'] in word_dict[target.stem] else 2.0, axis=1)
-    # df.loc[:, 'total_with_encoding'] = df.progress_apply(lambda row: 0.8 * row['total_score'] + 0.2 * row['encoding_score'], axis = 1)
     df.to_csv(outpath / 'all_in_context_with_scores.csv')
     return df
 
@@ -224,16 +289,8 @@ def add_distances_to_df(source: Path, target: Path, outpath: Path, model: Autoen
 def main(args):
     outpath = args.outpath
     outpath.mkdir(parents=True, exist_ok=True)
-    # cache_dir = outpath / "cache"
-    # cache_dir.mkdir(exist_ok=True)
     training_language_paths = {language.stem: language for language in args.train_langs}
     val_language_paths = {language.stem: language for language in args.val_langs}
-    
-#                 'en-NLT07', 
-#                 'fr-LBS21', 
-#                 'swh-ONEN',
-#                 'es-NTV',
-    # languages = [args.source.stem, args.target.stem, *training_languages]
     index_cache_paths = {}
     for language in [*training_language_paths, *val_language_paths]:
         index_cache_paths[language] = outpath  / 'cache'
