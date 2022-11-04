@@ -2,16 +2,18 @@ import json
 import argparse
 import logging
 import itertools
+from assessment_operations import InitiateAssessment, GetAssessment
+from sqlalchemy.exc import IntegrityError
 
 logging.getLogger().setLevel('DEBUG')
 
 class ApiSwitchboard:
-#TODO: figure best way for job_id to persist
-#job_id counter
+    #job_id counter
     try:
         current_id = int(open('counter.txt','r').read())+1
     except FileNotFoundError:
-        current_id=1
+        all_assessments = GetAssessment().get_all_assessments()
+        current_id = all_assessments[-1].id + 1
     job_id= itertools.count(current_id)
 
     def __init__(self):
@@ -20,8 +22,6 @@ class ApiSwitchboard:
         self.assess_type = args.assess_type
         self.target = self.valid_target(args.target)
         self.job_id = next(ApiSwitchboard.job_id)
-        with open('counter.txt','w') as counter_file:
-            counter_file.write(str(self.job_id))
 
     @staticmethod
     def assess_type(assess_type_string: str)-> bool:
@@ -56,25 +56,39 @@ class ApiSwitchboard:
 
     def switch(self):
         if self.assess_type == 'semsim':
-            #output a semantic similarity json file
-            #TODO: figure out why this file is not written to the volume
-            with open(f'{self.job_id}_semsim.json','w') as semsim_file:
-                semsim_file.write({"job_id":self.job_id,"reference": self.ref, "target": self.target})
-            logging.info(f"Assessment {self.job_id} - Semantic Similarity has begun")
+            try:
+                #TODO: catch psycopg2 error if there is a violation
+                InitiateAssessment(id=self.job_id, revision=self.target,
+                              reference=self.ref, type=self.assess_type).push_assessment()
+                #with open(f'{self.job_id}_semsim.json','w') as semsim_file:
+                #    json.dump({"job_id":self.job_id,
+                #               "reference": self.ref,
+                #               "target": self.target}, semsim_file)
+                return_string = f"Assessment {self.job_id}(Semantic Similarity) has begun"
+                logging.info(return_string)
+                #successfully added assessment so update counter file
+                with open('counter.txt','w') as counter_file:
+                    counter_file.write(str(self.job_id))
+                return 200, return_string
+            except IntegrityError as err:
+                logging.error(err.args[0])
+                return 500, err.args[0]
         elif self.assess_type == 'subwords':
             #TODO: subwords stage output here
-            logging.info(f"Assessment {self.job_id} - Subwords has begun")
+            logging.info(f"Assessment {self.job_id}(Subwords) has begun")
         elif self.assess_type == 'comp':
             #TODO: comprehension stage output here
-            logging.info(f"Assessment {self.job_id} - Comprehension has begun")
+            logging.info(f"Assessment {self.job_id}(Comprehension) has begun")
         else:
             #should not get here
             raise ValueError(f"{self.assess_type} is not a valid assessment type")
 
 if __name__ == '__main__':
+    from dotenv import load_dotenv
+    load_dotenv('../pull_revision/.env')
     try:
         switchboard = ApiSwitchboard()
-        pipeline_path  = switchboard.switch()
+        result  = switchboard.switch()
     except (ValueError, OSError,
             KeyError, AttributeError,
             FileNotFoundError) as err:
