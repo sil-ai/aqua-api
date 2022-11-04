@@ -1,4 +1,3 @@
-import json
 import argparse
 import logging
 import itertools
@@ -10,19 +9,24 @@ logging.getLogger().setLevel('DEBUG')
 class ApiSwitchboard:
     #job_id counter
     try:
-        current_id = int(open('counter.txt','r').read())+1
+        job_id = int(open('counter.txt','r').read())+1
     except FileNotFoundError:
         all_assessments = GetAssessment().get_all_assessments()
-        current_id = all_assessments[-1].id + 1
-    job_id= itertools.count(current_id)
+        job_id = all_assessments[-1].id + 1
+    #??? Are job and assessment ids the same thing?
+    #job_id = current_id#itertools.count(current_id)
 
     def __init__(self):
         args = self.get_args()
+        if not (args.ref and args.assess_type):
+            raise ValueError('Missing args')
         self.ref = args.ref
         self.assess_type = args.assess_type
         self.target = self.valid_target(args.target)
-        self.job_id = next(ApiSwitchboard.job_id)
+        #self.job_id = self.current_id #next(ApiSwitchboard.job_id)
 
+    def __str__(self):
+        return f"ApiSwitchboard({self.job_id}) - (target={self.target},ref={self.ref},assess_type={self.assess_type}) "
     @staticmethod
     def assess_type(assess_type_string: str)-> bool:
         assess_type_list = ['semsim', 'subwords', 'comp']
@@ -57,13 +61,9 @@ class ApiSwitchboard:
     def switch(self):
         if self.assess_type == 'semsim':
             try:
-                #TODO: catch psycopg2 error if there is a violation
+                #TODO: catch sqlalchemy error if there is a violation
                 InitiateAssessment(id=self.job_id, revision=self.target,
                               reference=self.ref, type=self.assess_type).push_assessment()
-                #with open(f'{self.job_id}_semsim.json','w') as semsim_file:
-                #    json.dump({"job_id":self.job_id,
-                #               "reference": self.ref,
-                #               "target": self.target}, semsim_file)
                 return_string = f"Assessment {self.job_id}(Semantic Similarity) has begun"
                 logging.info(return_string)
                 #successfully added assessment so update counter file
@@ -85,7 +85,7 @@ class ApiSwitchboard:
 
 if __name__ == '__main__':
     from dotenv import load_dotenv
-    load_dotenv('../pull_revision/.env')
+    load_dotenv()
     try:
         switchboard = ApiSwitchboard()
         result  = switchboard.switch()

@@ -28,7 +28,8 @@ class InitiateAssessment:
             self.session.commit()
         except IntegrityError as err:
             self.session.rollback()
-            raise IntegrityError(err)
+            raise ValueError('Problem with database values')
+
 class GetAssessment:
 
     def __init__(self):
@@ -37,6 +38,9 @@ class GetAssessment:
 
     def __del__(self):
         self.session.close()
+
+    def get_assessment(self, assess_id):
+        return self.session.query(Assessment).get(assess_id)
 
     def get_all_assessments(self):
         stmt = select(Assessment)
