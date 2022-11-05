@@ -5,6 +5,8 @@ import json
 import argparse
 import logging
 import math
+from pathlib import Path
+from typing import Tuple, Optional, Dict
 
 import pandas as pd
 import align
@@ -15,10 +17,11 @@ from tqdm import tqdm
 import torch
 from xgboost import XGBClassifier
 
+import get_data
+
 tqdm.pandas()
 
-from pathlib import Path
-from typing import Tuple, Optional
+
 
 # run fast_align
 def run_fa(
@@ -51,9 +54,10 @@ def run_match_words(
     source: Path,
     target: Path,
     outpath: Path,
-    jaccard_similarity_threshold: float = 0.0,
+    jaccard_similarity_threshold: float = 0.05,
     count_threshold: int = 0,
     refresh_cache: bool=False,
+    is_bible: bool=True
     ) -> None:
     """
     Runs match.run_match with the supplied arguments to get jaccard similarity scores and counts for pairs of
@@ -67,21 +71,24 @@ def run_match_words(
     refresh_cache           Force a cache refresh, rather than using cache from the last time the source and/or target were run
     """
     
-    match.run_match(
+    word_dict_src, word_dict_trg = match.run_match(
         source,
         target,
         outpath,
         jaccard_similarity_threshold=jaccard_similarity_threshold,
         count_threshold=count_threshold,
         refresh_cache=refresh_cache,
+        is_bible=is_bible,
     )
+    return(word_dict_src, word_dict_trg)
 
 
 def get_scores_from_match_dict(
                                 dictionary: dict, 
                                 source_word: str, 
-                                target_word: str
-    ) -> Tuple[float, float]:
+                                target_word: str,
+                                normalized: bool=True,
+                                ) -> Tuple[float, float]:
     """
     Takes a source word and a target word, looks them up in the match dictionary and returns the 
     jaccard similarity and count fields for their match in the dictionary.
@@ -89,11 +96,16 @@ def get_scores_from_match_dict(
     dictionary          The match dictionary for look up
     source              A string word to look up
     target              A string word to look up
+    normalized          Whether the source and target have already been normalized, as they need to be before dictionary look up
     
     Outputs:
     jac_sim             The jaccard similarity between the source and target in the dictionary
     match_count         The count between the source and target in the dictionary
     """
+    if not normalized:
+        source_word = get_data.normalize_word(source_word)
+        target_word = get_data.normalize_word(target_word)
+
     list_for_source = dictionary.get(source_word, [])
     match_list = [match for match in list_for_source if match.get("value") == target_word]
     if len(match_list) == 0:
@@ -140,12 +152,12 @@ def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFr
     all_results.loc[:, 'translation_score'] = all_results.loc[:, 'translation_score'].apply(
         lambda x: 0 if x < 0.00001 else x
         )
-    all_results.loc[:, "normalized_source"] = all_results["source"].apply(
-        match.normalize_word
-    )
-    all_results.loc[:, "normalized_target"] = all_results["target"].apply(
-        match.normalize_word
-    )
+    # all_results.loc[:, "normalized_source"] = all_results["source"].apply(
+    #     match.normalize_word
+    # )
+    # all_results.loc[:, "normalized_target"] = all_results["target"].apply(
+    #     match.normalize_word
+    # )
 
     match_results = json.load(open(match_path))
 
@@ -153,13 +165,13 @@ def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFr
     df = all_results
     df.loc[:, "jac_sim"] = df.progress_apply(
         lambda x: get_scores_from_match_dict(
-            match_results, x["normalized_source"], x["normalized_target"]
+            match_results, x["source"], x["target"], normalized=False
         )[0],
         axis=1,
     )
     df.loc[:, "match_counts"] = df.progress_apply(
         lambda x: get_scores_from_match_dict(
-            match_results, x["normalized_source"], x["normalized_target"]
+            match_results, x["source"], x["target"], normalized=False
         )[1],
         axis=1,
     )
@@ -173,7 +185,7 @@ def run_all_alignments(
                         target: Path,
                         outpath: Path,
                         is_bible: bool=True,
-                        jaccard_similarity_threshold: float=0.0,
+                        jaccard_similarity_threshold: float=0.05,
                         count_threshold: int=0,
                         refresh_cache: bool=False,
                         ):
@@ -187,7 +199,7 @@ def run_all_alignments(
 
     print(f"Running Match to get word match scores for {source.stem} to {target.stem}")
 
-    run_match_words(
+    word_dict_src, word_dict_trg = run_match_words(
             source,
             target,
             outpath,
@@ -195,6 +207,7 @@ def run_all_alignments(
             count_threshold,
             refresh_cache=refresh_cache,
                 )
+    return (word_dict_src, word_dict_trg)
 
 
 def run_combine_results(outpath: Path) -> None:
@@ -213,13 +226,36 @@ def run_combine_results(outpath: Path) -> None:
     df.to_csv(outpath / "combined.csv")
 
 
-def add_scores_to_alignments(source: Path, target: Path, outpath: Path, model_path: Optional[Path]=None, is_bible: bool=True) -> None:
+def add_scores_to_alignments(
+                            source: Path, 
+                            target: Path,
+                            outpath: Path, 
+                            word_dict_src: Optional[Dict[str, get_data.Word]] = None, 
+                            word_dict_trg: Optional[Dict[str, get_data.Word]] = None, 
+                            model_path: Optional[Path]=None, 
+                            is_bible: bool=True
+                            ) -> None:
+    """
+    Takes "best_in_context" scores and "combined" scores for source-target word pairs and merges them.
+    Produces "verse_scores" which are a mean of the various metrics by verse.
+    Takes "all_in_context" scores and "combined" scores for source-target word pairs and merges them,
+    adding a "simple_total" score which is the mean of the first four metrics, and a "total_score" which
+    is a mean of all five, where the fifth (encoding distance) is converted to approximately the same [0,1] scale.
+    Saves to "all_in_context_with_scores".
+    NB: Code for creating a total score with an XGBoost model is commented out for possible future use.
+    Inputs:
+    source          A path to the source text
+    target          A path to the target text
+    outpath         Path to the base output directory
+    model_path      Path to the Autoencoder used to compute the encoding for each word
+    is_bible        Whether the text is Bible
+    """
     if model_path is None:
         model_path = Path('data/models/autoencoder_50')
     df = pd.read_csv(outpath / 'best_in_context.csv')
     df['vref'] = df['vref'].astype('str')
     combined_df = pd.read_csv(outpath / 'combined.csv')
-    all_vrefs = align.get_ref_df(source, target, is_bible, remove_blanks=False) 
+    all_vrefs = get_data.get_ref_df(source, target, is_bible) 
     all_vrefs = pd.DataFrame(all_vrefs, columns = ['vref'], dtype='str')
     df = pd.merge(df.drop(columns=[
                 'alignment_count', 
@@ -230,30 +266,38 @@ def add_scores_to_alignments(source: Path, target: Path, outpath: Path, model_pa
                     'Unnamed: 0', 
                     'verse_score', 
                     'alignment_count', 
-                    'normalized_source', 
-                    'normalized_target'
                     ])
                     , on=['source', 'target'], how='left')
     df = pd.merge(all_vrefs, df, on='vref', how = 'left')    
-    df.loc[:, 'total_score'] = df.apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
+    df.loc[:, 'simple_total'] = df.apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
     df.to_csv(outpath / 'best_in_context_with_scores.csv')
-    verse_scores = df.loc[:, ['vref', 'verse_score', 'avg_aligned', 'alignment_score', 'jac_sim', 'total_score']].groupby('vref', sort=False).mean()
+    verse_scores = df.loc[:, ['vref', 'verse_score', 'avg_aligned', 'alignment_score', 'jac_sim', 'simple_total']].groupby('vref', sort=False).mean()
     verse_scores = remove_leading_and_trailing_blanks(verse_scores, 'verse_score')
     verse_scores = verse_scores.fillna(0)
     verse_scores.to_csv(outpath / 'verse_scores.csv')
+    if word_dict_src == None:
+        word_dict_src = get_data.create_words(source, outpath.parent / 'cache', outpath, is_bible=is_bible)
+    if word_dict_trg == None:
+        word_dict_trg = get_data.create_words(target, outpath.parent / 'cache', outpath, is_bible=is_bible)
+    assert isinstance(word_dict_src, dict)
+    assert isinstance(word_dict_trg, dict)
+
 
     df = pd.read_csv(outpath / 'all_in_context.csv')
     df = pd.merge(df.drop(columns=['Unnamed: 0', 'translation_score']), combined_df.drop(columns=['Unnamed: 0']), on=['source', 'target'], how='left')
     df['alignment_score'].fillna(0, inplace=True)
     model = autoencoder.Autoencoder(in_size=41899, out_size=50)
     model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
-    df = autoencoder.add_distances_to_df(source, target, outpath, model, df=df)
+    df = autoencoder.add_distances_to_df(word_dict_src, word_dict_trg, target.stem, outpath, model, df=df)
     # df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + math.log1p(row['alignment_count']) * row['alignment_score'] + math.log1p(row['match_counts']) * row['jac_sim'] + row['encoding_score']) / 5, axis=1)
     # model_xgb = XGBClassifier()
     # model_xgb.load_model("data/models/xgb_model_4.txt")
     # X = df[['translation_score', 'alignment_count', 'alignment_score', 'avg_aligned', 'jac_sim', 'match_counts', 'encoding_dist']]
     # df.loc[:, 'total_score'] = model_xgb.predict_proba(X)[:, 1]
+    print("Calculating simple total of the first four metrics...")
     df.loc[:, 'simple_total'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
+    print("Calculating total score of all five metrics (including encoding distance)...")
+    df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim'] + math.log1p(max(1 - row['encoding_dist'], -0.99))) / 5, axis=1)
     df.to_csv(outpath / 'all_in_context_with_scores.csv')
 
 
@@ -265,24 +309,44 @@ def remove_leading_and_trailing_blanks(df:pd.DataFrame, col: str) -> pd.DataFram
     return df
 
 
+def main(args):
+    term_size = os.get_terminal_size()
+    outpath = args.outpath / f"{args.source.stem}_{args.target.stem}"
+    outpath.mkdir(parents=True, exist_ok=True)
+    word_dict_src, word_dict_trg = None, None
+    if not args.combine_only:
+        word_dict_src, word_dict_trg = run_all_alignments(
+                                            args.source,
+                                            args.target,
+                                            outpath,
+                                            is_bible=args.is_bible,
+                                            jaccard_similarity_threshold=args.jaccard_similarity_threshold,
+                                            count_threshold=args.count_threshold,
+                                            refresh_cache = args.refresh_cache,
+                                            )
+   
+    run_combine_results(outpath)
+    # for word in {**word_dict_src, **word_dict_trg}.values():
+        # word.get
+    add_scores_to_alignments(
+                            args.source, 
+                            args.target, 
+                            outpath, 
+                            word_dict_src=word_dict_src, 
+                            word_dict_trg=word_dict_trg, 
+                            model_path=args.model, 
+                            is_bible=args.is_bible,
+                            )
+
+
 if __name__ == "__main__":
     # #command line args
     parser = argparse.ArgumentParser(description="Argparser")
     parser.add_argument("--source", type=Path, help="source bible")
     parser.add_argument("--target", type=Path, help="target bible")
-    parser.add_argument(
-        "--jaccard-similarity-threshold",
-        type=float,
-        help="Threshold for Jaccard Similarity score to be significant",
-        default=0.05,
-    )
+    parser.add_argument("--jaccard-similarity-threshold", type=float, help="Threshold for Jaccard Similarity score to be significant", default=0.05)
     parser.add_argument("--is-bible", action='store_true', help="is bible")
-    parser.add_argument(
-        "--count-threshold",
-        type=int,
-        help="Threshold for count (number of co-occurences) score to be significant",
-        default=0,
-    )
+    parser.add_argument("--count-threshold", type=int, help="Threshold for count (number of co-occurences) score to be significant", default=0)
     parser.add_argument("--outpath", type=Path, help="where to store results")
     parser.add_argument("--model", type=Path, help="Path to model for distance encodings")
     parser.add_argument("--combine-only", action='store_true', help="Only combine the results, since the alignment and matching files already exist")
@@ -291,21 +355,4 @@ if __name__ == "__main__":
     args, unknown = parser.parse_known_args()
     # make output dir
     # s, t, path = make_output_dir(args.source, args.target, args.outpath)
-    outpath = args.outpath / f"{args.source.stem}_{args.target.stem}"
-
-    outpath.mkdir(parents=True, exist_ok=True)
-    if not args.combine_only:
-        run_all_alignments(
-                            args.source,
-                            args.target,
-                            outpath,
-                            is_bible=args.is_bible,
-                            jaccard_similarity_threshold=args.jaccard_similarity_threshold,
-                            count_threshold=args.count_threshold,
-                            refresh_cache = args.refresh_cache,
-                            )
-        
-
-    run_combine_results(outpath)
-    add_scores_to_alignments(args.source, args.target, outpath, args.model, args.is_bible)
-    
+    main(args)

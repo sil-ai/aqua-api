@@ -33,15 +33,12 @@ def test_run_fa(source, target, is_bible, remove_files=True):
 
 @pytest.mark.parametrize("source,target,is_bible", [
                                                     (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt"), False), 
-                                                    (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), True), 
+                                                    (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), False), 
                                                     ])
 def test_run_match_words(source, target, is_bible, remove_files=True):
     outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
-    combined.run_match_words(source, target, outpath, 0.0, 0, False)
+    combined.run_match_words(source, target, outpath, 0.0, 0, is_bible=is_bible)
     assert (outpath / "dictionary.json").exists()
-    assert (outpath / "ref_df.csv").exists()
-    if remove_files:
-        (outpath / "ref_df.csv").unlink()
 
 @pytest.mark.parametrize("source,target,source_word,target_word", [
                                                     (Path("fixtures/de-LU1912-mini.txt"), Path("fixtures/en-KJV-mini.txt"), 'gott', 'god'), 
@@ -69,7 +66,7 @@ def test_get_scores_from_match_dict(source, target, source_word, target_word):
 def test_run_combine_results(source, target, source_word, target_word, is_bible):
     outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
     combined.run_fa(source, target, outpath, is_bible=is_bible)
-    combined.run_match_words(source, target, outpath)
+    combined.run_match_words(source, target, outpath, is_bible=is_bible)
     combined.run_combine_results(outpath)
     combined.add_scores_to_alignments(source, target, outpath, is_bible=is_bible)
     df = pd.read_csv(outpath / "combined.csv")
@@ -91,4 +88,3 @@ def test_run_combine_results(source, target, source_word, target_word, is_bible)
     (outpath / 'verse_scores.csv').unlink()
     (outpath / 'combined.csv').unlink()
     (outpath / 'dictionary.json').unlink()
-    (outpath / 'ref_df.csv').unlink()

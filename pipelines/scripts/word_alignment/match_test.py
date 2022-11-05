@@ -4,89 +4,61 @@ import json
 import pytest
 from pathlib import Path
 
-
-def test_text_to_words():
-    text = "This is a test."
-    words = match.text_to_words(text)
-    assert words == ["this", "is", "a", "test", ""]
+import get_data
 
 @pytest.mark.parametrize("word,expected", [
                                             (None, ''),
                                             ('מַלְכִּיאֵֽל', 'מלכיאל')
                                            ])
 def test_normalize_word(word, expected):
-    assert match.normalize_word(word) == expected
+    assert get_data.normalize_word(word) == expected
 
 
 def test_get_bible_data():
-    df = match.get_text_data("fixtures/en-KJV.txt")
-    assert len(df) > 5000
-    assert isinstance(df, pd.DataFrame)
-    assert 'god' in df['words'].explode().unique()
+    outpath = Path('')
+    ref_df = get_data.get_ref_df("fixtures/en-KJV.txt")
+    ref_df = get_data.get_words_from_txt_file(ref_df, outpath)
+    assert len(ref_df) == 41899
+    assert isinstance(ref_df, pd.DataFrame)
+    assert 'god' in ref_df['src_words'].explode().unique()
 
-@pytest.mark.parametrize("index_cache_keys,index_cache_values", [
-                                                    (Path("fixtures/en-NIV84-index-cache.json"), Path("fixtures/hbo-MaculaHebTok-index-cache.json")), 
+@pytest.mark.parametrize("cache_dir,source,target", [
+                                                    (Path("fixtures"), Path('fixtures/en-NIV84.txt'), Path("fixtures/hbo-MaculaHebTok.txt")), 
 
                                                     ])
-def test_update_matches_for_lists(index_cache_keys, index_cache_values):
-    source_list = [
-        "",
-        "ishvi",
-        "their",
-        "was",
-        "sons",
-        "ishvah",
-        "beriah",
-        "heber",
-        "the",
-        "sister",
-        "and",
-        "malkiel",
-        "imnah",
-        "asher",
-        "serah",
-        "of",
-    ]
-    target_list = [
-        "בְנֵ֣י",
-        "בְנֵ֣י",
-        "אָשֵׁ֗ר",
-        "יִמְנָ֧ה",
-        "יִשְׁוָ֛ה",
-        "יִשְׁוָ֛ה",
-        "יִשְׁוִ֥י",
-        "וּ",
-        "בְרִיעָ֖ה",
-        "בְרִיעָ֖ה",
-        "בְרִיעָ֖ה",
-        "ם",
-        "בְנֵ֣י",
-        "בְנֵ֣י",
-        "בְנֵ֣י",
-        "בְרִיעָ֔ה",
-        "חֶ֖בֶר",
-        "וּ",
-        "מַלְכִּיאֵֽל",
-    ]
-    source_objects = {word: match.Word(word) for word in source_list}
-    target_objects = {word: match.Word(word) for word in target_list}
-    for word in source_objects.values():
-        word.index_list = [0]
-    for word in target_objects.values():
-        word.index_list = [0]
-    js_cache = {}
+def test_update_matches_for_lists(cache_dir, source, target):
+    outpath = Path('')
+    is_bible=True
+    refresh_cache=False
+    word_dict_src = get_data.create_words(source, cache_dir, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
+    word_dict_trg = get_data.create_words(target, cache_dir, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
+    ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
+    condensed_df = get_data.condense_files(ref_df)
+    condensed_df = get_data.get_words_from_txt_file(condensed_df, outpath)
+    condensed_df.loc[:, 'normalized_src_words'] = condensed_df['src'].apply(lambda x: get_data.normalize_word(x).split())
+    condensed_df.loc[:, 'normalized_trg_words'] = condensed_df['trg'].apply(lambda x: get_data.normalize_word(x).split())
+    
+    condensed_df_indexes = list(condensed_df.index)  
+    for word_object in word_dict_src.values():
+        word_object.reduced_index_list = list(set(word_object.index_list).intersection(set(condensed_df_indexes)))
+    for word_object in word_dict_trg.values():
+        word_object.reduced_index_list = list(set(word_object.index_list).intersection(set(condensed_df_indexes)))
+    
     matches = {}
-    jaccard_similarity_threshold = 0.0
-    count_threshold = 0
-
-    matches, js_cache = match.update_matches_for_lists(
-        source_objects.values(),
-        target_objects.values(),
-        js_cache,
-        matches,
-        jaccard_similarity_threshold,
-        count_threshold,
-    )
+    print("Getting matches...")
+    for _, row in condensed_df.iterrows():
+        paired_source_objects = list(set([word_dict_src[x] for x in row["src_words"]]))
+        paired_target_objects = list(set([word_dict_trg[x] for x in row["trg_words"]]))
+        # for paired_object in [*paired_source_objects, *paired_target_objects]:
+            # paired_object.index_list = set(paired_object.index_list).intersection(set(ref_df_indexes))
+        matches, js_cache = match.update_matches_for_lists(
+            paired_source_objects,
+            paired_target_objects,
+            matches=matches,
+            js_cache=js_cache,
+            jaccard_similarity_threshold=0.05,
+            count_threshold=0,
+        )
     assert len(matches) > 0
     assert len(matches["the"]) > 0
     assert len(js_cache) > 0
@@ -105,10 +77,10 @@ def test_run_match(source, target, source_word, target_word, remove_files = Fals
         source,
         target,
         outpath = outpath,
-        logging_level='INFO',
         jaccard_similarity_threshold=0.0,
         count_threshold=0,
         refresh_cache=True,
+        is_bible=False,
     )
     
     with open(outpath / 'dictionary.json') as f:
@@ -133,4 +105,3 @@ def test_run_match(source, target, source_word, target_word, remove_files = Fals
     assert len(values_index_cache[target_word]) > 0
 
     (outpath / 'dictionary.json').unlink()
-    (outpath / 'ref_df.csv').unlink()

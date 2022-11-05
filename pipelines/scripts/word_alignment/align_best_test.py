@@ -2,16 +2,19 @@ from pathlib import Path
 import pytest
 import align_best
 import pandas as pd
+import get_data
 
 @pytest.mark.parametrize("source,target", [
                                             (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt")), 
                                             (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt")), 
                                             ])
 def test_get_alignments(source, target):
-    ref_df = align_best.get_ref_df(source, target, False)
+    ref_df = get_data.get_ref_df(source, target, False)
     outpath =  source.parent / 'out' / f'{source.stem}_{target.stem}'
-    condensed_source, condensed_target, vrefs = align_best.write_condensed_files(ref_df, outpath)
-    corpus = align_best.create_corpus(condensed_source, condensed_target)
+    ref_df = get_data.condense_files(ref_df)
+    vrefs = list(ref_df['vref'])
+    condensed_source, condensed_target = get_data.write_condensed_files(ref_df, outpath)
+    corpus = get_data.create_corpus(condensed_source, condensed_target)
     model = align_best.train_model(corpus)
     alignments = align_best.get_best_alignment_scores(model, corpus, vrefs)
 
@@ -22,8 +25,8 @@ def test_get_alignments(source, target):
     assert len(alignments['source'].unique()) > 10
     assert len(alignments['target'].unique()) > 10
     assert len(alignments['alignment_count'].unique()) == 1
-    (outpath / f'src_condensed.txt').unlink()
-    (outpath / f'trg_condensed.txt').unlink()
+    condensed_source.unlink()
+    condensed_target.unlink()
 
 
 @pytest.mark.parametrize("source,target,is_bible", [
@@ -32,18 +35,19 @@ def test_get_alignments(source, target):
                                                     ])
 def test_get_vref_scores(source, target, is_bible):
     outpath =  source.parent / 'out' / f'{source.stem}_{target.stem}'
-    ref_df = align_best.get_ref_df(source, target, is_bible)
-    condensed_source, condensed_target, vrefs = align_best.write_condensed_files(ref_df, outpath)
-    # vrefs = align_best.get_ref_df(source, target, is_bible=is_bible)
-    corpus = align_best.create_corpus(condensed_source, condensed_target)
+    ref_df = get_data.get_ref_df(source, target, is_bible)
+    ref_df = get_data.condense_files(ref_df)
+    vrefs = list(ref_df['vref'])
+    condensed_source, condensed_target = get_data.write_condensed_files(ref_df, outpath)
+    corpus = get_data.create_corpus(condensed_source, condensed_target)
     model = align_best.train_model(corpus)
     alignments = align_best.get_best_alignment_scores(model, corpus, vrefs)
     vref_scores = align_best.get_vref_scores(alignments)
     assert isinstance(vref_scores, pd.DataFrame)
     assert len(vref_scores) > 0
     assert len(vref_scores['verse_score'].unique()) > len(vrefs) / 2
-    (outpath / f'src_condensed.txt').unlink()
-    (outpath / f'trg_condensed.txt').unlink()
+    condensed_source.unlink()
+    condensed_target.unlink()
 
 @pytest.mark.parametrize("source,target", [
                                                     (Path("fixtures/es-test.txt"), Path("fixtures/en-test.txt")), 
@@ -52,10 +56,11 @@ def test_get_vref_scores(source, target, is_bible):
 def test_get_best_alignment_scores(source, target):
     is_bible=False
     outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
-    ref_df = align_best.get_ref_df(source, target, is_bible)
-    condensed_source, condensed_target, vrefs = align_best.write_condensed_files(ref_df, outpath)
-    corpus = align_best.create_corpus(condensed_source, condensed_target)
-    # vrefs = align_best.get_ref_df(source, target, is_bible)
+    ref_df = get_data.get_ref_df(source, target, is_bible)
+    ref_df = get_data.condense_files(ref_df)
+    vrefs = list(ref_df['vref'])
+    condensed_source, condensed_target = get_data.write_condensed_files(ref_df, outpath)
+    corpus = get_data.create_corpus(condensed_source, condensed_target)
     model = align_best.train_model(corpus)
     df = align_best.get_best_alignment_scores(model, corpus, vrefs)
     assert len(df) > 20
@@ -64,8 +69,8 @@ def test_get_best_alignment_scores(source, target):
 
     df.to_csv(outpath / 'df_best_alignment_scores.csv')
 
-    (outpath / f"src_condensed.txt").unlink()
-    (outpath / f"trg_condensed.txt").unlink()
+    condensed_source.unlink()
+    condensed_target.unlink()
 
 
 @pytest.mark.parametrize("outpath", [

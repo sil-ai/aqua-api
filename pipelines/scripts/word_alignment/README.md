@@ -25,6 +25,9 @@ These scores can be found in `combined.csv`, and list every source-target word p
 * `normalized_target`: The "normalized" target word, with punctuation, diacritics, etc removed.
 * `jac_sim`: The Jaccard Similarity of the lines where the source appears and the lines where the target appears.
 * `match_counts`: The number of lines in which both the source and target word appear.
+* `encoding_dist`: The euclidean distance between the embeddings of the two words in the Autoencoder.
+* `simple_total`: The mean of `translation_score`, `alignment_score`, `avg_aligned` and `jac_sim`.
+* `total_score`: The mean `translation_score`, `alignment_score`, `avg_aligned`, `jac_sim` and `encoding_dist`, which has been modified by x: log1p(1 - x) to apprximately map to [0, 1].
 
 #### Word by word alignment scores:
 These scores can be found in `best_in_context.csv`, which goes line by line, listing the Fat Align alignment pairs. Note that `hebrew_key_terms.csv` and `greek_key_terms.csv` contain the same information, filtered by "major key terms", as defined in the [SILNLP repository](https://github.com/sillsdev/silnlp/tree/master/silnlp/assets). These files contain:
@@ -74,9 +77,17 @@ Compares the output from a source to target alignment with output from other ali
 
 `--outpath` The base output directory where the each of the data directories is located. If data for any particular alignment is not in this directory, the alignment will be run first.
 
+`--refresh` Refresh the data - calculate the alignments and matches again, rather than using existing csv files.
+
+`--refresh-cache` Refresh the index cache files.
+
+`--combine-only` Only combine the results, since the alignment and matching files already exist.
+
+
+
 ### Outputs:
 
-A file `red_flags.csv` file containing `vref`, `source` word, `total_score` from the best target word, and scores from the best target word from each reference translation. This list is filtered according to each `total_score < 0.05`, and each reference score `> 0.4`, with the average reference score being at least 25 times greater than `total_score` from the text in question.
+A file `red_flags.csv` file containing `vref`, `source` word, `simple_tota` from the best target word, and scores from the best target word from each reference translation. This list is filtered according to each `simple_total < 0.1`, and each reference score `> 0.3`, with the average reference score being at least 10 times greater than `simple_total` from the text in question.
 
 
 ## align.py

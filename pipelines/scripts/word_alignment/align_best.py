@@ -3,7 +3,7 @@ import argparse
 import string
 import os
 import sys
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from unicodedata import category
 import pandas as pd
@@ -11,7 +11,8 @@ from tqdm import tqdm
 from machine.corpora import TextFileTextCorpus
 from machine.tokenization import LatinWordTokenizer
 from machine.translation import SymmetrizationHeuristic
-from align import write_condensed_files, create_corpus, train_model, get_ref_df
+from align import train_model
+from get_data import condense_files, create_corpus, get_ref_df, write_condensed_files
 
 from machine.translation.thot import (
     ThotFastAlignWordAlignmentModel,
@@ -20,7 +21,11 @@ from machine.translation.thot import (
 from pathlib import Path
 
 
-def get_best_alignment_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: List[str] = None) -> pd.DataFrame:
+def get_best_alignment_scores(
+                                model: ThotSymmetrizedWordAlignmentModel, 
+                                corpus: TextFileTextCorpus, 
+                                vrefs: Optional[List[str]] = None
+                                ) -> pd.DataFrame:
     """
     Takes a corpus and a word alignment model and calculates word alignments for each aligned line.
     Returns a dataframe with words that have been aligned by the model.
@@ -85,7 +90,6 @@ def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
 
     Inputs:
     df          A dataframe of alignment matches
-    threshold   A count threshold
 
     Outputs:
     no_dups     A dataframe with duplicates removed, grouped by source and target words.
@@ -129,10 +133,10 @@ def run_best_align(
     """
     # get vrefs
     ref_df = get_ref_df(source, target, is_bible)
-
-    condensed_source, condensed_target, vrefs = write_condensed_files(ref_df, outpath)
-
-
+    df = condense_files(ref_df)
+    vrefs = list(df['vref'])
+    condensed_source, condensed_target = write_condensed_files(df, outpath)
+    
     # create parallel corpus
     if not parallel_corpus:
         parallel_corpus = create_corpus(condensed_source, condensed_target)
@@ -142,16 +146,13 @@ def run_best_align(
         symmetrized_model = train_model(parallel_corpus)
 
     # Get alignments
-    print("Getting alignments...")
+    print("Getting alignment scores...")
     df = get_best_alignment_scores(symmetrized_model, parallel_corpus, vrefs)
 
-    # Get verse scores
-    # vref_df = get_vref_scores(df)
-    # Apply threshold
+    # Remove duplicates
     no_dups = remove_duplicates(df)
 
     # write results to csv
-    # outpath = outpath / f"{src_file.stem}{trg_file.stem}_align_best"
     if not outpath.exists():
         outpath.mkdir(parents=True)
 
@@ -159,11 +160,9 @@ def run_best_align(
 
     df.to_csv(outpath / "best_in_context.csv")
 
-    # vref_df.to_csv(outpath / "best_vref_scores.csv")
-
     # delete temp files
-    (outpath / "src_condensed.txt").unlink()
-    (outpath / "trg_condensed.txt").unlink()
+    condensed_source.unlink()
+    condensed_target.unlink()
 
     return parallel_corpus, symmetrized_model
 
