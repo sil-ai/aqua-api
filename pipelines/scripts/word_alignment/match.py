@@ -1,6 +1,6 @@
 import logging
 import argparse
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 import pandas as pd
 from tqdm import tqdm
@@ -8,64 +8,6 @@ from collections import Counter
 from pathlib import Path
 
 import get_data
-
-
-
-
-
-# def text_to_words(text: str) -> List[str]:
-#     """
-#     Takes a sentence, line or verse of text, tokenizes and "normalizes" it and returns a list of words.
-#     Inputs:
-#         text:   Normally a sentence, or Bible verse
-#     Outputs:
-#         A list of words, where the sentence has had its punctuation removed, and words splits into a list of words
-#     """
-#     word_tokenizer = LatinWordTokenizer()
-#     word_list = [normalize_word(word) for word in word_tokenizer.tokenize(text)]
-#     # remove any blanks and make character replacements from replace_dict
-#     word_list = [align.replace_chars(word) for word in word_list]
-#     return word_list
-
-
-# def get_text_data(source: Path) -> pd.DataFrame:
-#     """
-#     Takes the text source as an input, and returns a dataframe of the text.
-#     Inputs:
-#         source:      Path to input txt file
-#     Outputs:
-#         df:         A dataframe with the text in one column and the separate words in another
-#     """
-#     with open(source, "r") as f:
-#         data = f.readlines()
-#     words = [text_to_words(line) for line in data]
-#     normalized_words = [
-#         [normalize_word(word) for word in word_list] for word_list in words
-#     ]
-#     df = pd.DataFrame(
-#         {"text": data, "words": words, "normalized_words": normalized_words}
-#     )
-#     df = df[df["text"].apply(lambda x: len(x) > 2)]
-#     df = df[df["text"] != "b'\n'"]
-#     return df
-
-
-# def get_indices_with_item(item: str, list_series: pd.Series) -> List[pd.Index]:
-#     """
-#     Returns indices from a series of lists, filtered by rows whose list contains a particular item
-#     Inputs:
-#     item:           A single item from list_series
-#     list_series:     A series containing the lists to filter by list_item
-    
-#     Outputs:
-#     index_list    A list of indices for the list_series series, corresponding to rows that contain item
-#     """
-#     index_list = list(
-#         list_series[
-#             list_series.apply(lambda x: item in x if isinstance(x, Iterable) else False)
-#         ].index
-#     )
-#     return index_list
 
 
 def update_matches_for_lists(
@@ -130,65 +72,27 @@ def update_matches_for_lists(
     return (matches, js_cache)
 
 
-
-
-
-# def get_single_df(
-#     source: Path,
-#     list_name: str,
-# ) -> pd.DataFrame:
+# def create_freq_cache(cache_dir: Path, source: Path, target: Path, refresh_cache: bool=False):
 #     """
-#     Reads a text file and creates a dataframe corresponding to either the keys or values being investigated.
-#     The 'normalized_words' columns of the dataframe is renamed to either 'keys' or 'values'.
-#     Inputs:
-#         source:    Name of the dataframe
-#         list_name:  The name that should be used for the df column with the relevant verse lists. Normally 'keys' or 'values'.
-#     Outputs:
-#         df:         The dataframe containing text, and either a 'keys' or 'values' column with the relevant list data.
+#     Creates the freq_cache dictionary from 
 #     """
-#     df = get_text_data(source)
-#     df = df.rename(columns={"normalized_words": list_name})
-#     return df
-
-
-# def get_combined_df(
-#     source: Path,
-#     target: Path,
-#     outpath: Path,
-# ) -> pd.DataFrame:
-#     """
-#     Takes the source and target text files and creates ref_df - a single dataframe with aligned words from both inputs.
-#     Inputs:
-#         source: Path to the source txt file
-#         target: Path to the target txt file
-#         outpath:            The output file path
-#     Outputs:
-#         ref_df:     A dataframe that combines the keys and values data into a single dataframe by line
-#     """
-#     if not outpath.exists():
-#         outpath.mkdir(exist_ok=True)
-
-#     source_ref_df = get_single_df(
-#         source,
-#         list_name="source",
+#     freq_cache_file = cache_dir / f"{source.stem}-{target.stem}-freq-cache.json"
+#     reverse_freq_cache_file = (
+#         cache_dir / f"{target.stem}-{source.stem}-freq-cache.json"
 #     )
-#     target_ref_df = get_single_df(
-#         target,
-#         list_name="target",
+#     freq_cache = get_data.initialize_cache(freq_cache_file, to_tuples=True, refresh=refresh_cache)
+#     js_cache_reverse = get_data.initialize_cache(
+#         reverse_freq_cache_file, reverse=True, to_tuples=True
 #     )
-
-#     target_ref_series = target_ref_df["target"]
-#     ref_df = pd.concat([source_ref_df, target_ref_series], axis=1)
-#     ref_df = ref_df.dropna(subset=["source", "target"])
-#     ref_df.to_csv(outpath / "ref_df.csv")
-#     logging.info(ref_df.head())
-#     return (source_ref_df, target_ref_df, ref_df)
-
+#     freq_cache = {**freq_cache, **js_cache_reverse}
+#     return freq_cache
 
 def run_match(
             source: Path,
             target: Path,
             outpath: Path,
+            word_dict_src: Optional[dict]=None,
+            word_dict_trg: Optional[dict]=None,
             jaccard_similarity_threshold: float = 0.0,
             count_threshold: int = 0,
             refresh_cache: bool = False,
@@ -206,9 +110,6 @@ def run_match(
     refresh_cache    Whether to force a cache refresh or use any cached data from previous runs on this source and/or target
 
     """
-    source_list_name = source.stem
-    target_list_name = target.stem
-
     outpath.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(
         format="%(asctime)s - %(funcName)20s() - %(message)s",
@@ -221,19 +122,15 @@ def run_match(
 
     cache_dir = outpath.parent / "cache"
     cache_dir.mkdir(exist_ok=True)
-    js_cache_file = cache_dir / f"{source_list_name}-{target_list_name}-freq-cache.json"
-    reverse_freq_cache_file = (
-        cache_dir / f"{target_list_name}-{source_list_name}-freq-cache.json"
-    )
+    freq_cache_file = cache_dir / f"{source.stem}-{target.stem}-freq-cache.json"
+    freq_cache = get_data.initialize_cache(freq_cache_file, to_tuples=True, refresh=refresh_cache)
+    # freq_cache = create_freq_cache(cache_dir, source, target, refresh_cache)
     matches_file = outpath / "dictionary.json"
-
-    js_cache = get_data.initialize_cache(js_cache_file, to_tuples=True, refresh=refresh_cache)
-    js_cache_reverse = get_data.initialize_cache(
-        reverse_freq_cache_file, reverse=True, to_tuples=True
-    )
-    js_cache = {**js_cache, **js_cache_reverse}
-    word_dict_src = get_data.create_words(source, cache_dir, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
-    word_dict_trg = get_data.create_words(target, cache_dir, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
+    
+    if word_dict_src == None:
+        word_dict_src = get_data.create_words(source, cache_dir, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
+    if word_dict_trg == None:
+        word_dict_trg = get_data.create_words(target, cache_dir, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
     ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
     condensed_df = get_data.condense_files(ref_df)
     condensed_df = get_data.get_words_from_txt_file(condensed_df, outpath)
@@ -255,15 +152,15 @@ def run_match(
         paired_target_objects: List[get_data.Word] = list(set([word_dict_trg[x] for x in row["trg_words"]]))
         # for paired_object in [*paired_source_objects, *paired_target_objects]:
             # paired_object.index_list = set(paired_object.index_list).intersection(set(ref_df_indexes))
-        matches, js_cache = update_matches_for_lists(
+        matches, freq_cache = update_matches_for_lists(
             paired_source_objects,
             paired_target_objects,
             matches=matches,
-            js_cache=js_cache,
+            js_cache=freq_cache,
             jaccard_similarity_threshold=jaccard_similarity_threshold,
             count_threshold=count_threshold,
         )
-    get_data.write_dictionary_to_file(js_cache, js_cache_file, to_strings=True)
+    get_data.write_dictionary_to_file(freq_cache, freq_cache_file, to_strings=True)
     get_data.write_dictionary_to_file(matches, matches_file)
     logging.info("END RUN")
     return (word_dict_src, word_dict_trg)

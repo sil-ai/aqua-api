@@ -154,12 +154,13 @@ def get_encodings(word_dict_lang:Dict[str,get_data.Word], model: Autoencoder) ->
     model               Trained Autencoder to providing encodings / embeddings.
     """
     for word in tqdm(word_dict_lang.values()):
-            word.get_encoding(model)
+        # print(word.index_ohe.shape)
+        word.get_encoding(model)
 
         
 def add_distances_to_df(
-                        source_word_dict: dict, 
-                        target_word_dict: dict, 
+                        word_dict_src: dict, 
+                        word_dict_trg: dict, 
                         target_lang: str,
                         outpath: Path, 
                         model: Autoencoder, 
@@ -190,17 +191,16 @@ def add_distances_to_df(
     # for language in language_paths:
     if df is None:
         df = pd.read_csv(outpath / 'all_in_context_with_scores.csv')
-    word_dict = {'source': source_word_dict, 'target': target_word_dict}
+    word_dict = {'source': word_dict_src, 'target': word_dict_trg}
     for lang, word_dict_lang in word_dict.items():
         print(f"Getting {lang} encodings")
         assert isinstance(word_dict_lang, dict)
-
         get_encodings(word_dict_lang, model)
         unmatched_words = set(df[lang].unique()) - set(df[lang].unique()).intersection(set(word_dict_lang.keys()))
         assert len(unmatched_words) == 0, f"{unmatched_words} not in word_dict[{lang}]. Run again with --refresh-cache, or combined.py --refresh cache for just this source-target combination."
     print("Adding encoding distances to the data")
     
-    df.loc[:, 'encoding_dist'] = df.progress_apply(lambda row: source_word_dict[row['source']].get_norm_distance(target_word_dict[row['target']], target_lang), axis=1)
+    df.loc[:, 'encoding_dist'] = df.progress_apply(lambda row: word_dict_src[row['source']].get_norm_distance(word_dict_trg[row['target']], target_lang), axis=1)
     df.to_csv(outpath / 'all_in_context_with_scores.csv')
     return df
 

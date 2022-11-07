@@ -5,8 +5,9 @@ from tqdm import tqdm
 import math
 tqdm.pandas()
 from typing import Dict
+from memory_profiler import profile
 
-import combined
+import combined, get_data
 
 
 def read_dfs(ref_df_outpaths:dict, total_col: str='simple_total') -> Dict[str, pd.DataFrame]:
@@ -47,6 +48,7 @@ def identify_red_flags(outpath: Path, ref_df_outpaths:dict, total_col: str='simp
     df.loc[:, 'order'] = df.index
     df['order'] = -1 * df.groupby(['vref', 'source'])['order'].transform('min')
     df.loc[:, total_col] = df[total_col].apply(lambda x: max(x, 0))
+    print("Calculating best match for each source word...")
     possible_red_flags = df.groupby(['vref', 'source']).progress_apply(lambda x: x.nlargest(1, total_col))
     possible_red_flags.index = possible_red_flags['order']
     possible_red_flags = possible_red_flags.sort_values(['vref', 'source', total_col], ascending=False).groupby(['vref', 'source']).agg({total_col: 'sum', 'order': 'first'}).sort_values('order', ascending=False).reset_index()
@@ -66,47 +68,63 @@ def identify_red_flags(outpath: Path, ref_df_outpaths:dict, total_col: str='simp
     
     return red_flags
 
-
+# @profile
 def main(args):
     base_outpath = args.outpath
     source = args.source
     target = args.target
+    word_dict_src = None
+    word_dict_trg = None
     ref_df_outpaths = {}
     total_col = 'simple_total' if args.exclude_encodings else 'total_score'
-    for reference in args.reference:
-        outpath = base_outpath / f'{source.stem}_{reference.stem}'
+    for reference_target in args.reference:
+        outpath = base_outpath / f'{source.stem}_{reference_target.stem}'
         if args.refresh or not (outpath / 'all_in_context_with_scores.csv').exists():
             outpath.mkdir(parents=True, exist_ok=True)
             if not args.combine_only or not (outpath / 'dictionary.json').exists():
                 word_dict_src, word_dict_trg = combined.run_all_alignments(
                                 source,
-                                reference,
+                                reference_target,
                                 outpath,
+                                word_dict_src=word_dict_src,
+                                word_dict_trg=word_dict_trg,
                                 is_bible=True,
                                 jaccard_similarity_threshold=0.05,
                                 count_threshold=0,
                                 refresh_cache=args.refresh_cache,
                 )
+            # else:
+                # word_dict_src = get_data.create_words(source, base_outpath / 'cache', outpath)
+                # word_dict_trg = get_data.create_words(reference_target, base_outpath / 'cache', outpath)
 
             combined.run_combine_results(outpath)
-            combined.add_scores_to_alignments(source, reference, outpath, word_dict_src=word_dict_src, word_dict_trg=word_dict_trg, is_bible=True)
-        ref_df_outpaths[reference.stem] = outpath
+            combined.add_scores_to_alignments(source, reference_target, outpath, word_dict_src=word_dict_src, word_dict_trg=word_dict_trg, is_bible=True)
+            word_dict_trg = None
+        ref_df_outpaths[reference_target.stem] = outpath
     outpath = base_outpath / f'{source.stem}_{target.stem}'
     if args.refresh or not (outpath / 'all_in_context_with_scores.csv').exists():
-            outpath.mkdir(parents=True, exist_ok=True)
-            if not args.combine_only or not (outpath / 'dictionary.json').exists():
-                word_dict_src, word_dict_trg = combined.run_all_alignments(
-                                source,
-                                target,
-                                outpath,
-                                is_bible=True,
-                                jaccard_similarity_threshold=0.05,
-                                count_threshold=0,
-                                refresh_cache=args.refresh_cache,
-                )
+        outpath.mkdir(parents=True, exist_ok=True)
+        if not args.combine_only or not (outpath / 'dictionary.json').exists():
+            word_dict_src, word_dict_trg = combined.run_all_alignments(
+                            source,
+                            target,
+                            outpath,
+                            word_dict_src=word_dict_src,
+                            word_dict_trg=word_dict_trg,
+                            is_bible=True,
+                            jaccard_similarity_threshold=0.05,
+                            count_threshold=0,
+                            refresh_cache=args.refresh_cache,
+            )
+        # else:
+        #     word_dict_src = get_data.create_words(source, base_outpath / 'cache', outpath)
+        #     word_dict_trg = get_data.create_words(target, base_outpath / 'cache', outpath)
 
-            combined.run_combine_results(outpath)
-            combined.add_scores_to_alignments(source, target, outpath, word_dict_src=word_dict_src, word_dict_trg=word_dict_trg, is_bible=True)
+        combined.run_combine_results(outpath)
+        combined.add_scores_to_alignments(source, target, outpath, word_dict_src=word_dict_src, word_dict_trg=word_dict_trg, is_bible=True)
+    del word_dict_src
+    del word_dict_trg
+    print("Identifying red flags...")
     red_flags = identify_red_flags(outpath, ref_df_outpaths, total_col=total_col)
     red_flags.to_csv(outpath / f'red_flags_{total_col}.csv')
 
@@ -118,8 +136,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'", required=True)
     parser.add_argument("--target", type=Path, help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'", required=True,)
-    parser.add_argument('--reference', nargs='+', type=Path, help="A list of texts to compare to.")
-    parser.add_argument("--outpath", type=Path, help="Base output path, which all csv files are contained in.")
+    parser.add_argument('--reference', nargs='+', type=Path, help="A list of texts to compare to.", required=True)
+    parser.add_argument("--outpath", type=Path, help="Base output path, which all csv files are contained in.", required=True)
     parser.add_argument("--refresh", action='store_true', help="Refresh the data - calculate the alignments and matches again, rather than using existing csv files")
     parser.add_argument("--refresh-cache", action='store_true', help="Refresh the index cache files")
     parser.add_argument("--combine-only", action='store_true', help="Only combine the results, since the alignment and matching files already exist")

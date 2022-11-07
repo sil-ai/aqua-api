@@ -215,6 +215,8 @@ class Word():
         return (jac_sim, count)
     
     def get_encoding(self, model):
+        if self.index_ohe.shape[0] <= 1:
+            self.get_ohe
         self.encoding = model.encoder(torch.tensor(self.index_ohe).float()).cpu().detach().numpy()
         self.norm_encoding = self.encoding / np.linalg.norm(self.encoding)
     
@@ -437,7 +439,7 @@ def remove_blanks_and_ranges(df: pd.DataFrame) -> pd.DataFrame:
     df = df[df.trg != "\n"]
     df = df[df.src != "<range>\n"]
     df = df[df.trg != "<range>\n"]
-    df['src'] = df['src'].apply(replace_chars)
-    df['trg'] = df['trg'].apply(replace_chars)
+    # df['src'] = df['src'].apply(replace_chars)
+    # df['trg'] = df['trg'].apply(replace_chars)
 
     return df

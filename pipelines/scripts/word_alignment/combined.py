@@ -54,6 +54,8 @@ def run_match_words(
     source: Path,
     target: Path,
     outpath: Path,
+    word_dict_src: Optional[dict]=None,
+    word_dict_trg: Optional[dict]=None,
     jaccard_similarity_threshold: float = 0.05,
     count_threshold: int = 0,
     refresh_cache: bool=False,
@@ -75,6 +77,8 @@ def run_match_words(
         source,
         target,
         outpath,
+        word_dict_src=word_dict_src,
+        word_dict_trg=word_dict_trg,
         jaccard_similarity_threshold=jaccard_similarity_threshold,
         count_threshold=count_threshold,
         refresh_cache=refresh_cache,
@@ -184,6 +188,8 @@ def run_all_alignments(
                         source: Path,
                         target: Path,
                         outpath: Path,
+                        word_dict_src: Optional[dict]=None,
+                        word_dict_trg: Optional[dict]=None,
                         is_bible: bool=True,
                         jaccard_similarity_threshold: float=0.05,
                         count_threshold: int=0,
@@ -199,12 +205,14 @@ def run_all_alignments(
 
     print(f"Running Match to get word match scores for {source.stem} to {target.stem}")
 
-    word_dict_src, word_dict_trg = run_match_words(
+    word_dict_src, word_dict_trg = match.run_match(
             source,
             target,
             outpath,
-            jaccard_similarity_threshold,
-            count_threshold,
+            word_dict_src=word_dict_src,
+            word_dict_trg=word_dict_trg,
+            jaccard_similarity_threshold=jaccard_similarity_threshold,
+            count_threshold=count_threshold,
             refresh_cache=refresh_cache,
                 )
     return (word_dict_src, word_dict_trg)
