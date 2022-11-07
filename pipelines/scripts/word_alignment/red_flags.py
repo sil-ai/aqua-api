@@ -126,7 +126,7 @@ def main(args):
     del word_dict_trg
     print("Identifying red flags...")
     red_flags = identify_red_flags(outpath, ref_df_outpaths, total_col=total_col)
-    red_flags.to_csv(outpath / f'red_flags_{total_col}.csv')
+    red_flags.to_csv(outpath / f'red_flags.csv')
 
 
 if __name__ == "__main__":

@@ -83,11 +83,13 @@ Compares the output from a source to target alignment with output from other ali
 
 `--combine-only` Only combine the results, since the alignment and matching files already exist.
 
+`--exclude-encodings` Compute the scores using only the first four metrics, and not the autoencoder encodings.
+
 
 
 ### Outputs:
 
-A file `red_flags.csv` file containing `vref`, `source` word, `simple_tota` from the best target word, and scores from the best target word from each reference translation. This list is filtered according to each `simple_total < 0.1`, and each reference score `> 0.3`, with the average reference score being at least 10 times greater than `simple_total` from the text in question.
+A file `red_flags.csv` file containing `vref`, `source` word, `total_score` from the best target word, and scores from the best target word from each reference translation. This list is filtered according to each `total_score < 0.1`, and each reference score `> 0.3`, with the average reference score being at least 5 times greater than `total_score` from the text in question.
 
 
 ## align.py
