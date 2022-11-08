@@ -144,10 +144,6 @@ def test_upload_bible(client):
     assert response_abv.status_code == 200
 
 
-def test_delete_version(client):
-
-
-
 def test_list_revisions(client):
     test_version = {
             "version": "TEST"
