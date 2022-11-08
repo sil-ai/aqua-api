@@ -326,7 +326,7 @@ def main(args):
     outpath = args.outpath / f"{args.source.stem}_{args.target.stem}"
     outpath.mkdir(parents=True, exist_ok=True)
     word_dict_src, word_dict_trg = None, None
-    if not args.combine_only or not (outpath / 'summary_scores.csv').exists():
+    if not args.combine_only or not (outpath / 'dictionary.json').exists():
         word_dict_src, word_dict_trg = run_all_alignments(
                                             args.source,
                                             args.target,
