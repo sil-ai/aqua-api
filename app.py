@@ -181,22 +181,15 @@ def create_app():
             published: bool = False, 
             file: UploadFile = File(...)
             ):
-        
-        if version_abbreviation == None:
-            raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="version_abbreviation required"
-                    )
-        
-        elif version_abbreviation != None:
-            abbreviation = '"' + version_abbreviation + '"'
-            fetch_version = queries.fetch_bible_version(abbreviation)
+         
+        abbreviation = '"' + version_abbreviation + '"'
+        fetch_version = queries.fetch_bible_version(abbreviation)
                         
-            with Client(transport=transport, fetch_schema_from_transport=True) as client:
-                query = gql(fetch_version)
-                result = client.execute(query)
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            query = gql(fetch_version)
+            result = client.execute(query)
 
-            version_fixed = result["bibleVersion"][0]["id"]
+        version_fixed = result["bibleVersion"][0]["id"]
 
         revision_date = '"' + str(date.today()) + '"'
         revision = queries.insert_bible_revision(

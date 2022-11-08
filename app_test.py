@@ -51,7 +51,6 @@ def test_read_main(client):
     assert response.json() == {"Hello": "World"}
 
 
-# TODO
 # Test for the List Versions endpoint
 def test_list_versions(client):
     response = client.get("/version")
@@ -85,41 +84,36 @@ def test_add_version(client):
     assert fail_response.status_code == 400
 
 
+#def test_delete_version(client):
+#    test_version = {
+#            "name": "delete", "isoLanguage": "eng",
+#            "isoScript": "Latn", "abbreviation": "DELETE"
+#            }
+#
+#    with Client(transport=transport,
+#            fetch_schema_from_transport=True) as query_client:
+#
+#        mutation = gql(
+#
+#    test_delete_version = {
+#            "version_abbreviation": "DELETE"
+#            }
+#
+#    test_response = client.delete("/version", params=test_delete_version)
+#
+#    assert test_response == 200
+
+
 def test_upload_bible(client):
-    test_none_revision = {
-            "version_id": None,
-            "version_abbreviation": None,
-            "published": False
-            }
-
-    test_id_revision = {
-            "version_id": 3,
-            "version_abbreviation": "TEST",
-            "published": False
-            }
-
     test_abv_revision = {
-            "version_id": None,
             "version_abbreviation": "TEST",
             "published": False}
-
-    test_upload_file = Path("fixtures/uploadtest.txt")
-    file = {"file": test_upload_file.open("rb")}    
-    response_none = client.post("/revision", params=test_none_revision, files=file) 
-
-    test_upload_file = Path("fixtures/uploadtest.txt")
-    file = {"file": test_upload_file.open("rb")}
-    response_id = client.post("/revision", params=test_id_revision, files=file)
-    
+ 
     test_upload_file = Path("fixtures/uploadtest.txt")
     file = {"file": test_upload_file.open("rb")}
     response_abv = client.post("/revision", params=test_abv_revision, files=file)
 
-    revision_id = response_id.json()["Revision ID"]
     revision_abv = response_abv.json()["Revision ID"]
-
-    delete_verse_response_id = queries.delete_verses_mutation(revision_id)
-    delete_revision_response_id = queries.delete_revisions_mutation(revision_id)
 
     delete_verse_response_abv = queries.delete_verses_mutation(revision_abv)
     delete_revision_response_abv = queries.delete_revisions_mutation(revision_abv)
@@ -127,30 +121,29 @@ def test_upload_bible(client):
     with Client(transport=transport,
             fetch_schema_from_transport=True) as mutation_client:
 
-        verse_mutation_id = gql(delete_verse_response_id)
-        revision_mutation_id = gql(delete_revision_response_id)
-
         verse_mutation_abv = gql(delete_verse_response_abv)
         revision_mutation_abv = gql(delete_revision_response_abv)
-
-        verse_revised_id = mutation_client.execute(verse_mutation_id)
-        revision_revised_id = mutation_client.execute(revision_mutation_abv)
 
         verse_revised_abv = mutation_client.execute(verse_mutation_abv)
         revision_revised_abv = mutation_client.execute(revision_mutation_abv)
 
-    assert response_none.status_code == 400
-    assert response_id.status_code == 200
     assert response_abv.status_code == 200
 
 
 def test_list_revisions(client):
-    test_version = {
-            "version": "TEST"
+    fail_version = {
+            "version_abbreviation": "FAIL"
             }
 
-    response = client.get("/revision", params=test_version)
-    assert response.status_code == 200
+    test_version = {
+            "version_abbreviation": "TEST"
+            }
+
+    fail_response = client.get("/revision", params=fail_version)
+    test_response = client.get("/revision", params=test_version)
+
+    assert fail_response.status_code == 400
+    assert test_response.status_code == 200
 
 
 def test_get_chapter(client):
