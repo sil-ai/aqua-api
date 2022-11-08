@@ -10,6 +10,7 @@ vref_filename = "../fixtures/vref.txt"
 my_col = ["book", "chapter", "verse"]
 vref = pd.read_csv(vref_filename, sep=" |:", names=my_col, engine="python")
 
+
 with open("../fixtures/bible_books.json", "r") as f:
     books_json = json.load(f)
 
@@ -152,7 +153,8 @@ def load_verses(verse_df, upsert_method, db_engine, chapter_sql):
 def main():
 
     # initialize SQL engine
-    db_engine = db.create_engine(os.getenv("NEW_DB"))
+    new_db_conn = os.getenv("NEW_DB") + "/" + os.getenv("NEW_DB_NAME")
+    db_engine = db.create_engine(new_db_conn)
     meta = db.MetaData(db_engine)
     upsert_method = create_upsert_method(meta, None)
 

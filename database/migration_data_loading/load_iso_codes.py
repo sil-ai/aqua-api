@@ -112,7 +112,8 @@ def load_iso_scripts(scripts, upsert_method, db_engine):
 def main():
 
     # initialize SQL engine
-    db_engine = db.create_engine(os.getenv("NEW_DB"))
+    new_db_conn = os.getenv("NEW_DB") + "/" + os.getenv("NEW_DB_NAME")
+    db_engine = db.create_engine(new_db_conn)
     meta = db.MetaData(db_engine)
     upsert_method = create_upsert_method(meta, None)
 

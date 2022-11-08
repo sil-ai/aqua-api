@@ -2,9 +2,17 @@ import json
 import requests
 import os
 
+import sqlalchemy as db
+import psycopg2
+from psycopg2 import sql
+from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
+
 
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
 new_headers = {"x-hasura-admin-secret": os.getenv("NEW_HASURA_SECRET")}
+new_db_name = os.getenv("NEW_DB_NAME")
+db_conn = os.getenv("NEW_DB")
+new_db_conn = os.getenv("NEW_DB") + "/" + new_db_name
 
 migrate_url = os.getenv("GRAPHQL_URL")
 if migrate_url[-3::] == "app":
@@ -38,22 +46,23 @@ payload = {
 
 sql_response = requests.post(sql_fetch_url, json=payload, headers=headers)
 
+con = psycopg2.connect(db_conn)
 
-sql_query = {
-    "type": "run_sql", 
-    "args": {
-        "source": "default", 
-        "sql": sql_response.text
-        }
-    }
+con.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT) # <-- ADD THIS LINE
+
+cur = con.cursor()
+
+cur.execute(sql.SQL("CREATE DATABASE {}").format(
+        sql.Identifier(new_db_name))
+        )
 
 db_con = {
     "type": "pg_add_source",
     "args": {
-        "name": "default",
+        "name": new_db_name,
         "configuration": {
-        "connection_info": {
-            "database_url": os.getenv("NEW_DB"),
+          "connection_info": {
+            "database_url": new_db_conn,
                 "pool_settings": {
                     "retries": 1,
                     "idle_timeout": 180,
@@ -63,6 +72,16 @@ db_con = {
             }
           }
         }
+
+
+sql_query = {
+    "type": "run_sql", 
+    "args": {
+        "source": new_db_name, 
+        "sql": sql_response.text
+        }
+    }
+
 
 db_con_response = requests.post(db_con_url, json=db_con, headers=new_headers)
 sql_response = requests.post(sql_url, json=sql_query, headers=new_headers)

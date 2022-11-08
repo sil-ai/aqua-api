@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export NEW_HASURA_URL=$1 NEW_HASURA_SECRET=$2 NEW_DB=$3
+export NEW_HASURA_URL=$1 NEW_HASURA_SECRET=$2 NEW_DB=$3 NEW_DB_NAME=$4
 
 python3 graphql_setup.py
 
