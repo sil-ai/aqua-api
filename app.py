@@ -145,8 +145,8 @@ def create_app():
 
 
     @app.delete("/version", dependencies=[Depends(api_key_auth)])
-    async def delete_version(version: str):
-        bibleVersion = '"' + version + '"'
+    async def delete_version(version_abbreviation: str):
+        bibleVersion = '"' + version_abbreviation + '"'
         fetch_revisions = queries.list_revisions_query(bibleVersion)
         delete_version = queries.delete_bible_version(bibleVersion)
         
@@ -177,20 +177,16 @@ def create_app():
 
     @app.post("/revision", dependencies=[Depends(api_key_auth)])
     async def upload_bible(
-            version_id: Union[int, None] = None, 
-            version_abbreviation: Union[str, None] = None, 
+            version_abbreviation: str, 
             published: bool = False, 
             file: UploadFile = File(...)
             ):
         
-        if version_id == None and version_abbreviation == None:
+        if version_abbreviation == None:
             raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="version_id or version_abbreviation required"
+                    detail="version_abbreviation required"
                     )
-
-        elif version_id != None:
-            version_fixed = version_id
         
         elif version_abbreviation != None:
             abbreviation = '"' + version_abbreviation + '"'
@@ -249,23 +245,39 @@ def create_app():
 
     
     @app.get("/revision", dependencies=[Depends(api_key_auth)])
-    async def list_revisions(version: str):
-        bibleVersion = '"' + version + '"'
+    async def list_revisions(version_abbreviation: str):
+        bibleVersion = '"' + version_abbreviation + '"'
+        
         list_revision = queries.list_revisions_query(bibleVersion)
+        list_versions = queries.list_versions_query()
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
-            query = gql(list_revision)
-            result = client.execute(query)
+            version_query = gql(list_versions)
+            version_result = client.execute(version_query)
 
-            revisions_data = []
-            for revision in result["bibleRevision"]: 
-                revision_data = {
-                        "id": revision["id"],
-                        "date": revision["date"],
-                        "versionName": revision["bibleVersionByBibleversion"]["name"]
-                        }
+            version_list = []
+            for version in version_result["bibleVersion"]:
+                version_list.append(version["abbreviation"])
 
-                revisions_data.append(revision_data)
+            if version_abbreviation in version_list:
+                revision_query = gql(list_revision)
+                revision_result = client.execute(revision_query)
+
+                revisions_data = []
+                for revision in revision_result["bibleRevision"]: 
+                    revision_data = {
+                            "id": revision["id"],
+                            "date": revision["date"],
+                            "versionName": revision["bibleVersionByBibleversion"]["name"]
+                            }
+
+                    revisions_data.append(revision_data)
+
+            else:
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="version_abbreviation invalid"
+                        )
 
         return revisions_data 
 
