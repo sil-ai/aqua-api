@@ -1,14 +1,13 @@
 all: build-local
 
 IMAGENAME=aqua-api
-API_REGISTRY=registry.digitalocean.com/aqua-tools
 GH_BRANCH=$(shell basename ${GITHUB_REF})
 
 build-local:
-	docker build -t ${API_REGISTRY}/${IMAGENAME}:latest .
+	docker build -t ${REGISTRY}/${IMAGENAME}:latest .
 
 build-actions:
-	docker build --force-rm=true -t ${API_REGISTRY}/${IMAGENAME}:latest .
+	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
 test:
 	docker run -e AWS_ACCESS_KEY=${AWS_ACCESS_KEY} \
@@ -20,16 +19,16 @@ test:
 	-e FAIL_KEY=${FAIL_KEY} \
 	-e KEY_VAULT=${KEY_VAULT} \
 	-p 8000:8000 \
-	${API_REGISTRY}/${IMAGENAME}:latest pytest
+	${REGISTRY}/${IMAGENAME}:latest pytest
 
 push-branch:
-	docker push ${API_REGISTRY}/${IMAGENAME}:latest
-	docker tag ${API_REGISTRY}/${IMAGENAME}:latest ${API_REGISTRY}/${IMAGENAME}:${GITHUB_SHA}
-	docker push ${API_REGISTRY}/${IMAGENAME}:${GITHUB_SHA}
+	docker push ${REGISTRY}/${IMAGENAME}:latest
+	docker tag ${REGISTRY}/${IMAGENAME}:latest ${REGISTRY}/${IMAGENAME}:${GITHUB_SHA}
+	docker push ${REGISTRY}/${IMAGENAME}:${GITHUB_SHA}
 
 push-release:
-	docker tag ${API_REGISTRY}/${IMAGENAME}:latest ${API_REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
-	docker push ${API_REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
+	docker tag ${REGISTRY}/${IMAGENAME}:latest ${REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
+	docker push ${REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
 
 build-pipelines:
 	cd pipelines && ./build.sh

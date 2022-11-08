@@ -16,6 +16,8 @@ jobs:
       
     - name: Build API
       run: make build-actions
+      env:
+        REGISTRY: ${{ secrets.AWS_REGISTRY }}
       
     - name: Test API
       run: make test
@@ -28,6 +30,7 @@ jobs:
         TEST_KEY: ${{ secrets.TEST_KEY }}
         FAIL_KEY: ${{ secrets.FAIL_KEY }}
         KEY_VAULT: ${{ secrets.KEY_VAULT }}
+        REGISTRY: ${{ secrets.AWS_REGISTRY }}
 
     - name: Build Pipelines
       run: make build-pipelines
