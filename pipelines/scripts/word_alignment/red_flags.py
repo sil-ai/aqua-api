@@ -5,7 +5,6 @@ from tqdm import tqdm
 import math
 tqdm.pandas()
 from typing import Dict
-from memory_profiler import profile
 
 import combined, get_data
 
@@ -24,7 +23,7 @@ def read_dfs(ref_df_outpaths:dict, total_col: str='simple_total') -> Dict[str, p
     ref_dfs = {}
     print('Loading reference translation data...')
     for language in tqdm(ref_df_outpaths):
-        ref_dfs[language] = pd.read_csv(ref_df_outpaths[language] / 'all_in_context_with_scores.csv')
+        ref_dfs[language] = pd.read_csv(ref_df_outpaths[language] / 'summary_scores.csv')
         ref_dfs[language] = ref_dfs[language].groupby(['vref', 'source', 'target']).agg({k: v for k, v in {'total_score': 'max', 'simple_total': 'max'}.items() if k in ref_dfs[language]}).reset_index()
         ref_dfs[language] = ref_dfs[language].loc[ref_dfs[language].groupby(['vref', 'source'])[total_col].idxmax(), :]
     return ref_dfs
@@ -44,7 +43,7 @@ def identify_red_flags(outpath: Path, ref_df_outpaths:dict, total_col: str='simp
     red_flags       A dataframe with low scores for source-target alignments, when those same source words score highly in that
                     context in the reference languages.
     """
-    df = pd.read_csv(outpath / 'all_in_context_with_scores.csv')
+    df = pd.read_csv(outpath / 'summary_scores.csv')
     df.loc[:, 'order'] = df.index
     df['order'] = -1 * df.groupby(['vref', 'source'])['order'].transform('min')
     df.loc[:, total_col] = df[total_col].apply(lambda x: max(x, 0))
@@ -79,7 +78,7 @@ def main(args):
     total_col = 'simple_total' if args.exclude_encodings else 'total_score'
     for reference_target in args.reference:
         outpath = base_outpath / f'{source.stem}_{reference_target.stem}'
-        if args.refresh or not (outpath / 'all_in_context_with_scores.csv').exists():
+        if args.refresh or not (outpath / 'summary_scores.csv').exists():
             outpath.mkdir(parents=True, exist_ok=True)
             if not args.combine_only or not (outpath / 'dictionary.json').exists():
                 word_dict_src, word_dict_trg = combined.run_all_alignments(
@@ -98,11 +97,11 @@ def main(args):
                 # word_dict_trg = get_data.create_words(reference_target, base_outpath / 'cache', outpath)
 
             combined.run_combine_results(outpath)
-            combined.add_scores_to_alignments(source, reference_target, outpath, word_dict_src=word_dict_src, word_dict_trg=word_dict_trg, is_bible=True)
+            combined.combine_by_verse_scores(source, reference_target, outpath, word_dict_src=word_dict_src, word_dict_trg=word_dict_trg, is_bible=True)
             word_dict_trg = None
         ref_df_outpaths[reference_target.stem] = outpath
     outpath = base_outpath / f'{source.stem}_{target.stem}'
-    if args.refresh or not (outpath / 'all_in_context_with_scores.csv').exists():
+    if args.refresh or not (outpath / 'summary_scores.csv').exists():
         outpath.mkdir(parents=True, exist_ok=True)
         if not args.combine_only or not (outpath / 'dictionary.json').exists():
             word_dict_src, word_dict_trg = combined.run_all_alignments(
@@ -121,7 +120,7 @@ def main(args):
         #     word_dict_trg = get_data.create_words(target, base_outpath / 'cache', outpath)
 
         combined.run_combine_results(outpath)
-        combined.add_scores_to_alignments(source, target, outpath, word_dict_src=word_dict_src, word_dict_trg=word_dict_trg, is_bible=True)
+        combined.combine_by_verse_scores(source, target, outpath, word_dict_src=word_dict_src, word_dict_trg=word_dict_trg, is_bible=True)
     del word_dict_src
     del word_dict_trg
     print("Identifying red flags...")

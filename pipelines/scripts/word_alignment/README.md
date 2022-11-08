@@ -14,40 +14,40 @@ vrefs are from [here](https://github.com/sil-ai/aqua-api/tree/master/fixtures)
 ### Output
 All output is placed in a directory named `<source>_<target>` containing various files. The main outputs are:
 
-#### Word by word lexical scores:
-These scores can be found in `combined.csv`, and list every source-target word pair in the corpus, with the following metrics:
-* `co-occurrence_count`: The number of lines in which the pair appear together.
-* `translation_score`: The "translation score" for the pair, from Fast Align. This score is a function of the two words, and does not depend on any particular context.
+#### Word by word all alignment scores:
+These scores can be found in `summary_scores.csv`, and list every source-target word pair in each verse, with the following metrics:
 * `verse_score`: The average of the Fast Align "average translation score" for the lines in which the pair co-occur.
 * `alignment_score`: The average Fast Align "alignment score" for the pair, when Fast Align aligns them together.
+* `co-occurrence_count`: The number of lines in which the pair appear together.
+* `translation_score`: The "translation score" for the pair, from Fast Align. This score is a function of the two words, and does not depend on any particular context.
 * `avg_aligned`: The number of times Fast Align aligns them together as a proportion of the number of lines they co-occur in. (This is normally <=1, but occasionally can be > 1 if they occur, and are aligned, multiple times in a single line.)
-* `normalized_source`: The "normalized" source word, with punctuation, diacritics, etc removed.
-* `normalized_target`: The "normalized" target word, with punctuation, diacritics, etc removed.
 * `jac_sim`: The Jaccard Similarity of the lines where the source appears and the lines where the target appears.
 * `match_counts`: The number of lines in which both the source and target word appear.
 * `encoding_dist`: The euclidean distance between the embeddings of the two words in the Autoencoder.
 * `simple_total`: The mean of `translation_score`, `alignment_score`, `avg_aligned` and `jac_sim`.
 * `total_score`: The mean `translation_score`, `alignment_score`, `avg_aligned`, `jac_sim` and `encoding_dist`, which has been modified by x: log1p(1 - x) to apprximately map to [0, 1].
 
-#### Word by word alignment scores:
-These scores can be found in `best_in_context.csv`, which goes line by line, listing the Fat Align alignment pairs. Note that `hebrew_key_terms.csv` and `greek_key_terms.csv` contain the same information, filtered by "major key terms", as defined in the [SILNLP repository](https://github.com/sillsdev/silnlp/tree/master/silnlp/assets). These files contain:
-* `FA_verse_score`: The Fast Align "average translation score" for that verse. This is the mean of `translation_score` for the aligned pairs in that verse.
-* `FA_alignment_score`: The Fast Align "alignment score" for that pair in that verse.
-* `co-occurrence_count`: The number of lines in which the pair appear together.
+#### Word by word alignment best scores:
+These scores can be found in `word_scores.csv`, which goes word by word through each verse, giving the best target match along with its scores. These files contain:
+* `alignment_score`: The Fast Align "alignment score" for that pair in that verse.
 * `translation_score`: The "translation score" for the pair, from Fast Align. This score is a function of the two words, and does not depend on any particular context.
-* `avg_FA_alignment_score`: The average Fast Align alignment score for this word pair throughout the corpus, when Fast Align aligns them together.
 * `avg_aligned`: The number of times Fast Align aligns them together as a proportion of the number of lines they co-occur in. (This is normally <=1, but occasionally can be > 1 if they occur, and are aligned, multiple times in a single line.)
 * `jac_sim`: The Jaccard Similarity of the lines where the source appears and the lines where the target appears.
 * `match_counts`: The number of lines in which both the source and target word appear.
+* `encoding_dist`: The euclidean distance between the embeddings of the two words in the Autoencoder.
+* `simple_total`: The mean of `translation_score`, `alignment_score`, `avg_aligned` and `jac_sim`.
 * `total_score`: Experimental combining of the other metrics, which will almost certainly evolve. This could be the output of a model that takes the other features as inputs and predicts how good the alignment pair is.
 
-#### Verse by verse alignment
-These scores can be found in `verse_scores.csv`, which goes verse by verse, listing:
-* `FA_verse_score`: The average of the Fast Align "average translation score" for the lines in which the pair co-occur.
-* `avg_aligned`: The number of times Fast Align aligns a pair together as a proportion of the number of lines they co-occur in, averaged over all aligned pairs in the line.
-* `avg_FA_alignment_score`: The average Fast Align alignment score for the pairs in the line.
-* `jac_sim`: The average Jaccard Similarity of the lines where the source appears and the lines where the target appears, averaged across the aligned pairs in the line.
-* `total_score`: The average of the experimental `total_score` metric for each aligned word pair in the line.
+#### Verse by verse alignment average scores
+These scores can be found in `verse_scores.csv`, which goes verse by verse, listing the verse average of:
+* `alignment_score`
+* `translation_score`
+* `avg_aligned`
+* `jac_sim`
+* `match_counts`
+* `encoding_dist`
+* `simple_total`
+* `total_score`
 
 ### Arguments:
 
@@ -100,11 +100,9 @@ An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/m
 
 ### Output
 
-A directory containing two files:
+A directory containing:
 
-`all_in_context.csv`  All possible alignment pairs in the order they appear in `--source` and `target`.
-
-`all_sorted.csv`  All possible alignment pairs sorted alphabetically with their translation scores.
+`translation_scores.csv`  All possible alignment pairs sorted alphabetically with their translation scores.
 
 ### Arguments:
 
@@ -126,9 +124,9 @@ An implementation of [SIL Machine](https://github.com/sillsdev/machine.py/tree/m
 
 A directory containing two directories (one for each alignment direction), each containing three files:
 
-`best_in_context.csv`  Best alignment pairs in the order they appear in `--source` and `target`, with their alignment score in that particular context.
+`alignment_scores_by_verse.csv`  Best alignment pairs in the order they appear in `--source` and `target`, with their alignment score in that particular context.
 
-`best_sorted.csv`  Best alignment pairs sorted alphabetically. Pairs are grouped, and alignment scores and verse scores are averaged.
+`avg_alignment_scores.csv`  Best alignment pairs sorted alphabetically. Pairs are grouped, and alignment scores and verse scores are averaged.
 
 `best_vref_scores.csv` Average alignment scores for each line (or verse, if `--is-bible`)
 

@@ -136,9 +136,9 @@ def run_align(
     if not outpath.exists():
         outpath.mkdir()
 
-    no_dups.to_csv(outpath / "all_sorted.csv")
+    no_dups.to_csv(outpath / "translation_scores.csv")
 
-    df.to_csv(outpath / "all_in_context.csv")
+    # df.to_csv(outpath / "all_in_context.csv")
 
     return (parallel_corpus, symmetrized_model)
 

@@ -156,9 +156,9 @@ def run_best_align(
     if not outpath.exists():
         outpath.mkdir(parents=True)
 
-    no_dups.to_csv(outpath / "best_sorted.csv")
+    no_dups.to_csv(outpath / "avg_alignment_scores.csv")
 
-    df.to_csv(outpath / "best_in_context.csv")
+    df.to_csv(outpath / "alignment_scores_by_verse.csv")
 
     # delete temp files
     condensed_source.unlink()

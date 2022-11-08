@@ -119,23 +119,23 @@ def get_scores_from_match_dict(
     return jac_sim, match_count
 
 
-def combine_df(align_path: Path, best_path: Path, match_path: Path) -> pd.DataFrame:
+def combine_word_scores(translation_path: Path, avg_alignment_path: Path, match_path: Path) -> pd.DataFrame:
     """
     Reads the outputs saved to file from match.run_match(), align.run_align() and best_align.run_best_align() and saves to a single df
     Inputs:
-    align_path             Path to the all_sorted.csv alignment file
-    best_path              Path to the best_sorted.csv best alignments file
+    align_path             Path to the translation_scores.csv alignment file
+    best_path              Path to the avg_alignment_scores.csv best alignments file
     match_path             Path to the dictionary.json match dictionary file
 
     Output:
     df                  A dataframe containing pairs of source and target words, with metrics from the three algorithms
     """
     # open results
-    print(f"Combining results from the three algorithms from {align_path}, {best_path} and {match_path}")
+    print(f"Combining results from the three algorithms from {translation_path}, {avg_alignment_path} and {match_path}")
     
 
-    all_results = pd.read_csv(align_path)
-    best_results = pd.read_csv(best_path)
+    all_results = pd.read_csv(translation_path)
+    best_results = pd.read_csv(avg_alignment_path)
     all_results = all_results.merge(best_results, how='left', on=['source', 'target'])
     # print(all_results)
     all_results.loc[:, ['avg_aligned']] = all_results.apply(
@@ -221,20 +221,21 @@ def run_all_alignments(
 def run_combine_results(outpath: Path) -> None:
     """
     Runs combined.combine_df to combine the three output files in the outpath directory. They are saved
-    to combined.csv in the same outpath directory.
+    to align_and_match_word_scores.csv in the same outpath directory.
     Inputs:
     outpath         The directory where all three files are located.
     """
-    align_path = outpath / "all_sorted.csv"
-    best_path = outpath / "best_sorted.csv"
+    translation_path = outpath / "translation_scores.csv"
+    avg_alignment_path = outpath / "avg_alignment_scores.csv"
     match_path = outpath / "dictionary.json"
-    df = combine_df(align_path, best_path, match_path)
+    print("Combining word-pair scores across the corpus")
+    df = combine_word_scores(translation_path, avg_alignment_path, match_path)
 
     # save results
-    df.to_csv(outpath / "combined.csv")
+    df.to_csv(outpath / "align_and_match_word_scores.csv")
 
 
-def add_scores_to_alignments(
+def combine_by_verse_scores(
                             source: Path, 
                             target: Path,
                             outpath: Path, 
@@ -258,31 +259,51 @@ def add_scores_to_alignments(
     model_path      Path to the Autoencoder used to compute the encoding for each word
     is_bible        Whether the text is Bible
     """
+    print("Combining scores for each word-pair in each verse")
+
     if model_path is None:
         model_path = Path('data/models/autoencoder_50')
-    df = pd.read_csv(outpath / 'best_in_context.csv')
-    df['vref'] = df['vref'].astype('str')
-    combined_df = pd.read_csv(outpath / 'combined.csv')
-    all_vrefs = get_data.get_ref_df(source, target, is_bible) 
-    all_vrefs = pd.DataFrame(all_vrefs, columns = ['vref'], dtype='str')
-    df = pd.merge(df.drop(columns=[
+    ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
+    ref_df = get_data.remove_blanks_and_ranges(ref_df)
+    ref_df = get_data.get_words_from_txt_file(ref_df, outpath)
+    ref_df = ref_df.explode('src_words').explode('trg_words')
+    ref_df = ref_df.drop(['src', 'trg'], axis=1).rename(columns={'src_words': 'source', 'trg_words': 'target'})
+    by_verse_scores = pd.read_csv(outpath / 'alignment_scores_by_verse.csv')
+    by_verse_scores = pd.merge(ref_df, by_verse_scores, on=['vref', 'source', 'target'], how='left')
+
+    word_scores = pd.read_csv(outpath / 'align_and_match_word_scores.csv')
+
+    # df['vref'] = df['vref'].astype('str')
+    by_verse_scores = pd.merge(by_verse_scores.drop(columns=[
                 'alignment_count', 
                 'Unnamed: 0', 
-                'alignment_score',
+#                 'alignment_score',
                 ]), 
-                combined_df.drop(columns=[
+                word_scores.drop(columns=[
                     'Unnamed: 0', 
                     'verse_score', 
                     'alignment_count', 
+                    'alignment_score',
                     ])
                     , on=['source', 'target'], how='left')
-    df = pd.merge(all_vrefs, df, on='vref', how = 'left')    
-    df.loc[:, 'simple_total'] = df.apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
-    df.to_csv(outpath / 'best_in_context_with_scores.csv')
-    verse_scores = df.loc[:, ['vref', 'verse_score', 'avg_aligned', 'alignment_score', 'jac_sim', 'simple_total']].groupby('vref', sort=False).mean()
-    verse_scores = remove_leading_and_trailing_blanks(verse_scores, 'verse_score')
-    verse_scores = verse_scores.fillna(0)
-    verse_scores.to_csv(outpath / 'verse_scores.csv')
+    by_verse_scores['alignment_score'].fillna(0, inplace=True)
+    # all_vrefs = get_data.get_ref_df(source, target, is_bible) 
+    # all_vrefs = pd.DataFrame(all_vrefs, columns = ['vref'], dtype='str')
+    # df = pd.merge(df.drop(columns=[
+    #             'alignment_count', 
+    #             'Unnamed: 0', 
+    #             'alignment_score',
+    #             ]), 
+    #             combined_df.drop(columns=[
+    #                 'Unnamed: 0', 
+    #                 'verse_score', 
+    #                 'alignment_count', 
+    #                 ])
+    #                 , on=['source', 'target'], how='left')
+    # df = pd.merge(all_vrefs, df, on='vref', how = 'left')    
+    # df.loc[:, 'simple_total'] = df.apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
+    # df.to_csv(outpath / 'best_in_context_with_scores.csv')
+    
     if word_dict_src == None:
         word_dict_src = get_data.create_words(source, outpath.parent / 'cache', outpath, is_bible=is_bible)
     if word_dict_trg == None:
@@ -290,23 +311,30 @@ def add_scores_to_alignments(
     assert isinstance(word_dict_src, dict)
     assert isinstance(word_dict_trg, dict)
 
-
-    df = pd.read_csv(outpath / 'all_in_context.csv')
-    df = pd.merge(df.drop(columns=['Unnamed: 0', 'translation_score']), combined_df.drop(columns=['Unnamed: 0']), on=['source', 'target'], how='left')
-    df['alignment_score'].fillna(0, inplace=True)
+    # df = pd.read_csv(outpath / 'translation_scores.csv')
+    # df = pd.merge(df.drop(columns=['Unnamed: 0', 'translation_score']), combined_df.drop(columns=['Unnamed: 0']), on=['source', 'target'], how='left')
+    # df['alignment_score'].fillna(0, inplace=True)
     model = autoencoder.Autoencoder(in_size=41899, out_size=50)
     model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
-    df = autoencoder.add_distances_to_df(word_dict_src, word_dict_trg, target.stem, outpath, model, df=df)
+    by_verse_scores = autoencoder.add_distances_to_df(word_dict_src, word_dict_trg, target.stem, outpath, model, df=by_verse_scores)
     # df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + math.log1p(row['alignment_count']) * row['alignment_score'] + math.log1p(row['match_counts']) * row['jac_sim'] + row['encoding_score']) / 5, axis=1)
     # model_xgb = XGBClassifier()
     # model_xgb.load_model("data/models/xgb_model_4.txt")
     # X = df[['translation_score', 'alignment_count', 'alignment_score', 'avg_aligned', 'jac_sim', 'match_counts', 'encoding_dist']]
     # df.loc[:, 'total_score'] = model_xgb.predict_proba(X)[:, 1]
     print("Calculating simple total of the first four metrics...")
-    df.loc[:, 'simple_total'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
+    by_verse_scores.loc[:, 'simple_total'] = by_verse_scores.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
     print("Calculating total score of all five metrics (including encoding distance)...")
-    df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim'] + math.log1p(max(1 - row['encoding_dist'], -0.99))) / 5, axis=1)
-    df.to_csv(outpath / 'all_in_context_with_scores.csv')
+    by_verse_scores.loc[:, 'total_score'] = by_verse_scores.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim'] + math.log1p(max(1 - row['encoding_dist'], -0.99))) / 5, axis=1)
+    by_verse_scores.to_csv(outpath / 'summary_scores.csv')
+    word_scores = by_verse_scores.loc[:, ['vref', 'source', 'target', 'alignment_score',  'translation_score', 'avg_aligned', 'jac_sim', 'match_counts', 'encoding_dist', 'simple_total', 'total_score']]
+    word_scores = remove_leading_and_trailing_blanks(word_scores, 'total_score')
+    word_scores = word_scores.groupby(['vref', 'source'], sort=False).progress_apply(lambda x: x.nlargest(1, 'total_score')).reset_index(drop=True)
+    word_scores.to_csv(outpath / 'word_scores.csv')
+    
+    verse_scores = word_scores.groupby('vref', sort=False).mean()
+    verse_scores = verse_scores.fillna(0)
+    verse_scores.to_csv(outpath / 'verse_scores.csv')
 
 
 def remove_leading_and_trailing_blanks(df:pd.DataFrame, col: str) -> pd.DataFrame:
@@ -318,7 +346,6 @@ def remove_leading_and_trailing_blanks(df:pd.DataFrame, col: str) -> pd.DataFram
 
 
 def main(args):
-    term_size = os.get_terminal_size()
     outpath = args.outpath / f"{args.source.stem}_{args.target.stem}"
     outpath.mkdir(parents=True, exist_ok=True)
     word_dict_src, word_dict_trg = None, None
@@ -336,7 +363,7 @@ def main(args):
     run_combine_results(outpath)
     # for word in {**word_dict_src, **word_dict_trg}.values():
         # word.get
-    add_scores_to_alignments(
+    combine_by_verse_scores(
                             args.source, 
                             args.target, 
                             outpath, 

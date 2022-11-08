@@ -190,7 +190,7 @@ def add_distances_to_df(
     # word_dict = create_words(language_paths, index_cache_paths, outpath, refresh_cache=refresh_cache)
     # for language in language_paths:
     if df is None:
-        df = pd.read_csv(outpath / 'all_in_context_with_scores.csv')
+        df = pd.read_csv(outpath / 'summary_scores.csv')
     word_dict = {'source': word_dict_src, 'target': word_dict_trg}
     for lang, word_dict_lang in word_dict.items():
         print(f"Getting {lang} encodings")
@@ -201,7 +201,7 @@ def add_distances_to_df(
     print("Adding encoding distances to the data")
     
     df.loc[:, 'encoding_dist'] = df.progress_apply(lambda row: word_dict_src[row['source']].get_norm_distance(word_dict_trg[row['target']], target_lang), axis=1)
-    df.to_csv(outpath / 'all_in_context_with_scores.csv')
+    # df.to_csv(outpath / 'summary_scores.csv')
     return df
 
 

@@ -67,7 +67,7 @@ def test_get_best_alignment_scores(source, target):
     assert len(df['alignment_score'].unique()) > 20
     assert len(df['verse_score'].unique()) > 1
 
-    df.to_csv(outpath / 'df_best_alignment_scores.csv')
+    df.to_csv(outpath / 'df_best_avg_alignment_scores.csv')
 
     condensed_source.unlink()
     condensed_target.unlink()
@@ -78,7 +78,7 @@ def test_get_best_alignment_scores(source, target):
                                                     Path("fixtures/out/de-LU1912-mini_en-KJV-mini"), 
                                                     ])
 def test_remove_duplicates(outpath):
-    df = pd.read_csv(outpath / 'df_best_alignment_scores.csv')
+    df = pd.read_csv(outpath / 'df_best_avg_alignment_scores.csv')
     df = align_best.remove_duplicates(df)
     assert isinstance(df, pd.DataFrame)
     assert len(df) > 0
@@ -89,7 +89,7 @@ def test_remove_duplicates(outpath):
     assert max(df['alignment_score']) <= 1
     assert min(df['alignment_score']) >= 0
     assert len(df['alignment_score'].unique()) >= 20
-    (outpath / 'df_best_alignment_scores.csv').unlink()
+    (outpath / 'df_best_avg_alignment_scores.csv').unlink()
     # df.to_csv(outpath / f'df_best_remove_duplicates.csv')
 
 
@@ -103,8 +103,8 @@ def test_run_best_align(source, target, is_bible, delete_files=True):
     align_best.run_best_align(source, target, outpath, is_bible=is_bible)
 
     # check forward files exist
-    best_in_context = Path(outpath, "best_in_context.csv")
-    best_sorted = Path(outpath, "best_sorted.csv")
+    best_in_context = Path(outpath, "alignment_scores_by_verse.csv")
+    best_sorted = Path(outpath, "avg_alignment_scores.csv")
     assert best_in_context.exists()
     assert best_sorted.exists()
 

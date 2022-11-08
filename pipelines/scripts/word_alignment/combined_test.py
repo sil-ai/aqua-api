@@ -19,16 +19,14 @@ def test_run_fa(source, target, is_bible, remove_files=True):
         outpath,
         is_bible=is_bible,
     )
-    assert os.path.exists(outpath / "all_sorted.csv")
-    assert os.path.exists(outpath / "all_in_context.csv")
-    assert os.path.exists(outpath / "best_sorted.csv")
-    assert os.path.exists(outpath / "best_in_context.csv")
+    assert os.path.exists(outpath / "translation_scores.csv")
+    assert os.path.exists(outpath / "avg_alignment_scores.csv")
+    assert os.path.exists(outpath / "alignment_scores_by_verse.csv")
     
     if remove_files:
-        os.remove(outpath / "all_sorted.csv")
-        os.remove(outpath / "all_in_context.csv")
-        os.remove(outpath / "best_sorted.csv")
-        os.remove(outpath / "best_in_context.csv")
+        os.remove(outpath / "translation_scores.csv")
+        os.remove(outpath / "avg_alignment_scores.csv")
+        os.remove(outpath / "alignment_scores_by_verse.csv")
 
 
 @pytest.mark.parametrize("source,target,is_bible", [
@@ -68,8 +66,8 @@ def test_run_combine_results(source, target, source_word, target_word, is_bible)
     combined.run_fa(source, target, outpath, is_bible=is_bible)
     combined.run_match_words(source, target, outpath, is_bible=is_bible)
     combined.run_combine_results(outpath)
-    combined.add_scores_to_alignments(source, target, outpath, is_bible=is_bible)
-    df = pd.read_csv(outpath / "combined.csv")
+    combined.combine_by_verse_scores(source, target, outpath, is_bible=is_bible)
+    df = pd.read_csv(outpath / "align_and_match_word_scores.csv")
     assert len(df) > 10
     assert len(df['translation_score'].unique()) > 10
     assert len(df['alignment_count'].unique()) > 5
@@ -81,10 +79,9 @@ def test_run_combine_results(source, target, source_word, target_word, is_bible)
     assert df[(df['source'] == source_word) & (df['target'] == target_word)]['translation_score'].values[0] > 0.1
     assert df[(df['source'] == source_word) & (df['target'] == target_word)]['alignment_score'].values[0] > 0.1
     assert df[(df['source'] == source_word) & (df['target'] == target_word)]['jac_sim'].values[0] > 0.1
-    (outpath / 'all_in_context.csv').unlink()
-    (outpath / 'all_sorted.csv').unlink()
-    (outpath / 'best_in_context.csv').unlink()
-    (outpath / 'best_sorted.csv').unlink()
+    (outpath / 'translation_scores.csv').unlink()
+    (outpath / 'alignment_scores_by_verse.csv').unlink()
+    (outpath / 'avg_alignment_scores.csv').unlink()
     (outpath / 'verse_scores.csv').unlink()
-    (outpath / 'combined.csv').unlink()
+    (outpath / 'align_and_match_word_scores.csv').unlink()
     (outpath / 'dictionary.json').unlink()

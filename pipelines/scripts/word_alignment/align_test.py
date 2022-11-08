@@ -155,12 +155,9 @@ def test_run_align(source, target, is_bible, remove_files=True):
     align.run_align(source, target, outpath, is_bible=is_bible)
 
     # check the files exist
-    in_context = Path(outpath, "all_in_context.csv")
-    sorted_f = Path(outpath, "all_sorted.csv")
-    assert in_context.exists()
+    sorted_f = Path(outpath, "translation_scores.csv")
     assert sorted_f.exists()
     
     if remove_files:
         # delete the files
-        in_context.unlink()
         sorted_f.unlink()
