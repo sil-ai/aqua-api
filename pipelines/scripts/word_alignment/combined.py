@@ -259,10 +259,8 @@ def combine_by_verse_scores(
     model_path      Path to the Autoencoder used to compute the encoding for each word
     is_bible        Whether the text is Bible
     """
-    print("Combining scores for each word-pair in each verse")
 
-    if model_path is None:
-        model_path = Path('data/models/autoencoder_50')
+    print("Combining scores for each word-pair in each verse")
     ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
     ref_df = get_data.remove_blanks_and_ranges(ref_df)
     ref_df = get_data.get_words_from_txt_file(ref_df, outpath)
@@ -273,7 +271,6 @@ def combine_by_verse_scores(
 
     word_scores = pd.read_csv(outpath / 'align_and_match_word_scores.csv')
 
-    # df['vref'] = df['vref'].astype('str')
     by_verse_scores = pd.merge(by_verse_scores.drop(columns=[
                 'alignment_count', 
                 'Unnamed: 0', 
@@ -287,33 +284,13 @@ def combine_by_verse_scores(
                     ])
                     , on=['source', 'target'], how='left')
     by_verse_scores['alignment_score'].fillna(0, inplace=True)
-    # all_vrefs = get_data.get_ref_df(source, target, is_bible) 
-    # all_vrefs = pd.DataFrame(all_vrefs, columns = ['vref'], dtype='str')
-    # df = pd.merge(df.drop(columns=[
-    #             'alignment_count', 
-    #             'Unnamed: 0', 
-    #             'alignment_score',
-    #             ]), 
-    #             combined_df.drop(columns=[
-    #                 'Unnamed: 0', 
-    #                 'verse_score', 
-    #                 'alignment_count', 
-    #                 ])
-    #                 , on=['source', 'target'], how='left')
-    # df = pd.merge(all_vrefs, df, on='vref', how = 'left')    
-    # df.loc[:, 'simple_total'] = df.apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
-    # df.to_csv(outpath / 'best_in_context_with_scores.csv')
-    
     if word_dict_src == None:
         word_dict_src = get_data.create_words(source, outpath.parent / 'cache', outpath, is_bible=is_bible)
     if word_dict_trg == None:
         word_dict_trg = get_data.create_words(target, outpath.parent / 'cache', outpath, is_bible=is_bible)
-    assert isinstance(word_dict_src, dict)
-    assert isinstance(word_dict_trg, dict)
-
-    # df = pd.read_csv(outpath / 'translation_scores.csv')
-    # df = pd.merge(df.drop(columns=['Unnamed: 0', 'translation_score']), combined_df.drop(columns=['Unnamed: 0']), on=['source', 'target'], how='left')
-    # df['alignment_score'].fillna(0, inplace=True)
+    
+    if model_path is None:
+        model_path = Path('data/models/autoencoder_50')
     model = autoencoder.Autoencoder(in_size=41899, out_size=50)
     model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
     by_verse_scores = autoencoder.add_distances_to_df(word_dict_src, word_dict_trg, target.stem, outpath, model, df=by_verse_scores)
@@ -349,7 +326,7 @@ def main(args):
     outpath = args.outpath / f"{args.source.stem}_{args.target.stem}"
     outpath.mkdir(parents=True, exist_ok=True)
     word_dict_src, word_dict_trg = None, None
-    if not args.combine_only:
+    if not args.combine_only or not (outpath / 'summary_scores.csv').exists():
         word_dict_src, word_dict_trg = run_all_alignments(
                                             args.source,
                                             args.target,
@@ -361,8 +338,6 @@ def main(args):
                                             )
    
     run_combine_results(outpath)
-    # for word in {**word_dict_src, **word_dict_trg}.values():
-        # word.get
     combine_by_verse_scores(
                             args.source, 
                             args.target, 
@@ -388,6 +363,4 @@ if __name__ == "__main__":
     parser.add_argument("--refresh-cache", action='store_true', help="Refresh the cache of match scores")
 
     args, unknown = parser.parse_known_args()
-    # make output dir
-    # s, t, path = make_output_dir(args.source, args.target, args.outpath)
     main(args)
