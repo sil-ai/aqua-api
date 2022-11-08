@@ -119,7 +119,6 @@ def run_match(
         force=True,
     )
     logging.info("START RUN")
-
     cache_dir = outpath.parent / "cache"
     cache_dir.mkdir(exist_ok=True)
     freq_cache_file = cache_dir / f"{source.stem}-{target.stem}-freq-cache.json"
@@ -185,7 +184,7 @@ if __name__ == "__main__":
         args.source,
         args.target,
         outpath,
-        args.jaccard_similarity_threshold,
-        args.count_threshold,
-        args.refresh_cache,
+        jaccard_similarity_threshold = args.jaccard_similarity_threshold,
+        count_threshold = args.count_threshold,
+        refresh_cache = args.refresh_cache,
     )
