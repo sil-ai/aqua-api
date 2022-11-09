@@ -3,7 +3,6 @@ import logging
 import re
 from pathlib import Path
 from typing import Tuple, Iterable, Dict, Optional
-import sys
 
 import numpy as np
 import pandas as pd
@@ -11,8 +10,6 @@ import torch
 from machine.corpora import TextFileTextCorpus
 from machine.tokenization import LatinWordTokenizer
 from tqdm import tqdm
-from unicodedata import category
-
 
 
 def write_dictionary_to_file(
@@ -88,18 +85,6 @@ def initialize_cache(
     return cache
 
 
-def replace_chars(text: str) -> str:
-    """
-    Takes a string and replaces characters that string according to a dictionary.
-    """
-    replace_dict = {
-        'ˮ': '"',
-        "ʼ": "'"
-    }
-    text = ''.join(replace_dict.get(ch, ch) for ch in str(text))
-    return text
-
-
 def condense_files(df: pd.DataFrame) -> pd.DataFrame:
     """
     Takes an input dataframe and writes condensed versions of the source and target
@@ -145,6 +130,19 @@ def condense_files(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def remove_blanks_and_ranges(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Takes a df of source and target texts and removes any lines that are just new line chars
+    or '<range>'.
+    """
+    df = df[df.src != "\n"]
+    df = df[df.trg != "\n"]
+    df = df[df.src != "<range>\n"]
+    df = df[df.trg != "<range>\n"]
+
+    return df
+
+    
 def write_condensed_files(df: pd.DataFrame, outpath: Path) -> Tuple[Path, Path]:
     """
     Writes text files from the text in the 'src' and (optionally) 'trg' columns of a dataframe.
@@ -215,8 +213,6 @@ class Word():
         return (jac_sim, count)
     
     def get_encoding(self, model):
-        if self.index_ohe.shape[0] <= 1:
-            self.get_ohe
         self.encoding = model.encoder(torch.tensor(self.index_ohe).float()).cpu().detach().numpy()
         self.norm_encoding = self.encoding / np.linalg.norm(self.encoding)
     
@@ -309,7 +305,7 @@ def create_words_from_df(ref_df: pd.DataFrame) -> Dict[str, Word]:
     word_dict_lang = {word: Word(word) for word in all_source_words}
     for word in tqdm(word_dict_lang.values()):
         word.get_indices(ref_df['src'])
-        # word.get_ohe()
+        word.get_ohe()
     return word_dict_lang
 
 
@@ -343,7 +339,13 @@ def get_words_from_txt_file(df: pd.DataFrame, outpath: Path) -> pd.DataFrame:
     df.loc[:, 'trg_words'] = df['trg'].apply(lambda x: x.split())
     return df
 
-def create_words(source: Path, cache_path: Path, outpath: Path, refresh_cache: bool=False, is_bible: bool=True) -> dict:
+def create_words(
+                source: Path, 
+                cache_path: Path, 
+                outpath: Path, 
+                refresh_cache: bool=False, 
+                is_bible: bool=True
+                ) -> Dict[str, Word]:
     """
     Creates a dictionary. Keys are strings of the language. Values are dictionaries where keys are the string of the word and
     values are Word objects.
@@ -371,16 +373,7 @@ def create_words(source: Path, cache_path: Path, outpath: Path, refresh_cache: b
         print(f"Getting sentences that contain each word in {source.stem}")    
         word_dict_lang = create_words_from_df(ref_df)
         save_word_dict_lang_to_cache(word_dict_lang, index_cache_file)
-    
 
-        # word_dict_lang[language] = {word: Word(word) for word in ref_df['target'].explode().unique()}
-        # for word in tqdm(word_dict_lang[language].values()):
-        #     word.get_indices(ref_df['target'])
-        #     word.get_ohe()
-        # # Save the full index list to cache (not just the reduced index list which pairs with the other language non-blank lines)
-        # ref_dict[language] = {word: Word(word) for word in source_ref_df['text'].explode().unique()}
-        # index_lists[language] = {word.word: word.index_list for word in ref_dict[language].values()}
-        # write_dictionary_to_file(index_lists[language], index_cache_files[language])
     return word_dict_lang
 
 
@@ -418,28 +411,5 @@ def get_ref_df(source: Path, target: Optional[Path] = None, is_bible: bool=True)
     df = pd.DataFrame({"vref": vrefs, "src": src_data})
     if target:
         df['trg'] = trg_data
-
-    return df
-
-
-def remove_blanks_and_ranges(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Takes a df of source and target texts, removes the punctuation, then removes any lines that are just new line chars
-    or '<range>'.
-    """
-    # punctuation_chars = ""
-    # for i in range(sys.maxunicode):
-    #     if category(chr(i)).startswith("P"):
-    #         punctuation_chars += chr(i)
-    # df["src"] = df["src"].str.replace("[{}]".format(string.punctuation), "", regex=True)
-    # df["src"] = df["src"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
-    # df["trg"] = df["trg"].str.replace("[{}]".format(string.punctuation), "", regex=True)
-    # df["trg"] = df["trg"].str.replace("[{}]".format(punctuation_chars), "", regex=True)
-    df = df[df.src != "\n"]
-    df = df[df.trg != "\n"]
-    df = df[df.src != "<range>\n"]
-    df = df[df.trg != "<range>\n"]
-    # df['src'] = df['src'].apply(replace_chars)
-    # df['trg'] = df['trg'].apply(replace_chars)
 
     return df

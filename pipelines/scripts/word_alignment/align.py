@@ -1,5 +1,6 @@
 import argparse
 from typing import Tuple
+from pathlib import Path
 
 import pandas as pd
 from tqdm import tqdm
@@ -10,7 +11,6 @@ from machine.translation.thot import (
     ThotFastAlignWordAlignmentModel,
     ThotSymmetrizedWordAlignmentModel,
 )
-from pathlib import Path
 
 import get_data
 
@@ -137,8 +137,6 @@ def run_align(
         outpath.mkdir()
 
     no_dups.to_csv(outpath / "translation_scores.csv")
-
-    # df.to_csv(outpath / "all_in_context.csv")
 
     return (parallel_corpus, symmetrized_model)
 

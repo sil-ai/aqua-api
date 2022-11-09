@@ -35,7 +35,7 @@ def test_run_fa(source, target, is_bible, remove_files=True):
                                                     ])
 def test_run_match_words(source, target, is_bible, remove_files=True):
     outpath = source.parent / 'out' / f'{source.stem}_{target.stem}'
-    combined.run_match_words(source, target, outpath, 0.0, 0, is_bible=is_bible)
+    combined.run_match_words(source, target, outpath,jaccard_similarity_threshold=0.0,count_threshold=0,is_bible=is_bible)
     assert (outpath / "dictionary.json").exists()
 
 @pytest.mark.parametrize("source,target,source_word,target_word", [

@@ -70,22 +70,7 @@ def update_matches_for_lists(
                     }
                 )
     return (matches, js_cache)
-
-
-# def create_freq_cache(cache_dir: Path, source: Path, target: Path, refresh_cache: bool=False):
-#     """
-#     Creates the freq_cache dictionary from 
-#     """
-#     freq_cache_file = cache_dir / f"{source.stem}-{target.stem}-freq-cache.json"
-#     reverse_freq_cache_file = (
-#         cache_dir / f"{target.stem}-{source.stem}-freq-cache.json"
-#     )
-#     freq_cache = get_data.initialize_cache(freq_cache_file, to_tuples=True, refresh=refresh_cache)
-#     js_cache_reverse = get_data.initialize_cache(
-#         reverse_freq_cache_file, reverse=True, to_tuples=True
-#     )
-#     freq_cache = {**freq_cache, **js_cache_reverse}
-#     return freq_cache
+    
 
 def run_match(
             source: Path,
@@ -121,15 +106,16 @@ def run_match(
     logging.info("START RUN")
     cache_dir = outpath.parent / "cache"
     cache_dir.mkdir(exist_ok=True)
+    matches_file = outpath / "dictionary.json"
+
     freq_cache_file = cache_dir / f"{source.stem}-{target.stem}-freq-cache.json"
     freq_cache = get_data.initialize_cache(freq_cache_file, to_tuples=True, refresh=refresh_cache)
-    # freq_cache = create_freq_cache(cache_dir, source, target, refresh_cache)
-    matches_file = outpath / "dictionary.json"
     
     if word_dict_src == None:
         word_dict_src = get_data.create_words(source, cache_dir, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
     if word_dict_trg == None:
         word_dict_trg = get_data.create_words(target, cache_dir, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
+
     ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
     condensed_df = get_data.condense_files(ref_df)
     condensed_df = get_data.get_words_from_txt_file(condensed_df, outpath)
@@ -149,8 +135,6 @@ def run_match(
     for _, row in tqdm(condensed_df.iterrows(), total=condensed_df.shape[0]):
         paired_source_objects: List[get_data.Word] = list(set([word_dict_src[x] for x in row["src_words"]]))
         paired_target_objects: List[get_data.Word] = list(set([word_dict_trg[x] for x in row["trg_words"]]))
-        # for paired_object in [*paired_source_objects, *paired_target_objects]:
-            # paired_object.index_list = set(paired_object.index_list).intersection(set(ref_df_indexes))
         matches, freq_cache = update_matches_for_lists(
             paired_source_objects,
             paired_target_objects,
@@ -167,7 +151,6 @@ def run_match(
 
 if __name__ == "__main__":
     pd.options.mode.chained_assignment = None  # default='warn'
-    pd.set_option("display.max_rows", 500)
     tqdm.pandas()
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", type=Path, help="Can be a Bible version string, or 'OT_domains', 'NT_domains', 'hebrew' or 'greek'", required=True,)

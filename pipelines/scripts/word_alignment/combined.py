@@ -1,26 +1,21 @@
-# imports
-from enum import auto
-import os
 import json
 import argparse
-import logging
 import math
 from pathlib import Path
 from typing import Tuple, Optional, Dict
 
 import pandas as pd
+from tqdm import tqdm
+import torch
+# from xgboost import XGBClassifier
+
 import align
 import align_best
 import match
 import autoencoder
-from tqdm import tqdm
-import torch
-from xgboost import XGBClassifier
-
 import get_data
 
 tqdm.pandas()
-
 
 
 # run fast_align
@@ -156,14 +151,9 @@ def combine_word_scores(translation_path: Path, avg_alignment_path: Path, match_
     all_results.loc[:, 'translation_score'] = all_results.loc[:, 'translation_score'].apply(
         lambda x: 0 if x < 0.00001 else x
         )
-    # all_results.loc[:, "normalized_source"] = all_results["source"].apply(
-    #     match.normalize_word
-    # )
-    # all_results.loc[:, "normalized_target"] = all_results["target"].apply(
-    #     match.normalize_word
-    # )
 
-    match_results = json.load(open(match_path))
+    with open(match_path) as f:
+        match_results = json.load(f)
 
     # write to df and merge with fa results
     df = all_results
@@ -267,6 +257,7 @@ def combine_by_verse_scores(
     ref_df = ref_df.explode('src_words').explode('trg_words')
     ref_df = ref_df.drop(['src', 'trg'], axis=1).rename(columns={'src_words': 'source', 'trg_words': 'target'})
     by_verse_scores = pd.read_csv(outpath / 'alignment_scores_by_verse.csv')
+    by_verse_scores['vref'] = by_verse_scores['vref'].astype('object')  # Necessary for non-Bible, where vrefs are ints.
     by_verse_scores = pd.merge(ref_df, by_verse_scores, on=['vref', 'source', 'target'], how='left')
 
     word_scores = pd.read_csv(outpath / 'align_and_match_word_scores.csv')
@@ -274,7 +265,6 @@ def combine_by_verse_scores(
     by_verse_scores = pd.merge(by_verse_scores.drop(columns=[
                 'alignment_count', 
                 'Unnamed: 0', 
-#                 'alignment_score',
                 ]), 
                 word_scores.drop(columns=[
                     'Unnamed: 0', 
@@ -306,7 +296,8 @@ def combine_by_verse_scores(
     by_verse_scores.to_csv(outpath / 'summary_scores.csv')
     word_scores = by_verse_scores.loc[:, ['vref', 'source', 'target', 'alignment_score',  'translation_score', 'avg_aligned', 'jac_sim', 'match_counts', 'encoding_dist', 'simple_total', 'total_score']]
     word_scores = remove_leading_and_trailing_blanks(word_scores, 'total_score')
-    word_scores = word_scores.groupby(['vref', 'source'], sort=False).progress_apply(lambda x: x.nlargest(1, 'total_score')).reset_index(drop=True)
+    word_scores = word_scores.loc[word_scores.groupby(['vref', 'source'], sort=False)['total_score'].idxmax(), :].reset_index(drop=True)
+    # word_scores = word_scores.groupby(['vref', 'source'], sort=False).progress_apply(lambda x: x.nlargest(1, 'total_score')).reset_index(drop=True)
     word_scores.to_csv(outpath / 'word_scores.csv')
     
     verse_scores = word_scores.groupby('vref', sort=False).mean()

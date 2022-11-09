@@ -1,12 +1,12 @@
 from pathlib import Path
 import argparse
-import pandas as pd
-from tqdm import tqdm
-import math
-tqdm.pandas()
 from typing import Dict
 
-import combined, get_data
+import pandas as pd
+from tqdm import tqdm
+tqdm.pandas()
+
+import combined
 
 
 def read_dfs(ref_df_outpaths:dict, total_col: str='simple_total') -> Dict[str, pd.DataFrame]:
