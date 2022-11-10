@@ -327,6 +327,12 @@ def main(args):
                                             count_threshold=args.count_threshold,
                                             refresh_cache = args.refresh_cache,
                                             )
+    if word_dict_src:
+        for word in word_dict_src.values():
+            word.remove_index_list()        # To save memory
+    if word_dict_trg:
+        for word in word_dict_trg.values():
+            word.remove_index_list()
    
     run_combine_results(outpath)
     combine_by_verse_scores(

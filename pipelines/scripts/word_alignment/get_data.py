@@ -132,13 +132,15 @@ def condense_files(df: pd.DataFrame) -> pd.DataFrame:
 
 def remove_blanks_and_ranges(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Takes a df of source and target texts and removes any lines that are just new line chars
+    Takes a df of source ('src') and optionally target ('trg') texts and removes any lines that are just new line chars
     or '<range>'.
     """
     df = df[df.src != "\n"]
-    df = df[df.trg != "\n"]
+    if 'trg' in df.columns:
+        df = df[df.trg != "\n"]
     df = df[df.src != "<range>\n"]
-    df = df[df.trg != "<range>\n"]
+    if 'trg' in df.columns:
+        df = df[df.trg != "<range>\n"]
 
     return df
 
@@ -207,6 +209,9 @@ class Word():
     def get_indices(self, list_series):
         # self.index_list = list(list_series[list_series.apply(lambda x: self.word in x if isinstance(x, Iterable) else False)].index)
         self.index_list = list(list_series[list_series.apply(lambda x: self.normalized in x if isinstance(x, Iterable) else False)].index)
+
+    def remove_index_list(self):
+        self.index_list = None  # To save memory, once they're no longer needed.
 
     def get_matches(self, word):
         jac_sim, count = get_correlations_between_sets(set(self.index_list), set(word.index_list))
