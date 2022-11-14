@@ -50,12 +50,12 @@ def adjust_psalm_chapters(row):
     return int(row['DisplayChapter'])
         
 
-def main():
+def main(args):
     sources = ['greek_lemma', 'en-NIV11', 'swhMICP-front', 'wbi-wbiNT', 'ndh-ndhBT']
     source_stem = st.selectbox(label='Source', options=sources)
 
     # source = Path('data/archive/greek_lemma.txt')
-    out_dir = Path('data/out')
+    out_dir = args.outpath
     files = []
     for dir in out_dir.iterdir():
         if dir.is_dir() and f'{source_stem}_' in dir.parts[-1] and (dir / 'verse_scores.csv').exists():
@@ -265,4 +265,9 @@ def main():
         })
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--outpath", type=Path, default=Path("data/out/"), help="Directory where output files are stored")
+
+    args = parser.parse_args()
+
+    main(args)
