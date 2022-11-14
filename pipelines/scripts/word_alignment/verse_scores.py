@@ -16,13 +16,42 @@ def plot_results(scores, highlighted=None):
     fig, ax = plt.subplots()
     ax.bar(range(len(scores)), list(scores.values()), align='center', color=color)
     ax.set_xticks(range(len(scores)), list(scores.keys()), rotation='vertical')
+    plt.title('Extent of formal equivalence to the Greek NT source text')
 
     # plt.show()
     st.pyplot(fig)
 
 
+def split_Psalm_books(row):
+    if row['DisplayBook'] == 'PSA':
+        if row['DisplayChapter'] <=41:
+            return 'PSA 1-41'
+        if row['DisplayChapter'] <=72:
+            return 'PSA 42-72'
+        if row['DisplayChapter'] <=89:
+            return 'PSA 73-89'
+        if row['DisplayChapter'] <=106:
+            return 'PSA 90-106'
+        return 'PSA 107-150'
+    return row['DisplayBook']
+
+
+def adjust_psalm_chapters(row):
+    if row['DisplayBook'][:3] == 'PSA':
+        if int(row['DisplayChapter']) <=41:
+            return int(row['DisplayChapter'])
+        if int(row['DisplayChapter']) <=72:
+            return int(row['DisplayChapter']) - 41
+        if int(row['DisplayChapter']) <=89:
+            return int(row['DisplayChapter']) - 72
+        if int(row['DisplayChapter']) <=106:
+            return int(row['DisplayChapter']) - 89
+        return int(row['DisplayChapter']) - 106
+    return int(row['DisplayChapter'])
+        
+
 def main():
-    sources = ['greek_lemma', 'en-NIV11', 'swhMICP-front']
+    sources = ['greek_lemma', 'en-NIV11', 'swhMICP-front', 'wbi-wbiNT', 'ndh-ndhBT']
     source_stem = st.selectbox(label='Source', options=sources)
 
     # source = Path('data/archive/greek_lemma.txt')
@@ -56,28 +85,36 @@ def main():
     scores = {}
     for lang in ref_langs:
         scores[lang] = ref[lang].mean()
-    
     verse_scores_file = out_dir / f'{source_stem}_{target_stem}' / 'verse_scores.csv'
     verse_df = pd.read_csv(verse_scores_file)
     verse_df = verse_df.merge(ref, how='left', on='vref')
     scores[target_stem] = verse_df['total_score'].mean()
+    
     scores = OrderedDict(sorted(scores.items(), key=lambda item: item[1], reverse=True))
     st.header('Overall score')
-    plot_results(scores, highlighted = target_stem)
+    highlight_target = st.checkbox('Highlight the target translation as a different color?')
+    highlighted = target_stem if highlight_target else None
+    plot_results(scores, highlighted = highlighted)
 
     st.header('Detailed breakdown')
 
     calibrated = st.checkbox('Calibrate scores against other translations (to normalize verses that tend to score higher or lower across translations)?')
     calibrate_colors = st.checkbox('Calibrate colors, so they are relative to other scores within this text, rather than absolute?')
 
+
     sAggregationLevel = st.selectbox('View accuracy to the reference translation by:', ['Book/Chapter', 'Chapter/Verse']) 
     blnByBookChapter = sAggregationLevel == 'Book/Chapter'
     # base_outpath = Path('data/out')
     # outpath = base_outpath / f'{source.stem}_{target.stem}'
+
+
     verse_df['verse_score'] = verse_df['total_score'].apply(lambda x: round(x, 2))
     verse_df['verse_score_calibrated'] = verse_df.apply(lambda row: row['total_score'] / row['ref_mean'], axis=1)
     verse_df['DisplayBook'] = verse_df['vref'].apply(lambda x: x.split(' ')[0])
     verse_df['DisplayChapter'] = verse_df['vref'].apply(lambda x: int(x.split(' ')[1].split(':')[0]))
+    verse_df['DisplayBook'] = verse_df.apply(split_Psalm_books, axis=1)
+    verse_df['DisplayChapter'] = verse_df.apply(adjust_psalm_chapters, axis=1)
+
     verse_df['verse'] = verse_df['vref'].apply(lambda x: int(x.split(' ')[1].split(':')[1]))
 
     listVerses = verse_df.to_dict('records')
@@ -111,21 +148,22 @@ def main():
     print(mid_color_score)
 
     sCalculatedField = display_col
+    x=0.45
     color_config = {
         'field': sCalculatedField,
         'type': 'quantitative',
         'legend': {'title': '', 'direction': 'vertical', 'orient': 'left',
-            "labelExpr": "{'0.5': 'Possible Issue', '2.0': 'Accurate to Reference'}[datum.label]",
+            "labelExpr": "{'0.3': 'More dynamic', '0.6': 'More formally equivalent'}[datum.label]",
             "labelFontSize": 18, "titleFontSize": 20},
-        'scale': {'range': ['red', 'yellow', 'green'], 'domain': [0.85*mid_color_score, mid_color_score, 1.15*mid_color_score]},
+        'scale': {'range': ['blue', 'white', 'orange'], 'domain': [0.3, 0.6]},
     }
 
     books = list(verse_df['DisplayBook'].unique())
-
+    print(books)
     if blnByBookChapter:
         displayList = listChapters
         st.markdown('')
-        st.vega_lite_chart(displayList, {
+        st.vega_lite_chart(displayList, {"$schema": "https://vega.github.io/schema/vega-lite/v5.json",
             "width": "1300",
             'config': {
                 'view': {
