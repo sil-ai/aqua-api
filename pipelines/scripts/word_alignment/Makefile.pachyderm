@@ -1,0 +1,20 @@
+IMAGENAME=aqua-pipeline-word-alignment-pachyderm
+
+build-pachyderm-local:
+	docker build -t woodwardmw/${IMAGENAME}:latest -f pachyderm/Dockerfile .
+
+push-pachyderm:
+	docker image tag woodwardmw/${IMAGENAME}:latest woodwardmw/${IMAGENAME}:${TAG}
+	docker image push woodwardmw/${IMAGENAME}:${TAG}
+
+create-pipeline-pachyderm:
+	pachctl create pipeline -f ../../word_alignment.json 
+
+update-pipeline-pachyderm:
+	pachctl update pipeline -f ../../word_alignment.json 
+
+put-source-pachyderm:
+	pachctl put file sources@master:source.txt -f ${FILE}
+
+put-target-pachyderm:
+	pachctl put file targets@master:target.txt -f ${FILE}
