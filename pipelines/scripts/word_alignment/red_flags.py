@@ -32,9 +32,12 @@ def identify_red_flags(outpath: Path, ref_path:Path, total_col: str='simple_tota
     possible_red_flags.index = possible_red_flags['order']
     possible_red_flags = possible_red_flags.sort_values(['vref', 'source', total_col], ascending=False).groupby(['vref', 'source']).agg({total_col: 'sum', 'order': 'first'}).sort_values('order', ascending=False).reset_index()
     possible_red_flags = possible_red_flags[possible_red_flags[total_col] < 0.1]
-    ref = pd.read_csv(ref_path)
-    possible_red_flags = possible_red_flags.merge(ref, how='left', on=['vref', 'source'])
-    red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['mean'] > 5 * row[total_col] and row['min'] > 0.3, axis=1)]
+    if ref_path.exists():
+        ref = pd.read_csv(ref_path, low_memory=False)
+        possible_red_flags = possible_red_flags.merge(ref, how='left', on=['vref', 'source'])
+        red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['mean'] > 5 * row[total_col] and row['min'] > 0.3, axis=1)]
+    else:
+        red_flags = possible_red_flags
     # red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['avg_total_score'] > 10 * row[total_col], axis=1)]
     
     return red_flags

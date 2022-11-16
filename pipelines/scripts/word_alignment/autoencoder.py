@@ -145,66 +145,6 @@ def train_model(
     return model, outputs
 
 
-def get_encodings(word_dict_lang:Dict[str,get_data.Word], model: Autoencoder) -> None:
-    """
-    Takes a dictionary of {word: Word} items and calculates the embedding of each word in the model. This
-    is saved as encoding and norm_encoding attributes of the Word.
-    Inputs:
-    word_dict_lang      A dictionary of word (string) : Word (object)
-    model               Trained Autencoder to providing encodings / embeddings.
-    """
-    for word in tqdm(word_dict_lang.values()):
-        # print(word.index_ohe.shape)
-        word.get_encoding(model)
-
-        
-def add_distances_to_df(
-                        word_dict_src: dict, 
-                        word_dict_trg: dict, 
-                        target_lang: str,
-                        outpath: Path, 
-                        model: Autoencoder, 
-                        df: Optional[pd.DataFrame]=None, 
-                        cache_path: Optional[Path]=None, 
-                        # refresh_cache: bool=False
-                        ) -> None:
-    """
-    Takes source and target words, calculates the embeddings for each of the words with respect to the model. Calculates
-    distances between embeddings for each combination of words that co-occur in lines within their aligned corpuses. Saves
-    these distances to the 'encoding_dist' column of a df.
-    Inputs:
-    source          Dictionary of Words from source text
-    target          Dictionary of Words from target text
-    target_lang     String of target language
-    outpath         Path to output files. Normally args.outpath / {source.stem}_{target.stem}
-    model           Trained Autoencoder from which to get embeddings
-    df              Optionally pass in the df to write to, to save reading it from disk, since it is large.
-    cache_path      Cache path, if it is different from default args.cache / cache
-    refresh_cache   Boolean. Whether to force calculating the Word.index_lists from text data rather than from cache
-    """
-    cache_path = cache_path if cache_path else outpath.parent / 'cache'
-    # language_paths = {language_path.stem: language_path for language_path in [source, target]}
-    # index_cache_paths = {}
-    # for word_dict_lang in [source_word_dict, target_word_dict]:
-        # index_cache_paths[language] = cache_path
-    # word_dict = create_words(language_paths, index_cache_paths, outpath, refresh_cache=refresh_cache)
-    # for language in language_paths:
-    if df is None:
-        df = pd.read_csv(outpath / 'summary_scores.csv')
-    word_dict = {'source': word_dict_src, 'target': word_dict_trg}
-    for lang, word_dict_lang in word_dict.items():
-        print(f"Getting {lang} encodings")
-        assert isinstance(word_dict_lang, dict)
-        get_encodings(word_dict_lang, model)
-        unmatched_words = set(df[lang].unique()) - set(df[lang].unique()).intersection(set(word_dict_lang.keys()))
-        assert len(unmatched_words) == 0, f"{unmatched_words} not in word_dict[{lang}]. Run again with --refresh-cache, or combined.py --refresh cache for just this source-target combination."
-    print("Adding encoding distances to the data")
-    
-    df.loc[:, 'encoding_dist'] = df.progress_apply(lambda row: word_dict_src[row['source']].get_norm_distance(word_dict_trg[row['target']], target_lang), axis=1)
-    # df.to_csv(outpath / 'summary_scores.csv')
-    return df
-
-
 def main(args):
     outpath = args.outpath
     outpath.mkdir(parents=True, exist_ok=True)

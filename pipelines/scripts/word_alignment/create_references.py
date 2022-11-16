@@ -17,24 +17,41 @@ def get_scores(outpath: Path):
 def main():
     references = [
         'en-NASB',
+        'en-NIV84',
         'fr-LBS21',
         'swh-ONEN',
         'arb-AVD',
         'en-NLT07',
+        'en-GNBUK',
         'es-NTV',
+        'es-NVI99',
         'ko-RNKSV',
+        'cho-CHTW',
+        'en-KJV',
+        'en-NIV11',
+        'hop-hopNT',
+        'swhMICP-front',
+        'wbi-wbiBT',
+        'ndh-ndhBT'
     ]
 
     base_outpath = Path('data/out')
-    source = Path('data/archive/greek_lemma.txt')
+    # source = Path('data/archive/greek_lemma.txt')
+    # source = Path('data/archive/en-NIV11.txt')
+    # source = Path('data/archive/swhMICP-front.txt')
+    # source = Path('data/archive/wbi-wbiNT.txt')
+    source = Path('data/archive/ndh-ndhBT.txt')
 
+
+
+    references = [reference for reference in references if (base_outpath / f"{source.stem}_{reference}").exists()]
     df = get_data.get_ref_df(source, is_bible=True)
     df = get_data.remove_blanks_and_ranges(df)
     verse_df = df.drop('src', axis=1)
     df = get_data.get_words_from_txt_file(df, base_outpath)
     word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
     for reference in references:
-        outpath = base_outpath / f"{source.stem}_{reference}"    
+        outpath = base_outpath / f"{source.stem}_{reference}" 
         word_scores, verse_scores = get_scores(outpath)
         verse_df = verse_df.merge(verse_scores, how='left', on='vref').rename(columns={'total_score': reference})
         word_df = word_df.merge(word_scores, how='left', on=['vref', 'source']).rename(columns={'total_score': f'{reference}_score', 'target': f'{reference}_match'})

@@ -5,14 +5,13 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict
 
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
-import torch
 # from xgboost import XGBClassifier
 
 import align
 import align_best
 import match
-import autoencoder
 import get_data
 
 tqdm.pandas()
@@ -157,17 +156,17 @@ def combine_word_scores(translation_path: Path, avg_alignment_path: Path, match_
 
     # write to df and merge with fa results
     df = all_results
-    df.loc[:, "jac_sim"] = df.progress_apply(
+    df.loc[:, "jac_sim"] = get_data.faster_df_apply(df, 
         lambda x: get_scores_from_match_dict(
             match_results, x["source"], x["target"], normalized=False
         )[0],
-        axis=1,
+        # axis=1,
     )
-    df.loc[:, "match_counts"] = df.progress_apply(
+    df.loc[:, "match_counts"] = get_data.faster_df_apply(df, 
         lambda x: get_scores_from_match_dict(
             match_results, x["source"], x["target"], normalized=False
         )[1],
-        axis=1,
+        # axis=1,
     )
 
     df.drop(columns=["Unnamed: 0_x", "Unnamed: 0_y"], inplace=True)
@@ -201,6 +200,7 @@ def run_all_alignments(
             outpath,
             word_dict_src=word_dict_src,
             word_dict_trg=word_dict_trg,
+            is_bible=is_bible,
             jaccard_similarity_threshold=jaccard_similarity_threshold,
             count_threshold=count_threshold,
             refresh_cache=refresh_cache,
@@ -231,7 +231,7 @@ def combine_by_verse_scores(
                             outpath: Path, 
                             word_dict_src: Optional[Dict[str, get_data.Word]] = None, 
                             word_dict_trg: Optional[Dict[str, get_data.Word]] = None, 
-                            model_path: Optional[Path]=None, 
+                            weights_path: Optional[Path]=None, 
                             is_bible: bool=True
                             ) -> None:
     """
@@ -246,7 +246,7 @@ def combine_by_verse_scores(
     source          A path to the source text
     target          A path to the target text
     outpath         Path to the base output directory
-    model_path      Path to the Autoencoder used to compute the encoding for each word
+    weights_path    Path to the txt file with the encoder weights
     is_bible        Whether the text is Bible
     """
 
@@ -257,17 +257,17 @@ def combine_by_verse_scores(
     ref_df = ref_df.explode('src_words').explode('trg_words')
     ref_df = ref_df.drop(['src', 'trg'], axis=1).rename(columns={'src_words': 'source', 'trg_words': 'target'})
     by_verse_scores = pd.read_csv(outpath / 'alignment_scores_by_verse.csv')
+    by_verse_scores = by_verse_scores.drop('Unnamed: 0', axis=1)
+    by_verse_scores = by_verse_scores.astype({col: 'float16' for col in by_verse_scores.columns if col not in ['vref', 'source', 'target']})
+    word_scores = pd.read_csv(outpath / 'align_and_match_word_scores.csv')
+    word_scores = word_scores.drop('Unnamed: 0', axis=1)
+    word_scores = word_scores.astype({col: 'float16' for col in word_scores.columns if col not in ['vref', 'source', 'target']})
     by_verse_scores['vref'] = by_verse_scores['vref'].astype('object')  # Necessary for non-Bible, where vrefs are ints.
     by_verse_scores = pd.merge(ref_df, by_verse_scores, on=['vref', 'source', 'target'], how='left')
-
-    word_scores = pd.read_csv(outpath / 'align_and_match_word_scores.csv')
-
     by_verse_scores = pd.merge(by_verse_scores.drop(columns=[
                 'alignment_count', 
-                'Unnamed: 0', 
                 ]), 
                 word_scores.drop(columns=[
-                    'Unnamed: 0', 
                     'verse_score', 
                     'alignment_count', 
                     'alignment_score',
@@ -279,30 +279,94 @@ def combine_by_verse_scores(
     if word_dict_trg == None:
         word_dict_trg = get_data.create_words(target, outpath.parent / 'cache', outpath, is_bible=is_bible)
     
-    if model_path is None:
-        model_path = Path('data/models/autoencoder_50')
-    model = autoencoder.Autoencoder(in_size=41899, out_size=50)
-    model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
-    by_verse_scores = autoencoder.add_distances_to_df(word_dict_src, word_dict_trg, target.stem, outpath, model, df=by_verse_scores)
+    if weights_path is None:
+        weights_path = Path('data/models/encoder_weights.txt')
+    # model = autoencoder.Autoencoder(in_size=41899, out_size=50)
+    # model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
+    by_verse_scores = add_distances_to_df(word_dict_src, word_dict_trg, target.stem, outpath, weights_path=weights_path, df=by_verse_scores)
+    word_dict_src = None
+    word_dict_trg = None
     # df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + math.log1p(row['alignment_count']) * row['alignment_score'] + math.log1p(row['match_counts']) * row['jac_sim'] + row['encoding_score']) / 5, axis=1)
     # model_xgb = XGBClassifier()
     # model_xgb.load_model("data/models/xgb_model_4.txt")
     # X = df[['translation_score', 'alignment_count', 'alignment_score', 'avg_aligned', 'jac_sim', 'match_counts', 'encoding_dist']]
     # df.loc[:, 'total_score'] = model_xgb.predict_proba(X)[:, 1]
-    print("Calculating simple total of the first four metrics...")
-    by_verse_scores.loc[:, 'simple_total'] = by_verse_scores.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4, axis=1)
+    # print("Calculating simple total of the first four metrics...")
+    # by_verse_scores.loc[:, 'simple_total'] = get_data.faster_df_apply(by_verse_scores, lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4)
     print("Calculating total score of all five metrics (including encoding distance)...")
-    by_verse_scores.loc[:, 'total_score'] = by_verse_scores.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim'] + math.log1p(max(1 - row['encoding_dist'], -0.99))) / 5, axis=1)
+    by_verse_scores.loc[:, 'total_score'] = get_data.faster_df_apply(by_verse_scores,lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim'] + math.log1p(max(1 - row['encoding_dist'], -0.99))) / 5)
+    by_verse_scores = by_verse_scores.loc[:, ['vref', 'source', 'target', 'total_score']]
     by_verse_scores.to_csv(outpath / 'summary_scores.csv')
-    word_scores = by_verse_scores.loc[:, ['vref', 'source', 'target', 'alignment_score',  'translation_score', 'avg_aligned', 'jac_sim', 'match_counts', 'encoding_dist', 'simple_total', 'total_score']]
-    word_scores = remove_leading_and_trailing_blanks(word_scores, 'total_score')
+    word_scores = remove_leading_and_trailing_blanks(by_verse_scores, 'total_score')
+    del by_verse_scores
+    word_scores = word_scores.fillna(0)
     word_scores = word_scores.loc[word_scores.groupby(['vref', 'source'], sort=False)['total_score'].idxmax(), :].reset_index(drop=True)
-    # word_scores = word_scores.groupby(['vref', 'source'], sort=False).progress_apply(lambda x: x.nlargest(1, 'total_score')).reset_index(drop=True)
     word_scores.to_csv(outpath / 'word_scores.csv')
-    
     verse_scores = word_scores.groupby('vref', sort=False).mean()
+    del word_scores
     verse_scores = verse_scores.fillna(0)
     verse_scores.to_csv(outpath / 'verse_scores.csv')
+
+
+def get_encodings(word_dict_lang:Dict[str,get_data.Word], weights: np.ndarray) -> None:
+    """
+    Takes a dictionary of {word: Word} items and calculates the embedding of each word in the model. This
+    is saved as encoding and norm_encoding attributes of the Word.
+    Inputs:
+    word_dict_lang      A dictionary of word (string) : Word (object)
+    weights             np.ndarray with encoder weights
+    """
+    for word in tqdm(word_dict_lang.values()):
+        # print(word.index_ohe.shape)
+        word.get_encoding(weights)
+
+
+def add_distances_to_df(
+                        word_dict_src: dict, 
+                        word_dict_trg: dict, 
+                        target_lang: str,
+                        outpath: Path, 
+                        weights_path: Path, 
+                        df: Optional[pd.DataFrame]=None, 
+                        cache_path: Optional[Path]=None, 
+                        # refresh_cache: bool=False
+                        ) -> None:
+    """
+    Takes source and target words, calculates the embeddings for each of the words with respect to the model. Calculates
+    distances between embeddings for each combination of words that co-occur in lines within their aligned corpuses. Saves
+    these distances to the 'encoding_dist' column of a df.
+    Inputs:
+    source          Dictionary of Words from source text
+    target          Dictionary of Words from target text
+    target_lang     String of target language
+    outpath         Path to output files. Normally args.outpath / {source.stem}_{target.stem}
+    weights_path    Path to the txt file containing the encoder model weights
+    df              Optionally pass in the df to write to, to save reading it from disk, since it is large.
+    cache_path      Cache path, if it is different from default args.cache / cache
+    refresh_cache   Boolean. Whether to force calculating the Word.index_lists from text data rather than from cache
+    """
+    cache_path = cache_path if cache_path else outpath.parent / 'cache'
+    # language_paths = {language_path.stem: language_path for language_path in [source, target]}
+    # index_cache_paths = {}
+    # for word_dict_lang in [source_word_dict, target_word_dict]:
+        # index_cache_paths[language] = cache_path
+    # word_dict = create_words(language_paths, index_cache_paths, outpath, refresh_cache=refresh_cache)
+    # for language in language_paths:
+    if df is None:
+        df = pd.read_csv(outpath / 'summary_scores.csv')
+    word_dict = {'source': word_dict_src, 'target': word_dict_trg}
+    weights = np.loadtxt(weights_path)
+    for lang, word_dict_lang in word_dict.items():
+        print(f"Getting {lang} encodings")
+        assert isinstance(word_dict_lang, dict)
+        get_encodings(word_dict_lang, weights=weights)
+        unmatched_words = set(df[lang].unique()) - set(df[lang].unique()).intersection(set(word_dict_lang.keys()))
+        assert len(unmatched_words) == 0, f"{unmatched_words} not in word_dict[{lang}]. Run again with --refresh-cache, or combined.py --refresh cache for just this source-target combination."
+    print("Adding encoding distances to the data")
+    
+    df.loc[:, 'encoding_dist'] = get_data.faster_df_apply(df, lambda row: word_dict_src[row['source']].get_norm_distance(word_dict_trg[row['target']], target_lang))
+    # df.to_csv(outpath / 'summary_scores.csv')
+    return df
 
 
 def remove_leading_and_trailing_blanks(df:pd.DataFrame, col: str) -> pd.DataFrame:
@@ -341,7 +405,7 @@ def main(args):
                             outpath, 
                             word_dict_src=word_dict_src, 
                             word_dict_trg=word_dict_trg, 
-                            model_path=args.model, 
+                            weights_path=args.weights, 
                             is_bible=args.is_bible,
                             )
 
@@ -355,7 +419,7 @@ if __name__ == "__main__":
     parser.add_argument("--is-bible", action='store_true', help="is bible")
     parser.add_argument("--count-threshold", type=int, help="Threshold for count (number of co-occurences) score to be significant", default=0)
     parser.add_argument("--outpath", type=Path, help="where to store results")
-    parser.add_argument("--model", type=Path, help="Path to model for distance encodings")
+    parser.add_argument("--weights", type=Path, default=Path('data/models/encoder_weights.txt'), help="Path to txt file containing weights for encoder")
     parser.add_argument("--combine-only", action='store_true', help="Only combine the results, since the alignment and matching files already exist")
     parser.add_argument("--refresh-cache", action='store_true', help="Refresh the cache of match scores")
 

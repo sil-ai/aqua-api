@@ -6,11 +6,20 @@ from typing import Tuple, Iterable, Dict, Optional
 
 import numpy as np
 import pandas as pd
-import torch
 from machine.corpora import TextFileTextCorpus
 from machine.tokenization import LatinWordTokenizer
 from tqdm import tqdm
 
+
+def faster_df_apply(df, func):
+    cols = list(df.columns)
+    data, index = [], []
+    for row in tqdm(df.itertuples(index=True), total=df.shape[0]):
+        row_dict = {f:v for f,v in zip(cols, row[1:])}
+        data.append(func(row_dict))
+        index.append(row[0])
+    return pd.Series(data, index=index)
+    
 
 def write_dictionary_to_file(
     dictionary: dict, filepath: Path, to_strings: bool = False
@@ -206,9 +215,9 @@ class Word():
     def normalize(self):
         self.normalized = normalize_word(self.word)
     
-    def get_indices(self, list_series):
-        # self.index_list = list(list_series[list_series.apply(lambda x: self.word in x if isinstance(x, Iterable) else False)].index)
-        self.index_list = list(list_series[list_series.apply(lambda x: self.normalized in x if isinstance(x, Iterable) else False)].index)
+    def get_indices(self, word_series):
+        # self.index_list = list(list_series[list_series.apply(lambda x: self.normalized in x if isinstance(x, Iterable) else False)].index)
+        self.index_list = list(word_series[word_series == self.normalized].index)
 
     def remove_index_list(self):
         self.index_list = None  # To save memory, once they're no longer needed.
@@ -217,8 +226,9 @@ class Word():
         jac_sim, count = get_correlations_between_sets(set(self.index_list), set(word.index_list))
         return (jac_sim, count)
     
-    def get_encoding(self, model):
-        self.encoding = model.encoder(torch.tensor(self.index_ohe).float()).cpu().detach().numpy()
+    def get_encoding(self, weights: np.ndarray):
+        # self.encoding = model.encoder(torch.tensor(self.index_ohe).float()).cpu().detach().numpy()
+        self.encoding = np.matmul(weights, self.index_ohe)
         self.norm_encoding = self.encoding / np.linalg.norm(self.encoding)
     
     def get_ohe(self, max_num=41899):
@@ -239,12 +249,12 @@ class Word():
         return distance
     
     def get_norm_distance(self, word, language):
-        if language not in self.distances:
-            self.distances[language] = {}
-        if word not in self.distances[language]:
-            self.distances[language][word] = np.linalg.norm(self.norm_encoding - word.norm_encoding)
-        return self.distances[language][word]
-
+        # if language not in self.distances:
+        #     self.distances[language] = {}
+        # if word not in self.distances[language]:
+        #     self.distances[language][word] = np.linalg.norm(self.norm_encoding - word.norm_encoding)
+        # return self.distances[language][word]
+        return np.linalg.norm(self.norm_encoding - word.norm_encoding)
 
 def get_jaccard_similarity(set_1: set, set_2: set) -> float:
     """
@@ -307,9 +317,11 @@ def create_words_from_df(ref_df: pd.DataFrame) -> Dict[str, Word]:
     word_dict_lang      A dictionary of {word (str): Word} items
     """
     all_source_words = list(ref_df['src_words'].explode().unique())
+    word_series = ref_df['src_words'].explode()
     word_dict_lang = {word: Word(word) for word in all_source_words}
     for word in tqdm(word_dict_lang.values()):
-        word.get_indices(ref_df['src'])
+        # word.get_indices(ref_df['src'])
+        word.get_indices(word_series)
         word.get_ohe()
     return word_dict_lang
 

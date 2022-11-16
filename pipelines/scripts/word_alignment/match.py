@@ -96,14 +96,7 @@ def run_match(
 
     """
     outpath.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        format="%(asctime)s - %(funcName)20s() - %(message)s",
-        level='INFO',
-        filename=f"{outpath}/match_words_in_aligned_verse.log",
-        filemode="a",
-        force=True,
-    )
-    logging.info("START RUN")
+    
     cache_dir = outpath.parent / "cache"
     cache_dir.mkdir(exist_ok=True)
     matches_file = outpath / "dictionary.json"
