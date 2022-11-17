@@ -24,17 +24,19 @@ def identify_red_flags(outpath: Path, ref_path:Path, total_col: str='simple_tota
                     context in the reference languages.
     """
     df = pd.read_csv(outpath / 'summary_scores.csv')
-    df.loc[:, 'order'] = df.index
-    df['order'] = -1 * df.groupby(['vref', 'source'])['order'].transform('min')
+    # df.loc[:, 'order'] = df.index
+    # df['order'] = -1 * df.groupby(['vref', 'source'])['order'].transform('min')
     df.loc[:, total_col] = df[total_col].apply(lambda x: max(x, 0))
     print("Calculating best match for each source word...")
-    possible_red_flags = df.loc[df.groupby(['vref', 'source'])[total_col].idxmax(), :]
-    possible_red_flags.index = possible_red_flags['order']
-    possible_red_flags = possible_red_flags.sort_values(['vref', 'source', total_col], ascending=False).groupby(['vref', 'source']).agg({total_col: 'sum', 'order': 'first'}).sort_values('order', ascending=False).reset_index()
+    possible_red_flags = df.loc[df.groupby(['vref', 'source'], sort=False)[total_col].idxmax(), :].reset_index(drop=True)
+    # possible_red_flags.index = possible_red_flags['order']
+    # possible_red_flags = possible_red_flags.sort_values(['vref', 'source', total_col], ascending=False).groupby(['vref', 'source'], sort=False).agg({total_col: 'sum'}).reset_index()
+    possible_red_flags = possible_red_flags.loc[:, ['vref', 'source', total_col]]
     possible_red_flags = possible_red_flags[possible_red_flags[total_col] < 0.1]
+    possible_red_flags.to_csv(outpath / 'possible_red_flags.csv')
     if ref_path.exists():
         ref = pd.read_csv(ref_path, low_memory=False)
-        possible_red_flags = possible_red_flags.merge(ref, how='left', on=['vref', 'source'])
+        possible_red_flags = possible_red_flags.merge(ref, how='left', on=['vref', 'source'], sort=False)
         red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['mean'] > 5 * row[total_col] and row['min'] > 0.3, axis=1)]
     else:
         red_flags = possible_red_flags
@@ -72,7 +74,7 @@ def main(args):
     print("Identifying red flags...")
     ref_path = Path(f'data/ref_data/{source.stem}_ref_word_scores.csv')
     red_flags = identify_red_flags(outpath, ref_path, total_col=total_col)
-    red_flags.to_csv(outpath / f'red_flags.csv')
+    red_flags.to_csv(outpath / f'red_flags.csv', index=False)
 
 
 if __name__ == "__main__":

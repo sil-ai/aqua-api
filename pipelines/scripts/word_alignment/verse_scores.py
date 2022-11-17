@@ -67,10 +67,11 @@ def main(args):
     if not source_stem or not target_stem:
         return
     ref_path = Path('data/ref_data')
-    ref = pd.read_csv(ref_path / f'{source_stem}_ref_verse_scores.csv')
-    ref = ref.rename(columns = {'mean': 'ref_mean'})
+    all_ref = pd.read_csv(ref_path / f'{source_stem}_all_ref_verse_scores.csv')
+
+    all_ref = all_ref.rename(columns = {'mean': 'ref_mean'})
     to_exclude = ['vref', 'Unnamed: 0', 'mean', 'min', 'second_min', 'ref_mean']
-    cols = [col for col in ref.columns if col not in to_exclude]
+    cols = [col for col in all_ref.columns if col not in to_exclude]
     st.header('Choose reference translations for comparison')
     ref_langs = {}
     all_ref_langs = st.checkbox('All')
@@ -84,10 +85,10 @@ def main(args):
 
     scores = {}
     for lang in ref_langs:
-        scores[lang] = ref[lang].mean()
+        scores[lang] = all_ref[lang].mean()
     verse_scores_file = out_dir / f'{source_stem}_{target_stem}' / 'verse_scores.csv'
     verse_df = pd.read_csv(verse_scores_file)
-    verse_df = verse_df.merge(ref, how='left', on='vref')
+    verse_df = verse_df.merge(all_ref, how='left', on='vref')
     scores[target_stem] = verse_df['total_score'].mean()
     
     scores = OrderedDict(sorted(scores.items(), key=lambda item: item[1], reverse=True))
@@ -144,22 +145,34 @@ def main(args):
         if calibrated:
             mid_color_score = 1
         else:
-            mid_color_score = ref['ref_mean'].mean()
+            mid_color_score = all_ref['ref_mean'].mean()
+    min_color_score = mid_color_score*0.8
+    max_color_score = mid_color_score*1.2
+    print(min_color_score)
     print(mid_color_score)
 
+    print(max_color_score)
+
+
     sCalculatedField = display_col
-    x=0.45
+    # mid_color_score=0.5
     color_config = {
         'field': sCalculatedField,
         'type': 'quantitative',
-        'legend': {'title': '', 'direction': 'vertical', 'orient': 'left',
-            "labelExpr": "{'0.3': 'More dynamic', '0.6': 'More formally equivalent'}[datum.label]",
-            "labelFontSize": 18, "titleFontSize": 20},
-        'scale': {'range': ['blue', 'white', 'orange'], 'domain': [0.3, 0.6]},
+        'legend': { 'title': '', 
+                    'direction': 'vertical', 
+                    'orient': 'left',
+                    'values': [min_color_score, mid_color_score, max_color_score],
+                    "labelExpr": f"{{ {min_color_score}: 'More dynamic', {max_color_score}: 'More formally equivalent'}}[datum['value']]",
+                    # "labelExpr": "datum.value",
+                    # "labelFlush":True,
+                    "labelFontSize": 18, 
+                    "titleFontSize": 20
+                    },
+        'scale': {'range': ['blue', 'white', 'orange'], 'domain': [min_color_score, mid_color_score, max_color_score]},
     }
 
     books = list(verse_df['DisplayBook'].unique())
-    print(books)
     if blnByBookChapter:
         displayList = listChapters
         st.markdown('')

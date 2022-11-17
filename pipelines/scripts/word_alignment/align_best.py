@@ -44,9 +44,12 @@ def get_best_alignment_scores(
         vref                The verse reference for that line,     if a vref file has been supplied.
     """
     data = {"vref": [], "source": [], "target": [], "alignment_count": [], "verse_score": [], "alignment_score": []}
-    alignments = model.get_best_alignment_batch(corpus.lowercase().to_tuples())
+    segments = list(corpus.lowercase().to_tuples())
+    alignments = model.align_batch(segments)
     c = 0
-    for source_segment, target_segment, alignment in tqdm(alignments):
+    # for source_segments, target_segments in batch(segments, model.batch_size):
+
+    for (source_segment, target_segment), alignment in tqdm(zip(list(segments), alignments)):
         word_pairs = alignment.to_aligned_word_pairs()
         model.compute_aligned_word_pair_scores(source_segment, target_segment, word_pairs)
 

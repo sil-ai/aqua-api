@@ -318,7 +318,7 @@ def create_words_from_df(ref_df: pd.DataFrame) -> Dict[str, Word]:
     """
     all_source_words = list(ref_df['src_words'].explode().unique())
     word_series = ref_df['src_words'].explode()
-    word_dict_lang = {word: Word(word) for word in all_source_words}
+    word_dict_lang = {word: Word(word) for word in all_source_words if type(word) == str}
     for word in tqdm(word_dict_lang.values()):
         # word.get_indices(ref_df['src'])
         word.get_indices(word_series)
