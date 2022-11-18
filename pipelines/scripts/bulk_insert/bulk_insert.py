@@ -2,10 +2,10 @@ import os
 import json
 import argparse
 import logging
-from models import AssessmentResult
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from models import AssessmentResult
 
 logging.getLogger().setLevel('DEBUG')
 #input -> [{**item,**{'score': round(item['score'],precision)}} for item in sem_sims]
@@ -39,16 +39,30 @@ class BulkInsert():
                 raise ValueError(sys_exit.code) from sys_exit
 
     def insert(self):
-        for result in self.input:
-            self.insert_item(result)
+        #TODO: remove idx
+        try:
+            #sanity check that the assessment id is new
+            assert self.assessment_is_new(self.assess_id), f"Result with assessment id {self.assess_id} exists"
+            for idx,result in enumerate(self.input):
+                print(idx)
+                self.insert_item(result)
+            self.session.commit()
+            return 200, 'OK'
+        except (IntegrityError, AssertionError) as err:
+            self.session.rollback()
+            return 500, err
+
+    def assessment_is_new(self, assess_id):
+        stmt = 'select * from "assessmentResult";'
+        return len(list(filter(lambda item:item[1]==assess_id, self.session.execute(stmt)))) == 0
+        #self.session.query(AssessmentResult).filter_by(assessment=self.assess_id).first() is None
 
     def insert_item(self, result):
         ar = AssessmentResult(assessment = self.assess_id,
                               ref=result['ref'],
                               score=result['score'])
-        print(result['ref'])
         self.session.add(ar)
-        self.session.commit()
+       
 
 if __name__ == '__main__':
     from dotenv import load_dotenv
@@ -60,4 +74,3 @@ if __name__ == '__main__':
             KeyError, AttributeError,
             FileNotFoundError) as err:
         logging.error(err)
-    
