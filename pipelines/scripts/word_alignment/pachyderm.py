@@ -80,6 +80,10 @@ def main(args):
                         if target.suffix == '.txt':
                             print(f"Starting run")
                             print(f"Source: {source}\nTarget: {target}")
+                            cache_file = outpath / 'cache' / f'{source.stem}-index-cache.json'
+                            print(f"Does {cache_file} exist? {cache_file.exists()}")
+                            cache_file = outpath / 'cache' / f'{target.stem}-index-cache.json'
+                            print(f"Does {cache_file} exist? {cache_file.exists()}")
                             run_pachyderm(
                             source = source,
                             target = target,
