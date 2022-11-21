@@ -1,0 +1,36 @@
+{
+  "pipeline": {
+    "name": "word_alignment"
+  },
+  "description": "A pipeline that performs word alignment based on fast align and statistical matching algorithms to give alignment scores.",
+  "transform": {
+    "cmd": [
+      "python3",
+      "pachyderm.py",
+      "--source_dir",
+      "/pfs/create_source_cache",
+      "--target_dir",
+      "/pfs/create_target_cache",
+      "--outpath",
+      "/pfs/out/",
+      "--is-bible"
+    ],
+    "image": "woodwardmw/<imagename>:<tag>"
+  },
+  "input": {
+    "cross": [
+      {
+        "pfs": {
+          "repo": "create_source_cache",
+          "glob": "/*/"
+        }
+      },
+      {
+        "pfs": {
+          "repo": "create_target_cache",
+          "glob": "/*/"
+        }
+      }
+    ]
+  }
+}
