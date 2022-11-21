@@ -92,11 +92,11 @@ def main(args):
                             is_bible = args.is_bible,
                             refresh_cache = args.refresh_cache,
                             )
-                            config = {
+                            meta = {
                                 'source': source.stem,
                                 'target': target.stem,
                             }
-                            get_data.write_dictionary_to_file(config, outpath / config.json)
+                            get_data.write_dictionary_to_file(meta, outpath / meta.json)
 
 
 if __name__ == "__main__":
