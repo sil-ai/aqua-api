@@ -65,21 +65,21 @@ def main(args):
     outpath = Path('/pfs/out/')
     for source_dir in sources.iterdir():
         print(source_dir)
-        for source in source_dir:
+        for source in source_dir.iterdir():
             if source.suffix == 'json':
                 shutil.copy(source, outpath / 'cache' / source.name)
 
     for target_dir in targets.iterdir():
         print(target_dir)
-        for target in target_dir:
+        for target in target_dir.iterdir():
             if target.suffix == 'json':
                 shutil.copy(target, outpath / 'cache' / target.name)
 
     for source_dir in sources.iterdir():
-        for source in source_dir:
+        for source in source_dir.iterdir():
             if source.suffix == 'txt':
                 for target_dir in targets.iterdir():
-                    for target in target_dir:
+                    for target in target_dir.iterdir():
                         if target.suffix == 'txt':
                             print(f"Starting run")
                             print(f"Source: {source}\nTarget: {target}")
