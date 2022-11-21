@@ -97,6 +97,9 @@ def main(args):
                                 'target': target.stem,
                             }
                             get_data.write_dictionary_to_file(meta, outpath / meta.json)
+                            shutil.copy(source, outpath / source.name)
+                            shutil.copy(target, outpath / target.name)
+
 
 
 if __name__ == "__main__":
