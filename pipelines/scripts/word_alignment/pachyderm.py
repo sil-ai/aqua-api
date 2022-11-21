@@ -62,29 +62,35 @@ def main(args):
     sources = args.source_dir
     targets = args.target_dir
     outpath = Path('/pfs/out/')
-    for source in sources.iterdir():
-        print(source)
-        if source.suffix == 'json':
-            shutil.copy(source, outpath / 'cache' / source.name)
+    for source_dir in sources.iterdir():
+        print(source_dir)
+        for source in source_dir:
+            if source.suffix == 'json':
+                shutil.copy(source, outpath / 'cache' / source.name)
 
-    for target in targets.iterdir():
-        print(target)
-        if target.suffix == 'json':
-            shutil.copy(target, outpath / 'cache' / target.name)
+    for target_dir in targets.iterdir():
+        print(target_dir)
+        for target in target_dir:
+            if target.suffix == 'json':
+                shutil.copy(target, outpath / 'cache' / target.name)
 
-    for source in sources.iterdir():
-        for target in targets.iterdir():
-            print(f"Starting run")
-            print(f"Source: {source}\nTarget: {target}")
-            run_pachyderm(
-            source = source,
-            target = target,
-            outpath = outpath,
-            jaccard_similarity_threshold = args.jaccard_similarity_threshold,
-            count_threshold = args.count_threshold,
-            is_bible = args.is_bible,
-            refresh_cache = args.refresh_cache,
-            )
+    for source_dir in sources.iterdir():
+        for source in source_dir:
+            if source.suffix == 'txt':
+                for target_dir in targets.iterdir():
+                    for target in target_dir:
+                        if target.suffix == 'txt':
+                            print(f"Starting run")
+                            print(f"Source: {source}\nTarget: {target}")
+                            run_pachyderm(
+                            source = source,
+                            target = target,
+                            outpath = outpath,
+                            jaccard_similarity_threshold = args.jaccard_similarity_threshold,
+                            count_threshold = args.count_threshold,
+                            is_bible = args.is_bible,
+                            refresh_cache = args.refresh_cache,
+                            )
 
 
 if __name__ == "__main__":
