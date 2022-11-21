@@ -392,7 +392,8 @@ def create_words(
         print(f"Getting sentences that contain each word in {source.stem} from {index_cache_file}")    
         word_dict_lang = get_words_from_cache(index_cache_file)
     else:
-        index_cache_file.parent.mkdir(parents=True, exist_ok=True)
+        if not index_cache_file.parent.exists():
+            index_cache_file.parent.mkdir(parents=True, exist_ok=True)
         print(f"Getting sentences that contain each word in {source.stem}")    
         word_dict_lang = create_words_from_df(ref_df)
         save_word_dict_lang_to_cache(word_dict_lang, index_cache_file)
