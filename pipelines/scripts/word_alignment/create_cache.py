@@ -10,6 +10,7 @@ def main(args):
             outpath = Path(f'/pfs/out/{source.stem}')
             cache_path = outpath
             get_data.create_words(source, cache_path, outpath)
+            (outpath / 'src.txt').unlink()
             shutil.copy(source, outpath / source.name)
 
 
