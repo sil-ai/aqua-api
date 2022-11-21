@@ -5,6 +5,7 @@ from typing import Optional
 import shutil
 
 import combined
+import get_data
 
 
 def run_pachyderm(
@@ -91,6 +92,11 @@ def main(args):
                             is_bible = args.is_bible,
                             refresh_cache = args.refresh_cache,
                             )
+                            config = {
+                                'source': source.stem,
+                                'target': target.stem,
+                            }
+                            get_data.write_dictionary_to_file(config, outpath / config.json)
 
 
 if __name__ == "__main__":
