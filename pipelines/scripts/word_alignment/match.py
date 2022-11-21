@@ -97,8 +97,8 @@ def run_match(
     """
     outpath.mkdir(parents=True, exist_ok=True)
     
-    cache_dir = outpath.parent / "cache"
-    cache_dir.mkdir(exist_ok=True)
+    cache_dir = (outpath.parent / "cache")
+    # cache_dir.mkdir(exist_ok=True)
     matches_file = outpath / "dictionary.json"
 
     freq_cache_file = cache_dir / f"{source.stem}-{target.stem}-freq-cache.json"
