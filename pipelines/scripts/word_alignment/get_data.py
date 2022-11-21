@@ -113,7 +113,8 @@ def condense_files(df: pd.DataFrame) -> pd.DataFrame:
     df['to_drop'] = [False] * df.shape[0]
     df = df[df['src'] != '\n']
     df = df[df['trg'] != '\n']
-    
+    if df.shape[0] == 0:
+        return df
     # merge up lines that contain \n or <range> in either src or trg
     src_to_append = ''
     trg_to_append = ''
