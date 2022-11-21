@@ -69,14 +69,14 @@ def main(args):
         for source in source_dir.iterdir():
             if source.suffix == '.json':
                 print(f"Copying {source}")
-                shutil.copy(source, outpath / 'cache' / source.name)
+                shutil.copy(source, outpath / 'cache')
             if source.suffix == '.txt':
                 for target_dir in targets.iterdir():
                     print(target_dir)
                     for target in target_dir.iterdir():
                         if target.suffix == '.json':
                             print(f"Copying {target}")
-                            shutil.copy(target, outpath / 'cache' / target.name)
+                            shutil.copy(target, outpath / 'cache')
                         if target.suffix == '.txt':
                             print(f"Starting run")
                             print(f"Source: {source}\nTarget: {target}")
