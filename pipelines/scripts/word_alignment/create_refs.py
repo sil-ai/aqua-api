@@ -1,4 +1,5 @@
 from pathlib import Path
+import argparse
 
 import pandas as pd
 
@@ -21,19 +22,21 @@ def get_ref_scores(references, verse_df, word_df, source, base_outpath):
         word_scores, verse_scores = get_scores(outpath)
         verse_df = verse_df.merge(verse_scores, how='left', on='vref').rename(columns={'total_score': reference})
         word_df = word_df.merge(word_scores, how='left', on=['vref', 'source']).rename(columns={'total_score': f'{reference}_score', 'target': f'{reference}_match'})
-    verse_df['mean'] = verse_df.mean(axis=1)
-    word_df['mean'] = word_df.mean(axis=1)
-
-    verse_df['min'] = verse_df.iloc[:, 1:-1].min(axis=1)
-    word_df['min'] = word_df.iloc[:, 1:-1].min(axis=1)
+    print([f'{reference}_score' for reference in references])
+    
+    if len(references) > 0:
+        verse_df['mean'] = verse_df.loc[:, references].mean(axis=1)
+        word_df['mean'] = word_df.loc[:, [f'{reference}_score' for reference in references]].mean(axis=1)
+        verse_df['min'] = verse_df.loc[:, references].min(axis=1)
+        word_df['min'] = word_df.loc[:, [f'{reference}_score' for reference in references]].min(axis=1)
     print(verse_df)
     if len(references) > 1:
-        verse_df['second_min'] = verse_df.drop(['vref', 'mean', 'min'], axis=1).apply(lambda row: sorted(list(row))[1], axis=1)
-        word_df['second_min'] = word_df.drop(['vref', 'source', *[f'{reference}_match' for reference in references], 'mean', 'min'], axis=1).apply(lambda row: sorted(list(row))[1], axis=1)
+        verse_df['second_min'] = verse_df.loc[:, references].apply(lambda row: sorted(list(row))[1], axis=1)
+        word_df['second_min'] = word_df.loc[:, [f'{reference}_score' for reference in references]].apply(lambda row: sorted(list(row))[1], axis=1)
     return verse_df, word_df
 
 
-def main():
+def main(args):
     all_references = [
         'en-NASB',
         'en-NIV84',
@@ -56,8 +59,8 @@ def main():
         # 'ndh-ndhBT'
     ]
 
-    base_outpath = Path('data/out')
-    source = Path('data/archive/greek_lemma.txt')
+    base_outpath = args.outpath
+    source = args.source
     # source = Path('data/archive/en-NIV11.txt')
     # source = Path('data/archive/swhMICP-front.txt')
     # source = Path('data/archive/wbi-wbiNT.txt')
@@ -88,4 +91,8 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--source", type=Path, help="Path to source text", required=True)
+    parser.add_argument("--outpath", type=Path, help="Path to base outpath where scores are saved", required=True)
+    args = parser.parse_args()
+    main(args)

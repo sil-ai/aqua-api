@@ -281,22 +281,13 @@ def combine_by_verse_scores(
     
     if weights_path is None:
         weights_path = Path('data/models/encoder_weights.txt')
-    # model = autoencoder.Autoencoder(in_size=41899, out_size=50)
-    # model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
     by_verse_scores = add_distances_to_df(word_dict_src, word_dict_trg, target.stem, outpath, weights_path=weights_path, df=by_verse_scores)
     word_dict_src = None
     word_dict_trg = None
-    # df.loc[:, 'total_score'] = df.progress_apply(lambda row: (row['avg_aligned'] + row['translation_score'] + math.log1p(row['alignment_count']) * row['alignment_score'] + math.log1p(row['match_counts']) * row['jac_sim'] + row['encoding_score']) / 5, axis=1)
-    # model_xgb = XGBClassifier()
-    # model_xgb.load_model("data/models/xgb_model_4.txt")
-    # X = df[['translation_score', 'alignment_count', 'alignment_score', 'avg_aligned', 'jac_sim', 'match_counts', 'encoding_dist']]
-    # df.loc[:, 'total_score'] = model_xgb.predict_proba(X)[:, 1]
-    # print("Calculating simple total of the first four metrics...")
-    # by_verse_scores.loc[:, 'simple_total'] = get_data.faster_df_apply(by_verse_scores, lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim']) / 4)
-    print("Calculating total score of all five metrics (including encoding distance)...")
+    print("Calculating total score of all five metrics")
     by_verse_scores.loc[:, 'total_score'] = get_data.faster_df_apply(by_verse_scores,lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['jac_sim'] + math.log1p(max(1 - row['encoding_dist'], -0.99))) / 5)
-    by_verse_scores = by_verse_scores.loc[:, ['vref', 'source', 'target', 'total_score']]
-    by_verse_scores.to_csv(outpath / 'summary_scores.csv')
+    # by_verse_scores = by_verse_scores.loc[:, ['vref', 'source', 'target', 'total_score']]
+    by_verse_scores.to_csv(outpath / 'by_verse_scores.csv')
     word_scores = remove_leading_and_trailing_blanks(by_verse_scores, 'total_score')
     del by_verse_scores
     word_scores = word_scores.fillna(0)
@@ -391,12 +382,12 @@ def main(args):
                                             count_threshold=args.count_threshold,
                                             refresh_cache = args.refresh_cache,
                                             )
-    if word_dict_src:
-        for word in word_dict_src.values():
-            word.remove_index_list()        # To save memory
-    if word_dict_trg:
-        for word in word_dict_trg.values():
-            word.remove_index_list()
+    # if word_dict_src:
+    #     for word in word_dict_src.values():
+    #         word.remove_index_list()        # To save memory
+    # if word_dict_trg:
+    #     for word in word_dict_trg.values():
+    #         word.remove_index_list()
    
     run_combine_results(outpath)
     combine_by_verse_scores(

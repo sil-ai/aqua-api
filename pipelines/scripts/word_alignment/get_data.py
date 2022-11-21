@@ -45,8 +45,10 @@ def normalize_word(word:str)-> str:
     Strips the punctuation from the word. Note that in some languages this punctuation includes important meaning from the word!
     But this is used to "normalize" words, and group together words that are similar (and often have similar meanings) but not identical.
     """
-    word = re.sub("[^\w\s]", "", str(word).lower()) if word else ''    #  Gives 18,159 unique Hebrew ords in the OT, rather than 87,000
-    return word
+    word_norm = re.sub("[^\w\s]", "", str(word).lower()) if word else ''    #  Gives 18,159 unique Hebrew ords in the OT, rather than 87,000
+    if len(word_norm) == 0:
+        return word
+    return word_norm
 
 
 def tuple_keys_to_string(dictionary: dict) -> dict:
@@ -228,8 +230,10 @@ class Word():
     
     def get_encoding(self, weights: np.ndarray):
         # self.encoding = model.encoder(torch.tensor(self.index_ohe).float()).cpu().detach().numpy()
+        self.get_ohe()
         self.encoding = np.matmul(weights, self.index_ohe)
         self.norm_encoding = self.encoding / np.linalg.norm(self.encoding)
+        self.index_ohe = np.array([])
     
     def get_ohe(self, max_num=41899):
         a = np.zeros(max_num)
@@ -304,7 +308,7 @@ def get_words_from_cache(index_cache_file: Path) -> Dict[str, Word]:
     word_dict_lang = {word: Word(word) for word in index_lists}
     for word in word_dict_lang.values():
         word.index_list = index_lists[word.word]
-        word.get_ohe()
+        # word.get_ohe()
     return word_dict_lang
 
 
@@ -317,12 +321,13 @@ def create_words_from_df(ref_df: pd.DataFrame) -> Dict[str, Word]:
     word_dict_lang      A dictionary of {word (str): Word} items
     """
     all_source_words = list(ref_df['src_words'].explode().unique())
-    word_series = ref_df['src_words'].explode()
     word_dict_lang = {word: Word(word) for word in all_source_words if type(word) == str}
+
+    word_series = ref_df['src_words'].explode().apply(lambda x: normalize_word(x))
     for word in tqdm(word_dict_lang.values()):
         # word.get_indices(ref_df['src'])
         word.get_indices(word_series)
-        word.get_ohe()
+        # word.get_ohe()
     return word_dict_lang
 
 
