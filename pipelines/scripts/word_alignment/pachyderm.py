@@ -62,8 +62,6 @@ def main(args):
     sources = args.source_dir
     targets = args.target_dir
     outpath = Path('/pfs/out/')
-    # source_cache_dir = args.source_cache
-    # target_cache_dir = args.target_cache
     for source in sources.iterdir():
         print(source)
         if source.suffix == 'json':
@@ -94,8 +92,6 @@ if __name__ == "__main__":
     parser.add_argument("--source_dir", type=Path, help="source bible directory")
     parser.add_argument("--target_dir", type=Path, help="target bible directory")
     parser.add_argument("--outpath", type=Path, default=Path("/pfs/out"), help="Output directory")
-    parser.add_argument("--source-cache", type=Path, help="Source cache directory")
-    parser.add_argument("--target-cache", type=Path, help="Target cache directory")
     parser.add_argument("--jaccard-similarity-threshold", default=0.05, type=float, help="Jaccard Similarity threshold for including matches in dictionary")
     parser.add_argument("--count-threshold", type=int, default=0, help="Count threshold for including matches in dictionary")
     parser.add_argument("--is-bible", action="store_true", help="Whether text is Bible, in which case the length of the text file must be 41,899 lines")
