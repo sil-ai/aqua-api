@@ -70,7 +70,7 @@ def main(args):
 
     sources = args.source_dir
     targets = args.target_dir
-    outpath = Path('/pfs/out/')
+    base_outpath = Path('/pfs/out/')
 
     for source_dir in sources.iterdir():
         print(source_dir)
@@ -90,6 +90,7 @@ def main(args):
             target = target_dir / f'{target_str}.txt'
             print(f"Starting run")
             print(f"Source: {source}\nTarget: {target}")
+            outpath = base_outpath / f'{source_str}_{target_str}/'
             run_pachyderm(
             source = source,
             target = target,
