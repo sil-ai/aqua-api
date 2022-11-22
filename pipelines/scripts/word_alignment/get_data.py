@@ -18,7 +18,7 @@ def faster_df_apply(df, func):
         row_dict = {f:v for f,v in zip(cols, row[1:])}
         data.append(func(row_dict))
         index.append(row[0])
-    return pd.Series(data, index=index)
+    return pd.Series(data, index=index, dtype='object')
     
 
 def write_dictionary_to_file(
@@ -435,6 +435,6 @@ def get_ref_df(source: Path, target: Optional[Path] = None, is_bible: bool=True)
     df = pd.DataFrame({"vref": vrefs, "src": src_data})
     if target:
         df['trg'] = trg_data
-        
+
     df = df.astype('object')
     return df
