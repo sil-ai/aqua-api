@@ -94,7 +94,7 @@ def main(args):
             run_pachyderm(
             source = source,
             target = target,
-            outpath = outpath,
+            outpath = base_outpath,
             source_index_cache_file=source_index_cache_file,
             target_index_cache_file=target_index_cache_file,
             jaccard_similarity_threshold = args.jaccard_similarity_threshold,
