@@ -96,42 +96,22 @@ def combine_word_scores(translation_path: Path, avg_alignment_path: Path, match_
     # print(all_results)
     all_results.loc[:, ['avg_aligned']] = all_results.apply(
         lambda row: row['alignment_count'] / row['co-occurrence_count'], axis = 1
-        )
-    all_results.loc[:, 'alignment_count'] = all_results.loc[:, 'alignment_count'].apply(
-        lambda x: 0 if pd.isnull(x) else x
-        )
-    all_results.loc[:, 'verse_score'] = all_results.loc[:, 'verse_score'].apply(
-        lambda x: 0 if pd.isnull(x) else x
-        )
-    all_results.loc[:, 'avg_aligned'] = all_results.loc[:, 'avg_aligned'].apply(
-        lambda x: 0 if pd.isnull(x) else x
-        )
-    all_results.loc[:, 'alignment_count'] = all_results.loc[:, 'alignment_count'].apply(
-        lambda x: 0 if pd.isnull(x) else x
-        )
+        ).astype('float16')
+    all_results.loc[:, 'alignment_count'] = all_results['alignment_count'].fillna(0).astype('float16')
+    # all_results.loc[:, 'verse_score'] = all_results['verse_score'].fillna(0).astype('float16')
+    all_results.loc[:, 'avg_aligned'] = all_results['avg_aligned'].fillna(0).astype('float16')
+    all_results.loc[:, 'alignment_count'] = all_results['alignment_count'].fillna(0).astype('float16')
     all_results.loc[:, 'translation_score'] = all_results.loc[:, 'translation_score'].apply(
         lambda x: 0 if x < 0.00001 else x
-        )
+        ).astype('float16')
 
     with open(match_path) as f:
         match_results = json.load(f)
 
     # write to df and merge with fa results
     df = all_results
-    df.loc[:, "jac_sim"] = get_data.faster_df_apply(df, 
-        lambda x: get_scores_from_match_dict(
-            match_results, x["source"], x["target"], normalized=False
-        )[0],
-        # axis=1,
-    )
-    df.loc[:, "match_counts"] = get_data.faster_df_apply(df, 
-        lambda x: get_scores_from_match_dict(
-            match_results, x["source"], x["target"], normalized=False
-        )[1],
-        # axis=1,
-    )
-
-    df.drop(columns=["Unnamed: 0_x", "Unnamed: 0_y"], inplace=True)
+    df.loc[:, "jac_sim"] = get_data.faster_df_apply(df, lambda x: get_scores_from_match_dict(match_results, x["source"], x["target"], normalized=False)[0]).astype('float16')
+    df.loc[:, "match_counts"] = get_data.faster_df_apply(df, lambda x: get_scores_from_match_dict(match_results, x["source"], x["target"], normalized=False)[1]).astype('int')
     return df
 
 
