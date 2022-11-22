@@ -120,7 +120,7 @@ def main(args):
             if not target_index_cache_file_path.exists():
                 shutil.copy(target_index_cache_file, target_index_cache_file_path)
             if (base_outpath / 'cache').exists():
-                (base_outpath / 'cache').unlink()
+                shutil.rmtree(base_outpath / 'cache')
 
 
 
