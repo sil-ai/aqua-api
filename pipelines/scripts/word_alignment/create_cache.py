@@ -15,7 +15,7 @@ def main(args):
             meta = {
                     'source': source.stem,
                 }
-            get_data.write_dictionary_to_file(meta, outpath / meta.json)
+            get_data.write_dictionary_to_file(meta, outpath / 'meta.json')
             shutil.copy(source, outpath / source.name)
 
 
