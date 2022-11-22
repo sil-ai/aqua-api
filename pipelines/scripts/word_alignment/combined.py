@@ -204,8 +204,8 @@ def combine_by_verse_scores(
     by_verse_scores['vref'] = by_verse_scores['vref'].astype('object')  # Necessary for non-Bible, where vrefs are ints.
     by_verse_scores = pd.merge(ref_df, by_verse_scores, on=['vref', 'source', 'target'], how='left')
     by_verse_scores = pd.merge(by_verse_scores[['vref', 'source', 'target', 'alignment_score']], 
-                word_scores[['vref', 'source', 'target', 'co-occurrence_count', 'translation_score', 'alignment_count', 'avg_aligned', 'jac_sim', 'match_counts']],
-                on=['vref', 'source', 'target'], how='left')
+                word_scores[['source', 'target', 'co-occurrence_count', 'translation_score', 'alignment_count', 'avg_aligned', 'jac_sim', 'match_counts']],
+                on=['source', 'target'], how='left')
     by_verse_scores['alignment_score'].fillna(0, inplace=True)
     if word_dict_src == None:
         source_index_cache_file = outpath.parent / 'cache' / f'{source.stem}-index-cache.json'
