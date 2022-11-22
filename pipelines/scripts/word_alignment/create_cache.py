@@ -9,8 +9,13 @@ def main(args):
         for source in args.source_dir.iterdir():
             outpath = Path(f'/pfs/out/{source.stem}')
             cache_path = outpath
-            get_data.create_words(source, cache_path, outpath)
+            index_cache_file = cache_path / f'{source.stem}-index-cache.json'
+            get_data.create_words(source, index_cache_file, outpath)
             (outpath / 'src.txt').unlink()
+            meta = {
+                    'source': source.stem,
+                }
+            get_data.write_dictionary_to_file(meta, outpath / meta.json)
             shutil.copy(source, outpath / source.name)
 
 
