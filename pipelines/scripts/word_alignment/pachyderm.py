@@ -106,8 +106,19 @@ def main(args):
                 'target': target.stem,
             }
             get_data.write_dictionary_to_file(meta, outpath / 'meta.json')
-            shutil.copy(source, outpath / source.name)
-            shutil.copy(target, outpath / target.name)
+            source_file_path = outpath / source.name
+            target_file_path = outpath / target.name
+            source_index_cache_file_path = outpath / source_index_cache_file.name
+            target_index_cache_file_path = outpath / target_index_cache_file.name
+            if not source_file_path.exists():
+                shutil.copy(source, source_file_path)
+            if not target_file_path.exists():
+                shutil.copy(target, outpath / target.name)
+            if not source_index_cache_file_path.exists():
+                shutil.copy(source_index_cache_file, source_index_cache_file_path)
+            if not target_index_cache_file_path.exists():
+                shutil.copy(target_index_cache_file, target_index_cache_file_path)
+
 
 
 
