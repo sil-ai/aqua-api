@@ -160,11 +160,9 @@ def run_combine_results(outpath: Path) -> None:
     translation_path = outpath / "translation_scores.csv"
     avg_alignment_path = outpath / "avg_alignment_scores.csv"
     match_path = outpath / "dictionary.json"
-    print("Combining word-pair scores across the corpus")
     df = combine_word_scores(translation_path, avg_alignment_path, match_path)
-
     # save results
-    df.to_csv(outpath / "align_and_match_word_scores.csv")
+    df.to_csv(outpath / "align_and_match_word_scores.csv", index=False)
 
 
 def combine_by_verse_scores(
@@ -205,15 +203,9 @@ def combine_by_verse_scores(
     word_scores = word_scores.astype({col: 'float16' for col in word_scores.columns if col not in ['vref', 'source', 'target']})
     by_verse_scores['vref'] = by_verse_scores['vref'].astype('object')  # Necessary for non-Bible, where vrefs are ints.
     by_verse_scores = pd.merge(ref_df, by_verse_scores, on=['vref', 'source', 'target'], how='left')
-    by_verse_scores = pd.merge(by_verse_scores.drop(columns=[
-                'alignment_count', 
-                ]), 
-                word_scores.drop(columns=[
-                    'verse_score', 
-                    'alignment_count', 
-                    'alignment_score',
-                    ])
-                    , on=['source', 'target'], how='left')
+    by_verse_scores = pd.merge(by_verse_scores[['vref', 'source', 'target', 'alignment_score']], 
+                word_scores[['vref', 'source', 'target', 'co-occurrence_count', 'translation_score', 'alignment_count', 'avg_aligned', 'jac_sim', 'match_counts']],
+                on=['vref', 'source', 'target'], how='left')
     by_verse_scores['alignment_score'].fillna(0, inplace=True)
     if word_dict_src == None:
         source_index_cache_file = outpath.parent / 'cache' / f'{source.stem}-index-cache.json'

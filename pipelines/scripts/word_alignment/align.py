@@ -136,7 +136,7 @@ def run_align(
     if not outpath.exists():
         outpath.mkdir()
 
-    no_dups.to_csv(outpath / "translation_scores.csv")
+    no_dups.to_csv(outpath / "translation_scores.csv", index=False)
 
     return (parallel_corpus, symmetrized_model)
 
