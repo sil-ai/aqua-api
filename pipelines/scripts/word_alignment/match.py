@@ -76,6 +76,8 @@ def run_match(
             source: Path,
             target: Path,
             outpath: Path,
+            source_index_cache_file: Optional[Path]=None,
+            target_index_cache_file: Optional[Path]=None,
             word_dict_src: Optional[dict]=None,
             word_dict_trg: Optional[dict]=None,
             jaccard_similarity_threshold: float = 0.0,
@@ -96,19 +98,23 @@ def run_match(
 
     """
     outpath.mkdir(parents=True, exist_ok=True)
-    
     cache_dir = outpath.parent / "cache"
     if not cache_dir.exists():
         cache_dir.mkdir(exist_ok=True)
-    matches_file = outpath / "dictionary.json"
+
+    if not source_index_cache_file:
+        source_index_cache_file = cache_dir / f'{source.stem}-index-cache.json'
+    if not target_index_cache_file:
+        target_index_cache_file = cache_dir / f'{target.stem}-index-cache.json'
 
     freq_cache_file = cache_dir / f"{source.stem}-{target.stem}-freq-cache.json"
     freq_cache = get_data.initialize_cache(freq_cache_file, to_tuples=True, refresh=refresh_cache)
+    matches_file = outpath / "dictionary.json"
     
     if word_dict_src == None:
-        word_dict_src = get_data.create_words(source, cache_dir, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
+        word_dict_src = get_data.create_words(source, source_index_cache_file, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
     if word_dict_trg == None:
-        word_dict_trg = get_data.create_words(target, cache_dir, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
+        word_dict_trg = get_data.create_words(target, target_index_cache_file, outpath, is_bible=is_bible, refresh_cache=refresh_cache)
 
     ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
     condensed_df = get_data.condense_files(ref_df)

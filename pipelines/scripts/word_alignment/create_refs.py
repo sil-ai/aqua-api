@@ -1,5 +1,7 @@
 from pathlib import Path
 import argparse
+import json
+from typing import List, Tuple
 
 import pandas as pd
 
@@ -14,11 +16,17 @@ def get_scores(outpath: Path):
     word_scores['target'] = word_scores['target'].apply(lambda x: x.replace(';', '";"')) # Otherwise the separation gets messed up in the CSV file
     return (word_scores, verse_scores)
 
-def get_ref_scores(references, verse_df, word_df, source, base_outpath):
-    references = [reference for reference in references if (base_outpath / f"{source.stem}_{reference}").exists()]
+def get_ref_scores(
+                references: List[str], 
+                verse_df: pd.DataFrame, 
+                word_df: pd.DataFrame, 
+                source: str, 
+                base_outpath: Path
+                ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    references = [reference for reference in references if (base_outpath / f"{source}_{reference}").exists()]
 
     for reference in references:
-        outpath = base_outpath / f"{source.stem}_{reference}" 
+        outpath = base_outpath / f"{source}_{reference}" 
         word_scores, verse_scores = get_scores(outpath)
         verse_df = verse_df.merge(verse_scores, how='left', on='vref').rename(columns={'total_score': reference})
         word_df = word_df.merge(word_scores, how='left', on=['vref', 'source']).rename(columns={'total_score': f'{reference}_score', 'target': f'{reference}_match'})
@@ -37,62 +45,39 @@ def get_ref_scores(references, verse_df, word_df, source, base_outpath):
 
 
 def main(args):
-    all_references = [
-        'en-NASB',
-        'en-NIV84',
-        'fr-LBS21',
-        'swh-ONEN',
-        'arb-AVD',
-        'en-NLT07',
-        'en-GNBUK',
-        'es-NTV',
-        'es-NVI99',
-        'ko-RNKSV',
-        'cho-CHTW',
-        'en-KJV',
-        'en-NIV11',
-        'hop-hopNT',
-        'malay_edited',
-        'malay_baseline',
-        # 'swhMICP-front',
-        # 'wbi-wbiBT',
-        # 'ndh-ndhBT'
-    ]
-
+    base_inpath = args.inpath
     base_outpath = args.outpath
-    source = args.source
-    # source = Path('data/archive/en-NIV11.txt')
-    # source = Path('data/archive/swhMICP-front.txt')
-    # source = Path('data/archive/wbi-wbiNT.txt')
-    # source = Path('data/archive/ndh-ndhBT.txt')
-    references = [
-        'en-NASB',
-        'fr-LBS21',
-        'swh-ONEN',
-        'arb-AVD',
-        'ko-RNKSV',
-        'es-NTV',
+    references = args.references
+    sources = []
+    all_references = []
+    for ref_dir in base_inpath.iterdir():
+        meta_file = ref_dir / 'meta.json'
+        with open(meta_file) as f:
+            meta = json.load(f)
+        source = meta['source']
+        target = meta['target']
+        sources.append(source)
+        all_references.append(target)
         
-    ]
-
-
-    df = get_data.get_ref_df(source, is_bible=True)
-    df = get_data.remove_blanks_and_ranges(df)
-    verse_df = df.drop('src', axis=1)
-    df = get_data.get_words_from_txt_file(df, base_outpath)
-    word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
-    
-    ref_verse_df, ref_word_df = get_ref_scores(all_references, verse_df, word_df, source, base_outpath)
-    ref_verse_df.to_csv(f'data/ref_data/{source.stem}_all_ref_verse_scores.csv', index=False)
-    ref_word_df.to_csv(f'data/ref_data/{source.stem}_all_ref_word_scores.csv', index=False)
-    ref_verse_df, ref_word_df = get_ref_scores(references, verse_df, word_df, source, base_outpath)
-    ref_verse_df.to_csv(f'data/ref_data/{source.stem}_ref_verse_scores.csv', index=False)
-    ref_word_df.to_csv(f'data/ref_data/{source.stem}_ref_word_scores.csv', index=False)
+            
+    for source in sources:
+        df = get_data.get_ref_df(source, is_bible=True)
+        df = get_data.remove_blanks_and_ranges(df)
+        verse_df = df.drop('src', axis=1)
+        df = get_data.get_words_from_txt_file(df, base_outpath)
+        word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
+        
+        ref_verse_df, ref_word_df = get_ref_scores(all_references, verse_df, word_df, source, base_outpath)
+        ref_verse_df.to_csv(f'data/ref_data/{source.stem}_all_ref_verse_scores.csv', index=False)
+        ref_word_df.to_csv(f'data/ref_data/{source.stem}_all_ref_word_scores.csv', index=False)
+        ref_verse_df, ref_word_df = get_ref_scores(references, verse_df, word_df, source, base_outpath)
+        ref_verse_df.to_csv(f'data/ref_data/{source.stem}_ref_verse_scores.csv', index=False)
+        ref_word_df.to_csv(f'data/ref_data/{source.stem}_ref_word_scores.csv', index=False)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", type=Path, help="Path to source text", required=True)
-    parser.add_argument("--outpath", type=Path, help="Path to base outpath where scores are saved", required=True)
+    parser.add_argument("--inpath", type=Path, help="Path to base directory where scores are saved", required=True)
+    parser.add_argument("--references", type=str, nargs='*', help="List of references to be used in red flags, etc", required=True)
     args = parser.parse_args()
     main(args)

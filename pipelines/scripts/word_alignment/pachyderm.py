@@ -103,7 +103,7 @@ def main(args):
                 'source': source.stem,
                 'target': target.stem,
             }
-            get_data.write_dictionary_to_file(meta, outpath / meta.json)
+            get_data.write_dictionary_to_file(meta, outpath / 'meta.json')
             shutil.copy(source, outpath / source.name)
             shutil.copy(target, outpath / target.name)
 

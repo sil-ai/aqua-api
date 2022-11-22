@@ -365,7 +365,7 @@ def get_words_from_txt_file(df: pd.DataFrame, outpath: Path) -> pd.DataFrame:
 
 def create_words(
                 source: Path, 
-                cache_path: Path, 
+                index_cache_file: Path, 
                 outpath: Path, 
                 refresh_cache: bool=False, 
                 is_bible: bool=True
@@ -375,7 +375,7 @@ def create_words(
     values are Word objects.
     Inputs:
     source              Path to txt file
-    cache_path   Path to the cache directory
+    index_cache_file    Path to the cache file
                         used for that language. Normally args.outpath / cache.
     outpath             The base outpath directory
     refresh_cache       Bool. Where to force not using the cache files.
@@ -387,7 +387,6 @@ def create_words(
     word_dict_lang = {}
     ref_df = get_ref_df(source, is_bible=is_bible)
     ref_df = get_words_from_txt_file(ref_df, outpath)
-    index_cache_file = cache_path / f'{source.stem}-index-cache.json'
     
     if index_cache_file.exists() and not refresh_cache:
         print(f"Getting sentences that contain each word in {source.stem} from {index_cache_file}")    

@@ -43,44 +43,6 @@ def run_fa(
     align_best.run_best_align(source, target, outpath, is_bible=is_bible, parallel_corpus=corpus, symmetrized_model=model)
 
 
-# run match words
-def run_match_words(
-    source: Path,
-    target: Path,
-    outpath: Path,
-    word_dict_src: Optional[dict]=None,
-    word_dict_trg: Optional[dict]=None,
-    jaccard_similarity_threshold: float = 0.05,
-    count_threshold: int = 0,
-    refresh_cache: bool=False,
-    is_bible: bool=True
-    ) -> None:
-    """
-    Runs match.run_match with the supplied arguments to get jaccard similarity scores and counts for pairs of
-    source and target words. These are then saved to dictionary.json in the outpath directory.
-    Inputs:
-    source      A path to the source text
-    target      A path to the target text
-    outpath     Path to the base output directory
-    jaccard_similarity_threshold        Jaccard similiarty threshold above which word matches will be kept
-    count_threshold                     Count threshold above which word matches will be kept
-    refresh_cache           Force a cache refresh, rather than using cache from the last time the source and/or target were run
-    """
-    
-    word_dict_src, word_dict_trg = match.run_match(
-        source,
-        target,
-        outpath,
-        word_dict_src=word_dict_src,
-        word_dict_trg=word_dict_trg,
-        jaccard_similarity_threshold=jaccard_similarity_threshold,
-        count_threshold=count_threshold,
-        refresh_cache=refresh_cache,
-        is_bible=is_bible,
-    )
-    return(word_dict_src, word_dict_trg)
-
-
 def get_scores_from_match_dict(
                                 dictionary: dict, 
                                 source_word: str, 
@@ -117,8 +79,8 @@ def combine_word_scores(translation_path: Path, avg_alignment_path: Path, match_
     """
     Reads the outputs saved to file from match.run_match(), align.run_align() and best_align.run_best_align() and saves to a single df
     Inputs:
-    align_path             Path to the translation_scores.csv alignment file
-    best_path              Path to the avg_alignment_scores.csv best alignments file
+    translation_path             Path to the translation_scores.csv alignment file
+    avg_alignment_path              Path to the avg_alignment_scores.csv best alignments file
     match_path             Path to the dictionary.json match dictionary file
 
     Output:
@@ -275,9 +237,11 @@ def combine_by_verse_scores(
                     , on=['source', 'target'], how='left')
     by_verse_scores['alignment_score'].fillna(0, inplace=True)
     if word_dict_src == None:
-        word_dict_src = get_data.create_words(source, outpath.parent / 'cache', outpath, is_bible=is_bible)
+        source_index_cache_file = outpath.parent / 'cache' / f'{source.stem}-index-cache.json'
+        word_dict_src = get_data.create_words(source, source_index_cache_file, outpath, is_bible=is_bible)
     if word_dict_trg == None:
-        word_dict_trg = get_data.create_words(target, outpath.parent / 'cache', outpath, is_bible=is_bible)
+        target_index_cache_file = outpath.parent / 'cache' / f'{target.stem}-index-cache.json'
+        word_dict_trg = get_data.create_words(target, target_index_cache_file, outpath, is_bible=is_bible)
     
     if weights_path is None:
         weights_path = Path('data/models/encoder_weights.txt')

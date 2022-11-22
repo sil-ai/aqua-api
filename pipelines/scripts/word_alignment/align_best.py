@@ -99,7 +99,7 @@ def remove_duplicates(df: pd.DataFrame) -> pd.DataFrame:
     """
     # remove duplicates and average out verse and word scores
     dups = df.groupby(["source", "target"]).size().reset_index()
-    avgs = df.groupby(["source", "target"]).mean(numeric_only=True).reset_index()
+    avgs = df[['source', 'target', 'alignment_count', 'verse_score', 'alignment_score']].groupby(["source", "target"]).mean(numeric_only=True).reset_index()
     no_dups = pd.merge(dups, avgs)
     no_dups.drop(columns=['alignment_count'], inplace=True)
     no_dups.rename(columns={0: "alignment_count"}, inplace=True)
@@ -159,9 +159,9 @@ def run_best_align(
     if not outpath.exists():
         outpath.mkdir(parents=True)
 
-    no_dups.to_csv(outpath / "avg_alignment_scores.csv")
+    no_dups.to_csv(outpath / "avg_alignment_scores.csv", index=False)
 
-    df.to_csv(outpath / "alignment_scores_by_verse.csv")
+    df.to_csv(outpath / "alignment_scores_by_verse.csv", index=False)
 
     # delete temp files
     condensed_source.unlink()
