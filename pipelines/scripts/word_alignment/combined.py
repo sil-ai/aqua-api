@@ -199,10 +199,9 @@ def combine_by_verse_scores(
     ref_df = ref_df.explode('src_words').explode('trg_words')
     ref_df = ref_df.drop(['src', 'trg'], axis=1).rename(columns={'src_words': 'source', 'trg_words': 'target'})
     by_verse_scores = pd.read_csv(outpath / 'alignment_scores_by_verse.csv')
-    by_verse_scores = by_verse_scores.drop('Unnamed: 0', axis=1)
     by_verse_scores = by_verse_scores.astype({col: 'float16' for col in by_verse_scores.columns if col not in ['vref', 'source', 'target']})
     word_scores = pd.read_csv(outpath / 'align_and_match_word_scores.csv')
-    word_scores = word_scores.drop('Unnamed: 0', axis=1)
+    # word_scores = word_scores.drop('Unnamed: 0', axis=1)
     word_scores = word_scores.astype({col: 'float16' for col in word_scores.columns if col not in ['vref', 'source', 'target']})
     by_verse_scores['vref'] = by_verse_scores['vref'].astype('object')  # Necessary for non-Bible, where vrefs are ints.
     by_verse_scores = pd.merge(ref_df, by_verse_scores, on=['vref', 'source', 'target'], how='left')
