@@ -62,7 +62,7 @@ def main(args):
     logging.basicConfig(
         format="%(asctime)s - %(funcName)20s() - %(message)s",
         level='INFO',
-        filename=f"{args.outpath}/match_words_in_aligned_verse.log",
+        filename=f"{args.outpath}/{args.source_dir}_{args.target_dir}_match_words_in_aligned_verse.log",
         filemode="a",
         force=True,
     )
