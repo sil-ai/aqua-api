@@ -69,6 +69,9 @@ def main(args):
         word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
         
         ref_verse_df, ref_word_df = get_ref_scores(all_references, verse_df, word_df, source_str, base_outpath)
+
+        if not (f'/pfs/out/{source_str}').exists():
+            (f'/pfs/out/{source_str}').mkdir()
         ref_verse_df.to_csv(f'/pfs/out/{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
         ref_word_df.to_csv(f'/pfs/out/{source_str}/{source_str.stem}_all_ref_word_scores.csv', index=False)
         ref_verse_df, ref_word_df = get_ref_scores(references, verse_df, word_df, source_str, base_outpath)
