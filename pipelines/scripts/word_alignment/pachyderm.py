@@ -24,7 +24,7 @@ def run_pachyderm(
     ) -> None: 
                 outpath = outpath / f"{source.stem}_{target.stem}"
                 outpath.mkdir(parents=True, exist_ok=True)
-                logging.info("Starting Fast Align")
+                # logging.info("Starting Fast Align")
 
                 combined.run_fa(
                     source, 
@@ -32,7 +32,7 @@ def run_pachyderm(
                     outpath, 
                     is_bible=is_bible,
                     )
-                logging.info("Starting Match Words")
+                # logging.info("Starting Match Words")
 
                 match.run_match(
                                 source, 
@@ -44,9 +44,9 @@ def run_pachyderm(
                                 count_threshold=count_threshold,
                                 refresh_cache=refresh_cache,
                                 )
-                logging.info("Starting Combine Results")
+                # logging.info("Starting Combine Results")
                 combined.run_combine_results(outpath)
-                logging.info("Starting Combine By Verse Scores")
+                # logging.info("Starting Combine By Verse Scores")
                 combined.combine_by_verse_scores(
                             source, 
                             target, 
@@ -59,14 +59,14 @@ def run_pachyderm(
 
 
 def main(args):
-    logging.basicConfig(
-        format="%(asctime)s - %(funcName)20s() - %(message)s",
-        level='INFO',
-        filename=f"{args.outpath}/{args.source_dir}_{args.target_dir}_match_words_in_aligned_verse.log",
-        filemode="a",
-        force=True,
-    )
-    logging.info("START RUN")
+    # logging.basicConfig(
+    #     format="%(asctime)s - %(funcName)20s() - %(message)s",
+    #     level='INFO',
+    #     filename=f"{args.outpath}/{args.source_dir}_{args.target_dir}_match_words_in_aligned_verse.log",
+    #     filemode="a",
+    #     force=True,
+    # )
+    # logging.info("START RUN")
 
     sources = args.source_dir
     targets = args.target_dir
