@@ -50,7 +50,9 @@ def run_pachyderm(
                 combined.combine_by_verse_scores(
                             source, 
                             target, 
-                            outpath, 
+                            outpath,
+                            source_index_cache_file=source_index_cache_file,
+                            target_index_cache_file=target_index_cache_file,
                             weights_path=weights_path, 
                             is_bible=is_bible,
                             )

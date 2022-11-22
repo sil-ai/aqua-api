@@ -169,6 +169,8 @@ def combine_by_verse_scores(
                             source: Path, 
                             target: Path,
                             outpath: Path, 
+                            source_index_cache_file: Optional[Path]=None,
+                            target_index_cache_file: Optional[Path]=None,
                             word_dict_src: Optional[Dict[str, get_data.Word]] = None, 
                             word_dict_trg: Optional[Dict[str, get_data.Word]] = None, 
                             weights_path: Optional[Path]=None, 
@@ -208,10 +210,12 @@ def combine_by_verse_scores(
                 on=['source', 'target'], how='left')
     by_verse_scores['alignment_score'].fillna(0, inplace=True)
     if word_dict_src == None:
-        source_index_cache_file = outpath.parent / 'cache' / f'{source.stem}-index-cache.json'
+        if source_index_cache_file == None:
+            source_index_cache_file = outpath.parent / 'cache' / f'{source.stem}-index-cache.json'
         word_dict_src = get_data.create_words(source, source_index_cache_file, outpath, is_bible=is_bible)
     if word_dict_trg == None:
-        target_index_cache_file = outpath.parent / 'cache' / f'{target.stem}-index-cache.json'
+        if target_index_cache_file == None:
+            target_index_cache_file = outpath.parent / 'cache' / f'{target.stem}-index-cache.json'
         word_dict_trg = get_data.create_words(target, target_index_cache_file, outpath, is_bible=is_bible)
     
     if weights_path is None:
