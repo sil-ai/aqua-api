@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from datetime import date
 
 import app
 import pytest
@@ -7,8 +8,10 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
+import numpy as np
 
 import queries
+import bible_loading
 
 
 headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
@@ -84,50 +87,26 @@ def test_add_version(client):
     assert fail_response.status_code == 400
 
 
-#def test_delete_version(client):
-#    test_version = {
-#            "name": "delete", "isoLanguage": "eng",
-#            "isoScript": "Latn", "abbreviation": "DELETE"
-#            }
-#
-#    with Client(transport=transport,
-#            fetch_schema_from_transport=True) as query_client:
-#
-#        mutation = gql(
-#
-#    test_delete_version = {
-#            "version_abbreviation": "DELETE"
-#            }
-#
-#    test_response = client.delete("/version", params=test_delete_version)
-#
-#    assert test_response == 200
-
-
-def test_upload_bible(client):
-    test_abv_revision = {
-            "version_abbreviation": "TEST",
-            "published": False}
- 
-    test_upload_file = Path("fixtures/uploadtest.txt")
-    file = {"file": test_upload_file.open("rb")}
-    response_abv = client.post("/revision", params=test_abv_revision, files=file)
-
-    revision_abv = response_abv.json()["Revision ID"]
-
-    delete_verse_response_abv = queries.delete_verses_mutation(revision_abv)
-    delete_revision_response_abv = queries.delete_revisions_mutation(revision_abv)
+def test_delete_version(client):
+    add_version = queries.add_version_query(
+            '"test"', '"eng"', '"Latn"', 
+            '"DEL"', "null", "null", 
+            "null", "false"
+            )
 
     with Client(transport=transport,
             fetch_schema_from_transport=True) as mutation_client:
 
-        verse_mutation_abv = gql(delete_verse_response_abv)
-        revision_mutation_abv = gql(delete_revision_response_abv)
+        mutation = gql(add_version)
+        added_version = mutation_client.execute(mutation)
 
-        verse_revised_abv = mutation_client.execute(verse_mutation_abv)
-        revision_revised_abv = mutation_client.execute(revision_mutation_abv)
+    test_delete_version = {
+            "version_abbreviation": "DEL"
+            }
 
-    assert response_abv.status_code == 200
+    test_response = client.delete("/version", params=test_delete_version)
+
+    assert test_response.status_code == 200
 
 
 def test_list_revisions(client):
@@ -144,6 +123,71 @@ def test_list_revisions(client):
 
     assert fail_response.status_code == 400
     assert test_response.status_code == 200
+
+
+def test_upload_bible(client):
+    test_abv_revision = {
+            "version_abbreviation": "TEST",
+            "published": False}
+ 
+    test_upload_file = Path("fixtures/uploadtest.txt")
+    file = {"file": test_upload_file.open("rb")}
+    response_abv = client.post("/revision", params=test_abv_revision, files=file)
+
+    revision_abv = response_abv.json()["Revision ID"]
+
+    delete_verse_response_abv = queries.delete_verses_mutation(revision_abv)
+    delete_revision_response_abv = queries.delete_revision_mutation(revision_abv)
+
+    with Client(transport=transport,
+            fetch_schema_from_transport=True) as mutation_client:
+
+        verse_mutation_abv = gql(delete_verse_response_abv)
+        revision_mutation_abv = gql(delete_revision_response_abv)
+
+        verse_revised_abv = mutation_client.execute(verse_mutation_abv)
+        revision_revised_abv = mutation_client.execute(revision_mutation_abv)
+
+    assert response_abv.status_code == 200
+
+
+def test_delete_revision(client):
+    test_upload_file = "fixtures/uploadtest.txt"
+
+    revision_date = '"' + str(date.today()) + '"'
+    create_revision_mutation = queries.insert_bible_revision(
+            1, revision_date, "false"
+            )
+
+    with Client(transport=transport, fetch_schema_from_transport=True) as mutation_client:
+        create_revision = gql(create_revision_mutation)
+        create_revision_response = mutation_client.execute(create_revision)
+
+    revision_id = create_revision_response["insert_bibleRevision"]["returning"][0]["id"]
+
+    # Parse the input Bible revision data.
+    verses = []
+    bibleRevision = []
+
+    with open(test_upload_file, "r") as bible_data:
+        for line in bible_data:
+            if line == "\n" or line == "" or line == " ":
+                verses.append(np.nan)
+                bibleRevision.append(revision_id)
+            else:
+                verses.append(line.replace("\n", ""))
+                bibleRevision.append(revision_id)
+
+    # Push the revision to the database.
+    bible_loading.upload_bible(verses, bibleRevision)
+
+    delete_revision_data = {
+            "revision": revision_id
+            }
+
+    delete_response = client.delete("/revision", params=delete_revision_data)
+
+    assert delete_response.status_code == 200
 
 
 def test_get_chapter(client):
