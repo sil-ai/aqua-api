@@ -197,7 +197,7 @@ def combine_by_verse_scores(
     ref_df = get_data.remove_blanks_and_ranges(ref_df)
     ref_df = get_data.get_words_from_txt_file(ref_df, outpath)
     ref_df = ref_df.explode('src_words').explode('trg_words')
-    ref_df = ref_df.drop(['src', 'trg'], axis=1).rename(columns={'src_words': 'source', 'trg_words': 'target'})
+    ref_df = ref_df.drop(['src', 'trg'], axis=1).rename(columns={'src_words': 'source', 'trg_words': 'target'}).astype('object')
     by_verse_scores = pd.read_csv(outpath / 'alignment_scores_by_verse.csv')
     by_verse_scores = by_verse_scores.astype({col: 'float16' for col in by_verse_scores.columns if col not in ['vref', 'source', 'target']})
     word_scores = pd.read_csv(outpath / 'align_and_match_word_scores.csv')
