@@ -54,25 +54,26 @@ def main(args):
         meta_file = ref_dir / 'meta.json'
         with open(meta_file) as f:
             meta = json.load(f)
-        source = meta['source']
-        target = meta['target']
-        sources.append(source)
-        all_references.append(target)
+        source_str = meta['source']
+        target_str = meta['target']
+        sources.append(source_str)
+        all_references.append(target_str)
         
             
-    for source in sources:
+    for source_str in sources:
+        source = base_inpath / f'{source_str}_{all_references[0]}/{source_str}.txt'
         df = get_data.get_ref_df(source, is_bible=True)
         df = get_data.remove_blanks_and_ranges(df)
         verse_df = df.drop('src', axis=1)
         df = get_data.get_words_from_txt_file(df, base_outpath)
         word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
         
-        ref_verse_df, ref_word_df = get_ref_scores(all_references, verse_df, word_df, source, base_outpath)
-        ref_verse_df.to_csv(f'data/ref_data/{source.stem}_all_ref_verse_scores.csv', index=False)
-        ref_word_df.to_csv(f'data/ref_data/{source.stem}_all_ref_word_scores.csv', index=False)
-        ref_verse_df, ref_word_df = get_ref_scores(references, verse_df, word_df, source, base_outpath)
-        ref_verse_df.to_csv(f'data/ref_data/{source.stem}_ref_verse_scores.csv', index=False)
-        ref_word_df.to_csv(f'data/ref_data/{source.stem}_ref_word_scores.csv', index=False)
+        ref_verse_df, ref_word_df = get_ref_scores(all_references, verse_df, word_df, source_str, base_outpath)
+        ref_verse_df.to_csv(f'/pfs/out/{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
+        ref_word_df.to_csv(f'/pfs/out/{source_str}/{source_str.stem}_all_ref_word_scores.csv', index=False)
+        ref_verse_df, ref_word_df = get_ref_scores(references, verse_df, word_df, source_str, base_outpath)
+        ref_verse_df.to_csv(f'/pfs/out/{source_str}/{source_str.stem}_ref_verse_scores.csv', index=False)
+        ref_word_df.to_csv(f'/pfs/out/{source_str}/{source_str.stem}_ref_word_scores.csv', index=False)
 
 
 if __name__ == "__main__":
