@@ -3,15 +3,19 @@ import argparse
 import logging
 from typing import Optional
 import shutil
+import json
 
 import combined
 import get_data
+import match
 
 
 def run_pachyderm(
     source: Path,
     target: Path,
     outpath: Path,
+    source_index_cache_file: Optional[Path]=None,
+    target_index_cache_file: Optional[Path]=None,
     weights_path: Path=Path('data/models/encoder_weights.txt'),
     jaccard_similarity_threshold: float=0.05,
     count_threshold: int=0,
@@ -30,10 +34,12 @@ def run_pachyderm(
                     )
                 logging.info("Starting Match Words")
 
-                combined.run_match_words(
+                match.run_match(
                                 source, 
                                 target, 
                                 outpath,
+                                source_index_cache_file=source_index_cache_file,
+                                target_index_cache_file=target_index_cache_file,
                                 jaccard_similarity_threshold=jaccard_similarity_threshold, 
                                 count_threshold=count_threshold,
                                 refresh_cache=refresh_cache,
@@ -66,40 +72,40 @@ def main(args):
 
     for source_dir in sources.iterdir():
         print(source_dir)
-        for source in source_dir.iterdir():
-            if source.suffix == '.json':
-                print(f"Copying {source}")
-                shutil.copy(source, outpath / 'cache')
-            if source.suffix == '.txt':
-                for target_dir in targets.iterdir():
-                    print(target_dir)
-                    for target in target_dir.iterdir():
-                        if target.suffix == '.json':
-                            print(f"Copying {target}")
-                            shutil.copy(target, outpath / 'cache')
-                        if target.suffix == '.txt':
-                            print(f"Starting run")
-                            print(f"Source: {source}\nTarget: {target}")
-                            cache_file = outpath / 'cache' / f'{source.stem}-index-cache.json'
-                            print(f"Does {cache_file} exist? {cache_file.exists()}")
-                            cache_file = outpath / 'cache' / f'{target.stem}-index-cache.json'
-                            print(f"Does {cache_file} exist? {cache_file.exists()}")
-                            run_pachyderm(
-                            source = source,
-                            target = target,
-                            outpath = outpath,
-                            jaccard_similarity_threshold = args.jaccard_similarity_threshold,
-                            count_threshold = args.count_threshold,
-                            is_bible = args.is_bible,
-                            refresh_cache = args.refresh_cache,
-                            )
-                            meta = {
-                                'source': source.stem,
-                                'target': target.stem,
-                            }
-                            get_data.write_dictionary_to_file(meta, outpath / meta.json)
-                            shutil.copy(source, outpath / source.name)
-                            shutil.copy(target, outpath / target.name)
+        meta_file = source_dir / 'meta.json'
+        with open(meta_file) as f:
+            meta = json.load(f)
+        source_str = meta['source']
+        source_index_cache_file = source_dir / f'{source_str}-index-cache.json'
+        source = source_dir / f'{source_str}.txt'
+        for target_dir in targets.iterdir():
+            print(target_dir)
+            meta_file = target_dir / 'meta.json'
+            with open(meta_file) as f:
+                meta = json.load(f)
+            target_str = meta['source']
+            target_index_cache_file = target_dir / f'{target_str}-index-cache.json'
+            target = target_dir / f'{target_str}.txt'
+            print(f"Starting run")
+            print(f"Source: {source}\nTarget: {target}")
+            run_pachyderm(
+            source = source,
+            target = target,
+            outpath = outpath,
+            source_index_cache_file=source_index_cache_file,
+            target_index_cache_file=target_index_cache_file,
+            jaccard_similarity_threshold = args.jaccard_similarity_threshold,
+            count_threshold = args.count_threshold,
+            is_bible = args.is_bible,
+            refresh_cache = args.refresh_cache,
+            )
+            meta = {
+                'source': source.stem,
+                'target': target.stem,
+            }
+            get_data.write_dictionary_to_file(meta, outpath / meta.json)
+            shutil.copy(source, outpath / source.name)
+            shutil.copy(target, outpath / target.name)
 
 
 
