@@ -435,5 +435,6 @@ def get_ref_df(source: Path, target: Optional[Path] = None, is_bible: bool=True)
     df = pd.DataFrame({"vref": vrefs, "src": src_data})
     if target:
         df['trg'] = trg_data
-
+        
+    df = df.astype('object')
     return df
