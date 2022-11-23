@@ -40,28 +40,22 @@ def main(args):
     base_outpath = args.outpath
     base_inpath = args.inpath
     base_ref_inpath = args.ref_inpath
-    sources = []
-    targets = []
     for ref_dir in base_inpath.iterdir():
         meta_file = ref_dir / 'meta.json'
         with open(meta_file) as f:
             meta = json.load(f)
         source_str = meta['source']
         target_str = meta['target']
-        sources.append(source_str)
-        targets.append(target_str)
-    print(f'Sources: {sources}')
-    print(f'Targets: {targets}')
+        print(f'Source: {source_str}')
+        print(f'Target: {target_str}')
     
-    for source_str in sources:
-        for target_str in targets:
-            inpath = base_inpath / f'{source_str}_{target_str}'
-            outpath = base_outpath / f'{source_str}_{target_str}'
-    
-            print(f"Identifying red flags for {source_str} to {target_str}...")
-            ref_path = base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv'
-            red_flags = identify_red_flags(inpath, ref_path)
-            red_flags.to_csv(outpath / f'red_flags.csv', index=False)
+        inpath = base_inpath / f'{source_str}_{target_str}'
+        outpath = base_outpath / f'{source_str}_{target_str}'
+
+        print(f"Identifying red flags for {source_str} to {target_str}...")
+        ref_path = base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv'
+        red_flags = identify_red_flags(inpath, ref_path)
+        red_flags.to_csv(outpath / f'red_flags.csv', index=False)
 
 
 if __name__ == "__main__":
