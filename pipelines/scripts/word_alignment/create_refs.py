@@ -64,6 +64,8 @@ def main(args):
         target_str = meta['target']
         sources.append(source_str)
         all_references.append(target_str)
+    print(references)
+    print(all_references)
         
             
     for source_str in sources:
