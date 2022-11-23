@@ -10,7 +10,7 @@
             "--source-dir",
             "/pfs/targets"
         ],
-        "image": "woodwardmw/aqua-pipeline-create_target_cache-pachyderm:c3fcb72"
+        "image": "woodwardmw/<imagename>:<tag>"
     },
     "input": {
         "pfs": {
