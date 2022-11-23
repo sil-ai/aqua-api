@@ -8,9 +8,9 @@ import pandas as pd
 import get_data
 
 
-def get_scores(outpath: Path):
-    verse_scores = pd.read_csv(outpath / 'verse_scores.csv')
-    word_scores = pd.read_csv(outpath / 'word_scores.csv')
+def get_scores(data_path: Path):
+    verse_scores = pd.read_csv(data_path / 'verse_scores.csv')
+    word_scores = pd.read_csv(data_path / 'word_scores.csv')
     if verse_scores.shape[0] > 0:
         verse_scores = verse_scores[['vref', 'total_score']]
         word_scores = word_scores[['vref', 'source', 'target', 'total_score']]
@@ -28,6 +28,9 @@ def get_ref_scores(
     null_references = []
     for reference in references:
         inpath = base_inpath / f"{source}_{reference}" 
+        if not inpath.exists():
+            print(f'{inpath} does not exist, skipping.')
+            continue
         word_scores, verse_scores = get_scores(inpath)
         if verse_scores.shape[0] == 0:
             null_references.append(reference)
@@ -63,10 +66,11 @@ def main(args):
         target_str = meta['target']
         sources.add(source_str)
         all_references.add(target_str)
+    sources = list(sources)
+    all_references = list(all_references)
     print(f'Sources: {sources}')
     print(f'References: {references}')
-    print(f'All references: {all_references}')
-        
+    print(f'All references: {all_references}')    
             
     for source_str in sources:
         source = base_inpath / f'{source_str}_{all_references[0]}/{source_str}.txt'
