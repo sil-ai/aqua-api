@@ -61,7 +61,6 @@ def main(args):
 if __name__ == "__main__":
     tqdm.pandas()
     parser = argparse.ArgumentParser()
-    parser.add_argument('--references', nargs='+', type=Path, help="A list of texts to compare to.", required=True)
     parser.add_argument("--inpath", type=Path, help="Base input path, which all csv files are contained in.", required=True)
     parser.add_argument("--ref-inpath", type=Path, help="Base input path for reference csv files.", required=True)
     parser.add_argument("--outpath", type=Path, help="Base output path, to write to.", required=True)
