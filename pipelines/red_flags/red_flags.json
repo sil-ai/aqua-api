@@ -1,0 +1,35 @@
+{
+    "pipeline": {
+        "name": "red_flags"
+    },
+    "description": "A pipeline that produces the red flags / missing words file.",
+    "transform": {
+        "cmd": [
+            "python3",
+            "red_flags_pachyderm.py",
+            "--inpath",
+            "/pfs/word_alignment",
+            "--ref-inpath",
+            "/pfs/create_refs",
+            "--outpath",
+            "/pfs/out"
+        ],
+        "image": "woodwardmw/aqua-pipeline-red_flags-pachyderm:47b9fcb"
+    },
+    "input": {
+        "cross": [
+            {
+                "pfs": {
+                    "repo": "word_alignment",
+                    "glob": "/"
+                }
+            },
+            {
+                "pfs": {
+                    "repo": "create_refs",
+                    "glob": "/"
+                }
+            }
+        ]
+    }
+}
