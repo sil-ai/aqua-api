@@ -23,13 +23,13 @@ def get_ref_scores(
                 verse_df: pd.DataFrame, 
                 word_df: pd.DataFrame, 
                 source: str, 
-                base_outpath: Path
+                base_inpath: Path
                 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    references = [reference for reference in references if (base_outpath / f"{source}_{reference}").exists()]
+    references = [reference for reference in references if (base_inpath / f"{source}_{reference}").exists()]
     null_references = []
     for reference in references:
-        outpath = base_outpath / f"{source}_{reference}" 
-        word_scores, verse_scores = get_scores(outpath)
+        inpath = base_inpath / f"{source}_{reference}" 
+        word_scores, verse_scores = get_scores(inpath)
         if verse_scores == None:
             null_references.append(reference)
             continue
@@ -76,15 +76,15 @@ def main(args):
         df = get_data.get_words_from_txt_file(df, base_outpath)
         word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
         
-        ref_verse_df, ref_word_df = get_ref_scores(all_references, verse_df, word_df, source_str, base_outpath)
+        ref_verse_df, ref_word_df = get_ref_scores(all_references, verse_df, word_df, source_str, base_inpath)
 
         if not (base_outpath / f'{source_str}').exists():
             (base_outpath / f'{source_str}').mkdir()
-        ref_verse_df.to_csv(f'/pfs/out/{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
-        ref_word_df.to_csv(f'/pfs/out/{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
-        ref_verse_df, ref_word_df = get_ref_scores(references, verse_df, word_df, source_str, base_outpath)
-        ref_verse_df.to_csv(f'/pfs/out/{source_str}/{source_str}_ref_verse_scores.csv', index=False)
-        ref_word_df.to_csv(f'/pfs/out/{source_str}/{source_str}_ref_word_scores.csv', index=False)
+        ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
+        ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
+        ref_verse_df, ref_word_df = get_ref_scores(references, verse_df, word_df, source_str, base_inpath)
+        ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv', index=False)
+        ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_ref_word_scores.csv', index=False)
 
 
 if __name__ == "__main__":
