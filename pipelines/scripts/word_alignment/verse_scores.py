@@ -61,34 +61,36 @@ def main(args):
         if dir.is_dir() and f'{source_stem}_' in dir.parts[-1] and (dir / 'verse_scores.csv').exists():
             files.append(dir / 'verse_scores.csv')
     targets = []
+    ref_mean = 0.45
     # target = Path('data/archive/greek_lemma.txt')
     targets = sorted([file.parts[-2].replace(f'{source_stem}_', '') for file in files])
     target_stem = st.selectbox(label='Translation', options=targets)
     if not source_stem or not target_stem:
         return
     ref_path = Path('data/ref_data')
-    all_ref = pd.read_csv(ref_path / f'{source_stem}_all_ref_verse_scores.csv')
-
-    all_ref = all_ref.rename(columns = {'mean': 'ref_mean'})
-    to_exclude = ['vref', 'Unnamed: 0', 'mean', 'min', 'second_min', 'ref_mean']
-    cols = [col for col in all_ref.columns if col not in to_exclude]
-    st.header('Choose reference translations for comparison')
+    ref_path = ref_path / f'{source_stem}_all_ref_verse_scores.csv'
     ref_langs = {}
-    all_ref_langs = st.checkbox('All')
-
-    for col in sorted(cols):
-        ref_langs[col] = st.checkbox(col)
-    if all_ref_langs:
-        ref_langs = {lang: True for lang in ref_langs}
-
-    ref_langs = {key: value for key, value in ref_langs.items() if value}
+    verse_scores_file = out_dir / f'{source_stem}_{target_stem}' / 'verse_scores.csv'
+    verse_df = pd.read_csv(verse_scores_file)
+    if ref_path.exists():
+        all_ref = pd.read_csv(ref_path)
+        all_ref = all_ref.rename(columns = {'mean': 'ref_mean'})
+        to_exclude = ['vref', 'Unnamed: 0', 'mean', 'min', 'second_min', 'ref_mean']
+        cols = [col for col in all_ref.columns if col not in to_exclude]
+        st.header('Choose reference translations for comparison')
+        all_ref_langs = st.checkbox('All')
+        for col in sorted(cols):
+            ref_langs[col] = st.checkbox(col)
+        if all_ref_langs:
+            ref_langs = {lang: True for lang in ref_langs}
+        ref_langs = {key: value for key, value in ref_langs.items() if value}
+        verse_df = verse_df.merge(all_ref, how='left', on='vref')
+        ref_mean = all_ref['ref_mean'].mean()
 
     scores = {}
     for lang in ref_langs:
         scores[lang] = all_ref[lang].mean()
-    verse_scores_file = out_dir / f'{source_stem}_{target_stem}' / 'verse_scores.csv'
-    verse_df = pd.read_csv(verse_scores_file)
-    verse_df = verse_df.merge(all_ref, how='left', on='vref')
+
     scores[target_stem] = verse_df['total_score'].mean()
     
     scores = OrderedDict(sorted(scores.items(), key=lambda item: item[1], reverse=True))
@@ -110,7 +112,8 @@ def main(args):
 
 
     verse_df['verse_score'] = verse_df['total_score'].apply(lambda x: round(x, 2))
-    verse_df['verse_score_calibrated'] = verse_df.apply(lambda row: row['total_score'] / row['ref_mean'], axis=1)
+    if calibrated:
+        verse_df['verse_score_calibrated'] = verse_df.apply(lambda row: row['total_score'] / row['ref_mean'], axis=1)
     verse_df['DisplayBook'] = verse_df['vref'].apply(lambda x: x.split(' ')[0])
     verse_df['DisplayChapter'] = verse_df['vref'].apply(lambda x: int(x.split(' ')[1].split(':')[0]))
     verse_df['DisplayBook'] = verse_df.apply(split_Psalm_books, axis=1)
@@ -120,9 +123,10 @@ def main(args):
 
     listVerses = verse_df.to_dict('records')
 
-    chapter_df = verse_df.groupby(['DisplayBook', 'DisplayChapter'], sort=False).agg({'total_score': 'mean', 'ref_mean': 'mean'}).reset_index()
+    chapter_df = verse_df.groupby(['DisplayBook', 'DisplayChapter'], sort=False).agg({k:v for k,v in {'total_score': 'mean', 'ref_mean': 'mean'}.items() if k in verse_df}).reset_index()
     chapter_df['chapter_score'] = chapter_df['total_score'].apply(lambda x: round(x, 2))
-    chapter_df['chapter_score_calibrated'] = chapter_df.apply(lambda row: row['total_score'] / row['ref_mean'], axis=1)
+    if calibrated:
+        chapter_df['chapter_score_calibrated'] = chapter_df.apply(lambda row: row['total_score'] / row['ref_mean'], axis=1)
 
     
     listChapters = chapter_df.to_dict('records')
@@ -145,7 +149,7 @@ def main(args):
         if calibrated:
             mid_color_score = 1
         else:
-            mid_color_score = all_ref['ref_mean'].mean()
+            mid_color_score = ref_mean
     min_color_score = mid_color_score*0.8
     max_color_score = mid_color_score*1.2
     print(min_color_score)
