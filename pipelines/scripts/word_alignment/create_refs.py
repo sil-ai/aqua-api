@@ -53,16 +53,16 @@ def main(args):
     base_inpath = args.inpath
     base_outpath = args.outpath
     references = args.references
-    sources = []
-    all_references = []
+    sources = set()
+    all_references = set()
     for ref_dir in base_inpath.iterdir():
         meta_file = ref_dir / 'meta.json'
         with open(meta_file) as f:
             meta = json.load(f)
         source_str = meta['source']
         target_str = meta['target']
-        sources.append(source_str)
-        all_references.append(target_str)
+        sources.add(source_str)
+        all_references.add(target_str)
     print(f'Sources: {sources}')
     print(f'References: {references}')
     print(f'All references: {all_references}')
