@@ -27,6 +27,7 @@ def identify_red_flags(outpath: Path, ref_path:Path, total_col: str='simple_tota
     # df.loc[:, 'order'] = df.index
     # df['order'] = -1 * df.groupby(['vref', 'source'])['order'].transform('min')
     df.loc[:, total_col] = df[total_col].apply(lambda x: max(x, 0))
+    df.loc[:, total_col] = df[total_col].fillna(0)
     print("Calculating best match for each source word...")
     possible_red_flags = df.loc[df.groupby(['vref', 'source'], sort=False)[total_col].idxmax(), :].reset_index(drop=True)
     # possible_red_flags.index = possible_red_flags['order']
