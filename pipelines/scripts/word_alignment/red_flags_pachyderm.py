@@ -20,12 +20,11 @@ def identify_red_flags(outpath: Path, ref_path:Path) -> pd.DataFrame:
     red_flags       A dataframe with low scores for source-target alignments, when those same source words score highly in that
                     context in the reference languages.
     """
-    df = pd.read_csv(outpath / 'summary_scores.csv')
+    df = pd.read_csv(outpath / 'word_scores.csv')
+    df = df.loc[:, ['vref', 'source', 'total_score']]
     df.loc[:, 'total_score'] = df['total_score'].apply(lambda x: max(x, 0))
     df.loc[:, 'total_score'] = df['total_score'].fillna(0)
-    possible_red_flags = df.loc[df.groupby(['vref', 'source'], sort=False)['total_score'].idxmax(), :].reset_index(drop=True)
-    possible_red_flags = possible_red_flags.loc[:, ['vref', 'source', 'total_score']]
-    possible_red_flags = possible_red_flags[possible_red_flags['total_score'] < 0.1]
+    possible_red_flags = df[df['total_score'] < 0.1]
     possible_red_flags.to_csv(outpath / 'possible_red_flags.csv')
     if ref_path.exists():
         ref = pd.read_csv(ref_path, low_memory=False)
