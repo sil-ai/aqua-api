@@ -50,6 +50,8 @@ def main(args):
     
         inpath = base_inpath / f'{source_str}_{target_str}'
         outpath = base_outpath / f'{source_str}_{target_str}'
+        if not outpath.exists():
+            outpath.mkdir()
 
         print(f"Identifying red flags for {source_str} to {target_str}...")
         ref_path = base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv'
