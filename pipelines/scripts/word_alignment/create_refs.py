@@ -11,11 +11,10 @@ import get_data
 def get_scores(outpath: Path):
     verse_scores = pd.read_csv(outpath / 'verse_scores.csv')
     word_scores = pd.read_csv(outpath / 'word_scores.csv')
-    if verse_scores.shape[0] == 0:
-        return (None, None)
-    verse_scores = verse_scores[['vref', 'total_score']]
-    word_scores = word_scores[['vref', 'source', 'target', 'total_score']]
-    word_scores['target'] = word_scores['target'].apply(lambda x: x.replace(';', '";"')) # Otherwise the separation gets messed up in the CSV file
+    if verse_scores.shape[0] > 0:
+        verse_scores = verse_scores[['vref', 'total_score']]
+        word_scores = word_scores[['vref', 'source', 'target', 'total_score']]
+        word_scores['target'] = word_scores['target'].apply(lambda x: x.replace(';', '";"')) # Otherwise the separation gets messed up in the CSV file
     return (word_scores, verse_scores)
 
 def get_ref_scores(
@@ -30,7 +29,7 @@ def get_ref_scores(
     for reference in references:
         inpath = base_inpath / f"{source}_{reference}" 
         word_scores, verse_scores = get_scores(inpath)
-        if verse_scores == None:
+        if verse_scores.shape[0] == 0:
             null_references.append(reference)
             continue
         verse_df = verse_df.merge(verse_scores, how='left', on='vref').rename(columns={'total_score': reference})
