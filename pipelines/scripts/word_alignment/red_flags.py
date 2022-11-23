@@ -8,40 +8,32 @@ tqdm.pandas()
 import combined
 
 
-def identify_red_flags(outpath: Path, ref_path:Path, total_col: str='simple_total') -> pd.DataFrame:
+def identify_red_flags(outpath: Path, ref_path:Path) -> pd.DataFrame:
     """
     Takes the directory of the source-target outputs, and a dictionary of reference language to reference language source-target outputs.
     Returns "red flags", which are source words that score low in the target language alignment data, compared to how they
     score in the source - reference language data.
     Inputs:
     outpath         Path to the source-target output files
-    ref_df_outpaths Dictionary where the keys are language names, and the values are paths to source-target output files, where 
-                    the key is the target language.
-    total_col               String for the column to use for scores. Normally "total_score" or "simple_total".
+    ref_path        Path ti reference csv file
 
     Outputs:
     red_flags       A dataframe with low scores for source-target alignments, when those same source words score highly in that
                     context in the reference languages.
     """
     df = pd.read_csv(outpath / 'summary_scores.csv')
-    # df.loc[:, 'order'] = df.index
-    # df['order'] = -1 * df.groupby(['vref', 'source'])['order'].transform('min')
-    df.loc[:, total_col] = df[total_col].apply(lambda x: max(x, 0))
-    df.loc[:, total_col] = df[total_col].fillna(0)
-    print("Calculating best match for each source word...")
-    possible_red_flags = df.loc[df.groupby(['vref', 'source'], sort=False)[total_col].idxmax(), :].reset_index(drop=True)
-    # possible_red_flags.index = possible_red_flags['order']
-    # possible_red_flags = possible_red_flags.sort_values(['vref', 'source', total_col], ascending=False).groupby(['vref', 'source'], sort=False).agg({total_col: 'sum'}).reset_index()
-    possible_red_flags = possible_red_flags.loc[:, ['vref', 'source', total_col]]
-    possible_red_flags = possible_red_flags[possible_red_flags[total_col] < 0.1]
+    df.loc[:, 'total_score'] = df['total_score'].apply(lambda x: max(x, 0))
+    df.loc[:, 'total_score'] = df['total_score'].fillna(0)
+    possible_red_flags = df.loc[df.groupby(['vref', 'source'], sort=False)['total_score'].idxmax(), :].reset_index(drop=True)
+    possible_red_flags = possible_red_flags.loc[:, ['vref', 'source', 'total_score']]
+    possible_red_flags = possible_red_flags[possible_red_flags['total_score'] < 0.1]
     possible_red_flags.to_csv(outpath / 'possible_red_flags.csv')
     if ref_path.exists():
         ref = pd.read_csv(ref_path, low_memory=False)
         possible_red_flags = possible_red_flags.merge(ref, how='left', on=['vref', 'source'], sort=False)
-        red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['mean'] > 5 * row[total_col] and row['min'] > 0.3, axis=1)]
+        red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['mean'] > 5 * row['total_score'] and row['min'] > 0.3, axis=1)]
     else:
         red_flags = possible_red_flags
-    # red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['avg_total_score'] > 10 * row[total_col], axis=1)]
     
     return red_flags
 
