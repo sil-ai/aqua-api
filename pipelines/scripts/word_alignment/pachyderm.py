@@ -86,7 +86,7 @@ def main(args):
             meta_file = target_dir / 'meta.json'
             with open(meta_file) as f:
                 meta = json.load(f)
-            config_file = config_dir / f'{source_str}-config.json'
+            config_file = config_dir / f'{target_str}-config.json'
             if config_file.exists():
                 print("Found config file")
                 with open(config_file) as f:
