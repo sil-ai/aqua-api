@@ -5,7 +5,7 @@ import shutil
 import get_data
 
 def main(args):
-    if args.source_dir.exists():
+    if args.source_dir.exists():  # Note that in this file, "source" can be either a source or a target.
         for source in args.source_dir.iterdir():
             outpath = Path(f'/pfs/out/{source.stem}')
             cache_path = outpath
@@ -22,6 +22,6 @@ def main(args):
 if __name__ == '__main__':
      
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source-dir", type=Path, help="Path to source text", required=True)
+    parser.add_argument("--source-dir", type=Path, help="Path to source dir", required=True)
     args = parser.parse_args()
     main(args)

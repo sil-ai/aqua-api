@@ -71,6 +71,7 @@ def main(args):
     sources = args.source_dir
     targets = args.target_dir
     base_outpath = Path('/pfs/out/')
+    config_dir = args.config_dir
 
     for source_dir in sources.iterdir():
         print(source_dir)
@@ -85,6 +86,13 @@ def main(args):
             meta_file = target_dir / 'meta.json'
             with open(meta_file) as f:
                 meta = json.load(f)
+            config_file = config_dir / f'{source_str}-config.json'
+            if config_file.exists():
+                with open(config_file) as f:
+                    config = json.load(f)
+                requested_sources = config['sources']
+                if source_str not in requested_sources:
+                    continue
             target_str = meta['source']
             target_index_cache_file = target_dir / f'{target_str}-index-cache.json'
             target = target_dir / f'{target_str}.txt'
@@ -129,6 +137,7 @@ if __name__ == "__main__":
     parser.add_argument("--source_dir", type=Path, help="source bible directory")
     parser.add_argument("--target_dir", type=Path, help="target bible directory")
     parser.add_argument("--outpath", type=Path, default=Path("/pfs/out"), help="Output directory")
+    parser.add_argument("--config-dir", type=Path, help="Path to config dir", required=True)
     parser.add_argument("--jaccard-similarity-threshold", default=0.05, type=float, help="Jaccard Similarity threshold for including matches in dictionary")
     parser.add_argument("--count-threshold", type=int, default=0, help="Count threshold for including matches in dictionary")
     parser.add_argument("--is-bible", action="store_true", help="Whether text is Bible, in which case the length of the text file must be 41,899 lines")
