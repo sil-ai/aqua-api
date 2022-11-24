@@ -86,6 +86,7 @@ def main(args):
             meta_file = target_dir / 'meta.json'
             with open(meta_file) as f:
                 meta = json.load(f)
+            target_str = meta['source']
             config_file = config_dir / f'{target_str}-config.json'
             if config_file.exists():
                 print("Found config file")
@@ -96,7 +97,6 @@ def main(args):
                 if source_str not in requested_sources:
                     print(f"Skipping target {target_str} for source {source_str}")
                     continue
-            target_str = meta['source']
             target_index_cache_file = target_dir / f'{target_str}-index-cache.json'
             target = target_dir / f'{target_str}.txt'
             print(f"Starting run")
