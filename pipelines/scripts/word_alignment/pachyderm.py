@@ -88,10 +88,13 @@ def main(args):
                 meta = json.load(f)
             config_file = config_dir / f'{source_str}-config.json'
             if config_file.exists():
+                print("Found config file")
                 with open(config_file) as f:
                     config = json.load(f)
                 requested_sources = config['sources']
+                print(f'Requested sources: {requested_sources}')
                 if source_str not in requested_sources:
+                    print(f"Skipping target {target_str} for source {source_str}")
                     continue
             target_str = meta['source']
             target_index_cache_file = target_dir / f'{target_str}-index-cache.json'
