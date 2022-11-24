@@ -21,7 +21,7 @@
             {
                 "pfs": {
                     "repo": "word_alignment",
-                    "glob": "/"
+                    "glob": "/*/"
                 }
             },
             {
