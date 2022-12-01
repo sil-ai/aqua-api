@@ -52,6 +52,14 @@ def get_ref_scores(
     return verse_df, word_df
 
 
+def get_source_txt(base_inpath, source_str, all_references):
+    for reference in all_references:
+        source_path = base_inpath / f'{source_str}_{reference}/{source_str}.txt'
+        if source_path.exists():
+            return source_path
+    return None
+
+
 def main(args):
     base_inpath = args.inpath
     base_outpath = args.outpath
@@ -73,7 +81,9 @@ def main(args):
     print(f'All references: {all_references}')    
             
     for source_str in sources:
-        source = base_inpath / f'{source_str}_{all_references[0]}/{source_str}.txt'
+        source = get_source_txt(base_inpath, source_str, all_references)
+        if source == None:
+            continue
         df = get_data.get_ref_df(source, is_bible=True)
         df = get_data.remove_blanks_and_ranges(df)
         verse_df = df.drop('src', axis=1)
