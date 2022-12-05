@@ -2,7 +2,7 @@ machine==0.0.1
 pandas==1.4.3
 tqdm==4.64.0
 pytest==7.1.2
-sil-machine[thot]
+sil-machine[thot]>=0.8.3
 
 # --find-links https://download.pytorch.org/whl/torch_stable.html
 # torch==1.9.0+cu111
