@@ -153,7 +153,7 @@ def main(args):
     # word_dict = create_words({**training_language_paths, **val_language_paths}, index_cache_paths, outpath, refresh_cache=args.refresh_cache)
     word_dict = {}
     for lang, lang_path in {**training_language_paths, **val_language_paths}.items():
-        word_dict[lang] = get_data.create_words(lang_path, args.cache_dir, outpath, refresh_cache=args.refresh_cache)
+        word_dict[lang] = get_data.create_words(lang_path, args.cache_dir / f'{lang}-index-cache.json', outpath, refresh_cache=args.refresh_cache)
     model, outputs = train_model(
                                 word_dict, 
                                 training_language_paths.keys(),

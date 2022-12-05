@@ -1,5 +1,5 @@
-IMAGENAME=aqua-pipeline-word-alignment-pachyderm
-TAG=36
+IMAGENAME=aqua-pipeline-${PIPELINE}-pachyderm
+TAG=$(shell git rev-parse --short HEAD)
 
 setup-pachyderm:
 	minikube start --driver=kvm2
@@ -12,7 +12,7 @@ setup-pachyderm:
 	pachctl port-forward
 
 build-pachyderm-local:
-	docker build -t woodwardmw/${IMAGENAME}:latest -f pachyderm/Dockerfile .
+	docker build -t woodwardmw/${IMAGENAME}:latest -f ${PIPELINE}/Dockerfile .
 
 push-pachyderm:
 	docker image tag woodwardmw/${IMAGENAME}:latest woodwardmw/${IMAGENAME}:${TAG}
@@ -31,15 +31,13 @@ create-pipeline-pachyderm:
 	pachctl create pipeline -f ../../create_cache.json 
 
 update-pipelines-pachyderm:
-	pachctl update pipeline -f ../../word_alignment.json 
-	pachctl update pipeline -f ../../create_source_cache.json 
-	pachctl update pipeline -f ../../create_target_cache.json 
-
+	python create_pipeline_json.py --tag ${TAG} --imagename ${IMAGENAME} --file ${PIPELINE}/${PIPELINE}.json
+	pachctl update pipeline -f ${PIPELINE}/${PIPELINE}.json  --reprocess
 
 build-push-update:
-	make -f Makefile.pachyderm build-pachyderm-local
-	make -f Makefile.pachyderm push-pachyderm
-	make -f Makefile.pachyderm update-pipelines-pachyderm
+	make build-pachyderm-local
+	make push-pachyderm
+	make update-pipelines-pachyderm
 
 pachctl-put:
 	pachctl put file ${REPO}@master:${notdir ${FILE}} -f ${FILE}
@@ -55,3 +53,7 @@ pachctl-view-jobs:
 
 pachctl-del-job:
 	pachctl delete job word_alignment@${JOB}
+
+pachctl-get:
+	pachctl get file -r red_flags@master:${LANGS} -o scripts/word_alignment/data/out/${LANGS}
+	pachctl get file -r word_alignment@master:${LANGS} -o scripts/word_alignment/data/out/${LANGS}

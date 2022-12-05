@@ -51,7 +51,7 @@ def adjust_psalm_chapters(row):
         
 
 def main(args):
-    sources = ['greek_lemma', 'en-NIV11', 'swhMICP-front', 'wbi-wbiNT', 'ndh-ndhBT']
+    sources = ['greek_lemma', 'en-NIV11', 'swhMICP-front', 'wbi-wbiNT', 'ndh-ndhBT', 'ntk-ntk', 'swhMFT-front']
     source_stem = st.selectbox(label='Source', options=sources)
 
     # source = Path('data/archive/greek_lemma.txt')
@@ -111,7 +111,7 @@ def main(args):
     # outpath = base_outpath / f'{source.stem}_{target.stem}'
 
 
-    verse_df['verse_score'] = verse_df['total_score'].apply(lambda x: round(x, 2))
+    verse_df['verse_score'] = verse_df['total_score']
     if calibrated:
         verse_df['verse_score_calibrated'] = verse_df.apply(lambda row: row['total_score'] / row['ref_mean'], axis=1)
     verse_df['DisplayBook'] = verse_df['vref'].apply(lambda x: x.split(' ')[0])
@@ -124,7 +124,7 @@ def main(args):
     listVerses = verse_df.to_dict('records')
 
     chapter_df = verse_df.groupby(['DisplayBook', 'DisplayChapter'], sort=False).agg({k:v for k,v in {'total_score': 'mean', 'ref_mean': 'mean'}.items() if k in verse_df}).reset_index()
-    chapter_df['chapter_score'] = chapter_df['total_score'].apply(lambda x: round(x, 2))
+    chapter_df['chapter_score'] = chapter_df['total_score']
     if calibrated:
         chapter_df['chapter_score_calibrated'] = chapter_df.apply(lambda row: row['total_score'] / row['ref_mean'], axis=1)
 
