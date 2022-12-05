@@ -1,0 +1,21 @@
+{
+    "pipeline": {
+        "name": "create_target_cache"
+    },
+    "description": "A pipeline that takes target input files and forwards them together with their index-cache file.",
+    "transform": {
+        "cmd": [
+            "python3",
+            "create_cache.py",
+            "--source-dir",
+            "/pfs/targets"
+        ],
+        "image": "woodwardmw/aqua-pipeline-create_target_cache-pachyderm:c3fcb72"
+    },
+    "input": {
+        "pfs": {
+            "repo": "targets",
+            "glob": "/*.txt"
+        }
+    }
+}

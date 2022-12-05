@@ -1,0 +1,30 @@
+{
+    "pipeline": {
+        "name": "create_refs"
+    },
+    "description": "A pipeline that takes source input files and forwards them together with their index-cache file.",
+    "transform": {
+        "cmd": [
+            "python3",
+            "create_refs.py",
+            "--inpath",
+            "/pfs/word_alignment",
+            "--outpath",
+            "/pfs/out",
+            "--references",
+            "en-NASB",
+            "fr-LBS21",
+            "swh-ONEN",
+            "arb-AVD",
+            "ko-RNKSV",
+            "es-NTV"
+        ],
+        "image": "woodwardmw/<imagename>:<tag>"
+    },
+    "input": {
+        "pfs": {
+            "repo": "word_alignment",
+            "glob": "/"
+        }
+    }
+}
