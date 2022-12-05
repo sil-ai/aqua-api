@@ -19,7 +19,7 @@
             "ko-RNKSV",
             "es-NTV"
         ],
-        "image": "woodwardmw/aqua-pipeline-create_refs-pachyderm:c050c8c"
+        "image": "woodwardmw/aqua-pipeline-create_refs-pachyderm:b777809"
     },
     "input": {
         "pfs": {

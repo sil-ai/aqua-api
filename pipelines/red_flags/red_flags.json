@@ -14,14 +14,14 @@
             "--outpath",
             "/pfs/out"
         ],
-        "image": "woodwardmw/aqua-pipeline-red_flags-pachyderm:47b9fcb"
+        "image": "woodwardmw/aqua-pipeline-red_flags-pachyderm:3e6e5d7"
     },
     "input": {
         "cross": [
             {
                 "pfs": {
                     "repo": "word_alignment",
-                    "glob": "/"
+                    "glob": "/*/"
                 }
             },
             {

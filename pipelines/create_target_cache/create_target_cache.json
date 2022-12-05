@@ -15,7 +15,7 @@
     "input": {
         "pfs": {
             "repo": "targets",
-            "glob": "/*"
+            "glob": "/*.txt"
         }
     }
 }
