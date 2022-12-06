@@ -122,11 +122,11 @@ def condense_files(df: pd.DataFrame) -> pd.DataFrame:
     for index, row in df[:1:-1].iterrows():
         if row['src'].replace('\n', '').replace('<range>', '') == '':
             trg_to_append = row['trg'].replace('\n', ' ').replace('<range>', '') + trg_to_append
-            df.loc[index-1, 'trg'] = df.loc[index-1, 'trg'].replace('\n', ' ') + trg_to_append + '\n'
+            df.loc[df.index[df.index < index].max(), 'trg'] = df.loc[df.index[df.index < index].max(), 'trg'].replace('\n', ' ') + trg_to_append + '\n'
             df.loc[index, 'to_drop'] = True
         if row['trg'].replace('\n', '').replace('<range>', '') == '':
             src_to_append = row['src'].replace('\n', ' ').replace('<range>', '') + src_to_append
-            df.loc[index-1, 'src'] = df.loc[index-1, 'src'].replace('\n', ' ') + src_to_append + '\n'
+            df.loc[df.index[df.index < index].max(), 'src'] = df.loc[df.index[df.index < index].max(), 'src'].replace('\n', ' ') + src_to_append + '\n'
             df.loc[index, 'to_drop'] = True
         if len(row['src'].replace('\n', '').replace('<range>', '')) > 0 and len(row['trg'].replace('\n', '').replace('<range>', '')) > 0:
             src_to_append = ''
