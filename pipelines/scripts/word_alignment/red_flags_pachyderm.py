@@ -35,7 +35,7 @@ def identify_red_flags(outpath: Path, ref_path:Path) -> pd.DataFrame:
     possible_red_flags = possible_red_flags.merge(ref, how='left', on=['vref', 'source'], sort=False)
     red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['mean'] > 5 * row['total_score'] and row['min'] > 0.3, axis=1)]
     
-    return red_flags
+    return possible_red_flags, red_flags
 
 def main(args):
     base_outpath = args.outpath
@@ -57,8 +57,10 @@ def main(args):
 
         print(f"Identifying red flags for {source_str} to {target_str}...")
         ref_path = base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv'
-        red_flags = identify_red_flags(inpath, ref_path)
+        possible_red_flags, red_flags = identify_red_flags(inpath, ref_path)
         red_flags.to_csv(outpath / f'red_flags.csv', index=False)
+        possible_red_flags.to_csv(outpath / f'possible_red_flags.csv', index=False)
+
 
 
 if __name__ == "__main__":
