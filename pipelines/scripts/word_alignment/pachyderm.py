@@ -91,10 +91,11 @@ def main(args):
             if config_file.exists():
                 print("Found config file")
                 with open(config_file) as f:
-                    config = json.load(f)
-                requested_sources = config['sources']
+                    config = json.loads(f)
+                requested_sources = config.get('sources', [])
+                is_ref = config.get('ref', False)
                 print(f'Requested sources: {requested_sources}')
-                if source_str not in requested_sources:
+                if source_str not in requested_sources and not is_ref:
                     print(f"Skipping target {target_str} for source {source_str}")
                     continue
             target_index_cache_file = target_dir / f'{target_str}-index-cache.json'
