@@ -91,7 +91,7 @@ def main(args):
             if config_file.exists():
                 print("Found config file")
                 with open(config_file) as f:
-                    config = json.loads(f)
+                    config = json.loads(f.read())
                 requested_sources = config.get('sources', [])
                 is_ref = config.get('ref', False)
                 print(f'Requested sources: {requested_sources}')
