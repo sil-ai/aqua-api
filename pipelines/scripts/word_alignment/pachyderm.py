@@ -94,6 +94,7 @@ def main(args):
                     config = json.loads(f.read())
                 requested_sources = config.get('sources', [])
                 is_ref = config.get('ref', False)
+                print(f'Is Ref? {is_ref}')
                 print(f'Requested sources: {requested_sources}')
                 if source_str not in requested_sources and not is_ref:
                     print(f"Skipping target {target_str} for source {source_str}")
