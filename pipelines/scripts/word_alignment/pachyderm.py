@@ -94,6 +94,7 @@ def main(args):
                     config = json.loads(f.read())
                 requested_sources = config.get('sources', [])
                 is_ref = config.get('ref', False)
+                refresh = config.get('refresh', False)
                 print(f'Is Ref? {is_ref}')
                 print(f'Requested sources: {requested_sources}')
                 if source_str not in requested_sources and not is_ref:
@@ -101,9 +102,12 @@ def main(args):
                     continue
             target_index_cache_file = target_dir / f'{target_str}-index-cache.json'
             target = target_dir / f'{target_str}.txt'
+            outpath = base_outpath / f'{source_str}_{target_str}/'
+            if (outpath / 'verse_scores.csv').exists() and not refresh:
+                print(f"Skipping target {target_str} for source {source_str} since it has already been calculated")
+                continue
             print(f"Starting run")
             print(f"Source: {source}\nTarget: {target}")
-            outpath = base_outpath / f'{source_str}_{target_str}/'
             run_pachyderm(
             source = source,
             target = target,
