@@ -64,7 +64,7 @@ def get_source_txt(base_inpath, source_str, all_references):
 
 def main(args):
     base_inpath = args.inpath
-    base_ref_inpath = args.ref_inpath
+    base_ref_inpath = args.inpath
     base_outpath = args.outpath
     references = args.references
     sources = set()
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     parser.add_argument("--ref-inpath", type=Path, help="Path to base directory where the ref summary csvs are saved", required=True)
     parser.add_argument("--outpath", type=Path, help="Path to base outpath directory", required=True)
     parser.add_argument("--references", type=str, nargs='*', help="List of references to be used in red flags, etc", required=True)
-    parser.add_argument("--refresh", action="store_true", help="Refresh the csv files, building them from scratch", required=True)
+    parser.add_argument("--refresh", action="store_true", help="Refresh the csv files, building them from scratch")
 
     args = parser.parse_args()
     main(args)
