@@ -64,6 +64,7 @@ def get_source_txt(base_inpath, source_str, all_references):
 
 def main(args):
     base_inpath = args.inpath
+    base_ref_inpath = args.ref_inpath
     base_outpath = args.outpath
     references = args.references
     sources = set()
@@ -86,16 +87,16 @@ def main(args):
         source = get_source_txt(base_inpath, source_str, all_references)
         if source == None:
             continue
-        if ((base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
-            and (base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
-            and (base_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv').exists()
-            and (base_outpath / f'{source_str}/{source_str}_ref_word_scores.csv').exists()
+        if ((base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
+            and (base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
+            and (base_ref_inpath / f'{source_str}/{source_str}_ref_verse_scores.csv').exists()
+            and (base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv').exists()
             and not args.refresh
             ):
-            all_verse_ref_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
-            all_word_ref_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
-            ref_verse_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv')
-            ref_word_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_ref_word_scores.csv')
+            all_verse_ref_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
+            all_word_ref_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
+            ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_ref_verse_scores.csv')
+            ref_word_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv')
         else:
 
             df = get_data.get_ref_df(source, is_bible=True)
@@ -121,6 +122,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--inpath", type=Path, help="Path to base directory where scores are saved", required=True)
+    parser.add_argument("--ref-inpath", type=Path, help="Path to base directory where the ref summary csvs are saved", required=True)
     parser.add_argument("--outpath", type=Path, help="Path to base outpath directory", required=True)
     parser.add_argument("--references", type=str, nargs='*', help="List of references to be used in red flags, etc", required=True)
     parser.add_argument("--refresh", action="store_true", help="Refresh the csv files, building them from scratch", required=True)

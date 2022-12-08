@@ -9,6 +9,8 @@
             "create_refs.py",
             "--inpath",
             "/pfs/word_alignment",
+            "--ref-inpath",
+            "/pfs/copy_refs",
             "--outpath",
             "/pfs/out",
             "--references",
@@ -22,9 +24,19 @@
         "image": "woodwardmw/<imagename>:<tag>"
     },
     "input": {
-        "pfs": {
-            "repo": "word_alignment",
-            "glob": "/"
-        }
+        "cross": [
+            {
+                "pfs": {
+                    "repo": "word_alignment",
+                    "glob": "/*/"
+                }
+            },
+            {
+                "pfs": {
+                    "repo": "copy_refs",
+                    "glob": "/"
+                }
+            }
+        ]
     }
 }

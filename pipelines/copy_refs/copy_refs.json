@@ -1,0 +1,23 @@
+{
+    "pipeline": {
+        "name": "copy_refs"
+    },
+    "description": "A pipeline that copies the reference files, so they can be inputted back into create_refs again",
+    "transform": {
+        "cmd": [
+            "python3",
+            "copy_refs.py",
+            "--inpath",
+            "/pfs/create_refs",
+            "--outpath",
+            "/pfs/out"
+        ],
+        "image": "woodwardmw/aqua-pipeline-copy_refs-pachyderm:f42be8c"
+    },
+    "input": {
+        "pfs": {
+            "repo": "create_refs",
+            "glob": "/"
+        }
+    }
+}
