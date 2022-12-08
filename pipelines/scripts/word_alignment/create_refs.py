@@ -40,7 +40,6 @@ def get_ref_scores(
         verse_df = verse_df.merge(verse_scores, how='left', on='vref').rename(columns={'total_score': reference})
         word_df = word_df.merge(word_scores, how='left', on=['vref', 'source']).rename(columns={'total_score': f'{reference}_score', 'target': f'{reference}_match'})
     references  = [reference for reference in references if reference not in null_references]
-    print([f'{reference}_score' for reference in references])
     
     if len(references) > 0:
         verse_df['mean'] = verse_df.loc[:, references].mean(axis=1)
@@ -48,6 +47,7 @@ def get_ref_scores(
         verse_df['min'] = verse_df.loc[:, references].min(axis=1)
         word_df['min'] = word_df.loc[:, [f'{reference}_score' for reference in references]].min(axis=1)
     print(verse_df)
+    print(word_df)
     if len(references) > 1:
         verse_df['second_min'] = verse_df.loc[:, references].apply(lambda row: sorted(list(row))[1], axis=1)
         word_df['second_min'] = word_df.loc[:, [f'{reference}_score' for reference in references]].apply(lambda row: sorted(list(row))[1], axis=1)
@@ -120,7 +120,8 @@ def main(args):
             all_word_ref_df = word_ref_df
             if not (base_outpath / f'{source_str}').exists():
                 (base_outpath / f'{source_str}').mkdir()
-        
+        print(all_verse_ref_df)
+        print(all_word_ref_df)
         all_verse_ref_df, all_word_ref_df = get_ref_scores(all_references, all_verse_ref_df, all_word_ref_df, source_str, base_inpath)
         all_verse_ref_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
         all_word_ref_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
