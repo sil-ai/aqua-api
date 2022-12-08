@@ -87,12 +87,23 @@ def main(args):
         source = get_source_txt(base_inpath, source_str, all_references)
         if source == None:
             continue
-        if ((base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
+        if ((base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
+            and (base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
+            and (base_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv').exists()
+            and (base_outpath / f'{source_str}/{source_str}_ref_word_scores.csv').exists()
+            ):
+            # We must bepart-way through a run, so use the files in the outpath
+            all_verse_ref_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
+            all_word_ref_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
+            ref_verse_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv')
+            ref_word_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_ref_word_scores.csv')
+        elif ((base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
             and (base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
             and (base_ref_inpath / f'{source_str}/{source_str}_ref_verse_scores.csv').exists()
             and (base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv').exists()
             and not args.refresh
             ):
+            # Use the files from the base_ref_inpath
             all_verse_ref_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
             all_word_ref_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
             ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_ref_verse_scores.csv')
