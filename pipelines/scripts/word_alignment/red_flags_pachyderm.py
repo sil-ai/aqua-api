@@ -33,7 +33,7 @@ def identify_red_flags(outpath: Path, ref_path:Path) -> pd.DataFrame:
     if 'mean' not in ref.columns:
         return possible_red_flags
     possible_red_flags = possible_red_flags.merge(ref, how='left', on=['vref', 'source'], sort=False)
-    red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['mean'] > 5 * row['total_score'] and row['min'] > 0.3, axis=1)]
+    red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['mean'] > 5 * row['total_score'], axis=1)]
     
     return possible_red_flags, red_flags
 
