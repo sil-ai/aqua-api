@@ -37,11 +37,22 @@ def identify_red_flags(outpath: Path, ref_path:Path) -> pd.DataFrame:
     
     return possible_red_flags, red_flags
 
+
+def get_latest_ref_file(base_ref_inpath, source_str):
+    ref_dir = base_ref_inpath / source_str
+    files = []
+    for file in ref_dir.iterdir():
+        files.append(file)
+    files = sorted(files)
+    latest_ref = ref_dir / files[-1]
+    return latest_ref
+
+
 def main(args):
     base_outpath = args.outpath
     base_inpath = args.inpath
     base_ref_inpath = args.ref_inpath
-    for ref_dir in base_inpath.iterdir():
+    for ref_dir in base_inpath.iterdir():  
         meta_file = ref_dir / 'meta.json'
         with open(meta_file) as f:
             meta = json.load(f)
@@ -56,7 +67,7 @@ def main(args):
             outpath.mkdir()
 
         print(f"Identifying red flags for {source_str} to {target_str}...")
-        ref_path = base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv'
+        ref_path = get_latest_ref_file(base_ref_inpath, source_str)
         possible_red_flags, red_flags = identify_red_flags(inpath, ref_path)
         red_flags.to_csv(outpath / f'red_flags.csv', index=False)
         possible_red_flags.to_csv(outpath / f'possible_red_flags.csv', index=False)
