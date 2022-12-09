@@ -87,9 +87,11 @@ def main(args):
         source = get_source_txt(base_inpath, source_str, all_references)
         if source == None:
             continue
+
         files = base_outpath / f'{source_str}'
-        for file in files.iterdir():
-            print(file.name)
+        if files.exists():
+            for file in files.iterdir():
+                print(file.name)
         if ((base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
             and (base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
             and (base_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv').exists()
