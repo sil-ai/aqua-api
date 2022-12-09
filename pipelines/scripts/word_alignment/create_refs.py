@@ -67,6 +67,8 @@ def main(args):
     base_ref_inpath = args.inpath
     base_outpath = args.outpath
     tmp_outpath = Path('/tmp/refs')
+    if not tmp_outpath.exists():
+        tmp_outpath.mkdir()
     references = args.references
     sources = set()
     all_references = set()
@@ -85,6 +87,10 @@ def main(args):
     print(f'All references: {all_references}')    
             
     for source_str in sources:
+        if not (base_outpath / f'{source_str}').exists():
+            (base_outpath / f'{source_str}').mkdir()
+        if not (tmp_outpath / f'{source_str}').exists():
+            (tmp_outpath / f'{source_str}').mkdir()
         source = get_source_txt(base_inpath, source_str, all_references)
         if source == None:
             continue
@@ -119,10 +125,7 @@ def main(args):
             df = get_data.get_words_from_txt_file(df, base_outpath)
             word_ref_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
             all_word_ref_df = word_ref_df
-        if not (base_outpath / f'{source_str}').exists():
-            (base_outpath / f'{source_str}').mkdir()
-        if not (tmp_outpath / f'{source_str}').exists():
-            (tmp_outpath / f'{source_str}').mkdir()
+
         print(all_verse_ref_df)
         print(all_word_ref_df)
         all_verse_ref_df, all_word_ref_df = get_ref_scores(all_references, all_verse_ref_df, all_word_ref_df, source_str, base_inpath)
