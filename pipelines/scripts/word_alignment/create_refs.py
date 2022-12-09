@@ -132,6 +132,8 @@ def main(args):
         ref_verse_df, ref_word_df = get_ref_scores(references, verse_ref_df, word_ref_df, source_str, base_inpath)
         ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv', index=False)
         ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_ref_word_scores.csv', index=False)
+        for file in files:
+            print(file.name)
 
 
 if __name__ == "__main__":
