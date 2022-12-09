@@ -100,8 +100,8 @@ def main(args):
             and (tmp_outpath / f'{source_str}/{source_str}_ref_word_scores.csv').exists()
             ):
             # We must bepart-way through a run, so use the files in the outpath
-            all_verse_ref_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
-            all_word_ref_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
+            all_ref_verse_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
+            all_ref_word_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
             ref_verse_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv')
             ref_word_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_ref_word_scores.csv')
         elif ((base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
@@ -111,30 +111,30 @@ def main(args):
             and not args.refresh
             ):
             # Use the files from the base_ref_inpath
-            all_verse_ref_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
-            all_word_ref_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
+            all_ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
+            all_ref_word_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
             ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_ref_verse_scores.csv')
             ref_word_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv')
         else:
 
             df = get_data.get_ref_df(source, is_bible=True)
             df = get_data.remove_blanks_and_ranges(df)
-            verse_ref_df = df.drop('src', axis=1)
-            all_verse_ref_df = verse_ref_df
+            ref_verse_df = df.drop('src', axis=1)
+            all_ref_verse_df = ref_verse_df
             
             df = get_data.get_words_from_txt_file(df, base_outpath)
-            word_ref_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
-            all_word_ref_df = word_ref_df
+            ref_word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
+            all_ref_word_df = ref_word_df
 
-        print(all_verse_ref_df)
-        print(all_word_ref_df)
-        all_verse_ref_df, all_word_ref_df = get_ref_scores(all_references, all_verse_ref_df, all_word_ref_df, source_str, base_inpath)
-        all_verse_ref_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
-        all_word_ref_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
-        all_verse_ref_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
-        all_word_ref_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
+        print(all_ref_verse_df)
+        print(all_ref_word_df)
+        all_ref_verse_df, all_ref_word_df = get_ref_scores(all_references, all_ref_verse_df, all_ref_word_df, source_str, base_inpath)
+        all_ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
+        all_ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
+        all_ref_verse_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
+        all_ref_word_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
         
-        ref_verse_df, ref_word_df = get_ref_scores(references, verse_ref_df, word_ref_df, source_str, base_inpath)
+        ref_verse_df, ref_word_df = get_ref_scores(references, ref_verse_df, ref_word_df, source_str, base_inpath)
         ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv', index=False)
         ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_ref_word_scores.csv', index=False)
         ref_verse_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv', index=False)
