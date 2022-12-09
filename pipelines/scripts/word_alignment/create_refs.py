@@ -100,10 +100,10 @@ def main(args):
             and (tmp_outpath / f'{source_str}/{source_str}_ref_word_scores.csv').exists()
             ):
             # We must bepart-way through a run, so use the files in the outpath
-            all_verse_ref_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
-            all_word_ref_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
-            ref_verse_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv')
-            ref_word_df = pd.read_csv(base_outpath / f'{source_str}/{source_str}_ref_word_scores.csv')
+            all_verse_ref_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
+            all_word_ref_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
+            ref_verse_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv')
+            ref_word_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_ref_word_scores.csv')
         elif ((base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
             and (base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
             and (base_ref_inpath / f'{source_str}/{source_str}_ref_verse_scores.csv').exists()
