@@ -89,8 +89,8 @@ def main(args):
     for source_str in sources:
         if not (base_outpath / f'{source_str}').exists():
             (base_outpath / f'{source_str}').mkdir(parents=True)
-        if not (tmp_outpath / f'{source_str}').exists(parents=True):
-            (tmp_outpath / f'{source_str}').mkdir()
+        if not (tmp_outpath / f'{source_str}').exists():
+            (tmp_outpath / f'{source_str}').mkdir(parents=True)
         source = get_source_txt(base_inpath, source_str, all_references)
         if source == None:
             continue
