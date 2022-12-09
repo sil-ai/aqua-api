@@ -17,29 +17,26 @@ def get_scores(data_path: Path):
         word_scores['target'] = word_scores['target'].apply(lambda x: x.replace(';', '";"')) # Otherwise the separation gets messed up in the CSV file
     return (word_scores, verse_scores)
 
-def get_ref_scores(
-                references: List[str], 
+def add_ref_scores(
                 verse_df: pd.DataFrame, 
                 word_df: pd.DataFrame, 
-                source: str, 
+                source_str: str, 
+                target_str: str, 
                 base_inpath: Path,
                 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    references = [reference for reference in references if (base_inpath / f"{source}_{reference}").exists()]
-    null_references = []
-    for reference in references:
-        inpath = base_inpath / f"{source}_{reference}" 
-        if not inpath.exists():
-            print(f'{inpath} does not exist, skipping.')
-            continue
-        if reference in word_df.columns and reference in verse_df.columns:  # Skip those that are already in the df
-            continue
-        word_scores, verse_scores = get_scores(inpath)
-        if verse_scores.shape[0] == 0:
-            null_references.append(reference)
-            continue
-        verse_df = verse_df.merge(verse_scores, how='left', on='vref').rename(columns={'total_score': reference})
-        word_df = word_df.merge(word_scores, how='left', on=['vref', 'source']).rename(columns={'total_score': f'{reference}_score', 'target': f'{reference}_match'})
-    references  = [reference for reference in references if reference not in null_references]
+    inpath = base_inpath / f"{source_str}_{target_str}" 
+    if not inpath.exists():
+        print(f'{inpath} does not exist, skipping.')
+        return (verse_df, word_df)
+    if target_str in word_df.columns and target_str in verse_df.columns:  # Skip if already in the df
+        return (verse_df, word_df)
+
+    word_scores, verse_scores = get_scores(inpath)
+    if verse_scores.shape[0] == 0:
+        return (verse_df, word_df)
+    verse_df = verse_df.merge(verse_scores, how='left', on='vref').rename(columns={'total_score': target_str})
+    word_df = word_df.merge(word_scores, how='left', on=['vref', 'source']).rename(columns={'total_score': f'{target_str}_score', 'target': f'{target_str}_match'})
+    references  = [col for col in verse_df.columns if col not in ['vref', 'mean']]
     
     if len(references) > 0:
         verse_df['mean'] = verse_df.loc[:, references].mean(axis=1)
@@ -54,11 +51,10 @@ def get_ref_scores(
     return verse_df, word_df
 
 
-def get_source_txt(base_inpath, source_str, all_references):
-    for reference in all_references:
-        source_path = base_inpath / f'{source_str}_{reference}/{source_str}.txt'
-        if source_path.exists():
-            return source_path
+def get_source_txt(base_inpath, source_str, target_str):
+    source_path = base_inpath / f'{source_str}_{target_str}/{source_str}.txt'
+    if source_path.exists():
+        return source_path
     return None
 
 
@@ -69,76 +65,55 @@ def main(args):
     tmp_outpath = Path('/tmp/refs')
     if not tmp_outpath.exists():
         tmp_outpath.mkdir()
-    references = args.references
     sources = set()
-    all_references = set()
-    for ref_dir in base_inpath.iterdir():
+    for ref_dir in base_inpath.iterdir(): # FYI, this should only be one ref_dir per pachyderm datum
         meta_file = ref_dir / 'meta.json'
         with open(meta_file) as f:
             meta = json.load(f)
         source_str = meta['source']
         target_str = meta['target']
         sources.add(source_str)
-        all_references.add(target_str)
-    sources = list(sources)
-    all_references = list(all_references)
+    sources = list(sources)  # Should only have one element
     print(f'Sources: {sources}')
-    print(f'References: {references}')
-    print(f'All references: {all_references}')    
+    print(f'Target: {target_str}')    
             
     for source_str in sources:
         if not (base_outpath / f'{source_str}').exists():
             (base_outpath / f'{source_str}').mkdir(parents=True)
         if not (tmp_outpath / f'{source_str}').exists():
             (tmp_outpath / f'{source_str}').mkdir(parents=True)
-        source = get_source_txt(base_inpath, source_str, all_references)
+        source = get_source_txt(base_inpath, source_str, target_str)
         if source == None:
             continue
         if ((tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
             and (tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
-            and (tmp_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv').exists()
-            and (tmp_outpath / f'{source_str}/{source_str}_ref_word_scores.csv').exists()
             ):
             # We must bepart-way through a run, so use the files in the outpath
             all_ref_verse_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
             all_ref_word_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
-            ref_verse_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv')
-            ref_word_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_ref_word_scores.csv')
         elif ((base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
             and (base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
-            and (base_ref_inpath / f'{source_str}/{source_str}_ref_verse_scores.csv').exists()
-            and (base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv').exists()
             and not args.refresh
             ):
             # Use the files from the base_ref_inpath
             all_ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
             all_ref_word_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
-            ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_ref_verse_scores.csv')
-            ref_word_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_ref_word_scores.csv')
         else:
 
             df = get_data.get_ref_df(source, is_bible=True)
             df = get_data.remove_blanks_and_ranges(df)
-            ref_verse_df = df.drop('src', axis=1)
-            all_ref_verse_df = ref_verse_df
+            all_ref_verse_df = df.drop('src', axis=1)
             
             df = get_data.get_words_from_txt_file(df, base_outpath)
-            ref_word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
-            all_ref_word_df = ref_word_df
+            all_ref_word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
 
         print(all_ref_verse_df)
         print(all_ref_word_df)
-        all_ref_verse_df, all_ref_word_df = get_ref_scores(all_references, all_ref_verse_df, all_ref_word_df, source_str, base_inpath)
+        all_ref_verse_df, all_ref_word_df = add_ref_scores(all_ref_verse_df, all_ref_word_df, source_str, target_str, base_inpath)
         all_ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
         all_ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
         all_ref_verse_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
         all_ref_word_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
-        
-        ref_verse_df, ref_word_df = get_ref_scores(references, ref_verse_df, ref_word_df, source_str, base_inpath)
-        ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv', index=False)
-        ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_ref_word_scores.csv', index=False)
-        ref_verse_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_ref_verse_scores.csv', index=False)
-        ref_word_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_ref_word_scores.csv', index=False)
 
 
 if __name__ == "__main__":
@@ -146,7 +121,6 @@ if __name__ == "__main__":
     parser.add_argument("--inpath", type=Path, help="Path to base directory where scores are saved", required=True)
     parser.add_argument("--ref-inpath", type=Path, help="Path to base directory where the ref summary csvs are saved", required=True)
     parser.add_argument("--outpath", type=Path, help="Path to base outpath directory", required=True)
-    parser.add_argument("--references", type=str, nargs='*', help="List of references to be used in red flags, etc", required=True)
     parser.add_argument("--refresh", action="store_true", help="Refresh the csv files, building them from scratch")
 
     args = parser.parse_args()
