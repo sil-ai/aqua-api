@@ -61,12 +61,13 @@ def get_source_txt(base_inpath, source_str, target_str):
 
 def main(args):
     base_inpath = args.inpath
-    base_ref_inpath = args.inpath
+    base_ref_inpath = args.ref_inpath
     base_outpath = args.outpath
     tmp_outpath = Path('/tmp/refs')
     if not tmp_outpath.exists():
         tmp_outpath.mkdir()
     sources = set()
+    references = set()
     for ref_dir in base_inpath.iterdir(): # FYI, this should only be one ref_dir per pachyderm datum
         meta_file = ref_dir / 'meta.json'
         with open(meta_file) as f:
@@ -74,51 +75,53 @@ def main(args):
         source_str = meta['source']
         target_str = meta['target']
         sources.add(source_str)
+        references.add(target_str)
     sources = list(sources)  # Should only have one element
     print(f'Sources: {sources}')
-    print(f'Target: {target_str}')    
+    print(f'References: {references}')    
             
     for source_str in sources:
         if not (base_outpath / f'{source_str}').exists():
             (base_outpath / f'{source_str}').mkdir(parents=True)
         if not (tmp_outpath / f'{source_str}').exists():
             (tmp_outpath / f'{source_str}').mkdir(parents=True)
-        source = get_source_txt(base_inpath, source_str, target_str)
-        if source == None:
-            continue
-        if ((tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
-            and (tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
-            ):
-            # We must bepart-way through a run, so use the files in the outpath
-            all_ref_verse_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
-            all_ref_word_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
-        elif ((base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
-            and (base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
-            and not args.refresh
-            ):
-            # Use the files from the base_ref_inpath
-            all_ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
-            all_ref_word_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
-        else:
+        for reference in references:
+            source = get_source_txt(base_inpath, source_str, reference)
+            if source == None:
+                continue
+            if ((tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
+                and (tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
+                ):
+                # We must bepart-way through a run, so use the files in the outpath
+                all_ref_verse_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
+                all_ref_word_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
+            elif ((base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
+                and (base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
+                and not args.refresh
+                ):
+                # Use the files from the base_ref_inpath
+                all_ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
+                all_ref_word_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
+            else:
 
-            df = get_data.get_ref_df(source, is_bible=True)
-            df = get_data.remove_blanks_and_ranges(df)
-            all_ref_verse_df = df.drop('src', axis=1)
-            
-            df = get_data.get_words_from_txt_file(df, tmp_outpath)
-            all_ref_word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
+                df = get_data.get_ref_df(source, is_bible=True)
+                df = get_data.remove_blanks_and_ranges(df)
+                all_ref_verse_df = df.drop('src', axis=1)
+                
+                df = get_data.get_words_from_txt_file(df, tmp_outpath)
+                all_ref_word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
 
         print(all_ref_verse_df)
         print(all_ref_word_df)
-        all_ref_verse_df, all_ref_word_df = add_ref_scores(all_ref_verse_df, all_ref_word_df, source_str, target_str, base_inpath)
+        all_ref_verse_df, all_ref_word_df = add_ref_scores(all_ref_verse_df, all_ref_word_df, source_str, reference, base_inpath)
         # Get the current datetime
         now = datetime.datetime.now()
 
         # Create the timestamp string in the desired format
         timestamp = now.strftime("%Y%m%d_%H%M%S")
 
-        all_ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores-{timestamp}.csv', index=False)
-        all_ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv-{timestamp}', index=False)
+        all_ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
+        all_ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
         all_ref_verse_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
         all_ref_word_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
 
