@@ -105,7 +105,7 @@ def main(args):
             df = get_data.remove_blanks_and_ranges(df)
             all_ref_verse_df = df.drop('src', axis=1)
             
-            df = get_data.get_words_from_txt_file(df, base_outpath)
+            df = get_data.get_words_from_txt_file(df, tmp_outpath)
             all_ref_word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
 
         print(all_ref_verse_df)
