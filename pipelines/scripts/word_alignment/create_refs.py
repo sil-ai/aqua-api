@@ -93,6 +93,7 @@ def main(args):
                 and (tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
                 ):
                 # We must bepart-way through a run, so use the files in the outpath
+                print("Adding to temp file")
                 all_ref_verse_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
                 all_ref_word_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
             elif ((base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
@@ -100,6 +101,7 @@ def main(args):
                 and not args.refresh
                 ):
                 # Use the files from the base_ref_inpath
+                print("Getting files from refs repo")
                 all_ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
                 all_ref_word_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
             else:
@@ -111,9 +113,10 @@ def main(args):
                 df = get_data.get_words_from_txt_file(df, tmp_outpath)
                 all_ref_word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
 
-        print(all_ref_verse_df)
-        print(all_ref_word_df)
+
         all_ref_verse_df, all_ref_word_df = add_ref_scores(all_ref_verse_df, all_ref_word_df, source_str, reference, base_inpath)
+        print(all_ref_verse_df.head())
+        print(all_ref_word_df.head())
         # Get the current datetime
         now = datetime.datetime.now()
 
