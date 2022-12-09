@@ -2,6 +2,7 @@ from pathlib import Path
 import argparse
 import json
 from typing import List, Tuple
+import datetime
 
 import pandas as pd
 
@@ -110,10 +111,16 @@ def main(args):
         print(all_ref_verse_df)
         print(all_ref_word_df)
         all_ref_verse_df, all_ref_word_df = add_ref_scores(all_ref_verse_df, all_ref_word_df, source_str, target_str, base_inpath)
-        all_ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
-        all_ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
-        all_ref_verse_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
-        all_ref_word_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
+        # Get the current datetime
+        now = datetime.datetime.now()
+
+        # Create the timestamp string in the desired format
+        timestamp = now.strftime("%Y%m%d_%H%M%S")
+
+        all_ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores-{timestamp}.csv', index=False)
+        all_ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv-{timestamp}', index=False)
+        all_ref_verse_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv-{timestamp}', index=False)
+        all_ref_word_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv-{timestamp}', index=False)
 
 
 if __name__ == "__main__":
