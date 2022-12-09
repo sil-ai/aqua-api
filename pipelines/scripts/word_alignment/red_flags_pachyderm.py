@@ -39,10 +39,12 @@ def identify_red_flags(outpath: Path, ref_path:Path) -> pd.DataFrame:
 
 
 def get_latest_ref_file(base_ref_inpath, source_str):
+    file_str = '_ref_word_scores'
     ref_dir = base_ref_inpath / source_str
     files = []
     for file in ref_dir.iterdir():
-        files.append(file)
+        if file_str in file.name:
+            files.append(file.name)
     files = sorted(files)
     latest_ref = ref_dir / files[-1]
     return latest_ref
