@@ -36,7 +36,7 @@ def add_ref_scores(
         return (verse_df, word_df)
     verse_df = verse_df.merge(verse_scores, how='left', on='vref').rename(columns={'total_score': target_str})
     word_df = word_df.merge(word_scores, how='left', on=['vref', 'source']).rename(columns={'total_score': f'{target_str}_score', 'target': f'{target_str}_match'})
-    references  = [col for col in verse_df.columns if col not in ['vref', 'mean']]
+    references  = [col for col in verse_df.columns if col not in ['vref', 'mean', 'min', 'second_min']]
     
     if len(references) > 0:
         verse_df['mean'] = verse_df.loc[:, references].mean(axis=1)
