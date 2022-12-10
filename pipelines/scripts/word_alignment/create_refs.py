@@ -36,7 +36,7 @@ def add_ref_scores(
             return (verse_df, word_df)
         else:
             verse_df = verse_df.drop(target_str, axis=1)
-            word_df = word_df.drop([f'{target_str}_score', 'f{target_str}_match'], axis=1)
+            word_df = word_df.drop([f'{target_str}_score', f'{target_str}_match'], axis=1)
 
 
     word_scores, verse_scores = get_scores(inpath)
