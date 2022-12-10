@@ -30,7 +30,7 @@ def add_ref_scores(
     if not inpath.exists():
         print(f'{inpath} does not exist, skipping.')
         return (verse_df, word_df)
-    if target_str in word_df.columns and target_str in verse_df.columns:  # Skip if already in the df
+    if f'{target_str}_match' in word_df.columns and target_str in verse_df.columns:  # Skip if already in the df
         if not refresh:
             print(f'{target_str} already in the df, skipping.')
             return (verse_df, word_df)
