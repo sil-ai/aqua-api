@@ -15,7 +15,7 @@ def get_scores(data_path: Path):
     if verse_scores.shape[0] > 0:
         verse_scores = verse_scores[['vref', 'total_score']]
         word_scores = word_scores[['vref', 'source', 'target', 'total_score']]
-        word_scores['target'] = word_scores['target'].apply(lambda x: x.replace(';', '";"')) # Otherwise the separation gets messed up in the CSV file
+        word_scores['target'] = word_scores['target'].apply(lambda x: str(x).replace(';', '";"')) # Otherwise the separation gets messed up in the CSV file
     return (word_scores, verse_scores)
 
 def add_ref_scores(
