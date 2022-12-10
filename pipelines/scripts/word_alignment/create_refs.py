@@ -89,21 +89,21 @@ def main(args):
             source = get_source_txt(base_inpath, source_str, reference)
             if source == None:
                 continue
-            if ((tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
-                and (tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
+            if ((tmp_outpath / f'{source_str}_all_ref_verse_scores.csv').exists()
+                and (tmp_outpath / f'{source_str}_all_ref_word_scores.csv').exists()
                 ):
                 # We must bepart-way through a run, so use the files in the outpath
                 print("Adding to temp file")
-                all_ref_verse_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
-                all_ref_word_df = pd.read_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
-            elif ((base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv').exists()
-                and (base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv').exists()
+                all_ref_verse_df = pd.read_csv(tmp_outpath / f'{source_str}_all_ref_verse_scores.csv')
+                all_ref_word_df = pd.read_csv(tmp_outpath / f'{source_str}_all_ref_word_scores.csv')
+            elif ((base_ref_inpath / f'{source_str}_all_ref_verse_scores.csv').exists()
+                and (base_ref_inpath / f'{source_str}_all_ref_word_scores.csv').exists()
                 and not args.refresh
                 ):
                 # Use the files from the base_ref_inpath
                 print("Getting files from refs repo")
-                all_ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv')
-                all_ref_word_df = pd.read_csv(base_ref_inpath / f'{source_str}/{source_str}_all_ref_word_scores.csv')
+                all_ref_verse_df = pd.read_csv(base_ref_inpath / f'{source_str}_all_ref_verse_scores.csv')
+                all_ref_word_df = pd.read_csv(base_ref_inpath / f'{source_str}_all_ref_word_scores.csv')
             else:
 
                 df = get_data.get_ref_df(source, is_bible=True)
@@ -125,8 +125,8 @@ def main(args):
 
         all_ref_verse_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_verse_scores-{timestamp}.csv', index=False)
         all_ref_word_df.to_csv(base_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv-{timestamp}', index=False)
-        all_ref_verse_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_verse_scores.csv', index=False)
-        all_ref_word_df.to_csv(tmp_outpath / f'{source_str}/{source_str}_all_ref_word_scores.csv', index=False)
+        all_ref_verse_df.to_csv(tmp_outpath / f'{source_str}_all_ref_verse_scores.csv', index=False)
+        all_ref_word_df.to_csv(tmp_outpath / f'{source_str}_all_ref_word_scores.csv', index=False)
 
 
 if __name__ == "__main__":
