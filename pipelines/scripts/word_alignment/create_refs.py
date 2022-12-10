@@ -31,18 +31,20 @@ def add_ref_scores(
         print(f'{inpath} does not exist, skipping.')
         return (verse_df, word_df)
     if target_str in word_df.columns and target_str in verse_df.columns:  # Skip if already in the df
-        print(f'{target_str} already in the df, skipping.')
-        return (verse_df, word_df)
+        if not refresh:
+            print(f'{target_str} already in the df, skipping.')
+            return (verse_df, word_df)
+        else:
+            verse_df = verse_df.drop(target_str, axis=1)
+            word_df = word_df.drop([f'{target_str}_score', 'f{target_str}_match'], axis=1)
+
 
     word_scores, verse_scores = get_scores(inpath)
     if verse_scores.shape[0] == 0:
         return (verse_df, word_df)
-    if refresh:
-        verse_df = verse_df.merge(verse_scores, how='left', on='vref', suffixes=('_DROP', '')).filter(regex='^(?!.*_DROP)').rename(columns={'total_score': target_str})
-        word_df = word_df.merge(word_scores, how='left', on='vref', suffixes=('_DROP', '')).filter(regex='^(?!.*_DROP)').rename(columns={'total_score': f'{target_str}_score', 'target': f'{target_str}_match'})
-    else:
-        verse_df = verse_df.merge(verse_scores, how='left', on='vref', suffixes=('', '_DROP')).filter(regex='^(?!.*_DROP)').rename(columns={'total_score': target_str})
-        word_df = word_df.merge(word_scores, how='left', on='vref', suffixes=('', '_DROP')).filter(regex='^(?!.*_DROP)').rename(columns={'total_score': f'{target_str}_score', 'target': f'{target_str}_match'})
+
+    verse_df = verse_df.merge(verse_scores, how='left', on='vref').rename(columns={'total_score': target_str})
+    word_df = word_df.merge(word_scores, how='left', on='vref').rename(columns={'total_score': f'{target_str}_score', 'target': f'{target_str}_match'})
     
     references  = [col for col in verse_df.columns if col not in ['vref', 'mean', 'min', 'second_min']]
     
