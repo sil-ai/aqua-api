@@ -24,19 +24,26 @@ def add_ref_scores(
                 source_str: str, 
                 target_str: str, 
                 base_inpath: Path,
+                refresh: bool=False,
                 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     inpath = base_inpath / f"{source_str}_{target_str}" 
     if not inpath.exists():
         print(f'{inpath} does not exist, skipping.')
         return (verse_df, word_df)
     if target_str in word_df.columns and target_str in verse_df.columns:  # Skip if already in the df
+        print(f'{target_str} already in the df, skipping.')
         return (verse_df, word_df)
 
     word_scores, verse_scores = get_scores(inpath)
     if verse_scores.shape[0] == 0:
         return (verse_df, word_df)
-    verse_df = verse_df.merge(verse_scores, how='left', on='vref').rename(columns={'total_score': target_str})
-    word_df = word_df.merge(word_scores, how='left', on=['vref', 'source']).rename(columns={'total_score': f'{target_str}_score', 'target': f'{target_str}_match'})
+    if refresh:
+        verse_df = verse_df.merge(verse_scores, how='left', on='vref', suffixes=('_DROP', '')).filter(regex='^(?!.*_DROP)').rename(columns={'total_score': target_str})
+        word_df = word_df.merge(word_scores, how='left', on='vref', suffixes=('_DROP', '')).filter(regex='^(?!.*_DROP)').rename(columns={'total_score': f'{target_str}_score', 'target': f'{target_str}_match'})
+    else:
+        verse_df = verse_df.merge(verse_scores, how='left', on='vref', suffixes=('', '_DROP')).filter(regex='^(?!.*_DROP)').rename(columns={'total_score': target_str})
+        word_df = word_df.merge(word_scores, how='left', on='vref', suffixes=('', '_DROP')).filter(regex='^(?!.*_DROP)').rename(columns={'total_score': f'{target_str}_score', 'target': f'{target_str}_match'})
+    
     references  = [col for col in verse_df.columns if col not in ['vref', 'mean', 'min', 'second_min']]
     
     if len(references) > 0:
@@ -114,7 +121,7 @@ def main(args):
                 all_ref_word_df = df.explode('src_words')[['vref', 'src_words']].rename(columns={'src_words': 'source'})
 
 
-        all_ref_verse_df, all_ref_word_df = add_ref_scores(all_ref_verse_df, all_ref_word_df, source_str, reference, base_inpath)
+        all_ref_verse_df, all_ref_word_df = add_ref_scores(all_ref_verse_df, all_ref_word_df, source_str, reference, base_inpath, refresh=args.refresh)
         print(all_ref_verse_df.head())
         print(all_ref_word_df.head())
         # Get the current datetime
