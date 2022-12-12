@@ -194,7 +194,8 @@ def combine_by_verse_scores(
 
     print("Combining scores for each word-pair in each verse")
     ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
-    ref_df = get_data.remove_blanks_and_ranges(ref_df)
+    # ref_df = get_data.remove_blanks_and_ranges(ref_df)
+    ref_df = get_data.condense_files(ref_df)
     ref_df = get_data.get_words_from_txt_file(ref_df, outpath)
     ref_df = ref_df.explode('src_words').explode('trg_words')
     ref_df = ref_df.drop(['src', 'trg'], axis=1).rename(columns={'src_words': 'source', 'trg_words': 'target'}).astype('object')
