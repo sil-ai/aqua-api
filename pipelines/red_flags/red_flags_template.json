@@ -19,10 +19,26 @@
     "input": {
         "cross": [
             {
-                "pfs": {
-                    "repo": "word_alignment",
-                    "glob": "/*/"
-                }
+                "group": [
+                    {
+                        "union": [
+                            {
+                                "pfs": {
+                                    "repo": "word_alignment",
+                                    "glob": "/(*)/word_scores.csv",
+                                    "group_by": "($1)"
+                                }
+                            },
+                            {
+                                "pfs": {
+                                    "repo": "word_alignment",
+                                    "glob": "/(*)/meta.json",
+                                    "group_by": "($1)"
+                                }
+                            }
+                        ]
+                    }
+                ]
             },
             {
                 "pfs": {

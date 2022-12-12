@@ -14,15 +14,31 @@
             "--outpath",
             "/pfs/out"
         ],
-        "image": "woodwardmw/aqua-pipeline-red_flags-pachyderm:3e6e5d7"
+        "image": "woodwardmw/aqua-pipeline-red_flags-pachyderm:8448e56"
     },
     "input": {
         "cross": [
             {
-                "pfs": {
-                    "repo": "word_alignment",
-                    "glob": "/*/"
-                }
+                "group": [
+                    {
+                        "union": [
+                            {
+                                "pfs": {
+                                    "repo": "word_alignment",
+                                    "glob": "/(*)/word_scores.csv",
+                                    "group_by": "($1)"
+                                }
+                            },
+                            {
+                                "pfs": {
+                                    "repo": "word_alignment",
+                                    "glob": "/(*)/meta.json",
+                                    "group_by": "($1)"
+                                }
+                            }
+                        ]
+                    }
+                ]
             },
             {
                 "pfs": {

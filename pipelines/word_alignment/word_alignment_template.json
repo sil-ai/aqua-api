@@ -22,10 +22,32 @@
   "input": {
     "cross": [
       {
-        "pfs": {
-          "repo": "create_source_cache",
-          "glob": "/*/"
-        }
+        "join": [
+          {
+            "pfs": {
+              "repo": "create_source_cache",
+              "glob": "/(*)/",
+              "join_on": "$1",
+              "outer_join": true
+            }
+          },
+          {
+            "pfs": {
+              "repo": "refs",
+              "glob": "(*)_all_ref_word_scores.csv/",
+              "join_on": "$1",
+              "group_by": "$1"
+            }
+          },
+          {
+            "pfs": {
+              "repo": "refs",
+              "glob": "(*)_all_ref_verse_scores.csv/",
+              "join_on": "$1",
+              "group_by": "$1"
+            }
+          }
+        ]
       },
       {
         "join": [
@@ -33,8 +55,7 @@
             "pfs": {
               "repo": "create_target_cache",
               "glob": "/(*)/",
-              "join_on": "$1",
-              "outer_join": true
+              "join_on": "$1"
             }
           },
           {

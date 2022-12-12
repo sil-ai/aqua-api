@@ -10,7 +10,7 @@
             "--source-dir",
             "/pfs/sources"
         ],
-        "image": "woodwardmw/aqua-pipeline-create_source_cache-pachyderm:c3fcb72"
+        "image": "woodwardmw/aqua-pipeline-create_source_cache-pachyderm:391d71c"
     },
     "input": {
         "pfs": {

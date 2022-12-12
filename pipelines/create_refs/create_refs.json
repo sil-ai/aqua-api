@@ -9,22 +9,57 @@
             "create_refs.py",
             "--inpath",
             "/pfs/word_alignment",
+            "--ref-inpath",
+            "/pfs/refs",
             "--outpath",
-            "/pfs/out",
-            "--references",
-            "en-NASB",
-            "fr-LBS21",
-            "swh-ONEN",
-            "arb-AVD",
-            "ko-RNKSV",
-            "es-NTV"
+            "/pfs/out"
         ],
-        "image": "woodwardmw/aqua-pipeline-create_refs-pachyderm:0f06a8e"
+        "image": "woodwardmw/aqua-pipeline-create_refs-pachyderm:56d3927"
     },
     "input": {
-        "pfs": {
-            "repo": "word_alignment",
-            "glob": "/"
-        }
+        "cross": [
+            {
+                "group": [
+                    {
+                        "union": [
+                            {
+                                "pfs": {
+                                    "repo": "word_alignment",
+                                    "glob": "/(*)/verse_scores.csv",
+                                    "group_by": "($1)"
+                                }
+                            },
+                            {
+                                "pfs": {
+                                    "repo": "word_alignment",
+                                    "glob": "/(*)/word_scores.csv",
+                                    "group_by": "($1)"
+                                }
+                            },
+                            {
+                                "pfs": {
+                                    "repo": "word_alignment",
+                                    "glob": "/(*)/meta.json",
+                                    "group_by": "($1)"
+                                }
+                            },
+                            {
+                                "pfs": {
+                                    "repo": "word_alignment",
+                                    "glob": "/(*)/*.txt",
+                                    "group_by": "($1)"
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "pfs": {
+                    "repo": "refs",
+                    "glob": "/"
+                }
+            }
+        ]
     }
 }
