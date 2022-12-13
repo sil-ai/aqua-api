@@ -27,7 +27,7 @@ def identify_red_flags(outpath: Path, ref_path:Path) -> pd.DataFrame:
     possible_red_flags = df[df['total_score'] < 0.1]
     possible_red_flags.to_csv(outpath / 'possible_red_flags.csv')
     if not ref_path.exists():
-        return possible_red_flags
+        return possible_red_flags, possible_red_flags
 
     ref = pd.read_csv(ref_path, low_memory=False)
     if 'mean' not in ref.columns:
