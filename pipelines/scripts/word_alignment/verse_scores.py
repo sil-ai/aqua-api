@@ -1,5 +1,6 @@
 from pathlib import Path
 import argparse
+import json
 
 import streamlit as st
 import pandas as pd
@@ -17,7 +18,7 @@ import get_data
 def plot_results(scores, source='Greek NT', highlighted=None):
     # Set the font family and size
     font_family = 'sans-serif'
-    font_size = 9
+    font_size = 12
 
     # Use the font manager to find the font
     font_prop = fm.FontProperties(family=font_family, size=font_size)
@@ -119,6 +120,12 @@ def truncate_colormap(cmap, minval=0.0, maxval=1.0, n=100):
     return new_cmap
 
 
+def get_attrib_from_json(json_file, attrib_name):
+    with open(json_file) as f:
+        data = json.load(f)
+    return data[attrib_name]
+
+
 def main(args):
     #select analysis
     with st.sidebar:
@@ -126,16 +133,16 @@ def main(args):
         sources = ['greek_lemma', 'en-NIV11', 'swhMICP-front', 'wbi-wbiNT', 'ndh-ndhBT', 'ntk-ntk', 'swhMFT-front']
         out_dir = args.outpath
         source_str = st.selectbox(label='Source', options=sources)
-        files = []
+        meta_files = []
         for dir in out_dir.iterdir():
-            if dir.is_dir() and f'{source_str}_' in dir.parts[-1] and (dir / 'verse_scores.csv').exists():
-                files.append(dir / 'verse_scores.csv')
+            if dir.is_dir() and f'{source_str}_' in dir.parts[-1] and (dir / 'meta.json').exists():
+                meta_files.append(dir / 'meta.json')
         targets = []
         ref_mean = 0.45
-        targets = sorted([file.parts[-2].replace(f'{source_str}_', '') for file in files])
+        targets = sorted([get_attrib_from_json(file, 'target') for file in meta_files])
         target_str = st.selectbox(label='Translation', options=targets)
         outpath = out_dir / f'{source_str}_{target_str}'
-        df = get_df(outpath / 'by_verse_scores.csv')
+        by_verse_scores = get_df(outpath / 'by_verse_scores.csv')
         condensed_df = get_condensed_df(source_str, target_str, outpath)
         books = condensed_df['vref'].apply(lambda x: x.split(' ')[0]).unique()
         chapters = condensed_df['vref'].apply(lambda x: int(x.split(' ')[1].split(':')[0])).unique()
@@ -147,27 +154,44 @@ def main(args):
     #WORD ALIGNMENT
 ################################################################################################################################################################################
     if analysis == 'Word Alignment':
-        
-        st.sidebar.selectbox('Book', books, key = 'book', index = list(books).index(st.session_state['book']))
-        st.sidebar.selectbox('Chapter', chapters, key = 'chapter', index = list(chapters).index(st.session_state['chapter']))
-        st.sidebar.selectbox('Verse', verses, key = 'verse', index = list(verses).index(st.session_state['verse']))
+        targets.append(None)
+        reference = st.selectbox('Include reference translation', options=targets)
+        reference = None if reference == 'None' else reference
+        if reference:
+            ref_outpath = out_dir / f'{source_str}_{reference}'
+            ref_by_verse_scores = get_df(ref_outpath / 'by_verse_scores.csv')
+            ref_condensed_df = get_condensed_df(source_str, reference, ref_outpath)
+        st.sidebar.selectbox('Book', books, key = 'book')
+        st.sidebar.selectbox('Chapter', chapters, key = 'chapter')
+        st.sidebar.selectbox('Verse', verses, key = 'verse')
+
         book = st.session_state['book']
         chapter = st.session_state['chapter']
         verse = st.session_state['verse']
 
         vref = f'{book} {str(chapter)}:{str(verse)}'
         print(vref)
+        print(st.session_state['verse'])
         st.title(vref)
         words = condensed_df[condensed_df['vref'] == vref]
-        sen = df[df['vref'] == vref]
+        current_verse = by_verse_scores[by_verse_scores['vref'] == vref]
         src_words = words.iloc[0]['src_words']
         trg_words = words.iloc[0]['trg_words']
+
+        if reference:
+            ref_words = ref_condensed_df[ref_condensed_df['vref'] == vref]
+            ref_current_verse = ref_by_verse_scores[ref_by_verse_scores['vref'] == vref]
+            ref_src_words = ref_words.iloc[0]['src_words']
+            ref_trg_words = ref_words.iloc[0]['trg_words']
 
         # Create the network diagram using NetworkX
         G = nx.Graph()
         node_labels = {}
-        trg_exclude = [',', '.']
+        trg_exclude = [',', '.', ';', ':', '“', '”']
         trg_words = [word for word in trg_words if word not in trg_exclude]
+        if reference:
+            ref_trg_words = [word for word in ref_trg_words if word not in trg_exclude]
+
         # Add nodes for each word in the two sentences
         for i, word in enumerate(src_words):
             G.add_node(f'{i}-{word}')
@@ -175,16 +199,44 @@ def main(args):
         for i, word in enumerate(trg_words):
             G.add_node(f'{i}-{word}')
             node_labels[f'{i}-{word}'] = word
-
+        if reference:
+            for i, word in enumerate([word for word in ref_src_words if word not in src_words]):
+                G.add_node(f'{i}-{word}')
+                node_labels[f'{i}-{word}'] = word
+            for i, word in enumerate(ref_trg_words):
+                G.add_node(f'{i}-{word}')
+                node_labels[f'{i}-{word}'] = word
         # Add edges between words that have a high similarity
         for i, word1 in enumerate(src_words):
             for j, word2 in enumerate(trg_words):
                 # if similarity_matrix[i, j] > 0.2:
-                weight = sen[(sen['source'] == word1) & (sen['target'] == word2)]['total_score'].values[0]
+                weight = current_verse[(current_verse['source'] == word1) & (current_verse['target'] == word2)]['total_score'].values[0]
+                # print(f'{word1} - {word2} : {weight}')
                 # print(weight)
-                if weight > 0.25:
+                if weight > 0.15 and \
+                    (f'{i}-{word1}', f'{word2}') not in [(word1, word2.split('-')[1]) for word1, word2 in G.edges()] and \
+                    (f'{word1}', f'{j}-{word2}') not in [(word1.split('-')[1], word2) for word1, word2 in G.edges()]:
                     G.add_edge(f'{i}-{word1}', f'{j}-{word2}', weight=weight)
+            
+            if reference:
+                for j, word2 in enumerate(ref_trg_words):
+                    weight = ref_current_verse[(ref_current_verse['source'] == word1) & (ref_current_verse['target'] == word2)]['total_score'].values[0]
+                    
+                    if weight > 0.25 and \
+                        (f'{i}-{word1}', f'{word2}') not in [(word1, word2.split('-')[1]) for word1, word2 in G.edges()] and \
+                        (f'{word1}', f'{j}-{word2}') not in [(word1.split('-')[1], word2) for word1, word2 in G.edges()]:
+                        G.add_edge(f'{i}-{word1}', f'{j}-{word2}', weight=weight)
+                for i, word1 in enumerate([word for word in ref_src_words if word not in src_words]):
+                    for j, word2 in enumerate(ref_trg_words):
+                        weight = ref_current_verse[(ref_current_verse['source'] == word1) & (ref_current_verse['target'] == word2)]['total_score'].values[0]
+                    
+                        if weight > 0.25 and \
+                            (f'{i}-{word1}', f'{word2}') not in [(word1, word2.split('-')[1]) for word1, word2 in G.edges()] and \
+                            (f'{word1}', f'{j}-{word2}') not in [(word1.split('-')[1], word2) for word1, word2 in G.edges()]:
+                            G.add_edge(f'{i}-{word1}', f'{j}-{word2}', weight=weight)
+            
         
+        print(G.edges())
 
         # Define the positions of the nodes manually
         pos = {}
@@ -193,7 +245,7 @@ def main(args):
         # Place the words in the first sentence in a horizontal line
         y = 0
         for i, word in enumerate(src_words):
-            pos[f'{i}-{word}'] = (y+0.07, -i)
+            pos[f'{i}-{word}'] = (y+0.07 if not reference else y, -i)
             label_pos[f'{i}-{word}'] = (y, -i)
 
         # Place the words in the second sentence in a horizontal line below the first
@@ -202,15 +254,21 @@ def main(args):
             pos[f'{i}-{word}'] = (0.9*y, -i)
             label_pos[f'{i}-{word}'] = (y, -i)
 
-        fig, ax = plt.subplots()
+        if reference:
+            y = -1
+            for i, word in enumerate(ref_trg_words):
+                pos[f'{i}-{word}'] = (0.9*y, -i)
+                label_pos[f'{i}-{word}'] = (y, -i)
+
+        fig, ax = plt.subplots(figsize=(6, 4))
         # Draw the nodes and edges, coloring the edges based on their weight
-        nx.draw(G, label_pos, edge_color=[G[u][v]["weight"] for u, v in G.edges()], edge_cmap=plt.cm.YlOrRd, node_size = 1000, alpha=0)
+        nx.draw(G, label_pos, edge_color=[G[u][v]["weight"] for u, v in G.edges()], edge_cmap=plt.cm.YlOrRd, alpha=0)
 
         cmap = truncate_colormap(plt.cm.YlOrRd, 0.3, 1.0)
         # Add labels to the nodes
         nx.draw_networkx_edges(G, pos, edge_color=[G[u][v]["weight"] for u, v in G.edges()], edge_cmap=cmap)
         # nx.draw_networkx_nodes(G, pos)
-        nx.draw_networkx_labels(G, label_pos, labels=node_labels, font_size = 8)
+        nx.draw_networkx_labels(G, label_pos, labels=node_labels, font_size = 5)
         # Show the plot
         st.pyplot(fig)
         col1, col2 = st.columns(2, gap='large')
@@ -288,19 +346,19 @@ def main(args):
         listChapters = chapter_df.to_dict('records')
 
         if blnByBookChapter:
-            df = chapter_df
+            verse_scores = chapter_df
             if calibrated:
                 display_col = 'chapter_score_calibrated'
             else:
                 display_col = 'chapter_score'
         else:
-            df = verse_df
+            verse_scores = verse_df
             if calibrated:
                 display_col = 'verse_score_calibrated'
             else:
                 display_col = 'verse_score'
         if calibrate_colors:
-            mid_color_score = df[display_col].mean()
+            mid_color_score = verse_scores[display_col].mean()
         else:
             if calibrated:
                 mid_color_score = 1
@@ -438,12 +496,12 @@ def main(args):
         data_dir = out_dir / f'{source_str}_{target_str}'
         print(data_dir)
         if (data_dir / 'red_flags.csv').exists():
-            df = pd.read_csv(data_dir / 'red_flags.csv')
-            references = [item.replace('_match', '') for item in list(df.columns) if '_match' in item]
+            red_flags = pd.read_csv(data_dir / 'red_flags.csv')
+            references = [item.replace('_match', '') for item in list(red_flags.columns) if '_match' in item]
             print(references)
             
             print(analysis)
-            st.dataframe(df[['vref', 'source', 'en-NASB_match']].rename(columns={'en-NASB_match': 'English', 'vref': 'Verse Reference', 'source': 'Greek'}), width=800, height=1000)
+            st.dataframe(red_flags[['vref', 'source', 'en-NASB_match']].rename(columns={'en-NASB_match': 'English', 'vref': 'Verse Reference', 'source': 'Greek'}), width=800, height=1000)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
