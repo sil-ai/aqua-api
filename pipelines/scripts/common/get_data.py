@@ -353,7 +353,7 @@ def get_words_from_txt_file(df: pd.DataFrame, outpath: Path) -> pd.DataFrame:
     corpus_df = condensed_parallel_corpus.lowercase().to_pandas()
     if source_file.exists():
         source_file.unlink()
-    if target_file.exists():
+    if target_file and target_file.exists():
         target_file.unlink()
     df.loc[:, 'src'] = list(corpus_df['source'])
     df.loc[:, 'trg'] = list(corpus_df['target'])
