@@ -12,29 +12,7 @@ from machine.translation.thot import (
     ThotSymmetrizedWordAlignmentModel,
 )
 
-import get_data
-
-
-def train_model(corpus: TextFileTextCorpus) -> ThotSymmetrizedWordAlignmentModel:
-    """
-    Takes an aligned corpus as input and trains a model on that corpus
-    Inputs:
-    corpus          A TextFileTextCorpus
-    Outputs:
-    symmetrized_model       A ThotSymmetrizedWordAlignmentModel trained on the corpus
-    """
-    src_trg_model = ThotFastAlignWordAlignmentModel()
-    trg_src_model = ThotFastAlignWordAlignmentModel()
-    symmetrized_model = ThotSymmetrizedWordAlignmentModel(src_trg_model, trg_src_model)
-    symmetrized_model.heuristic = SymmetrizationHeuristic.GROW_DIAG_FINAL_AND
-    trainer = symmetrized_model.create_trainer(corpus.lowercase())
-    trainer.train(
-        lambda status: print(
-            f"Training Symmetrized FastAlign model: {status.percent_completed:.2%}"
-        )
-    )
-    trainer.save()
-    return symmetrized_model
+import get_data, train_fa_model
 
 
 def get_translation_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: TextFileTextCorpus, vrefs: list = None) -> pd.DataFrame:
@@ -123,7 +101,7 @@ def run_align(
 
     # Train fast_align model
     if not symmetrized_model:
-        symmetrized_model = train_model(parallel_corpus)
+        symmetrized_model = train_fa_model.train_model(parallel_corpus)
 
     # Get alignments
     print("Getting translation scores...")
