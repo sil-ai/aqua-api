@@ -1,0 +1,51 @@
+{
+    "pipeline": {
+        "name": "match_contexts"
+    },
+    "description": "A pipeline that takes the source and target files and matches their words according to the verses they appear in, returning the similarity scores in a json dictionary.",
+    "transform": {
+        "cmd": [
+            "python3",
+            "match_contexts.py",
+            "--source-dir",
+            "/pfs/create_source_cache",
+            "--target-dir",
+            "/pfs/create_target_cache",
+            "--outpath",
+            "/pfs/out",
+            "--config-dir",
+            "/pfs/target_config",
+            "--is-bible"
+        ],
+        "image": "woodwardmw/<imagename>:<tag>"
+    },
+    "input": {
+        "cross": [
+          {
+            "pfs": {
+              "repo": "create_source_cache",
+              "glob": "/*/"
+            }
+          },
+          {
+            "join": [
+              {
+                "pfs": {
+                  "repo": "create_target_cache",
+                  "glob": "/(*)/",
+                  "join_on": "$1",
+                  "outer_join": true
+                }
+              },
+              {
+                "pfs": {
+                  "repo": "target_config",
+                  "glob": "/(*)-config.json/",
+                  "join_on": "$1"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }

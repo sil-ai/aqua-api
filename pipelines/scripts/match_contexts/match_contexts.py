@@ -196,6 +196,9 @@ def main(args):
                 count_threshold = args.count_threshold,
                 refresh_cache = args.refresh_cache,
             )
+            meta = {'source': source_str, 'target': target_str}
+            with open(outpath / 'meta.json', 'w') as f:
+                json.dump(meta, f)
 
 
 if __name__ == "__main__":
