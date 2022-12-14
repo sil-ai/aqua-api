@@ -1,0 +1,51 @@
+{
+    "pipeline": {
+        "name": "alignment_scores"
+    },
+    "description": "A pipeline that takes the source and target files and aligns them using Fast Align, returning the alignment scores in a csv file.",
+    "transform": {
+        "cmd": [
+            "python3",
+            "alignment_scores.py",
+            "--source-dir",
+            "/pfs/create_source_cache",
+            "--target-dir",
+            "/pfs/create_target_cache",
+            "--outpath",
+            "/pfs/out",
+            "--config-dir",
+            "/pfs/target_config",
+            "--is-bible"
+        ],
+        "image": "woodwardmw/<imagename>:<tag>"
+    },
+    "input": {
+        "cross": [
+          {
+            "pfs": {
+              "repo": "create_source_cache",
+              "glob": "/*/"
+            }
+          },
+          {
+            "join": [
+              {
+                "pfs": {
+                  "repo": "create_target_cache",
+                  "glob": "/(*)/",
+                  "join_on": "$1",
+                  "outer_join": true
+                }
+              },
+              {
+                "pfs": {
+                  "repo": "target_config",
+                  "glob": "/(*)-config.json/",
+                  "join_on": "$1"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
