@@ -1,0 +1,3 @@
+* Pipeline Specs
+
+This directory holds the Pachyderm pipeline spec files. Most files also have a `*_template.json` file too. During the build, the [Makefile]('/../Makefile') will run a script that copies from the template, overwriting the regular pipeline file. This is so that the current git commit hash that is used to tag the image can be placed into the pipeline spec.
