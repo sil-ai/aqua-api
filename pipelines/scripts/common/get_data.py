@@ -253,12 +253,7 @@ class Word():
         distance = np.linalg.norm(self.encoding - word.encoding)
         return distance
     
-    def get_norm_distance(self, word, language):
-        # if language not in self.distances:
-        #     self.distances[language] = {}
-        # if word not in self.distances[language]:
-        #     self.distances[language][word] = np.linalg.norm(self.norm_encoding - word.norm_encoding)
-        # return self.distances[language][word]
+    def get_norm_distance(self, word):
         return np.linalg.norm(self.norm_encoding - word.norm_encoding)
 
 def get_jaccard_similarity(set_1: set, set_2: set) -> float:
@@ -356,6 +351,10 @@ def get_words_from_txt_file(df: pd.DataFrame, outpath: Path) -> pd.DataFrame:
     source_file, target_file = write_condensed_files(df, outpath)
     condensed_parallel_corpus = create_corpus(source_file, target_file)
     corpus_df = condensed_parallel_corpus.lowercase().to_pandas()
+    if source_file.exists():
+        source_file.unlink()
+    if target_file.exists():
+        target_file.unlink()
     df.loc[:, 'src'] = list(corpus_df['source'])
     df.loc[:, 'trg'] = list(corpus_df['target'])
     df.loc[:, 'src_words'] = df['src'].apply(lambda x: x.split())
