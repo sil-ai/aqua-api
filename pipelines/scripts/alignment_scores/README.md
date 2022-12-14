@@ -1,0 +1,3 @@
+# Alignment Scores
+
+This pipeline takes a source and a target (together with their index cache files) and the target config file as input. If the target config file requests that the target be compared with a particular source, the pipeline trains a Fast Align model. For each verse, each source and target that are aligned are recorded in `alignment_scores.csv`, together with the alignment score.
