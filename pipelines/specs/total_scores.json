@@ -1,0 +1,56 @@
+{
+    "pipeline": {
+        "name": "total_scores"
+    },
+    "description": "A pipeline that takes the output from the four algorithms and combines them into one csv file of total scores.",
+    "transform": {
+        "cmd": [
+            "python3",
+            "total_scores.py",
+            "--alignment-dir",
+            "/pfs/alignment_scores",
+            "--translation-dir",
+            "/pfs/translation_scores",
+            "--match-dir",
+            "/pfs/match_contexts",
+            "--embedding-dir",
+            "/pfs/embeddings",
+            "--outpath",
+            "/pfs/out",
+            "--is-bible"
+        ],
+        "image": "woodwardmw/aqua-pipeline-total_scores-pachyderm:7aa040e"
+    },
+    "input": {
+        "join": [
+            {
+                "pfs": {
+                    "repo": "alignment_scores",
+                    "glob": "/(*)/",
+                    "join_on": "$1"
+                }
+            },
+            {
+                "pfs": {
+                    "repo": "translation_scores",
+                    "glob": "/(*)/",
+                    "join_on": "$1"
+                }
+            },
+            {
+                "pfs": {
+                    "repo": "match_contexts",
+                    "glob": "/(*)/",
+                    "join_on": "$1"
+                }
+            },
+            {
+                "pfs": {
+                    "repo": "embeddings",
+                    "glob": "/(*)/",
+                    "join_on": "$1"
+                }
+            }
+        ]
+    }
+}

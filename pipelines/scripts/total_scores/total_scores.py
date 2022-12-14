@@ -57,7 +57,7 @@ def main(args):
     for match_dir in args.match_dir.iterdir():
         with open(match_dir / 'dictionary.json') as f:
             match_scores = json.load(f)
-
+    outpath = args.outpath / f'{source_str}_{target_str}'
     alignment_scores['vref'] = alignment_scores['vref'].astype('object')  # Necessary for non-Bible, where vrefs are ints.
     alignment_scores = alignment_scores['alignment_score'].fillna(0)
 
@@ -71,9 +71,9 @@ def main(args):
     all_results.loc[:, 'total_score'] = get_data.faster_df_apply(all_results,lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['match_score'] + row['embedding_score']) / 5)
     
     total_scores = all_results[['vref', 'source', 'target', 'total_score']]
-    total_scores.to_csv(args.outpath / 'total_scores.csv', index=False)
+    total_scores.to_csv(outpath / 'total_scores.csv', index=False)
 
-    with open(args.outpath / 'meta.json', 'w') as f:
+    with open(outpath / 'meta.json', 'w') as f:
                 json.dump(meta, f)
 
 if __name__ == "__main__":
