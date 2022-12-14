@@ -175,7 +175,7 @@ def main(args):
                     continue
             target = target_dir / f'{target_str}.txt'
             outpath = base_outpath / f'{source_str}_{target_str}/'
-    run_align(source, target, outpath, is_bible=args.is_bible)
+            run_align(source, target, outpath, is_bible=args.is_bible)
 
 
 if __name__ == "__main__":
