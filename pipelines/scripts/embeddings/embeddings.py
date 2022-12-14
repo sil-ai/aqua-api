@@ -2,6 +2,7 @@ from typing import Optional
 from pathlib import Path
 import argparse
 import json
+import math
 
 import pandas as pd
 import numpy as np
@@ -30,8 +31,11 @@ def get_embeddings(
     ref_df = get_data.condense_files(ref_df)
     ref_df = get_data.get_words_from_txt_file(ref_df, outpath)
     df = ref_df.explode('src_words').explode('trg_words')
-    df.loc[:, 'embedding_dist'] = df.apply(lambda row: word_dict_src[row['src_words']].get_norm_distance(word_dict_trg[row['trg_words']]), axis=1)
-    df.to_csv(outpath / "embeddings.csv", index=False)
+    if df.shape[0] > 0:
+        df.loc[:, 'embedding_dist'] = df.apply(lambda row: word_dict_src[row['src_words']].get_norm_distance(word_dict_trg[row['trg_words']]), axis=1)
+        df.loc[:, 'embedding_score'] = df['embedding_dist'].apply(lambda x: math.log1p(max(1-x, -0.99)))
+    df[df.select_dtypes(['float']).columns] = df.select_dtypes(['float']).astype('float16')
+    df.to_csv(outpath / "embedding_scores.csv", index=False)
 
 
 def main(args):
@@ -80,6 +84,9 @@ def main(args):
                 is_bible=args.is_bible,
                 weights_path=args.weights_path
             )
+            meta = {'source': source_str, 'target': target_str}
+            with open(outpath / 'meta.json', 'w') as f:
+                json.dump(meta, f)
 
 
 if __name__ == "__main__":
