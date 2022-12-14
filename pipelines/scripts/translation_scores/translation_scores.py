@@ -30,7 +30,7 @@ def get_translation_scores(model: ThotSymmetrizedWordAlignmentModel, corpus: Tex
     """
     data = {"vref": [], "source": [], "target": [], "translation_score": []}
     c = 0
-    for source_verse, target_verse in tqdm(corpus.lowercase().to_tuples()):
+    for source_verse, target_verse in corpus.lowercase().to_tuples():
         if len(source_verse) > 0 and len(target_verse) > 0:
             vref = vrefs[c] if vrefs else None
             c = c + 1
