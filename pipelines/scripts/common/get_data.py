@@ -2,19 +2,18 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Tuple, Iterable, Dict, Optional
+from typing import Tuple, Dict, Optional
 
 import numpy as np
 import pandas as pd
 from machine.corpora import TextFileTextCorpus
 from machine.tokenization import LatinWordTokenizer
-from tqdm import tqdm
 
 
 def faster_df_apply(df, func):
     cols = list(df.columns)
     data, index = [], []
-    for row in tqdm(df.itertuples(index=True), total=df.shape[0]):
+    for row in df.itertuples(index=True):
         row_dict = {f:v for f,v in zip(cols, row[1:])}
         data.append(func(row_dict))
         index.append(row[0])
@@ -326,7 +325,7 @@ def create_words_from_df(ref_df: pd.DataFrame) -> Dict[str, Word]:
     word_dict_lang = {word: Word(word) for word in all_source_words if type(word) == str}
 
     word_series = ref_df['src_words'].explode().apply(lambda x: normalize_word(x))
-    for word in tqdm(word_dict_lang.values()):
+    for word in word_dict_lang.values():
         # word.get_indices(ref_df['src'])
         word.get_indices(word_series)
         # word.get_ohe()
