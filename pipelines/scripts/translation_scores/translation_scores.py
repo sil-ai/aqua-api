@@ -114,6 +114,7 @@ def run_align(
     if not outpath.exists():
         outpath.mkdir()
 
+    no_dups[no_dups.select_dtypes(['float']).columns] = no_dups.select_dtypes(['float']).astype('float16')
     no_dups.to_csv(outpath / "translation_scores.csv", index=False)
 
     return (parallel_corpus, symmetrized_model)
@@ -154,6 +155,9 @@ def main(args):
             target = target_dir / f'{target_str}.txt'
             outpath = base_outpath / f'{source_str}_{target_str}/'
             run_align(source, target, outpath, is_bible=args.is_bible)
+            meta = {'source': source_str, 'target': target_str}
+            with open(outpath / 'meta.json', 'w') as f:
+                json.dump(meta, f)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,3 @@
+# Translation Scores
+
+This pipeline takes a source and a target (together with their index cache files) and the target config file as input. If the target config file requests that the target be compared with a particular source, the pipeline trains a Fast Align model. For each verse, the translation score for each source and target is recorded in `alignment_scores.csv`, together with a count of how many times they occur together throughout the corpus.
