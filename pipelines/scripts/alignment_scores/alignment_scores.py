@@ -38,7 +38,7 @@ def get_best_alignment_scores(
         verse_score         The average alignment score for the line in question
         vref                The verse reference for that line,     if a vref file has been supplied.
     """
-    data = {"vref": [], "source": [], "target": [], "alignment_count": [], "verse_score": [], "alignment_score": []}
+    data = {"vref": [], "source": [], "target": [], "alignment_count": [], "alignment_score": []}
     segments = list(corpus.lowercase().to_tuples())
     alignments = model.align_batch(segments)
     c = 0
