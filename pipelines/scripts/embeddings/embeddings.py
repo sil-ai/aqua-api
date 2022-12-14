@@ -21,7 +21,9 @@ def get_embeddings(
     word_dict_trg = get_data.create_words(target, target_index_cache_file, outpath, is_bible=is_bible)
 
     weights = np.loadtxt(weights_path)
-    for word in ({**word_dict_src, **word_dict_trg}.values()):
+    for word in word_dict_src.values():
+        word.get_encoding(weights)
+    for word in word_dict_trg.values():
         word.get_encoding(weights)
 
     ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
