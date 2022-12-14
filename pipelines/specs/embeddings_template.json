@@ -1,0 +1,53 @@
+{
+    "pipeline": {
+        "name": "embeddings"
+    },
+    "description": "A pipeline that takes the source and target files and gets embeddings for every word combination, returning the embedding distances in a csv file.",
+    "transform": {
+        "cmd": [
+            "python3",
+            "embeddings.py",
+            "--source-dir",
+            "/pfs/create_source_cache",
+            "--target-dir",
+            "/pfs/create_target_cache",
+            "--outpath",
+            "/pfs/out",
+            "--config-dir",
+            "/pfs/target_config",
+            "--weights-path",
+            "encoder_weights.txt",
+            "--is-bible"
+        ],
+        "image": "woodwardmw/<imagename>:<tag>"
+    },
+    "input": {
+        "cross": [
+          {
+            "pfs": {
+              "repo": "create_source_cache",
+              "glob": "/*/"
+            }
+          },
+          {
+            "join": [
+              {
+                "pfs": {
+                  "repo": "create_target_cache",
+                  "glob": "/(*)/",
+                  "join_on": "$1",
+                  "outer_join": true
+                }
+              },
+              {
+                "pfs": {
+                  "repo": "target_config",
+                  "glob": "/(*)-config.json/",
+                  "join_on": "$1"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
