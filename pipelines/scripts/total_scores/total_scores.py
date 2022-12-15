@@ -45,6 +45,7 @@ def create_empty_df(source, target, is_bible=True):
     ref_df = get_data.condense_files(ref_df)
     ref_df = get_data.get_words_from_txt_file(ref_df, Path('/tmp'))
     df = ref_df.explode('src_words').explode('trg_words')
+    df = df.rename(columns={'src_words': 'source', 'trg_words': 'target'})
     return df
 
 def main(args):
