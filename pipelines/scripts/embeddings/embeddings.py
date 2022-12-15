@@ -31,6 +31,7 @@ def get_embeddings(
     ref_df = get_data.condense_files(ref_df)
     ref_df = get_data.get_words_from_txt_file(ref_df, Path('/tmp'))
     df = ref_df.explode('src_words').explode('trg_words')
+    df = df[['src_words', 'trg_words']].drop_duplicates()
     if df.shape[0] > 0:
         df.loc[:, 'embedding_dist'] = df.apply(lambda row: word_dict_src[row['src_words']].get_norm_distance(word_dict_trg[row['trg_words']]), axis=1).astype('float16')
         df.loc[:, 'embedding_score'] = df['embedding_dist'].apply(lambda x: math.log1p(max(1-x, -0.99))).astype('float16')
