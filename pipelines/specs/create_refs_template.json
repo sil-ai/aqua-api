@@ -1,0 +1,35 @@
+{
+  "pipeline": {
+    "name": "create_refs"
+  },
+  "description": "A pipeline that takes the top source scores and combines them into a single dataframe for each source text, saving as summary_top_source_scores.csv.",
+  "transform": {
+    "cmd": [
+      "python3",
+      "create_refs.py",
+      "--top-source-scores-dir",
+      "/pfs/total_scores",
+      "sources-dir",
+      "/pfs/sources",
+      "--outpath",
+      "/pfs/out"
+    ],
+    "image": "woodwardmw/<imagename>:<tag>"
+  },
+  "input": {
+    "cross": [
+      {
+        "pfs": {
+          "repo": "top_source_scores",
+          "glob": "/"
+        }
+      },
+      {
+        "pfs": {
+          "repo": "sources",
+          "glob": "/"
+        }
+      }
+    ]
+  }
+}
