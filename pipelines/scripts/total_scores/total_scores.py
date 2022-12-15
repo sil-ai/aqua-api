@@ -63,7 +63,7 @@ def main(args):
 
     all_results = alignment_scores.merge(avg_alignment_scores, how='left', on=['source', 'target'])
     all_results = all_results.merge(translation_scores, how='left', on=['source', 'target'])
-    all_results.loc[:, ['avg_aligned']] = all_results.apply(lambda row: row['alignment_count'] / row['co-occurrence_count'], axis = 1).astype('float16')
+    all_results.loc[:, 'avg_aligned'] = all_results.apply(lambda row: row['alignment_count'] / row['co-occurrence_count'], axis = 1).astype('float16')
     all_results.loc[:, 'translation_score'] = all_results.loc[:, 'translation_score'].apply(lambda x: 0 if x < 0.00001 else x).astype('float16')
     all_results.loc[:, "match_score"] = get_data.faster_df_apply(all_results, lambda x: get_scores_from_match_dict(match_scores, x["source"], x["target"], normalized=False)[0]).astype('float16')
     all_results = alignment_scores.merge(embedding_scores, how='left', on=['source', 'target'])
