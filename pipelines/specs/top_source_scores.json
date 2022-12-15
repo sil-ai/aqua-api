@@ -1,0 +1,23 @@
+{
+    "pipeline": {
+        "name": "top_source_scores"
+    },
+    "description": "A pipeline that takes the total scores and keeps the top score for each source word, saving to top_source_scores.csv.",
+    "transform": {
+        "cmd": [
+            "python3",
+            "top_source_scores.py",
+            "--total-scores-dir",
+            "/pfs/total_scores",
+            "--outpath",
+            "/pfs/out"
+        ],
+        "image": "woodwardmw/aqua-pipeline-top_source_scores-pachyderm:7aa040e"
+    },
+    "input": {
+        "pfs": {
+            "repo": "total_scores",
+            "glob": "/(*)/"
+        }
+    }
+}
