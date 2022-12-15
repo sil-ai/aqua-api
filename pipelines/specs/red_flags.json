@@ -1,0 +1,37 @@
+{
+  "pipeline": {
+    "name": "red_flags"
+  },
+  "description": "A pipeline that takes the top source scores and filters those which are low scoring when compared with the average for that source text, saving the results as possible_red_flags.csv and red_flags.csv.",
+  "transform": {
+    "cmd": [
+      "python3",
+      "red_flags.py",
+      "--top-source-scores-dir",
+      "/pfs/top_source_scores",
+      "--ref-dir",
+      "/pfs/create_refs",
+      "--outpath",
+      "/pfs/out",
+      "--threshold",
+      "0.1"
+    ],
+    "image": "woodwardmw/<imagename>:<tag>"
+  },
+  "input": {
+    "cross": [
+      {
+        "pfs": {
+          "repo": "top_source_scores",
+          "glob": "/*/"
+        }
+      },
+      {
+        "pfs": {
+          "repo": "create_refs",
+          "glob": "/"
+        }
+      }
+    ]
+  }
+}
