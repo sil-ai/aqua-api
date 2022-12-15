@@ -40,6 +40,13 @@ def get_scores_from_match_dict(
     return jac_sim, match_count
 
 
+def create_empty_df(source, target, is_bible=True):
+    ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
+    ref_df = get_data.condense_files(ref_df)
+    ref_df = get_data.get_words_from_txt_file(ref_df, Path('/tmp'))
+    df = ref_df.explode('src_words').explode('trg_words')
+    return df
+
 def main(args):
     for alignment_dir in args.alignment_dir.iterdir():
         print(alignment_dir)
@@ -62,7 +69,12 @@ def main(args):
         outpath.mkdir()
     alignment_scores['vref'] = alignment_scores['vref'].astype('object')  # Necessary for non-Bible, where vrefs are ints.
     alignment_scores['alignment_score'] = alignment_scores['alignment_score'].fillna(0)
+    source = args.sources_dir / f'{source_str}.txt'
+    target = args.targets_dir / f'{target_str}.txt'
 
+    all_results = create_empty_df(source, target, is_bible=args.is_bible)
+    all_results = all_results.merge(alignment_scores, how='left', on=['vref', 'source', 'target'])
+    all_results = all_results.fillna(0)
     all_results = alignment_scores.merge(avg_alignment_scores, how='left', on=['source', 'target'])
     all_results = all_results.merge(translation_scores, how='left', on=['source', 'target'])
     all_results.loc[:, 'avg_aligned'] = all_results.apply(lambda row: row['alignment_count'] / row['co-occurrence_count'], axis = 1).astype('float16')
@@ -83,6 +95,8 @@ if __name__ == "__main__":
     parser.add_argument("--translation-dir", type=Path, help="directory with translation scores")
     parser.add_argument("--match-dir", type=Path, help="directory with match scores")
     parser.add_argument("--embedding-dir", type=Path, help="directory with embedding scores")
+    parser.add_argument("--sources-dir", type=Path, help="directory with source texts")
+    parser.add_argument("--targets-dir", type=Path, help="directory with target texts")
     parser.add_argument("--outpath", type=Path, default=Path("/pfs/out"), help="Output directory")
     parser.add_argument("--is-bible", action="store_true", help="Whether text is Bible, in which case the length of the text file must be 41,899 lines")
     args = parser.parse_args()
