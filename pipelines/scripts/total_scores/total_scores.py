@@ -59,7 +59,7 @@ def main(args):
             match_scores = json.load(f)
     outpath = args.outpath / f'{source_str}_{target_str}'
     alignment_scores['vref'] = alignment_scores['vref'].astype('object')  # Necessary for non-Bible, where vrefs are ints.
-    alignment_scores = alignment_scores['alignment_score'].fillna(0)
+    alignment_scores['alignment_score'] = alignment_scores['alignment_score'].fillna(0)
 
     all_results = alignment_scores.merge(avg_alignment_scores, how='left', on=['source', 'target'])
     all_results = all_results.merge(translation_scores, how='left', on=['source', 'target'])
