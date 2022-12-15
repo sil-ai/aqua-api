@@ -58,6 +58,8 @@ def main(args):
         with open(match_dir / 'dictionary.json') as f:
             match_scores = json.load(f)
     outpath = args.outpath / f'{source_str}_{target_str}'
+    if not outpath.exists():
+        outpath.mkdir()
     alignment_scores['vref'] = alignment_scores['vref'].astype('object')  # Necessary for non-Bible, where vrefs are ints.
     alignment_scores['alignment_score'] = alignment_scores['alignment_score'].fillna(0)
 
