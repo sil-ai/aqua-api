@@ -151,10 +151,11 @@ def run_best_align(
         outpath.mkdir(parents=True)
 
     avg_df[avg_df.select_dtypes(['float']).columns] = avg_df.select_dtypes(['float']).astype('float16')
+    avg_df = avg_df.drop(['alignment_score'], axis=1)
     avg_df.to_csv(outpath / "avg_alignment_scores.csv", index=False)
 
     df[df.select_dtypes(['float']).columns] = df.select_dtypes(['float']).astype('float16')
-    print(df.head())
+    df = df.drop(['alignment_count'], axis=1)
     df.to_csv(outpath / "alignment_scores.csv", index=False)
 
     # delete temp files
