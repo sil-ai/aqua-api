@@ -35,6 +35,7 @@ def get_embeddings(
         df.loc[:, 'embedding_dist'] = df.apply(lambda row: word_dict_src[row['src_words']].get_norm_distance(word_dict_trg[row['trg_words']]), axis=1).astype('float16')
         df.loc[:, 'embedding_score'] = df['embedding_dist'].apply(lambda x: math.log1p(max(1-x, -0.99))).astype('float16')
     df = df[['vref', 'src_words', 'trg_words', 'embedding_dist']].rename(columns={'src_words': 'source', 'trg_words': 'target'})
+    print(df.info())
     df.to_csv(outpath / "embedding_scores.csv", index=False)
 
 
