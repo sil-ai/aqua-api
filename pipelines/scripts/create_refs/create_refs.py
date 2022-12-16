@@ -18,7 +18,7 @@ def create_new_ref_df(source):
 
 def add_scores_to_ref(target_str: str, top_source_scores: pd.DataFrame, summary_top_source_scores: pd.DataFrame):
     summary_top_source_scores = summary_top_source_scores.merge(top_source_scores, how='left', on=['vref', 'source']).rename(columns={'total_score': target_str})
-    
+    return summary_top_source_scores
     
 def main(args):
     summary_top_source_scores = None
