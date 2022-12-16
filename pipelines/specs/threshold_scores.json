@@ -1,0 +1,25 @@
+{
+    "pipeline": {
+      "name": "threshold_scores"
+    },
+    "description": "A pipeline that takes the total scores and keeps the scores over a threshold, saving to threshold_scores.csv.",
+    "transform": {
+      "cmd": [
+        "python3",
+        "top_source_scores.py",
+        "--total-scores-dir",
+        "/pfs/total_scores",
+        "--outpath",
+        "/pfs/out",
+        "--threshold",
+        "0.15"
+      ],
+        "image": "woodwardmw/aqua-pipeline-threshold_scores-pachyderm:5fcb4d1"
+    },
+    "input": {
+        "pfs": {
+            "repo": "total_scores",
+            "glob": "/(*)/"
+        }
+    }
+}

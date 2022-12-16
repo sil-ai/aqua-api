@@ -1,16 +1,18 @@
 {
   "pipeline": {
-    "name": "top_source_scores"
+    "name": "threshold_scores"
   },
-  "description": "A pipeline that takes the total scores and keeps the top score for each source word, saving to top_source_scores.csv.",
+  "description": "A pipeline that takes the total scores and keeps the scores over a threshold, saving to threshold_scores.csv.",
   "transform": {
     "cmd": [
       "python3",
-      "top_source_scores.py",
+      "threshold_scores.py",
       "--total-scores-dir",
       "/pfs/total_scores",
       "--outpath",
-      "/pfs/out"
+      "/pfs/out",
+      "--threshold",
+      "0.15"
     ],
     "image": "woodwardmw/<imagename>:<tag>"
   },

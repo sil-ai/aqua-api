@@ -13,10 +13,10 @@ def remove_leading_and_trailing_blanks(df:pd.DataFrame, col: str) -> pd.DataFram
     return df
 
 def get_threshold_scores(total_scores: pd.DataFrame, threshold: float):
-    top_source_scores = remove_leading_and_trailing_blanks(total_scores, 'total_score')
-    top_source_scores = top_source_scores.fillna(0)
-    top_source_scores = top_source_scores.loc[top_source_scores['total_score'] > threshold]
-    return top_source_scores
+    threshold_scores = remove_leading_and_trailing_blanks(total_scores, 'total_score')
+    threshold_scores = threshold_scores.fillna(0)
+    threshold_scores = threshold_scores.loc[threshold_scores['total_score'] > threshold]
+    return threshold_scores
     
     
 def main(args):
