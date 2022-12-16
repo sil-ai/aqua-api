@@ -30,7 +30,7 @@ def main(args):
             outpath.mkdir()
         summary_top_source_scores = create_new_ref_df(source)
 
-        for top_source_scores_dir in args.top_source_scores.iterdir():
+        for top_source_scores_dir in args.top_source_scores_dir.iterdir():
             print(top_source_scores_dir)
             meta_file = top_source_scores_dir / 'meta.json'
             with open(meta_file) as f:
