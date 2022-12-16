@@ -20,9 +20,9 @@ def get_verse_scores(total_scores: pd.DataFrame):
     
     
 def main(args):
-    for total_scores_dir in args.total_scores_dir.iterdir():
-        print(total_scores_dir)
-        meta_file = total_scores_dir / 'meta.json'
+    for dir in args.total_scores_dir.iterdir():
+        print(dir)
+        meta_file = dir / 'meta.json'
         with open(meta_file) as f:
             meta = json.load(f)
         source_str = meta['source']
@@ -30,11 +30,11 @@ def main(args):
         outpath = args.outpath / f'{source_str}_{target_str}'
         if not outpath.exists():
             outpath.mkdir()
-        total_scores = pd.read_csv(total_scores_dir / 'total_scores.csv')
+        total_scores = pd.read_csv(dir / 'total_scores.csv')
         top_source_scores = get_verse_scores(total_scores)
         top_source_scores.to_csv(outpath / 'top_source_scores.csv')
-    with open(args.outpath / 'meta.json', 'w') as f:
-                json.dump(meta, f)
+        with open(args.outpath / 'meta.json', 'w') as f:
+            json.dump(meta, f)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
