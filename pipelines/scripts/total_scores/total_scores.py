@@ -83,6 +83,7 @@ def main(args):
     all_results.loc[:, 'total_score'] = get_data.faster_df_apply(all_results,lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['match_score'] + row['embedding_score']) / 5)
     
     total_scores = all_results[['vref', 'source', 'target', 'total_score']]
+    print(total_scores.head())
     total_scores.to_csv(outpath / 'total_scores.csv', index=False)
 
     with open(outpath / 'meta.json', 'w') as f:
