@@ -41,12 +41,12 @@ def get_scores_from_match_dict(
 
 
 def create_empty_df(source, target, is_bible=True):
-    ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
+    ref_df = get_data.get_ref_df(source, target=target, is_bible=is_bible)
     ref_df = get_data.condense_files(ref_df)
     ref_df = get_data.get_words_from_txt_file(ref_df, Path('/tmp'))
     df = ref_df.explode('src_words').explode('trg_words')
     df = df.rename(columns={'src_words': 'source', 'trg_words': 'target'})
-    return df
+    return df[['vref', 'source', 'target']]
 
 def main(args):
     for alignment_dir in args.alignment_dir.iterdir():
@@ -69,13 +69,12 @@ def main(args):
     if not outpath.exists():
         outpath.mkdir()
     alignment_scores['vref'] = alignment_scores['vref'].astype('object')  # Necessary for non-Bible, where vrefs are ints.
+    alignment_scores = alignment_scores.merge(avg_alignment_scores, how = 'left', on=['source', 'target']).fillna(0)
     source = args.sources_dir / f'{source_str}.txt'
     target = args.targets_dir / f'{target_str}.txt'
 
     all_results = create_empty_df(source, target, is_bible=args.is_bible)
-    all_results = all_results.merge(alignment_scores, how='left', on=['vref', 'source', 'target'])
-    all_results = all_results.fillna(0)
-    all_results = all_results.merge(avg_alignment_scores, how='left', on=['source', 'target'])
+    all_results = all_results.merge(alignment_scores, how='left', on=['vref', 'source', 'target']).fillna(0)
     all_results = all_results.merge(translation_scores, how='left', on=['source', 'target'])
     all_results.loc[:, 'avg_aligned'] = all_results.apply(lambda row: row['alignment_count'] / row['co-occurrence_count'], axis = 1).astype('float16')
     all_results.loc[:, 'translation_score'] = all_results.loc[:, 'translation_score'].apply(lambda x: 0 if x < 0.00001 else x).astype('float16')
