@@ -28,6 +28,8 @@ def main(args):
         source_str = meta['source']
         target_str = meta['target']
         outpath = args.outpath / f'{source_str}_{target_str}'
+        if not outpath.exists():
+            outpath.mkdir()
         total_scores = pd.read_csv(total_scores_dir / 'total_scores.csv')
         top_source_scores = get_verse_scores(total_scores)
         top_source_scores.to_csv(outpath / 'top_source_scores.csv')
