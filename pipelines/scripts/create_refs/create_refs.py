@@ -11,6 +11,8 @@ def create_new_ref_df(source):
     df = get_data.get_ref_df(source, is_bible=True)
     df = get_data.remove_blanks_and_ranges(df)
     df = get_data.get_words_from_txt_file(df, Path('/tmp'))
+    df = df.explode('src_words').explode('trg_words')
+    df = df.rename(columns={'src_words': 'source', 'trg_words': 'target'})
     return df
 
 
@@ -21,8 +23,11 @@ def add_scores_to_ref(target_str: str, top_source_scores: pd.DataFrame, summary_
 def main(args):
     summary_top_source_scores = None
     for source in args.sources_dir.iterdir():
-        print(f'Source: {source.stem}')
+        source_str = source.stem
+        print(f'Source: {source_str}')
         outpath = args.outpath / f'{source_str}'
+        if not outpath.exists():
+            outpath.mkdir()
         summary_top_source_scores = create_new_ref_df(source)
 
         for top_source_scores_dir in args.top_source_scores_dir.iterdir():
@@ -35,6 +40,8 @@ def main(args):
             if source_str != source.stem:
                 continue
             outpath = args.outpath / f'{source_str}'
+            if not outpath.exists():
+                outpath.mkdir()
             top_source_scores = pd.read_csv(top_source_scores_dir / 'top_source_scores.csv')
             summary_top_source_scores = add_scores_to_ref(target_str, top_source_scores, summary_top_source_scores)
         summary_top_source_scores.to_csv(outpath / 'summary_top_source_scores.csv')
