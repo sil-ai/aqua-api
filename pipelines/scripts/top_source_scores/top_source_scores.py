@@ -33,7 +33,7 @@ def main(args):
         total_scores = pd.read_csv(dir / 'total_scores.csv')
         top_source_scores = get_verse_scores(total_scores)
         top_source_scores.to_csv(outpath / 'top_source_scores.csv')
-        with open(args.outpath / 'meta.json', 'w') as f:
+        with open(outpath / 'meta.json', 'w') as f:
             json.dump(meta, f)
 
 if __name__ == "__main__":
