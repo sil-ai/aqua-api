@@ -1,0 +1,4 @@
+machine==0.0.1
+pandas==1.4.3
+pytest==7.1.2
+sil-machine[thot]>=0.8.3
