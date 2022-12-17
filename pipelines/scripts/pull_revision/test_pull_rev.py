@@ -20,6 +20,7 @@ def test_missing_revision():
         else:
             raise AssertionError(f'Error is {err}') from err
 
+#TODO: add test for reference arg
 
 #test for invalid revision number -3
 def test_invalid_revision():
