@@ -16,7 +16,7 @@
       ],
       "image": "tim/aqua-pipeline-pull-revision",
       "env": {
-        "AQUA_DB":"postgresql://doadmin:AVNS_G6H58Gqz3c4cZqH@hasura-aqua-do-user-7925792-0.b.db.ondigitalocean.com:25060/defaultdb?sslmode=require"
+        "AQUA_DB":""
       }
     },
     "input": {
