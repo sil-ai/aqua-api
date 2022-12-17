@@ -32,7 +32,7 @@ def main(args):
             outpath.mkdir()
         total_scores = pd.read_csv(dir / 'total_scores.csv')
         top_source_scores = get_threshold_scores(total_scores, args.threshold)
-        top_source_scores.to_csv(outpath / 'threshold_scores.csv')
+        top_source_scores.to_csv(outpath / 'threshold_scores.csv', index=False)
         with open(outpath / 'meta.json', 'w') as f:
             json.dump(meta, f)
 

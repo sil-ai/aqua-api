@@ -1,0 +1,5672 @@
+{
+    "los": [
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "cielos": [
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "en": [
+        {
+            "value": ".",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "el": [
+        {
+            "value": ".",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "principio": [
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    ",": [
+        {
+            "value": ".",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "dios": [
+        {
+            "value": ".",
+            "jaccard_similarity": 1.0,
+            "count": 5
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 1.0,
+            "count": 5
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "sprach",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "creó": [
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "tierra": [
+        {
+            "value": ".",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    ".": [
+        {
+            "value": ".",
+            "jaccard_similarity": 1.0,
+            "count": 5
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 1.0,
+            "count": 5
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "sprach",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "y": [
+        {
+            "value": ".",
+            "jaccard_similarity": 1.0,
+            "count": 5
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 1.0,
+            "count": 5
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "sprach",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "la": [
+        {
+            "value": ".",
+            "jaccard_similarity": 0.8,
+            "count": 4
+        },
+        {
+            "value": "schuf",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "anfang",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "himmel",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "am",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.8,
+            "count": 4
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.75,
+            "count": 3
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        }
+    ],
+    "sobre": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "movía": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "de": [
+        {
+            "value": ";",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    ";": [
+        {
+            "value": ";",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sprach",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "aguas": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "cubría": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "superficie": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "vacía": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "aire": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "forma": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "se": [
+        {
+            "value": ";",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "no": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "espíritu": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "profundas": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "las": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "oscuridad": [
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 1.0,
+            "count": 3
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "estaba": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "tenía": [
+        {
+            "value": ";",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gottes",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finster",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dem",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wüst",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "leer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "auf",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tiefe",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "geist",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "schwebte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "wasser",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "hubo": [
+        {
+            "value": "sprach",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "luz": [
+        {
+            "value": "sprach",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 1.0,
+            "count": 3
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "»": [
+        {
+            "value": "sprach",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "que": [
+        {
+            "value": "sprach",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "haya": [
+        {
+            "value": "sprach",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    ":": [
+        {
+            "value": "sprach",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "«": [
+        {
+            "value": "sprach",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "da",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "entonces": [
+        {
+            "value": "sprach",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "dijo": [
+        {
+            "value": "sprach",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "werde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "es",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "!",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "vio": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "era": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "buena": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "separó": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "luego": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gut",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "von",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "gott",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "schied",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sah",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "war",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "daß",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "primer": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "llegó": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "pasó": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "día": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "así": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "llamó": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "cumplió": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "mañana": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "tarde": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "noche": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "a": [
+        {
+            "value": "da",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "morgen",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "nannte",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "die",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "finsternis",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "nacht",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "licht",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "der",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tag",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "abend",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "ward",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "das",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aus",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "erste",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "und",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ]
+}

@@ -61,22 +61,6 @@ def get_best_alignment_scores(
     return df
 
 
-def get_vref_scores(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Takes a dataframe that includes both "vref" and "verse_score" columns, and returns
-    a dataframe of just those two columns.
-
-    Inputs:
-    df      A dataframe with both "vref" and "verse_score" columns
-
-    Outputs:
-    vref_df     A dataframe with just "vref" and "verse_score" columns
-    """
-    # remove duplicate verses
-    df = df.drop_duplicates(subset=["vref"])
-    vref_df = df[["vref", "verse_score"]]
-    return vref_df
-
 def average_scores(df: pd.DataFrame) -> pd.DataFrame:
     """
     Takes a dataframe of aligned matches, removes duplicate source word / target word combinations,
@@ -95,6 +79,11 @@ def average_scores(df: pd.DataFrame) -> pd.DataFrame:
     no_dups.drop(columns=['alignment_count'], inplace=True)
     no_dups.rename(columns={0: "alignment_count"}, inplace=True)
     return no_dups
+
+
+def save_alignment_scores(df, filename):
+    df[df.select_dtypes(['float']).columns] = df.select_dtypes(['float']).astype('float16')
+    df.to_csv(filename, index=False)
 
 
 def run_best_align(
@@ -125,6 +114,8 @@ def run_best_align(
     TextFileTextCorpus      In case you want to re-use it without creating it from scratch
     ThotSymmetrizedWordAlignmentModel       In case you want to re-use it without training from scratch
     """
+    if not outpath.exists():
+        outpath.mkdir(parents=True)
     # get vrefs
     ref_df = get_data.get_ref_df(source, target, is_bible)
     df = get_data.condense_files(ref_df)
@@ -145,24 +136,49 @@ def run_best_align(
 
     # Remove duplicates
     avg_df = average_scores(df)
+    avg_df = avg_df.drop(['alignment_score'], axis=1)
+    df = df.drop(['alignment_count'], axis=1)
+
 
     # write results to csv
-    if not outpath.exists():
-        outpath.mkdir(parents=True)
-
-    avg_df[avg_df.select_dtypes(['float']).columns] = avg_df.select_dtypes(['float']).astype('float16')
-    avg_df = avg_df.drop(['alignment_score'], axis=1)
-    avg_df.to_csv(outpath / "avg_alignment_scores.csv", index=False)
-
-    df[df.select_dtypes(['float']).columns] = df.select_dtypes(['float']).astype('float16')
-    df = df.drop(['alignment_count'], axis=1)
-    df.to_csv(outpath / "alignment_scores.csv", index=False)
+    save_alignment_scores(avg_df, outpath / "avg_alignment_scores.csv")
+    save_alignment_scores(df, outpath / "alignment_scores.csv")
 
     # delete temp files
     condensed_source.unlink()
     condensed_target.unlink()
 
     return parallel_corpus, symmetrized_model
+
+
+def get_source(source_dir: Path):
+    print(source_dir)
+    meta_file = source_dir / 'meta.json'
+    with open(meta_file) as f:
+        meta = json.load(f)
+    source_str = meta['source']
+    source = source_dir / f'{source_str}.txt'
+    return source, source_str
+
+
+def is_source_in_config(source_str, target_str, config_dir):
+    print(target_str)
+
+    config_file = config_dir / f'{target_str}-config.json'
+    if config_file.exists():
+        print("Found config file")
+        with open(config_file) as f:
+            config = json.loads(f.read())
+        requested_sources = config.get('sources', [])
+        is_ref = config.get('ref', False)
+        refresh = config.get('refresh', False)
+        print(f'Is Ref? {is_ref}')
+        print(f'Requested sources: {requested_sources}')
+        if source_str not in requested_sources and not is_ref:
+            print(f"Skipping target {target_str} for source {source_str}")
+            return False
+    print("No config file found, will compare with all sources")
+    return True
 
 
 def main(args):
@@ -172,31 +188,15 @@ def main(args):
     config_dir = args.config_dir
 
     for source_dir in sources.iterdir():
-        print(source_dir)
-        meta_file = source_dir / 'meta.json'
-        with open(meta_file) as f:
-            meta = json.load(f)
-        source_str = meta['source']
-        source = source_dir / f'{source_str}.txt'
+        source, source_str = get_source(source_dir)
         for target_dir in targets.iterdir():
-            print(target_dir)
             meta_file = target_dir / 'meta.json'
             with open(meta_file) as f:
                 meta = json.load(f)
             target_str = meta['source']
-            config_file = config_dir / f'{target_str}-config.json'
-            if config_file.exists():
-                print("Found config file")
-                with open(config_file) as f:
-                    config = json.loads(f.read())
-                requested_sources = config.get('sources', [])
-                is_ref = config.get('ref', False)
-                refresh = config.get('refresh', False)
-                print(f'Is Ref? {is_ref}')
-                print(f'Requested sources: {requested_sources}')
-                if source_str not in requested_sources and not is_ref:
-                    print(f"Skipping target {target_str} for source {source_str}")
-                    continue
+            if not is_source_in_config(source_str, target_str, config_dir):
+                continue
+
             target = target_dir / f'{target_str}.txt'
             outpath = base_outpath / f'{source_str}_{target_str}/'
             run_best_align(source, target, outpath, is_bible=args.is_bible)

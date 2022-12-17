@@ -1,6 +1,7 @@
 FROM python:3.8.10
 
-COPY scripts/common/get_data.py scripts/common/vref.txt scripts/embeddings/embeddings.py scripts/embeddings/weights/encoder_weights.txt scripts/embeddings/requirements.txt /app/
+COPY scripts/common/get_data.py scripts/common/vref.txt scripts/embeddings/embeddings.py scripts/embeddings/embeddings_test.py scripts/embeddings/weights/encoder_weights.txt scripts/embeddings/requirements.txt /app/
+COPY scripts/embeddings/fixtures/ app/fixtures
 
 WORKDIR /app
 

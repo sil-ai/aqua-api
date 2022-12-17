@@ -4,7 +4,7 @@ import argparse
 
 import pandas as pd
 
-import get_data
+from common import get_data
 
 
 def create_new_ref_df(source):

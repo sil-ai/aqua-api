@@ -1,6 +1,7 @@
 FROM python:3.8.10
 
-COPY scripts/common/get_data.py scripts/common/train_fa_model.py scripts/common/vref.txt scripts/alignment_scores/alignment_scores.py scripts/alignment_scores/requirements.txt /app/
+COPY scripts/common/get_data.py scripts/common/train_fa_model.py scripts/common/vref.txt scripts/alignment_scores/alignment_scores.py scripts/alignment_scores/alignment_scores_test.py scripts/alignment_scores/requirements.txt /app/
+COPY scripts/alignment_scores/fixtures/ app/fixtures
 
 WORKDIR /app
 

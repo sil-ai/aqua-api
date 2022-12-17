@@ -1,6 +1,7 @@
 FROM python:3.8.10
 
-COPY scripts/common/get_data.py scripts/common/train_fa_model.py scripts/common/vref.txt scripts/translation_scores/translation_scores.py scripts/translation_scores/requirements.txt /app/
+COPY scripts/common/get_data.py scripts/common/train_fa_model.py scripts/common/vref.txt scripts/translation_scores/translation_scores.py scripts/translation_scores/translation_scores_test.py scripts/translation_scores/requirements.txt /app/
+COPY scripts/translation_scores/fixtures/ app/fixtures
 
 WORKDIR /app
 

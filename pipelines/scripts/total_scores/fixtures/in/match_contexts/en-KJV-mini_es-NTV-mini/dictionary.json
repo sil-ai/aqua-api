@@ -1,0 +1,7806 @@
+{
+    "earth": [
+        {
+            "value": "el",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "creó",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "principio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "aire",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    ".": [
+        {
+            "value": "el",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "creó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "principio",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 1.0,
+            "count": 7
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "aire",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "the": [
+        {
+            "value": "el",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "creó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "principio",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 4
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.7142857142857143,
+            "count": 5
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 1.0,
+            "count": 6
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 4
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.7142857142857143,
+            "count": 5
+        },
+        {
+            "value": "aire",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 4
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        }
+    ],
+    "and": [
+        {
+            "value": "el",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "creó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "principio",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 1.0,
+            "count": 7
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "aire",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "god": [
+        {
+            "value": "el",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "creó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "principio",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 1.0,
+            "count": 7
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "aire",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "in": [
+        {
+            "value": "el",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "creó",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "principio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "beginning": [
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "creó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "principio",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        }
+    ],
+    "heaven": [
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "creó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "principio",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        }
+    ],
+    "created": [
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "creó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "principio",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        }
+    ],
+    "moved": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "deep": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "face": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "darkness": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 1.0,
+            "count": 3
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "void": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "form": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "waters": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 1.0,
+            "count": 3
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.75,
+            "count": 3
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 1.0,
+            "count": 3
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.75,
+            "count": 3
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "was": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 4
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 4
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.5714285714285714,
+            "count": 4
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.6,
+            "count": 3
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        }
+    ],
+    "spirit": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "of": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "upon": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    ";": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    ",": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 4
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.7142857142857143,
+            "count": 5
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.7142857142857143,
+            "count": 5
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.7142857142857143,
+            "count": 5
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.8571428571428571,
+            "count": 6
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 4
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        }
+    ],
+    "without": [
+        {
+            "value": "aire",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espíritu",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "profundas",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sobre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "estaba",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "movía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tenía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cubría",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vacía",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "en",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "forma",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "no",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "superficie",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        }
+    ],
+    "light": [
+        {
+            "value": "»",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 1.0,
+            "count": 3
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "se",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    ":": [
+        {
+            "value": "»",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.75,
+            "count": 3
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "there": [
+        {
+            "value": "»",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "be": [
+        {
+            "value": "»",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "said": [
+        {
+            "value": "»",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "let": [
+        {
+            "value": "»",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "hubo",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        }
+    ],
+    "that": [
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        }
+    ],
+    "divided": [
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        }
+    ],
+    "from": [
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.75,
+            "count": 3
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.75,
+            "count": 3
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "it": [
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.75,
+            "count": 3
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.75,
+            "count": 3
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.42857142857142855,
+            "count": 3
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.5,
+            "count": 3
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.4,
+            "count": 2
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        }
+    ],
+    "good": [
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        }
+    ],
+    "saw": [
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "buena",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "era",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "separó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "luego",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "vio",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        }
+    ],
+    "evening": [
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "morning": [
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "he": [
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "night": [
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "called": [
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "day": [
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "were": [
+        {
+            "value": "se",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        }
+    ],
+    "first": [
+        {
+            "value": "se",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "luz",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "oscuridad",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "cumplió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "mañana",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "tarde",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "el",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "noche",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "a",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "primer",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "así",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "llegó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "pasó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "día",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "llamó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "midst": [
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "divide": [
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "a": [
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        }
+    ],
+    "firmament": [
+        {
+            "value": "que",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ":",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "entonces",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "entre",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "un",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": ";",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 2
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 1.0,
+            "count": 2
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.5,
+            "count": 2
+        },
+        {
+            "value": "»",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.6666666666666666,
+            "count": 2
+        },
+        {
+            "value": "haya",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "«",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ",",
+            "jaccard_similarity": 0.2,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.2857142857142857,
+            "count": 2
+        },
+        {
+            "value": "dijo",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "ese",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "under": [
+        {
+            "value": "ese",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "above": [
+        {
+            "value": "ese",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "made": [
+        {
+            "value": "ese",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "which": [
+        {
+            "value": "ese",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ],
+    "so": [
+        {
+            "value": "ese",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "sucedió",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "que",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "fue",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "las",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "separar",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "de",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": ".",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "formó",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "la",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "aguas",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "lo",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "eso",
+            "jaccard_similarity": 1.0,
+            "count": 1
+        },
+        {
+            "value": "para",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "espacio",
+            "jaccard_similarity": 0.5,
+            "count": 1
+        },
+        {
+            "value": "cielos",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "tierra",
+            "jaccard_similarity": 0.25,
+            "count": 1
+        },
+        {
+            "value": "y",
+            "jaccard_similarity": 0.16666666666666666,
+            "count": 1
+        },
+        {
+            "value": "los",
+            "jaccard_similarity": 0.3333333333333333,
+            "count": 1
+        },
+        {
+            "value": "dios",
+            "jaccard_similarity": 0.14285714285714285,
+            "count": 1
+        }
+    ]
+}
