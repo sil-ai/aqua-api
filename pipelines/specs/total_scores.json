@@ -15,41 +15,61 @@
             "/pfs/match_contexts",
             "--embedding-dir",
             "/pfs/embeddings",
+            "--sources-dir",
+            "/pfs/sources",
+            "--targets-dir",
+            "/pfs/targets",
             "--outpath",
             "/pfs/out",
             "--is-bible"
         ],
-        "image": "woodwardmw/aqua-pipeline-total_scores-pachyderm:7aa040e"
+        "image": "woodwardmw/aqua-pipeline-total_scores-pachyderm:8a5e59c"
     },
     "input": {
-        "join": [
+        "cross": [
             {
                 "pfs": {
-                    "repo": "alignment_scores",
-                    "glob": "/(*)/",
-                    "join_on": "$1"
+                    "repo": "sources",
+                    "glob": "/"
                 }
             },
             {
                 "pfs": {
-                    "repo": "translation_scores",
-                    "glob": "/(*)/",
-                    "join_on": "$1"
+                    "repo": "targets",
+                    "glob": "/"
                 }
             },
             {
-                "pfs": {
-                    "repo": "match_contexts",
-                    "glob": "/(*)/",
-                    "join_on": "$1"
-                }
-            },
-            {
-                "pfs": {
-                    "repo": "embeddings",
-                    "glob": "/(*)/",
-                    "join_on": "$1"
-                }
+                "join": [
+                    {
+                        "pfs": {
+                            "repo": "alignment_scores",
+                            "glob": "/(*)/",
+                            "join_on": "$1"
+                        }
+                    },
+                    {
+                        "pfs": {
+                            "repo": "translation_scores",
+                            "glob": "/(*)/",
+                            "join_on": "$1"
+                        }
+                    },
+                    {
+                        "pfs": {
+                            "repo": "match_contexts",
+                            "glob": "/(*)/",
+                            "join_on": "$1"
+                        }
+                    },
+                    {
+                        "pfs": {
+                            "repo": "embeddings",
+                            "glob": "/(*)/",
+                            "join_on": "$1"
+                        }
+                    }
+                ]
             }
         ]
     }

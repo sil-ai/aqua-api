@@ -12,7 +12,7 @@
             "--outpath",
             "/pfs/out"
         ],
-        "image": "woodwardmw/aqua-pipeline-top_source_scores-pachyderm:7aa040e"
+        "image": "woodwardmw/aqua-pipeline-top_source_scores-pachyderm:7d38164"
     },
     "input": {
         "pfs": {

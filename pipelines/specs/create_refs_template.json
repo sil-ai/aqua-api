@@ -8,8 +8,8 @@
       "python3",
       "create_refs.py",
       "--top-source-scores-dir",
-      "/pfs/total_scores",
-      "sources-dir",
+      "/pfs/top_source_scores",
+      "--sources-dir",
       "/pfs/sources",
       "--outpath",
       "/pfs/out"
@@ -27,7 +27,7 @@
       {
         "pfs": {
           "repo": "sources",
-          "glob": "/"
+          "glob": "/*.txt"
         }
       }
     ]

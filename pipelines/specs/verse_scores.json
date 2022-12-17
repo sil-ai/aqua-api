@@ -1,0 +1,23 @@
+{
+    "pipeline": {
+        "name": "verse_scores"
+    },
+    "description": "A pipeline that takes the top source scores and aggregates them by verse, saving to verse_scores.csv.",
+    "transform": {
+        "cmd": [
+            "python3",
+            "verse_scores.py",
+            "--top-source-scores-dir",
+            "/pfs/total_scores",
+            "--outpath",
+            "/pfs/out"
+        ],
+        "image": "woodwardmw/aqua-pipeline-verse_scores-pachyderm:7aa040e"
+    },
+    "input": {
+        "pfs": {
+            "repo": "top_source_scores",
+            "glob": "/(*)/"
+        }
+    }
+}

@@ -17,7 +17,7 @@
             "/pfs/target_config",
             "--is-bible"
         ],
-        "image": "woodwardmw/aqua-pipeline-alignment_scores-pachyderm:d653dd3"
+        "image": "woodwardmw/aqua-pipeline-alignment_scores-pachyderm:cbd7d39"
     },
     "input": {
         "cross": [

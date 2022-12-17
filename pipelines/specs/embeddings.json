@@ -19,7 +19,7 @@
             "encoder_weights.txt",
             "--is-bible"
         ],
-        "image": "woodwardmw/aqua-pipeline-embeddings-pachyderm:7aa040e"
+        "image": "woodwardmw/aqua-pipeline-embeddings-pachyderm:bbe32d1"
     },
     "input": {
         "cross": [

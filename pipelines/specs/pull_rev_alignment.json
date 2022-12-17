@@ -1,0 +1,26 @@
+{
+    "pipeline": {
+        "name": "pull_rev_alignment"
+    },
+    "description": "A pipeline that pull revisions for word alignment (NOT YET TESTED BECAUSE PACHYDERM IS DOWN)",
+    "transform": {
+        "cmd": [ "/bin/bash" ],
+           "stdin": [
+              "TARGET=$(jq …. /pfs/alignment_config/config.json)",
+              "python pull_rev.py --revision $TARGET --out .",
+              "for $s in $SOURCES",
+              "python pull_rev.py --revision $s --out .",
+              "end"
+            ],
+            "image": "279795702643.dkr.ecr.us-east-1.amazonaws.com/aqua-pipeline-pull-revision",
+    "env": {
+        "AQUA_DB": "postgresql://doadmin:AVNS_G6H58Gqz3c4cZqH@hasura-aqua-do-user-7925792-0.b.db.ondigitalocean.com:25060/defaultdb?sslmode=require"
+            }
+        },
+        "input": {
+            "pfs": {
+                "repo": "alignment_config",
+                "glob": "/"
+            }
+        }
+    }

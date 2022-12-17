@@ -15,6 +15,10 @@
       "/pfs/match_contexts",
       "--embedding-dir",
       "/pfs/embeddings",
+      "--sources-dir",
+      "/pfs/sources",
+      "--targets-dir",
+      "/pfs/targets",
       "--outpath",
       "/pfs/out",
       "--is-bible"
@@ -22,34 +26,50 @@
     "image": "woodwardmw/<imagename>:<tag>"
   },
   "input": {
-    "join": [
+    "cross": [
       {
         "pfs": {
-          "repo": "alignment_scores",
-          "glob": "/(*)/",
-          "join_on": "$1"
+          "repo": "sources",
+          "glob": "/"
         }
       },
       {
         "pfs": {
-          "repo": "translation_scores",
-          "glob": "/(*)/",
-          "join_on": "$1"
+          "repo": "targets",
+          "glob": "/"
         }
       },
       {
-        "pfs": {
-          "repo": "match_contexts",
-          "glob": "/(*)/",
-          "join_on": "$1"
-        }
-      },
-      {
-        "pfs": {
-          "repo": "embeddings",
-          "glob": "/(*)/",
-          "join_on": "$1"
-        }
+        "join": [
+          {
+            "pfs": {
+              "repo": "alignment_scores",
+              "glob": "/(*)/",
+              "join_on": "$1"
+            }
+          },
+          {
+            "pfs": {
+              "repo": "translation_scores",
+              "glob": "/(*)/",
+              "join_on": "$1"
+            }
+          },
+          {
+            "pfs": {
+              "repo": "match_contexts",
+              "glob": "/(*)/",
+              "join_on": "$1"
+            }
+          },
+          {
+            "pfs": {
+              "repo": "embeddings",
+              "glob": "/(*)/",
+              "join_on": "$1"
+            }
+          }
+        ]
       }
     ]
   }
