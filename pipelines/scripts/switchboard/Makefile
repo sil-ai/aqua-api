@@ -1,6 +1,6 @@
 all: build-local
 
-IMAGENAME=aqua-pipeline-switchboard
+IMAGENAME=aqua-pipeline-start
 GH_BRANCH=$(shell basename ${GITHUB_REF})
 
 build-local:
