@@ -1,4 +1,5 @@
 import os
+import json
 import argparse
 import logging
 #from assessment_operations import InitiateAssessment
@@ -18,7 +19,7 @@ class StartPipeline:
         self.out = args.out
         #gets the job ID from pachyderm
         try:
-            self.job_id = 'abc'#os.environ['PACH_JOB_ID']
+            self.job_id = os.environ['PACH_JOB_ID']
         except KeyError:
             raise KeyError('No valid job ID')
 
@@ -71,6 +72,7 @@ class StartPipeline:
                                "out": self.out
                               }
                 logging.info(return_json)
+                json.dump(return_json, open(self.out + '/job_params.json','w'))
                 return 200, return_json
             except IntegrityError as err:
                 logging.error(err.args[0])
