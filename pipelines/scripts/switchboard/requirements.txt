@@ -1,0 +1,3 @@
+ipython==8.5.0
+SQLAlchemy==1.4.42
+python-dotenv==0.20.0
