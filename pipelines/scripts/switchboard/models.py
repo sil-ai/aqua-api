@@ -2,7 +2,7 @@ import enum
 from sqlalchemy import Column, Integer, Text,\
                        ForeignKey, DateTime, Enum, VARCHAR
 from sqlalchemy.orm import declarative_base
-from datetime import datetime
+from datetime import datetime, timezone
 
 Base = declarative_base()
 
@@ -34,10 +34,14 @@ class Assessment(Base):
     revision = Column(Integer, ForeignKey(VerseText.bibleRevision))
     reference = Column(Integer, ForeignKey(VerseText.bibleRevision))
     type = Column(Text)
-    start_time = Column(DateTime, default=datetime.now())
+    start_time = Column(DateTime, default= datetime.now(timezone.utc))
     end_time = Column(DateTime)
-    status = Column(Enum(StatusEnum), nullable=False)
-    job_id = Column(VARCHAR, required=True)
+    status = Column(Enum(StatusEnum, values_callable=lambda obj: [e.value for e in obj]),
+                   nullable=False,
+                   default = StatusEnum.RUNNING.value,
+                   server_default = StatusEnum.RUNNING.value
+                   )
+    job_id = Column(VARCHAR, nullable=False)
 
     def __repr__(self):
         return (

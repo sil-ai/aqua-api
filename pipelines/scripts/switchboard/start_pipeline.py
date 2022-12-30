@@ -2,7 +2,7 @@ import os
 import json
 import argparse
 import logging
-#from assessment_operations import InitiateAssessment
+from assessment_operations import InitiateAssessment
 from sqlalchemy.exc import IntegrityError
 
 logging.getLogger().setLevel('DEBUG')
@@ -19,6 +19,7 @@ class StartPipeline:
         self.out = args.out
         #gets the job ID from pachyderm
         try:
+            #TODO: add pachyderm job id
             self.job_id = os.environ['PACH_JOB_ID']
         except KeyError:
             raise KeyError('No valid job ID')
@@ -62,14 +63,15 @@ class StartPipeline:
     def start(self):
         if self.assess_type == 'semsim':
             try:
-                #TODO: catch sqlalchemy error if there is a violation
-                #InitiateAssessment(id=self.job_id, revision=self.target,
-                #              reference=self.ref, type=self.assess_type).push_assessment()
+                assess_id = InitiateAssessment(revision=self.target,
+                              reference=self.ref, type=self.assess_type,
+                               job_id=self.job_id).push_assessment()
                 return_json = {"job_id": self.job_id,
                                "revision": self.target,
                                "reference": self.ref,
                                "type": self.assess_type,
-                               "out": self.out
+                               "out": self.out,
+                               "assessment_id" : assess_id
                               }
                 logging.info(return_json)
                 json.dump(return_json, open(self.out + '/job_params.json','w'))
