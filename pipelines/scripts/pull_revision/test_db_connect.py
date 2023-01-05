@@ -27,7 +27,7 @@ def get_fake_conn_string(original_string):
 
 #??? Is there a way to do this with fixtures
 FAKE_NUM=3
-acs = os.environ['AQUA_DB']
+acs = os.environ['AQUA_CONNECTION_STRING']
 fake_strings = [get_fake_conn_string(acs) for __ in range(FAKE_NUM)]
 
 #test for n invalid database connections
