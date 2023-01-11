@@ -5,6 +5,7 @@
 (This is a WIP schema, but PRs should generally conform to this schema. If a PR deviates, it should update this section of the README and explicitly give the logic for deviating from the schema below.)
 
 ✔️ - currently implemented as expected
+
 ❌ - not yet implemented, or not yet conforming to this schema
 
 - `/version`
