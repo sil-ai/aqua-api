@@ -3,17 +3,14 @@ from pathlib import Path
 import logging
 
 import modal
-import numpy as np
 import pandas as pd
-# from gql.transport.requests import RequestsHTTPTransport
-# from gql import Client, gql
+import numpy as np
 
 from db_connect import get_session, VerseText
 
+
 logging.basicConfig(level=logging.DEBUG)
 
-local_data_dir = Path("./")
-remote_data_dir = Path("/")
 
 # Manage suffix on modal endpoint if testing.
 suffix = ''
@@ -24,12 +21,13 @@ if os.environ.get('MODAL_TEST') == 'TRUE':
 stub = modal.Stub(
     name="pull_revision" + suffix,
     image=modal.Image.debian_slim().pip_install(
+        "numpy",
         "pandas==1.4.3",
         "gql==3.3.0",
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
         "psycopg2-binary",
-    ),
+    ).copy(mount=modal.Mount(local_file=Path('./vref.txt'), remote_dir=Path('/root'))),
 )
 
 
@@ -43,7 +41,7 @@ class PullRevision:
     def prepare_vref():
         try:
             return pd.Series(
-                open("/vref.txt").read().splitlines(), name="verseReference"
+                open("/root/vref.txt").read().splitlines(), name="verseReference"
             )
         except FileNotFoundError as err:
             raise FileNotFoundError(err) from err
@@ -98,11 +96,9 @@ class PullRevision:
 @stub.function(
     timeout=600,
     secret=modal.Secret.from_name("my-aws-secret-api"),
-    mounts=[
-        modal.Mount(local_dir=local_data_dir, remote_dir=remote_data_dir)
-    ],  # This is needed to get vref.txt
 )
 def pull_revision(revision_id: int) -> bytes:
+
     try:
         pr = PullRevision(revision_id)
         pr.pull_revision()
