@@ -95,10 +95,11 @@ class PullRevision:
     def output_revision(self):
         if not self.revision_text.empty:
             output_text = self.prepare_output()
+            return output_text
+
         else:
             logging.info("Revision text is empty. Nothing printed.")
             return []
-        return output_text
 
 
 @stub.function(
