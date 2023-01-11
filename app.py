@@ -365,15 +365,15 @@ def create_app():
 
         return verses_data
 
-    @app.get("/assessment", dependencies=[Depends(api_key_auth)])
-    async def assessment(
+    @app.get("/word_alignment", dependencies=[Depends(api_key_auth)])
+    async def word_alignment(
         source_revision_id: int,
         target_revision_id: int,
         background_tasks: BackgroundTasks,
     ):
         # Start a background task to run the assessment, while returning a response to the user
         background_tasks.add_task(
-            run_assessment, source_revision_id, target_revision_id
+            run_word_alignment, source_revision_id, target_revision_id
         )
 
         return {"message": "Assessment started"}
@@ -384,7 +384,7 @@ def create_app():
             filename = run_pull_revision(revision_id)
         return filename
 
-    def run_assessment(source_revision_id, target_revision_id):
+    def run_word_alignment(source_revision_id, target_revision_id):
         with stub.run():
             source = run_pull_revision.call(source_revision_id)
             target = run_pull_revision.call(target_revision_id)
