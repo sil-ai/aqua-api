@@ -8,3 +8,4 @@ boto3==1.21.31
 pandas==1.4.1
 psycopg2-binary==2.8.6
 python-multipart==0.0.5
+modal-client = "*"
