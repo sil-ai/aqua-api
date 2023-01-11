@@ -28,3 +28,4 @@ def test_get_text():
 
     assert len(text_bytes) == 41899
     assert max([len(line) for line in text_bytes]) > 10
+    
