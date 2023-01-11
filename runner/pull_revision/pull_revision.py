@@ -22,8 +22,14 @@ transport = RequestsHTTPTransport(
 )
 
 
+# Manage suffix on modal endpoint if testing.
+suffix = ''
+if os.environ.get('MODAL_TEST') == 'TRUE':
+    suffix = '_test'
+
+
 stub = modal.Stub(
-    name="pull_revision",
+    name="pull_revision" + suffix,
     image=modal.Image.debian_slim().pip_install(
         "pandas==1.4.3",
         "gql==3.3.0",
