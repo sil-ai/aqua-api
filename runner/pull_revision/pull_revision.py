@@ -5,8 +5,8 @@ import logging
 import modal
 import numpy as np
 import pandas as pd
-from gql.transport.requests import RequestsHTTPTransport
-from gql import Client, gql
+# from gql.transport.requests import RequestsHTTPTransport
+# from gql import Client, gql
 
 from db_connect import get_session, VerseText
 
@@ -14,12 +14,6 @@ logging.basicConfig(level=logging.DEBUG)
 
 local_data_dir = Path("./")
 remote_data_dir = Path("/")
-# Configure connection to the GRAPHQL endpoint
-headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
-transport = RequestsHTTPTransport(
-    url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
-)
-
 
 # Manage suffix on modal endpoint if testing.
 suffix = ''
