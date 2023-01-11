@@ -34,12 +34,12 @@ from starlette.responses import RedirectResponse, JSONResponse
 import queries
 import bible_loading
 from key_fetch import get_secret
-import assessments.word_alignment.word_alignment as word_alignment
+# import assessments.word_alignment.word_alignment as word_alignment
 
 logging.basicConfig(level=logging.DEBUG)
 
 
-local_data_dir = Path("assessments/word_alignment/data")
+# local_data_dir = Path("assessments/word_alignment/data")
 remote_data_dir = Path("/data/")
 
 stub = modal.Stub(
@@ -365,18 +365,18 @@ def create_app():
 
         return verses_data
 
-    @app.get("/word_alignment", dependencies=[Depends(api_key_auth)])
-    async def word_alignment(
-        source_revision_id: int,
-        target_revision_id: int,
-        background_tasks: BackgroundTasks,
-    ):
-        # Start a background task to run the assessment, while returning a response to the user
-        background_tasks.add_task(
-            run_word_alignment, source_revision_id, target_revision_id
-        )
+    # @app.get("/word_alignment", dependencies=[Depends(api_key_auth)])
+    # async def word_alignment(
+    #     source_revision_id: int,
+    #     target_revision_id: int,
+    #     background_tasks: BackgroundTasks,
+    # ):
+    #     # Start a background task to run the assessment, while returning a response to the user
+    #     background_tasks.add_task(
+    #         run_word_alignment, source_revision_id, target_revision_id
+    #     )
 
-        return {"message": "Assessment started"}
+    #     return {"message": "Assessment started"}
 
     @app.get("/pull_revision", dependencies=[Depends(api_key_auth)])
     async def pull_revision(revision_id):
@@ -388,7 +388,7 @@ def create_app():
         with stub.run():
             source = run_pull_revision.call(source_revision_id)
             target = run_pull_revision.call(target_revision_id)
-            run_pipelines.call(source, target)
+            # run_pipelines.call(source, target)
 
     return app
 
@@ -405,37 +405,37 @@ def run_pull_revision(revision_id):
     return s3_outpath
 
 
-@stub.function(
-    timeout=3600,
-    secret=modal.Secret.from_name("my-aws-secret-api"),
-    mounts=[modal.Mount(local_dir=local_data_dir, remote_dir=remote_data_dir)],
-)
-def run_pipelines(source, target):
-    outpath = remote_data_dir
-    s3 = boto3.client("s3")
-    s3.download_file(
-        "aqua-word-alignment", source, remote_data_dir / source.split("/")[-1]
-    )
-    s3.download_file(
-        "aqua-word-alignment", target, remote_data_dir / target.split("/")[-1]
-    )
-    source = remote_data_dir / source.split("/")[-1]
-    target = remote_data_dir / target.split("/")[-1]
+# @stub.function(
+#     timeout=3600,
+#     secret=modal.Secret.from_name("my-aws-secret-api"),
+#     mounts=[modal.Mount(local_dir=local_data_dir, remote_dir=remote_data_dir)],
+# )
+# def run_pipelines(source, target):
+#     outpath = remote_data_dir
+#     s3 = boto3.client("s3")
+#     s3.download_file(
+#         "aqua-word-alignment", source, remote_data_dir / source.split("/")[-1]
+#     )
+#     s3.download_file(
+#         "aqua-word-alignment", target, remote_data_dir / target.split("/")[-1]
+#     )
+#     source = remote_data_dir / source.split("/")[-1]
+#     target = remote_data_dir / target.split("/")[-1]
 
     # Many of these can be asynced, and run in parallel
-    word_alignment.create_index_cache(source, outpath / "cache")
-    word_alignment.create_index_cache(target, outpath / "cache")
-    word_alignment.create_alignment_scores(source, target, outpath)
-    word_alignment.create_translation_scores(source, target, outpath)
-    word_alignment.create_match_scores(source, target, outpath)
-    word_alignment.create_index_cache(target, outpath / "cache")
-    word_alignment.create_embeddings(source, target, outpath)
-    word_alignment.create_total_scores(source, target, outpath)
-    word_alignment.create_top_source_scores(source, target, outpath)
-    word_alignment.create_verse_scores(source, target, outpath, refresh=True)
-    word_alignment.create_ref_scores(source, target, outpath, refresh=True)
-    word_alignment.create_red_flags(source, target, outpath)
-    word_alignment.create_threshold_scores(source, target, outpath, threshold=0.15)
+    # word_alignment.create_index_cache(source, outpath / "cache")
+    # word_alignment.create_index_cache(target, outpath / "cache")
+    # word_alignment.create_alignment_scores(source, target, outpath)
+    # word_alignment.create_translation_scores(source, target, outpath)
+    # word_alignment.create_match_scores(source, target, outpath)
+    # word_alignment.create_index_cache(target, outpath / "cache")
+    # word_alignment.create_embeddings(source, target, outpath)
+    # word_alignment.create_total_scores(source, target, outpath)
+    # word_alignment.create_top_source_scores(source, target, outpath)
+    # word_alignment.create_verse_scores(source, target, outpath, refresh=True)
+    # word_alignment.create_ref_scores(source, target, outpath, refresh=True)
+    # word_alignment.create_red_flags(source, target, outpath)
+    # word_alignment.create_threshold_scores(source, target, outpath, threshold=0.15)
 
 
 # create app
