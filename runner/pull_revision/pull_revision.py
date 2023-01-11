@@ -8,7 +8,6 @@ import pandas as pd
 from gql.transport.requests import RequestsHTTPTransport
 from gql import Client, gql
 
-import queries
 from db_connect import get_session, VerseText
 
 logging.basicConfig(level=logging.DEBUG)
@@ -41,7 +40,7 @@ stub = modal.Stub(
 
 
 class PullRevision:
-    def __init__(self, revision_id: int, version_abbr: str):
+    def __init__(self, revision_id: int):
         self.revision_id = revision_id
         self.revision_text = pd.DataFrame()
         self.vref = self.prepare_vref()
@@ -110,13 +109,8 @@ class PullRevision:
     ],  # This is needed to get vref.txt
 )
 def pull_revision(revision_id: int) -> bytes:
-    get_version_id = queries.fetch_bible_version_from_revision(revision_id)
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        query = gql(get_version_id)
-        result = client.execute(query)
-        version_name = result["bibleVersion"][0]["abbreviation"]
     try:
-        pr = PullRevision(revision_id, version_name)
+        pr = PullRevision(revision_id)
         pr.pull_revision()
         revision_bytes = pr.output_revision()
     except (ValueError, OSError, KeyError, AttributeError, FileNotFoundError) as err:
