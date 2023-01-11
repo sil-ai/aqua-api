@@ -145,23 +145,6 @@ def fetch_bible_version(abbreviation):
     return version_id
 
 
-def fetch_bible_version_from_revision(revision_id):
-    version_id = """
-                query MyQuery {{
-                  bibleVersion(where: {{
-                    bibleRevisions: {{
-                      id: {{
-                        _eq: {}
-                        }}
-                        }}
-                        }}) {{
-                    abbreviation
-                  }}
-                }}
-                """.format(revision_id)
-    return version_id
-
-
 def list_revisions_query(bibleVersion):
     list_revisions = """
                   query MyQuery {{
