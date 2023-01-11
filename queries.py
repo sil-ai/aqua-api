@@ -194,6 +194,7 @@ def get_chapter_query(revision, chapterReference):
                   }}
                 }}
                 """.format(revision, chapterReference)
+                
     return get_chapter
 
 
