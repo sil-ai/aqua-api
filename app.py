@@ -34,7 +34,7 @@ from starlette.responses import RedirectResponse, JSONResponse
 import queries
 import bible_loading
 from key_fetch import get_secret
-import assessments.word_alignment.main as word_alignment
+import assessments.word_alignment.word_alignment as word_alignment
 
 logging.basicConfig(level=logging.DEBUG)
 
