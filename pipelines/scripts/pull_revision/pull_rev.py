@@ -20,9 +20,7 @@ stub = modal.Stub(
     image=modal.Image.debian_slim().pip_install(
         "machine==0.0.1",
         "pandas==1.4.3",
-        # "pytest==7.1.2",
         "sil-machine[thot]>=0.8.3",
-        "diskcache",
         "boto3",
         "sqlalchemy==1.4.36",
         "psycopg2-binary",  # ==2.8.6
@@ -33,15 +31,9 @@ remote_data_dir = Path("/data/")
 
 
 class PullRevision:
-    # @stub.function(timeout=600, secret=modal.Secret.from_name("my-aws-secret-api"))
-    def __init__(self, revision_id: int, version_name: str):
-        # gets the args of the form --revision 3 --out /path/to/output/file
-        # args = self.get_args()
-        # if not (args.revision and args.out):
-        #     raise ValueError('Missing Revision Id or output path')
-        # initializes the instance variables
+    def __init__(self, revision_id: int, version_abbr: str):
         self.revision_id = revision_id
-        self.version_name = version_name
+        self.version_abbr = version_abbr
         self.revision_text = pd.DataFrame()
         self.vref = self.prepare_vref()
         self.out = Path("./")
@@ -75,7 +67,6 @@ class PullRevision:
     def is_duplicated(refs):
         return len(refs) != len(set(refs))
 
-    # @stub.function(secret=modal.Secret.from_name("my-aws-secret"))
     def pull_revision(self):
         # with postgres connection gets the verses from the verseText table
         # ??? Think about dividing get_session into get_engine and get_session
@@ -114,18 +105,16 @@ class PullRevision:
         all_verses_text = all_verses["text"].replace(np.nan, "", regex=True)
         return all_verses_text.to_list()
 
-    # @stub.function(timeout=600, secret=modal.Secret.from_name("my-aws-secret-api"))
     def output_revision(self, s3_outpath):
         # Check whether the specified path exists or not
         print("Outputting the revision")
         isExist = os.path.exists(self.out)
         if not isExist:
             os.makedirs(self.out)
-        # date = datetime.now().strftime("%Y_%m_%d")
-        # saves the output as a txt file with revision_id and unix date
+        # saves the output as a txt file with version abbreviation and revision id
         if not self.revision_text.empty:
             output_text = self.prepare_output()
-            filename = f"{self.version_name}_{self.revision_id}.txt"
+            filename = f"{self.version_abbr}_{self.revision_id}.txt"
             filepath = self.out / filename
             with open(filepath, "w") as outfile:
                 for verse_text in output_text:
@@ -141,7 +130,6 @@ class PullRevision:
         else:
             logging.info("Revision text is empty. Nothing printed.")
 
-    # @stub.function(timeout=600, secret=modal.Secret.from_name("my-aws-secret-api"))
     def upload_texts(self, filepath: Path, s3_outpath: str):
         s3 = boto3.client("s3")
         s3.upload_file(filepath, "aqua-word-alignment", s3_outpath)
@@ -161,11 +149,11 @@ def run_pull_rev(revision_id, version_name, s3_outpath):
         logging.error(err)
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Pull and output verses from a revision"
-    )
-    parser.add_argument("-r", "--revision", type=int, help="Revision ID", required=True)
-    parser.add_argument("-o", "--out", type=str, help="Output path", required=True)
-    args = parser.parse_args()
-    run_pull_rev(args.revision)
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser(
+#         description="Pull and output verses from a revision"
+#     )
+#     parser.add_argument("-r", "--revision", type=int, help="Revision ID", required=True)
+#     parser.add_argument("-o", "--out", type=str, help="Output path", required=True)
+#     args = parser.parse_args()
+#     run_pull_rev(args.revision)

@@ -48,7 +48,6 @@ stub = modal.Stub(
         "machine==0.0.1",
         "pandas==1.4.3",
         "sil-machine[thot]>=0.8.3",
-        "diskcache",
         "boto3",
         "gql==3.3.0",
         "requests_toolbelt==0.9.1",
@@ -58,6 +57,7 @@ stub = modal.Stub(
 
 stub.run_pull_rev = modal.Function.from_name("pull_rev", "run_pull_rev")
 
+# run api key fetch function requiring 
 # input of AWS credentials
 api_keys = get_secret(
     os.getenv("KEY_VAULT"),
@@ -388,7 +388,7 @@ def create_app():
         with stub.run():
             source = run_pull_revision.call(source_revision_id)
             target = run_pull_revision.call(target_revision_id)
-            run_pipelines(source, target)
+            run_pipelines.call(source, target)
 
     return app
 
