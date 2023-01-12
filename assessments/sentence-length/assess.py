@@ -3,7 +3,19 @@ from typing import List
 import modal
 import os
 
-stub = modal.Stub("sentence-length")
+# Manage suffix on modal endpoint if testing.
+suffix = ''
+if os.environ.get('MODAL_TEST') == 'TRUE':
+    suffix = '_test'
+
+
+# Define the modal stub.
+stub = modal.Stub(
+    "sentence-length" + suffix,
+    image=modal.Image.debian_slim()
+)
+
+#get the pull_revision function
 stub.pull_revision = modal.Function.from_name("pull_revision", "pull_revision")
 
 # The information needed to run a sentence length assessment configuration.
@@ -34,9 +46,7 @@ class Results(BaseModel):
 def assess(assessment: SentLengthAssessment):
     #pull the revision
     rev_num = assessment.configuration.draft_revision
-    #lines = pull_revision(rev_num).split('\n')
     lines = modal.container_app.pull_revision.call(rev_num)
-    #lines = lines.split('\n')
 
     #calculate average words per sentence for each line
     results = []
@@ -45,13 +55,8 @@ def assess(assessment: SentLengthAssessment):
         words = line.split(' ')
         sentences = line.split('.')
         avg_words = len(words) / len(sentences)
-
-        #if score is above 10, flag
-        flag = False
-        if avg_words > 10:
-            flag = True
         
         #add to results
-        results.append(Result(assessment_id=assessment.assessment_id, verse=line, score=avg_words, flag=flag, note=''))
+        results.append(Result(assessment_id=assessment.assessment_id, verse=line, score=avg_words, flag=False, note=''))
 
     return Results(results=results)
