@@ -13,21 +13,28 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 # Manage suffix on modal endpoint if testing.
-suffix = ''
-if os.environ.get('MODAL_TEST') == 'TRUE':
-    suffix = '_test'
+suffix = ""
+if os.environ.get("MODAL_TEST") == "TRUE":
+    suffix = "_test"
 
 
 stub = modal.Stub(
     name="pull_revision" + suffix,
-    image=modal.Image.debian_slim().pip_install(
+    image=modal.Image.debian_slim()
+    .pip_install(
         "numpy==1.24.1",
         "pandas==1.4.3",
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
         "psycopg2-binary",
-    ).copy(mount=modal.Mount(local_file=Path('./vref.txt'), remote_dir=Path('/root'))),
+    )
+    .copy(mount=modal.Mount(local_file=Path("./vref.txt"), remote_dir=Path("/root"))),
 )
+
+
+class RecordNotFoundError(Exception):
+    def __init__(self, message):
+        self.message = message
 
 
 class PullRevision:
@@ -67,6 +74,9 @@ class PullRevision:
                 logging.info("Duplicated verses in Revision %s", self.revision_id)
         else:
             logging.info("No verses for Revision %s", self.revision_id)
+            raise RecordNotFoundError(
+                f"Revision {self.revision_id} was not found in the database."
+            )
 
     def prepare_output(self):
         # outer merges the vref list on the revision verses
@@ -100,5 +110,5 @@ def pull_revision(revision_id: int) -> bytes:
     pr = PullRevision(revision_id)
     pr.pull_revision()
     revision_bytes = pr.output_revision()
-    
+
     return revision_bytes
