@@ -28,7 +28,7 @@ stub = modal.Stub(
         "sqlalchemy==1.4.36",
         "psycopg2-binary",
     )
-    .copy(mount=modal.Mount(local_file=Path("./vref.txt"), remote_dir=Path("/root"))),
+    .copy(mount=modal.Mount(local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root"))),
 )
 
 
