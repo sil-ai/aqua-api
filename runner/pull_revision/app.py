@@ -21,7 +21,7 @@ if os.environ.get('MODAL_TEST') == 'TRUE':
 stub = modal.Stub(
     name="pull_revision" + suffix,
     image=modal.Image.debian_slim().pip_install(
-        "numpy",
+        "numpy==1.24.1",
         "pandas==1.4.3",
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
@@ -94,14 +94,11 @@ class PullRevision:
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("my-aws-secret-api"),
+    secret=modal.Secret.from_name("sil-aqua-secrets"),
 )
 def pull_revision(revision_id: int) -> bytes:
-
-    try:
-        pr = PullRevision(revision_id)
-        pr.pull_revision()
-        revision_bytes = pr.output_revision()
-    except (ValueError, OSError, KeyError, AttributeError, FileNotFoundError) as err:
-        logging.error(err)
+    pr = PullRevision(revision_id)
+    pr.pull_revision()
+    revision_bytes = pr.output_revision()
+    
     return revision_bytes
