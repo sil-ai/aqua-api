@@ -21,9 +21,14 @@ def get_text(revision_id: int) -> bytes:
     return modal.container_app.run_pull_rev.call(revision_id)
 
 
-def test_get_text():
+@pytest.mark.parametrize("revision_id", [
+                    10,
+                    # 100,
+                                                    ])
+def test_get_text(revision_id):
     with stub.run():
-        text_bytes = get_text.call(10)
+        text_bytes = get_text.call(revision_id)
+
 
     assert len(text_bytes) == 41899
     assert max([len(line) for line in text_bytes]) > 10
