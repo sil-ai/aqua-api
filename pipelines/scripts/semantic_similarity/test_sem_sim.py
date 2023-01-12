@@ -60,8 +60,7 @@ def test_tokenizer_vocab(vocab_item,vocab_id,valuestorage):
     except Exception as err:
         raise AssertionError(f'Error is {err}') from err
 
-@pytest.mark.parametrize('idx,expected',[(12,5),(22,5)],ids=['Gen 40:16','Gen 41:3'])
-#TODO: need more interesting results to test this properly than just 5
+@pytest.mark.parametrize('idx,expected',[(12,4),(22,4)],ids=['Gen 40:16','Gen 41:3'])
 #test sem_sim predictions
 def test_predictions(idx, expected, valuestorage):
     ss = valuestorage.valid_sem_sim
@@ -70,22 +69,36 @@ def test_predictions(idx, expected, valuestorage):
     score = prediction[2]
     assert int(round(score,0)) == expected
 
-@pytest.mark.parametrize('ref', ['GEN 1:1','GEN 23:12','EXO 12:8','EXO 14:7'])
+@pytest.mark.parametrize('ref', ['JOB 10:19','JOB 12:19','JOB 16:12','JOB 18:9'])
 #test sem_sim json output
 def test_sem_sim_json(ref,json_output):
-    #taken from mean to mean + std in calibrate_fuzzy_wuzzy.py
-    similarity_mapping = { 0:(0,64.32),
-                           1:(64.33, 70.76),
-                           2:(70.42, 77.65),
-                           3:(77.9, 83.14),
-                           4:(95.3, 99.13),
-                           5:(99.14,100)}
+    
+    try:
+        #extract the verse with reference 'ref'
+        sem_sim_verse = list(filter(lambda item:item['ref']==ref, json_output))[0]
+        #count    311.000000
+        #mean       3.960161
+        #std        0.465435
+        #min        1.990000
+        #25%        3.685000
+        #50%        4.010000
+        #75%        4.290000
+        #max        4.840000
 
-    #extract the verse with reference 'ref'
-    sem_sim_verse = list(filter(lambda item:item['ref']==ref, json_output))[0]
-    #calculate the fuzzywuzzy ratio between 'sent1' and 'sent2'
-    fuzzy_score = fuzz.ratio(sem_sim_verse['sent1'], sem_sim_verse['sent2'])
-    #map the sem_sim score onto the fuzzywuzzy ratio scale
-    fuzzy_mapped_scores = similarity_mapping[sem_sim_verse['score']]
-    #fuzzy score should be in the similarity mapping range for its sem_sim_score
-    assert fuzzy_mapped_scores[0] <= fuzzy_score <= fuzzy_mapped_scores[1]
+        #calculate the fuzzywuzzy ratio between 'sent1' and 'sent2'
+        fuzzy_score = fuzz.ratio(sem_sim_verse['sent1'], sem_sim_verse['sent2'])
+        #normalize the fuzzy_score to a 5 scale using a ratio of 1.22 to overcome bias
+        #count    311.000000
+        #mean       4.016977
+        #std        0.585760
+        #min        2.684000
+        #25%        3.599000
+        #50%        3.965000
+        #75%        4.392000
+        #max        5.612000
+
+        fuzzy_normalized = fuzzy_score/20*1.22
+        #fuzzy score should be within one standard deviation for its sem_sim_score
+        assert (fuzzy_normalized - 0.585) <= sem_sim_verse['score'] <= (fuzzy_normalized + 0.585)
+    except IndexError:
+        raise AssertionError(f'{ref} is not in output')

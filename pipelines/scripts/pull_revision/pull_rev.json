@@ -1,0 +1,32 @@
+{
+    "pipeline": {
+      "name": "pull_rev_pipe"
+    },
+    "description": "A pipeline that pulls verses from a revision.",
+    "transform": {
+      "cmd": ["/bin/bash"], 
+      "stdin":
+      [
+        "TARGET=$(python3 -m json.tool config.json | jq -r '.TARGET')",
+        "REFERENCE=$(python3 -m json.tool config.json | jq -r '.REFERENCE')",
+        "python3 pull_rev.py --revision $TARGET --target True --out /pfs/out",
+        "echo Finished Revision $TARGET pull",
+        "python3 pull_rev.py --revision $REFERENCE --out /pfs/out",
+        "echo Finished Reference $REFERENCE pull",
+        "zip -r /pfs/out/${PACH_JOB_ID}.zip /pfs/out",
+        "echo Bundled Target $TARGET and Reference $REFERENCE",
+        "rm /pfs/out/*.txt",
+        "echo Original text files removed"
+      ],
+      "image": "tim/aqua-pipeline-pull-revision",
+      "env": {
+        "AQUA_DB":"postgresql://doadmin:AVNS_G6H58Gqz3c4cZqH@hasura-aqua-do-user-7925792-0.b.db.ondigitalocean.com:25060/defaultdb?sslmode=require"
+      }
+    },
+    "input": {
+      "pfs": {
+        "repo": "pull_rev",
+        "glob": "/*"
+      }
+    }
+  }

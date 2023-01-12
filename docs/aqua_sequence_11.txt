@@ -1,0 +1,32 @@
+title AQuA Assessment v 0.1.1
+
+actor User #blue
+participant API #yellow
+participant Pachyderm #orange
+participant GraphQL (Hasura) #lightgreen
+database SQL (Postgres) #silver
+User->API:RequestAssessment\n(revision_ID,assessment_ type)
+API->Pachyderm:StartAssessmentPipeline\n(type, revision ID)
+API<--Pachyderm:PipelineJobStarted\n(job_ID)
+API->GraphQL (Hasura):Create_assessment\n(in progress, job_ID)
+GraphQL (Hasura)->SQL (Postgres):INSERT assessment;
+GraphQL (Hasura)<--SQL (Postgres):Success
+API<--GraphQL (Hasura):Success
+User<--API:200 OK, Assessment started
+GraphQL (Hasura)->SQL (Postgres):SELECT assessment;
+GraphQL (Hasura)<--SQL (Postgres):Success
+User->API:RequestAssessmentStatus\n(assessment_ID)
+API->GraphQL (Hasura):GetAssessment()
+API<--GraphQL (Hasura):Assessment data
+User<--API:200 OK, Assessment in progress
+Pachyderm->Pachyderm:RunAssessmentPipeline()
+Pachyderm->SQL (Postgres):Bulk INSERT assessment results;
+Pachyderm<--SQL (Postgres):Success
+Pachyderm->GraphQL (Hasura):MutateAssessment (finished, job_ID)
+Pachyderm<--GraphQL (Hasura):Success
+User->API:RequestAssessmentStatus\n(assessment_ID)
+API->GraphQL (Hasura):GetAssessment()
+GraphQL (Hasura)->SQL (Postgres):SELECT assessment
+GraphQL (Hasura)<--SQL (Postgres):Success
+API<--GraphQL (Hasura):Assessment data
+User<--API:200 OK, Assessment finished

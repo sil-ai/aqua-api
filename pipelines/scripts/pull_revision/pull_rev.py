@@ -13,13 +13,14 @@ from db_connect import get_session, VerseText
 class PullRevision:
 
     def __init__(self,):
-        #gets the args of the form --revision 3 --out /path/to/output/file
+        #gets the args of the form --revision 3 --target True --out /path/to/output/file
         args = self.get_args()
         if not (args.revision and args.out):
             raise ValueError('Missing Revision Id or output path')
         #initializes the instance variables
         self.revision_id = args.revision
         self.out = args.out
+        self.target = args.target
         self.revision_text = pd.DataFrame()
         self.vref = self.prepare_vref()
 
@@ -37,6 +38,7 @@ class PullRevision:
         parser = argparse.ArgumentParser(description='Pull and output verses from a revision')
         parser.add_argument('-r','--revision', type=int, help='Revision ID', required=True)
         parser.add_argument('-o','--out', type=str, help='Output path', required=True)
+        parser.add_argument('-t','--target', type=bool, nargs='?',const='False',help='Target revision or not')
         #gets the arguments - will fail if they are of the wrong type
         try:
             return parser.parse_args()
@@ -92,7 +94,8 @@ class PullRevision:
         #saves the output as a txt file with revision_id and unix date
         if not self.revision_text.empty:
             output_text = self.prepare_output()
-            filename = f'{self.revision_id}_{date}.txt'
+            filetype = 'target' if self.target else 'ref'
+            filename = f'{self.revision_id}_{date}_{filetype}.txt'
             filepath = self.out + '/' + filename
             with open(filepath,'w') as outfile:
                 for verse_text in output_text:

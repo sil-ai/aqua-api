@@ -8,6 +8,7 @@ logging.getLogger().setLevel('DEBUG')
 class SplitRevision:
 
     def __init__(self,):
+        #self.logger = get_logger()
         #gets the args of the form --input /path/to/my/input/file --num 100 --out /path/to/output
         args = self.get_args()
         if not (args.input and args.num and args.out):
@@ -16,10 +17,18 @@ class SplitRevision:
         self.input_filepath = args.input
         self.output_filepath = args.out
         self.num = args.num
-        self.revision_df = self.get_revision_file()
+        revision_file = self.get_revision_file()
+        self.revision_list = self.build_revision_list(revision_file)
 
     def get_revision_file(self):
-        return pd.read_csv(self.input_filepath)
+        return open(self.input_filepath).read().splitlines()
+
+    @staticmethod
+    def build_revision_list(revision_file):
+        #TODO: better way to pass vref to these classes
+        vref = open('vref.txt').read().splitlines()
+        #put reference and verse together and strip out missing verses
+        return [item for item in list(zip(vref,revision_file)) if item[1]]
 
     @staticmethod
     def get_args():
@@ -39,11 +48,12 @@ class SplitRevision:
 
     def split_revision(self):
         #split revision list into roughly 'num' chunks
-        logging.info(f'Splitting revision into {self.num} chunks...')
-        return np.array_split(self.revision_df, self.num)
+        split_revision = np.array_split(self.revision_list, self.num)
+        logging.info('Revision is split into %s chunks', self.num)
+        return split_revision
 
     def output_split_revisions(self, split_revisions):
-        regex_string = r'(?!.*\/)(.*)\.csv'
+        regex_string = r'(?!.*\/)(.*)\.txt'
         regex = re.compile(regex_string)
         input_filename = regex.search(self.input_filepath).groups()[0]
         #!!! Note chunk file numbering starts with zero
@@ -51,9 +61,9 @@ class SplitRevision:
             output_filename = f'{self.output_filepath}/{input_filename}_chunk{idx}.csv'
             output_file = pd.DataFrame(split_revisions[idx])
             #outputs the idxth chunk of split_revisions to outputname file
-            #without index and has headers
-            output_file.to_csv(output_filename, index=False, header=True)
-        logging.info(f'Revision chunks written to {self.output_filepath}')
+            #without index or headers
+            output_file.to_csv(output_filename, index=False, header=False)
+        logging.info('Revision is split into %s files', self.num)
 
 if __name__ == '__main__':
     try:

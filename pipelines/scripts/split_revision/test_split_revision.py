@@ -76,7 +76,7 @@ def test_split_revision(valuestorage):
         average_chunk_length = len(sr.revision_df)//sr.num
         assert all([(len(item)==average_chunk_length)\
                or (len(item)==average_chunk_length+1)\
-                  for item in split_revision])
+                  for item in split_revision]), 'Some chunks are of different length'
    except Exception as err:
         raise AssertionError(f'Error is {err}') from err
 
