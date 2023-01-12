@@ -13,7 +13,7 @@ class AssessmentResult(Base):
     id = Column(Integer, primary_key=True)#autoincrements by default
     assessment = Column(Integer, ForeignKey('assessment.id'),
                  nullable=False)
-    # vref = Column(Text, ForeignKey('verseReference.fullVerseId')) #vref format 'Gen 1:1'
+    vref = Column(Text, ForeignKey('verseReference.fullVerseId')) #vref format 'Gen 1:1'
     score = Column(Float)
     flag = Column(Boolean, default=False)
     note = Column(Text)
@@ -47,7 +47,7 @@ class Result(BaseModel):
     assessment_id: int
     vref: str
     score: float
-    flag: bool
+    flag: bool = False
     note: Optional[str] = None
 
 

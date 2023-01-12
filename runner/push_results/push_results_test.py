@@ -27,6 +27,9 @@ if __name__ == "__main__":
         df = pd.read_csv('fixtures/verse_scores.csv')
         results = []
         for _, row in df.iterrows():
+            # print(row['vref'])
+            # print(row['total_score'])
+
             result = Result(
                             assessment_id = 1,
                             vref = row['vref'],
@@ -36,6 +39,6 @@ if __name__ == "__main__":
             results.append(result)
         
         results = Results(results=results)
-        
+        print(results)
         # Push the results to the DB.
         push_results.call(results)
