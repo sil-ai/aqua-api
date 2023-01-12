@@ -6,7 +6,6 @@ stub = modal.Stub(
     name="pull_revision_test",
     image=modal.Image.debian_slim().pip_install(
         "pandas==1.4.3",
-        "gql==3.3.0",
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
         'pytest',

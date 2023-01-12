@@ -23,7 +23,6 @@ stub = modal.Stub(
     image=modal.Image.debian_slim().pip_install(
         "numpy",
         "pandas==1.4.3",
-        "gql==3.3.0",
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
         "psycopg2-binary",
