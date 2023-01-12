@@ -18,15 +18,18 @@ stub = modal.Stub(
 #get the pull_revision function
 stub.pull_revision = modal.Function.from_name("pull_revision", "pull_revision")
 
+
 # The information needed to run a sentence length assessment configuration.
 class SentLengthConfig(BaseModel):
     draft_revision:int
+
 
 # The information corresponding to the given assessment.
 class SentLengthAssessment(BaseModel):
     assessment_id: int
     assessment_type: str
     configuration: SentLengthConfig
+
 
 # Results model to record in the DB.
 class Result(BaseModel):
@@ -36,9 +39,11 @@ class Result(BaseModel):
     flag: bool
     note: str
 
+
 # Results is a list of results to push to the DB
 class Results(BaseModel):
     results: List[Result]
+
 
 #run the assessment
 #for now, average words per sentence
