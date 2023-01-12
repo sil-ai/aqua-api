@@ -13,7 +13,7 @@ def get_results(assessment):
 if __name__ == "__main__":
     with stub.run():
         # Initialize some SentLengthAssessment value.
-        config = SentLengthConfig(draft_revision=1)
+        config = SentLengthConfig(draft_revision=10)
         assessment = SentLengthAssessment(assessment_id=1, assessment_type='sentence-length', configuration=config)
         results = get_results(assessment)
-        print(results)
+        print(results.results[24995:25000])
