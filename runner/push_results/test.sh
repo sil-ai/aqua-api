@@ -2,8 +2,8 @@
 
 export MODAL_TEST=TRUE
 
-modal deploy pull_revision.py
+modal deploy push_results.py
 
-pytest pull_revision_test.py
+python push_results_test.py
 
 # Should we then un-deploy?
