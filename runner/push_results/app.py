@@ -16,7 +16,6 @@ if os.environ.get("MODAL_TEST") == "TRUE":
 stub = modal.Stub(
     name="push_results" + suffix,
     image=modal.Image.debian_slim().pip_install(
-        "pandas==1.4.3",
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
         "psycopg2-binary",
