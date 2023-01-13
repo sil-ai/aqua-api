@@ -115,9 +115,9 @@ def test_get_chapter(client):
             }
 
     version_response = client.get("/revision", params=version_abv)
-    version_fixed = ast.literal_eval(version_response)
+    version_fixed = ast.literal_eval(version_response.text)
 
-    for version_data in version_fixed.text:
+    for version_data in version_fixed:
         if version_data["versionName"] == "delete":
             revision_id = version_data["id"]
 
@@ -128,7 +128,7 @@ def test_get_chapter(client):
             }
 
     response = client.get("/chapter", params=test_chapter)
-    
+
     assert response.status_code == 200
 
 
@@ -138,9 +138,9 @@ def test_get_verse(client):
             }
 
     version_response = client.get("/revision", params=version_abv)
-    version_fixed = ast.literal_eval(version_response)
+    version_fixed = ast.literal_eval(version_response.text)
 
-    for version_data in version_fixed.text:
+    for version_data in version_fixed:
         if version_data["versionName"] == "delete":
             revision_id = version_data["id"]
 
@@ -152,36 +152,37 @@ def test_get_verse(client):
             }
 
     response = client.get("/verse", params=test_version)
-    
+
     assert response.status_code == 200
 
 
-#def test_delete_revision(client):
-#    version_abv = {
-#            "version_abbreviation": "DEL"
-#            }
-#
-#    version_response = client.get("/revision", params=version_abv)
-#    version_fixed = ast.literal_eval(version_response)
-#
-#    for version_data in version_fixed.text:
-#        if version_data["versionName"] == "delete":
-#            revision_id = version_data["id"]
-#
-#    delete_revision_data = {
-#            "revision": revision_id
-#            }
-#
-#    delete_response = client.delete("/revision", params=delete_revision_data)
-#
-#    assert delete_response.status_code == 200
+def test_delete_revision(client):
+    
+    version_abv = {
+           "version_abbreviation": "DEL"
+           }
+
+    version_response = client.get("/revision", params=version_abv)
+    version_fixed = ast.literal_eval(version_response.text)
+
+    for version_data in version_fixed:
+        if version_data["versionName"] == "delete":
+            revision_id = version_data["id"]
+
+    delete_revision_data = {
+            "revision": revision_id
+            }
+
+    delete_response = client.delete("/revision", params=delete_revision_data)
+
+    assert delete_response.status_code == 200
 
 
-# def test_delete_version(client):
-#     test_delete_version = {
-#             "version_abbreviation": "DEL"
-#             }
+def test_delete_version(client):
+    test_delete_version = {
+            "version_abbreviation": "DEL"
+            }
 
-#     test_response = client.delete("/version", params=test_delete_version)
+    test_response = client.delete("/version", params=test_delete_version)
 
-#     assert test_response.status_code == 200
+    assert test_response.status_code == 200
