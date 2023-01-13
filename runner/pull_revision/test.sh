@@ -4,6 +4,6 @@ export MODAL_TEST=TRUE
 
 modal deploy app.py
 
-pytest app_test.py
+pytest
 
 # Should we then un-deploy?
