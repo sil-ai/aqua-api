@@ -28,18 +28,43 @@ class Assessment(Base):
 
     __tablename__ = "assessment"
     id = Column(Integer, primary_key=True)#autoincrements by default
-    revision = Column(Integer, ForeignKey('verseText.bibleRevision'))
-    reference = Column(Integer, ForeignKey('verseText.bibleRevision'))
+    revision = Column(Integer)
+    reference = Column(Integer, ForeignKey('bibleRevision.id'))
     type = Column(Text)
-    start_time = Column(DateTime)
-    end_time = Column(DateTime)
-    status = Column(Enum, ForeignKey('assessment_status.status'))
+    finished = Column(Boolean)
+    time_finished = (Column(DateTime))
 
     def __repr__(self):
         return (
             f"Assessment({self.id}) - {self.type} "
             f"revision={self.revision} reference={self.reference}, finished={self.finished}"
         )
+
+
+class VerseReference(Base):
+    __tablename__ = 'verseReference'
+    fullVerseId = Column(Text, primary_key=True)
+    number = Column(Integer)
+    chapter = Column(Text, ForeignKey('chapterReference.fullChapterId'))
+
+
+class ChapterReference(Base):
+    __tablename__ = 'chapterReference'
+    fullChapterId = Column(Text, primary_key=True)
+    number = Column(Integer)
+    bookReference = Column(Text, ForeignKey('bookReference.abbreviation'))
+
+
+class BookReference(Base):
+    __tablename__ = 'bookReference'
+    abbreviation = Column(Text, primary_key=True)
+    name = Column(Text)
+    number = Column(Integer)
+
+
+
+
+
 
 
 # Results model to record in the DB.
