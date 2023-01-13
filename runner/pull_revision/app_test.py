@@ -41,4 +41,4 @@ def test_get_text(revision_id):
 def test_record_not_found():
     with stub.run():
         with pytest.raises(RecordNotFoundError):
-            get_text.call(100)
+            get_text.call(9999999)
