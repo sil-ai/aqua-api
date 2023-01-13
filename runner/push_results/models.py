@@ -21,7 +21,7 @@ class AssessmentResult(Base):
 
     def __repr__(self):
         return (
-            f"Assessment Result({self.id}) -> {self.assessment}/{self.ref}\n"
+            f"Assessment Result({self.id}) -> {self.assessment}/{self.vref}\n"
             f"score={self.score} flag={self.flag}, note={self.note}"
         )
 

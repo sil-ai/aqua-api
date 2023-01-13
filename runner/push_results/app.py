@@ -32,21 +32,21 @@ class PushResults:
         self.session.close()
 
     def insert(self, results: Results):
-        
-        self.create_bulk_results(results)
-    
+        self.results = results
+        self.create_bulk_results()
 
         try:
-            ids = self.bulk_insert_items(self.assessment_results)
+            ids = self.bulk_insert_items()
             self.session.commit()
+
             return 200, ids
         except (IntegrityError, AssertionError) as err:
             self.session.rollback()
             return 500, err
     
-    def create_bulk_results(self, results: Results):
+    def create_bulk_results(self):
         self.assessment_results = []
-        for result in results.results:
+        for result in self.results.results:
             ar = AssessmentResult(
             assessment=result.assessment_id,
             vref=result.vref,
@@ -55,10 +55,11 @@ class PushResults:
             )
             self.assessment_results.append(ar)
 
-    def bulk_insert_items(self, assessment_results):
-        self.session.bulk_save_objects(assessment_results)
+    def bulk_insert_items(self):
+        self.session.bulk_save_objects(self.assessment_results, return_defaults=True)
         self.session.flush()
-        ids = [ar.id for ar in assessment_results]
+        ids = [ar.id for ar in self.assessment_results]
+
         return ids
     
     def delete(self, ids: List[int]):

@@ -66,3 +66,6 @@ def test_push_wrong_data_type():
                 score="abc123",
                 flag=False,
             )
+
+if __name__ == "__main__":
+    test_push_df_rows()
