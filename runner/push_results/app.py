@@ -1,21 +1,16 @@
-import logging
 import os
 
-import pandas as pd
 import modal
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.schema import MetaData
-from sqlalchemy.engine import reflection
 
 from db_connect import get_session
-from models import Assessment, AssessmentResult, Result, Results
-
+from models import AssessmentResult, Results
 
 
 # Manage suffix on modal endpoint if testing.
-suffix = ''
-if os.environ.get('MODAL_TEST') == 'TRUE':
-    suffix = '_test'
+suffix = ""
+if os.environ.get("MODAL_TEST") == "TRUE":
+    suffix = "_test"
 
 
 stub = modal.Stub(
@@ -29,14 +24,12 @@ stub = modal.Stub(
 )
 
 
-class PushResults():
-
+class PushResults:
     def __init__(self, results: Results):
         self.results = results.results
 
     def __del__(self):
         self.session.close()
-
 
     def insert(self):
         self.engine, self.session = next(get_session())
@@ -45,17 +38,17 @@ class PushResults():
             for result in self.results:
                 self.insert_item(result)
             self.session.commit()
-            return 200, 'OK'
+            return 200, "OK"
         except (IntegrityError, AssertionError) as err:
             self.session.rollback()
             return 500, err
 
     def insert_item(self, result):
         ar = AssessmentResult(
-                    assessment = result.assessment_id,
-                    vref = result.vref,
-                    score = result.score,
-                    flag = False,
+            assessment=result.assessment_id,
+            vref=result.vref,
+            score=result.score,
+            flag=False,
         )
         self.session.add(ar)
 

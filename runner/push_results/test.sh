@@ -2,6 +2,6 @@
 
 export MODAL_TEST=TRUE
 
-modal deploy push_results.py
+modal deploy app.py
 
 pytest
