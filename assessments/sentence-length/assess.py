@@ -10,13 +10,12 @@ suffix = ''
 if os.environ.get('MODAL_TEST') == 'TRUE':
     suffix = '_test'
 
-
 # Define the modal stub.
 stub = modal.Stub(
     "sentence-length" + suffix,
     image=modal.Image.debian_slim().pip_install(
         'pydantic',
-        'pandas'
+        'pandas',
     )
     .copy(mount=modal.Mount(local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root"))),
 )
@@ -66,10 +65,6 @@ def get_words_per_sentence(text):
     sentences = text.split('.')
     avg_words = len(words) / len(sentences)
 
-    #handle edge case where line is blank or <range>
-    if avg_words < 2:
-        avg_words = 0
-
     #round to 2 decimal places
     avg_words = round(avg_words, 2)
     
@@ -79,6 +74,7 @@ def get_words_per_sentence(text):
 #for now, average words per sentence
 @stub.function
 def assess(assessment: SentLengthAssessment):
+
     #pull the revision
     rev_num = assessment.configuration.draft_revision
     lines = modal.container_app.pull_revision.call(rev_num)

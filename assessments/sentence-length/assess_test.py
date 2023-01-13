@@ -1,6 +1,5 @@
 import modal
 from assess import SentLengthAssessment, SentLengthConfig
-import pytest
 import pandas as pd
 
 stub = modal.Stub(
@@ -9,6 +8,7 @@ stub = modal.Stub(
         'pydantic',
         'pytest',
         'pandas',
+        'requests',
     ),
 )
 stub.assess = modal.Function.from_name("sentence-length", "assess")
@@ -19,7 +19,22 @@ def get_results(assessment):
     return results
 
 
-def test_assess():
+def test_assess_draft_10():
+    with stub.run():
+        # Initialize some SentLengthAssessment value.
+        config = SentLengthConfig(draft_revision=10)
+        assessment = SentLengthAssessment(assessment_id=1, assessment_type='sentence-length', configuration=config)
+        results = get_results.call(assessment)
+
+        #assert the length of results is 41899
+        assert len(results.results) == 41899
+
+        #assert the first verse is empty and has a score of 0.0
+        assert results.results[0].score == 0.0
+        assert results.results[0].flag == False
+        assert results.results[0].verse == ''
+
+def test_assess_draft_11():
     with stub.run():
         # Initialize some SentLengthAssessment value.
         config = SentLengthConfig(draft_revision=11)
@@ -44,7 +59,7 @@ def test_assess():
 
 #main function to print results, if needed
 if __name__ == "__main__":
-    results = test_assess()
+    results = test_assess_draft_11()
     #GEN 1:1
     print(results.results[0])
     #LUK 1:34
