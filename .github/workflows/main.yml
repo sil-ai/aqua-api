@@ -33,18 +33,6 @@ jobs:
         KEY_VAULT: ${{ secrets.KEY_VAULT }}
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
 
-    - name: Build Pipelines
-      run: make build-pipelines
-      env:
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
-        AQUA_DB: ${{ secrets.AQUA_DB }}
-      
-    - name: Test Pipelines
-      run: make test-pipelines
-      env:
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
-        AQUA_DB: ${{ secrets.AQUA_DB }}
-
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
       with:
@@ -58,10 +46,5 @@ jobs:
 
     - name: Push API
       run: make push-branch
-      env:
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
-
-    - name: Push Pipelines
-      run: make push-pipelines
       env:
         REGISTRY: ${{ secrets.AWS_REGISTRY }}

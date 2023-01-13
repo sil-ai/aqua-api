@@ -31,15 +31,3 @@ jobs:
         FAIL_KEY: ${{ secrets.FAIL_KEY }}
         KEY_VAULT: ${{ secrets.KEY_VAULT }}
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
-
-    - name: Build Pipelines
-      run: make build-pipelines
-      env:
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
-        AQUA_DB: ${{ secrets.AQUA_DB }}
-      
-    - name: Test Pipelines
-      run: make test-pipelines
-      env:
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
-        AQUA_DB: ${{ secrets.AQUA_DB }}
