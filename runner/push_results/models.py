@@ -34,7 +34,7 @@ class Assessment(Base):
     reference = Column(Integer, ForeignKey("bibleRevision.id"))
     type = Column(Text)
     finished = Column(Boolean)
-    time_finished = Column(DateTime)
+    time_inserted = Column(DateTime)
 
     def __repr__(self):
         return (

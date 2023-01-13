@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 import modal
 from sqlalchemy.exc import IntegrityError
@@ -24,32 +25,47 @@ stub = modal.Stub(
 
 
 class PushResults:
-    def __init__(self, results: Results):
-        self.results = results.results
+    def __init__(self):
+        self.engine, self.session = next(get_session())
 
     def __del__(self):
         self.session.close()
 
-    def insert(self):
-        self.engine, self.session = next(get_session())
+    def insert(self, results: Results):
+        
+        self.create_bulk_results(results)
+    
 
         try:
-            for result in self.results:
-                self.insert_item(result)
+            ids = self.bulk_insert_items(self.assessment_results)
             self.session.commit()
-            return 200, "OK"
+            return 200, ids
         except (IntegrityError, AssertionError) as err:
             self.session.rollback()
             return 500, err
-
-    def insert_item(self, result):
-        ar = AssessmentResult(
+    
+    def create_bulk_results(self, results: Results):
+        self.assessment_results = []
+        for result in results.results:
+            ar = AssessmentResult(
             assessment=result.assessment_id,
             vref=result.vref,
             score=result.score,
             flag=False,
-        )
-        self.session.add(ar)
+            )
+            self.assessment_results.append(ar)
+
+    def bulk_insert_items(self, assessment_results):
+        self.session.bulk_save_objects(assessment_results)
+        self.session.flush()
+        ids = [ar.id for ar in assessment_results]
+        return ids
+    
+    def delete(self, ids: List[int]):
+        self.session.query(AssessmentResult).filter(AssessmentResult.id.in_(ids)).delete(synchronize_session='fetch')
+        self.session.commit()
+
+
 
 
 @stub.function(
@@ -57,6 +73,16 @@ class PushResults:
     secret=modal.Secret.from_name("aqua-db"),
 )
 def push_results(results: Results):
-    pr = PushResults(results)
-    response = pr.insert()
-    return response
+    pr = PushResults()
+    response, ids = pr.insert(results)
+    return response, ids
+
+
+@stub.function(
+    timeout=600,
+    secret=modal.Secret.from_name("aqua-db"),
+)
+def delete_results(ids: List[int]):
+    pr = PushResults()
+    pr.delete(ids)
+    return 200, 'OK'
