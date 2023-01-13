@@ -54,7 +54,7 @@ class PushResults:
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("sil-aqua-secrets"),
+    secret=modal.Secret.from_name("aqua-db"),
 )
 def push_results(results: Results):
     pr = PushResults(results)
