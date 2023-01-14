@@ -3,7 +3,7 @@ import os
 import json
 
 import modal
-from fastapi import UploadFile, BackgroundTasks, JSONResponse
+from fastapi import UploadFile, BackgroundTasks
 
 # Manage suffix on modal endpoint if testing.
 suffix = ""
@@ -13,7 +13,7 @@ if os.environ.get("MODAL_TEST") == "TRUE":
 
 stub = modal.Stub(
     name="runner" + suffix,
-    image=modal.Image.debian_slim().pip_install(),
+    image=modal.Image.debian_slim().pip_install()
 )
 assessment_types = [
     "dummy",  # List all assessment types here
@@ -41,10 +41,10 @@ async def assessment_runner(file: UploadFile, background_tasks: BackgroundTasks)
     config = json.loads(config_file)
     assessment_config = AssessmentConfig(**config)
     background_tasks.add_task(run_assessment_runner, assessment_config)
-    return JSONResponse(
-        status_code=200,
-        content="Assessment runner started in the background, will take approximately 20 minutes to finish.",
-    )
+    return {
+        'status_code': 200,
+        'content': "Assessment runner started in the background, will take approximately 20 minutes to finish.",
+    }
 
 
 if __name__ == "__main__":
