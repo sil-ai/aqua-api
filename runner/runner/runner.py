@@ -25,13 +25,13 @@ for assessment_type in assessment_types:
 class AssessmentConfig(BaseModel):
     assessment: int
     assessment_type: str  # Or Enum?
-    config_details: dict  # This will later be validated as a BaseModel by the specific assessment
+    configuration: dict  # This will later be validated as a BaseModel by the specific assessment
 
 
 @stub.function(timeout=7200)
 def run_assessment_runner(assessment_config: AssessmentConfig):
     return modal.container_app[assessment_config.assessment_type].call(
-        assessment_config.config_details
+        assessment_config.configuration
     )
 
 
