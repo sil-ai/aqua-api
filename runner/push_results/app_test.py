@@ -15,7 +15,9 @@ stub = modal.Stub(
     ),
 )
 stub.run_push_results = modal.Function.from_name("push_results_test", "push_results")
-stub.run_delete_results = modal.Function.from_name("push_results_test", "delete_results")
+stub.run_delete_results = modal.Function.from_name(
+    "push_results_test", "delete_results"
+)
 
 
 @stub.function
@@ -66,6 +68,7 @@ def test_push_wrong_data_type():
                 score="abc123",
                 flag=False,
             )
+
 
 if __name__ == "__main__":
     test_push_df_rows()

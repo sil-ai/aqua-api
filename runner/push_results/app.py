@@ -43,15 +43,15 @@ class PushResults:
         except (IntegrityError, AssertionError) as err:
             self.session.rollback()
             return 500, err
-    
+
     def create_bulk_results(self):
         self.assessment_results = []
         for result in self.results.results:
             ar = AssessmentResult(
-            assessment=result.assessment_id,
-            vref=result.vref,
-            score=result.score,
-            flag=False,
+                assessment=result.assessment_id,
+                vref=result.vref,
+                score=result.score,
+                flag=False,
             )
             self.assessment_results.append(ar)
 
@@ -61,12 +61,12 @@ class PushResults:
         ids = [ar.id for ar in self.assessment_results]
 
         return ids
-    
+
     def delete(self, ids: List[int]):
-        self.session.query(AssessmentResult).filter(AssessmentResult.id.in_(ids)).delete(synchronize_session='fetch')
+        self.session.query(AssessmentResult).filter(
+            AssessmentResult.id.in_(ids)
+        ).delete(synchronize_session="fetch")
         self.session.commit()
-
-
 
 
 @stub.function(
@@ -86,4 +86,4 @@ def push_results(results: Results):
 def delete_results(ids: List[int]):
     pr = PushResults()
     pr.delete(ids)
-    return 200, 'OK'
+    return 200, "OK"
