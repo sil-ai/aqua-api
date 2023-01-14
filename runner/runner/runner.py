@@ -16,7 +16,7 @@ stub = modal.Stub(
     image=modal.Image.debian_slim().pip_install(),
 )
 assessment_types = [
-    "dummy",
+    "dummy",  # List all assessment types here
 ]
 for assessment_type in assessment_types:
     stub[assessment_type] = modal.Function.from_name(assessment_type, assessment_type)
