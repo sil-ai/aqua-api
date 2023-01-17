@@ -5,7 +5,6 @@ logging.getLogger().setLevel('INFO')
 class MergeRevision:
 
     def __init__(self,draft_id, draft_verses, reference_id, reference_verses):
-        #expecting revision in the format {'revision_id':[revision verses as list]}
         self.draft_id = draft_id
         self.draft = draft_verses
         self.reference_id = reference_id

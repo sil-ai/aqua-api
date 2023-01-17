@@ -2,14 +2,14 @@ import os
 import modal
 from models import Result, Results, SemSimAssessment, SemSimConfig
 import logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 #Manage suffix on modal endpoint if testing
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "-test"
+    suffix = "_test"
 
-stub = modal.Stub("semantic-similarity" + suffix,
+stub = modal.Stub("semantic_similarity" + suffix,
                      image = modal.Image.debian_slim().pip_install_from_requirements(
                       "requirements.txt"
                      ).copy(modal.Mount(
@@ -48,7 +48,8 @@ class SemanticSimilarity:
         self.semsim_tokenizer = BertTokenizerFast.from_pretrained('setu4993/LaBSE')
         logging.info('Tokenizer initialized...')
 
-    @stub.function(image=semsim_image,cpu=4, concurrency_limit=5)
+    #??? May want to raise the concurrency limit
+    @stub.function(image=semsim_image,cpu=4, concurrency_limit=2)
     def predict(self, sent1, sent2, ref, assessment_id, precision=2):
         import torch
         """
@@ -85,7 +86,6 @@ def get_text(rev_id):
 @stub.function
 def merge(draft_id, draft_verses, reference_id, reference_verses):
     from merge_revision import MergeRevision
-
     mr = MergeRevision(draft_id, draft_verses, reference_id, reference_verses)
     return mr.merge_revision()
 
@@ -101,7 +101,7 @@ def assess(assessment: SemSimAssessment)-> Results:
                     reference)
     sem_sim = SemanticSimilarity()
     #TODO: remove delimiter later
-    offset=10
+    offset=105
     sents1 = df['draft'].to_list()[:offset]
     sents2 = df['reference'].to_list()[:offset]
     refs = df.index.to_list()[:offset]
@@ -114,3 +114,5 @@ if __name__ == '__main__':
         config = SemSimConfig(draft_revision=1, reference_revision=2)
         assessment = SemSimAssessment(assessment_id=1, configuration=config)
         results = assess.call(assessment)
+        import pickle
+        pickle.dump(results,open('results.pkl','wb'))
