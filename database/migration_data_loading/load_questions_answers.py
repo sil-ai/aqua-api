@@ -96,7 +96,7 @@ def load_qas(qa_df, upsert_method, db_engine):
 
 def main():
     # initialize SQL engine
-    new_db_conn = os.getenv("NEW_DB") + "/" + os.getenv("NEW_DB_NAME")
+    new_db_conn = os.getenv("NEW_DB")
     db_engine = db.create_engine(new_db_conn)
     meta = db.MetaData(db_engine)
     upsert_method = create_upsert_method(meta, None)
