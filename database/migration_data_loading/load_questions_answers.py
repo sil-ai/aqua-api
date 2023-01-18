@@ -46,7 +46,7 @@ def dataframe_creation():
            }
 
     for files in os.listdir(dir):
-        language = files[0:3]
+        language = files.split('-')[0]
     
         with open(os.path.join(dir, files), "r") as f:
             data = json.load(f)
