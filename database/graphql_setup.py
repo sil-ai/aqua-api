@@ -10,7 +10,6 @@ from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
 new_headers = {"x-hasura-admin-secret": os.getenv("NEW_HASURA_SECRET")}
-new_db_name = os.getenv("NEW_DB_NAME")
 db_conn = os.getenv("NEW_DB")
 new_db_conn = os.getenv("NEW_DB") + "/" + new_db_name
 
@@ -48,14 +47,6 @@ sql_response = requests.post(sql_fetch_url, json=payload, headers=headers)
 
 con = psycopg2.connect(db_conn)
 
-con.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT) # <-- ADD THIS LINE
-
-cur = con.cursor()
-
-cur.execute(sql.SQL("CREATE DATABASE {}").format(
-        sql.Identifier(new_db_name))
-        )
-
 db_con = {
     "type": "pg_add_source",
     "args": {
@@ -77,7 +68,7 @@ db_con = {
 sql_query = {
     "type": "run_sql", 
     "args": {
-        "source": new_db_name, 
+        "source": "default", 
         "sql": sql_response.text
         }
     }

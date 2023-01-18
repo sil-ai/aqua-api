@@ -29,12 +29,3 @@ push-branch:
 push-release:
 	docker tag ${REGISTRY}/${IMAGENAME}:latest ${REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
 	docker push ${REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
-
-build-pipelines:
-	cd pipelines && ./build.sh
-
-test-pipelines:
-	cd pipelines && ./build.sh
-
-push-pipelines:
-	cd pipelines && ./push.sh
