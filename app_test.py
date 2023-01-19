@@ -1,18 +1,13 @@
 from pathlib import Path
 import os
-from datetime import date
 import ast
 
 import app
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
-import numpy as np
 
-import queries
-import bible_loading
 
 
 headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
@@ -26,7 +21,7 @@ def test_key_auth():
     assert err.value.status_code == 401
 
     response = app.api_key_auth(os.getenv("TEST_KEY"))
-    assert response == True
+    assert response is True
 
 
 # Create a generator that when called gives
