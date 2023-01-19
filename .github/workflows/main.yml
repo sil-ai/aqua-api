@@ -59,4 +59,4 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install ruff
-        ruff --disable E501 --format=github .
+        ruff --ignore E501 --format=github .
