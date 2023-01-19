@@ -17,6 +17,7 @@ stub = modal.Stub(name="runner" + suffix, image=modal.Image.debian_slim().pip_in
 
 class AssessmentType(Enum):
     dummy = 1
+    sentence_length = 2
 
 
 for assessment_type in AssessmentType:

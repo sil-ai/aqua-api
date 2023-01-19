@@ -12,7 +12,7 @@ if os.environ.get('MODAL_TEST') == 'TRUE':
 
 # Define the modal stub.
 stub = modal.Stub(
-    "sentence-length" + suffix,
+    "sentence_length" + suffix,
     image=modal.Image.debian_slim().pip_install(
         'pydantic',
         'pandas',

@@ -1,5 +1,5 @@
 #!/bin/bash
 
-MODAL_TEST=TRUE modal deploy assess.py
+MODAL_TEST=TRUE modal deploy sentence_length.py
 
-pytest assess_test.py
+pytest sentence_length_test.py
