@@ -38,13 +38,13 @@ class RecordNotFoundError(Exception):
 class PullRevision:
     def __init__(self, revision_id: int):
         import pandas as pd
-        import numpy as np
         self.revision_id = revision_id
         self.revision_text = pd.DataFrame()
         self.vref = self.prepare_vref()
 
     @staticmethod
     def prepare_vref():
+        import pandas as pd
         try:
             return pd.Series(
                 open("/root/vref.txt").read().splitlines(), name="verseReference"
@@ -57,6 +57,7 @@ class PullRevision:
         return len(refs) != len(set(refs))
 
     def pull_revision(self):
+        import pandas as pd
         __, session = next(get_session())
         logging.info("Loading verses from Revision %s...", self.revision_id)
         revision_verses = pd.read_sql(
@@ -79,6 +80,8 @@ class PullRevision:
             )
 
     def prepare_output(self):
+        import pandas as pd
+        import numpy as np
         # outer merges the vref list on the revision verses
         all_verses = pd.merge(
             self.revision_text, self.vref, on="verseReference", how="outer"
