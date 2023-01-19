@@ -1,6 +1,6 @@
 def list_versions_query():
     list_version = """
-                query MyQuery {
+                query {
                   bibleVersion {
                     id
                     name
@@ -24,7 +24,7 @@ def add_version_query(name, isoLanguage, isoScript,
                 backTranslation, machineTranslation):
     
     add_version = """
-                  mutation MyMutation {{
+                  mutation {{
                     insert_bibleVersion(objects: {{
                       name: {}, isoLanguage: {}, isoScript: {}, 
                       abbreviation: {}, rights: {}, 
@@ -52,7 +52,7 @@ def add_version_query(name, isoLanguage, isoScript,
 
 def check_version_query():
     check_version = """
-                    query MyQuery {
+                    query {
                       bibleVersion {
                         abbreviation
                       }
@@ -64,7 +64,7 @@ def check_version_query():
 
 def delete_bible_version(version_abbv):
     delete_version = """
-                     mutation MyMutation {{
+                     mutation {{
                        delete_bibleVersion(where: {{
                          abbreviation: {{
                            _eq: {}
@@ -81,9 +81,28 @@ def delete_bible_version(version_abbv):
     return delete_version
 
 
+def delete_revision_mutation(bibleRevision):
+    delete_revision = """
+                    mutation {{
+                      delete_bibleRevision(where: {{
+                        id: {{
+                          _eq: {}
+                        }}
+                      }}) {{
+                        affected_rows
+                        returning {{
+                          id
+                        }}
+                      }}
+                    }}
+                    """.format(bibleRevision)
+
+    return delete_revision
+
+
 def delete_verses_mutation(bibleRevision):
     delete_verses = """ 
-                    mutation MyMutation {{
+                    mutation {{
                       delete_verseText(where: {{
                         bibleRevision: {{
                           _eq: {}
@@ -97,25 +116,9 @@ def delete_verses_mutation(bibleRevision):
     return delete_verses
 
 
-def delete_revisions_mutation(bibleRevision):
-    delete_revision = """
-                    mutation MyMutation {{
-                      delete_bibleRevision(where: {{
-                        id: {{
-                          _eq: {}
-                        }}
-                      }}) {{
-                        affected_rows
-                      }}
-                    }}
-                    """.format(bibleRevision)
-
-    return delete_revision
-
-
 def insert_bible_revision(version, date, published):
     bible_revise = """
-                mutation MyMutation {{
+                mutation {{
                   insert_bibleRevision(objects: {{
                     bibleVersion: {}, date: {}, published: {}
                     }}) {{
@@ -131,7 +134,7 @@ def insert_bible_revision(version, date, published):
 
 def fetch_bible_version(abbreviation):
     version_id = """
-                query MyQuery {{
+                query {{
                   bibleVersion(where: {{
                     abbreviation: {{
                       _eq: {}
@@ -147,7 +150,7 @@ def fetch_bible_version(abbreviation):
 
 def list_revisions_query(bibleVersion):
     list_revisions = """
-                  query MyQuery {{
+                  query {{
                     bibleRevision(where: {{
                       bibleVersionByBibleversion: {{
                         abbreviation: {{
@@ -169,7 +172,7 @@ def list_revisions_query(bibleVersion):
 
 def get_chapter_query(revision, chapterReference):
     get_chapter = """
-                query MyQuery {{
+                query {{
                   verseText(where: {{
                     bibleRevision: {{
                       _eq: {}
@@ -200,7 +203,7 @@ def get_chapter_query(revision, chapterReference):
 
 def get_verses_query(revision, verseReference):
     get_verses = """
-              query MyQuery {{
+              query {{
                 verseText(where: {{
                   bibleRevision: {{
                     _eq: {}
