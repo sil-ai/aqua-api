@@ -15,7 +15,7 @@ modal deploy assessments/dummy/dummy.py || exit 1
 # Test all Modal apps.
 for dir in runner assessments
 do 
-for app in $dir*/
+for app in $dir/*/
 do
 echo ""
 echo ""
