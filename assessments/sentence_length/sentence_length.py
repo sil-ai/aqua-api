@@ -75,9 +75,11 @@ def get_words_per_sentence(text):
 @stub.function
 def sentence_length(configuration: dict):
     print(configuration)
-    assessment = SentLengthAssessment(configuration)
+    assessment = SentLengthConfig(**configuration)
+    print(assessment)
+    # assessment = SentLengthAssessment(configuration)
     #pull the revision
-    rev_num = assessment.configuration.draft_revision
+    rev_num = assessment.draft_revision
     lines = modal.container_app.pull_revision.call(rev_num)
     lines = [line.strip() for line in lines]
 
