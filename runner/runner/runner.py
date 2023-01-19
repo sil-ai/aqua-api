@@ -35,7 +35,7 @@ class AssessmentConfig(BaseModel):
 @stub.function(timeout=7200)
 def run_assessment_runner(assessment_config: AssessmentConfig):
     return modal.container_app[assessment_config.assessment_type.name].call(
-        assessment_config.configuration
+        assessment_id = assessment_config.assessment, configuration = assessment_config.configuration
     )
 
 
