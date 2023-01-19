@@ -1,20 +1,15 @@
 import json
 import os
 from datetime import date, datetime
-from typing import List, Union, Optional
+from typing import Union, Optional
 from tempfile import NamedTemporaryFile
 from enum import Enum
 
-from fastapi import FastAPI, Body, Security, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi import File, UploadFile
-from fastapi.security.api_key import APIKeyQuery, APIKeyCookie, APIKeyHeader, APIKey
-from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.security import OAuth2PasswordBearer
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
-from starlette.status import HTTP_403_FORBIDDEN
-from starlette.responses import RedirectResponse, JSONResponse
-import pandas as pd
 import numpy as np
 from pydantic import BaseModel
 
@@ -52,7 +47,7 @@ class AssessmentType(Enum):
 class Assessment(BaseModel):
     revision_id: int
     type: AssessmentType
-    revision: Optional[int]
+    reference: Optional[int]
 
 
 # Creates the FastAPI app object
@@ -109,17 +104,17 @@ def create_app():
         isoScpt_fixed = '"' + isoScript + '"'
         abbv_fixed = '"' + abbreviation + '"'
         
-        if rights == None:
+        if rights is None:
             rights_fixed = "null"
         else:
             rights_fixed = '"' + rights + '"'
 
-        if forwardTranslation == None:
+        if forwardTranslation is None:
             fT = "null"
         else:
             fT = forwardTranslation
 
-        if backTranslation == None:
+        if backTranslation is None:
             bT = "null"
         else:
             bT = backTranslation
@@ -167,15 +162,14 @@ def create_app():
             revision_query = gql(fetch_revisions)
             revision_result = client.execute(revision_query)
 
-            revisions_data = []
             for revision in revision_result["bibleRevision"]:
                 delete_verses = queries.delete_verses_mutation(revision["id"])
                 verses_mutation = gql(delete_verses)
-                verse_deletion = client.execute(verses_mutation)
+                client.execute(verses_mutation)
 
                 delete_revision = queries.delete_revisions_mutation(revision["id"])
                 revision_mutation = gql(delete_revision)
-                revision_deletion = client.execute(revision_mutation)
+                client.execute(revision_mutation)
 
             version_delete_mutation = gql(delete_version)
             version_delete_result = client.execute(version_delete_mutation)        
@@ -369,18 +363,27 @@ def create_app():
         config_file = await file.read()
         with open(config_file) as f:
             config = json.loads(f)
-        revision = 
+        revision_id = config['revision']
         assessment_type = config['type']
+        reference = config.get('reference', None)
+        assessment = Assessment(
+                    revision_id=revision_id, 
+                    assessment_type=assessment_type, 
+                    reference=reference)
         assessment_type_fixed = '"' + assessment_type +  '"'
         requested_time = '"' + datetime.now().isoformat() + '"'
         status = '"' + 'queued' + '"'
-        if reference == None:
+        if reference is None:
             reference = "null"
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
             new_assessment = queries.add_assessment_query(
-                    revision, assessment_type_fixed, requested_time, status, reference,
+                    revision_id, 
+                    assessment_type_fixed, 
+                    requested_time, 
+                    status, 
+                    reference,
                     )
             mutation = gql(new_assessment)
 
