@@ -35,7 +35,7 @@ def test_assess_draft_10():
     with stub.run():
         # Initialize some SentLengthAssessment value.
         config = SentLengthConfig(draft_revision=10)
-        assessment = SentLengthAssessment(assessment_id=1, assessment_type='sentence_length', configuration=config)
+        assessment = SentLengthAssessment(assessment_id=2, assessment_type='sentence_length', configuration=config)
         results = get_results.call(assessment)
 
         #assert the length of results is 41899
@@ -50,7 +50,7 @@ def test_assess_draft_11():
     with stub.run():
         # Initialize some SentLengthAssessment value.
         config = SentLengthConfig(draft_revision=11)
-        assessment = SentLengthAssessment(assessment_id=1, assessment_type='sentence_length', configuration=config)
+        assessment = SentLengthAssessment(assessment_id=2, assessment_type='sentence_length', configuration=config)
         results = get_results.call(assessment)
 
     #assert the length of results is 41899
