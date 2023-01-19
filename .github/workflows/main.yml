@@ -50,7 +50,7 @@ jobs:
       run: ./modal_test.sh
       env:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-        MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_SECRET }}
+        MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
 
     - name: Login to Amazon ECR
       id: login-ecr
@@ -65,4 +65,4 @@ jobs:
       run: ./modal_deploy.sh
       env:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-        MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_SECRET }}
+        MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
