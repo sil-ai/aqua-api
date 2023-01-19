@@ -1,5 +1,5 @@
 import modal
-from sentence_length import SentLengthAssessment, SentLengthConfig
+from sentence_length import SentLengthConfig
 import pandas as pd
 import requests
 from pathlib import Path
@@ -23,20 +23,19 @@ stub = modal.Stub(
         'requests',
     ),
 )
-stub.assess = modal.Function.from_name("sentence_length", "assess")
+stub.sentence_length_test = modal.Function.from_name("sentence_length_test", "sentence_length")
 
 @stub.function
-def get_results(assessment):
-    results = modal.container_app.assess.call(assessment)
+def get_results(assessment_id, configuration):
+    results = modal.container_app.sentence_length_test.call(assessment_id, configuration)
     return results
 
 
 def test_assess_draft_10():
     with stub.run():
         # Initialize some SentLengthAssessment value.
-        config = SentLengthConfig(draft_revision=10)
-        assessment = SentLengthAssessment(assessment_id=2, assessment_type='sentence_length', configuration=config)
-        results = get_results.call(assessment)
+        config = {'draft_revision': 10}     # This will then be validated as a SentLengthConfig in the app
+        results = get_results.call(assessment_id=2, configuration=config)
 
         #assert the length of results is 41899
         assert len(results.results) == 41899
@@ -49,9 +48,8 @@ def test_assess_draft_10():
 def test_assess_draft_11():
     with stub.run():
         # Initialize some SentLengthAssessment value.
-        config = SentLengthConfig(draft_revision=11)
-        assessment = SentLengthAssessment(assessment_id=2, assessment_type='sentence_length', configuration=config)
-        results = get_results.call(assessment)
+        config = {'draft_revision': 11}     # This will then be validated as a SentLengthConfig in the app
+        results = get_results.call(assessment_id=2, configuration=config)
 
     #assert the length of results is 41899
     assert len(results.results) == 41899

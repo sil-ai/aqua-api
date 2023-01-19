@@ -28,13 +28,6 @@ class SentLengthConfig(BaseModel):
     draft_revision:int
 
 
-# The information corresponding to the given assessment.
-class SentLengthAssessment(BaseModel):
-    assessment_id: int
-    assessment_type: str
-    configuration: SentLengthConfig
-
-
 # Results model to record in the DB.
 class Result(BaseModel):
     assessment_id: int
@@ -73,13 +66,11 @@ def get_words_per_sentence(text):
 #run the assessment
 #for now, average words per sentence
 @stub.function
-def sentence_length(configuration: dict):
-    print(configuration)
-    assessment = SentLengthConfig(**configuration)
-    print(assessment)
-    # assessment = SentLengthAssessment(configuration)
+def sentence_length(assessment_id: int, configuration: dict):
+    assessment_config = SentLengthConfig(**configuration)
+    
     #pull the revision
-    rev_num = assessment.draft_revision
+    rev_num = assessment_config.draft_revision
     lines = modal.container_app.pull_revision.call(rev_num)
     lines = [line.strip() for line in lines]
 
@@ -109,6 +100,6 @@ def sentence_length(configuration: dict):
     #add to results
     results = []
     for index, row in df.iterrows():
-        results.append(Result(assessment_id=assessment.assessment_id, verse=row['verse'], score=row['score'], flag=False, note=''))
+        results.append(Result(assessment_id=assessment_id, verse=row['verse'], score=row['score'], flag=False, note=''))
 
     return Results(results=results)
