@@ -1,17 +1,13 @@
-import json
 import requests
 import os
 
-import sqlalchemy as db
 import psycopg2
-from psycopg2 import sql
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
 new_headers = {"x-hasura-admin-secret": os.getenv("NEW_HASURA_SECRET")}
 db_conn = os.getenv("NEW_DB")
-new_db_conn = os.getenv("NEW_DB") + "/" + new_db_name
+new_db_conn = os.getenv("NEW_DB")
 
 migrate_url = os.getenv("GRAPHQL_URL")
 if migrate_url[-3::] == "app":

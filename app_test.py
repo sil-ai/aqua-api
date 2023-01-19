@@ -1,14 +1,13 @@
 from pathlib import Path
 import os
+import ast
 
 import app
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 
-import queries
 
 
 headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
@@ -22,7 +21,7 @@ def test_key_auth():
     assert err.value.status_code == 401
 
     response = app.api_key_auth(os.getenv("TEST_KEY"))
-    assert response == True
+    assert response is True
 
 
 # Create a generator that when called gives
@@ -51,12 +50,6 @@ def test_read_main(client):
     assert response.json() == {"Hello": "World"}
 
 
-# Test for the List Versions endpoint
-def test_list_versions(client):
-    response = client.get("/version")
-    assert response.status_code == 200
-
-
 def test_add_version(client):
     test_version = {
             "name": "delete", "isoLanguage": "eng",
@@ -64,106 +57,139 @@ def test_add_version(client):
             }
 
     fail_version = {
-            "name": "test", "isoLanguage": "eng",
-            "isoScript": "Latn", "abbreviation": "TEST"
+            "name": "fail_delete", "isoLanguage": "eng",
+            "isoScript": "Latn", "abbreviation": "DEL"
             }
 
     test_response = client.post("/version", params=test_version)
     fail_response = client.post("/version", params=fail_version)
 
-    delete_abv = '"' + test_version["abbreviation"] + '"'
-    delete_test_version = queries.delete_bible_version(delete_abv)
-
-    with Client(transport=transport,
-            fetch_schema_from_transport=True) as mutation_client:
-
-        mutation = gql(delete_test_version)
-        deleted_version = mutation_client.execute(mutation)
-
     assert test_response.status_code == 200
     assert fail_response.status_code == 400
 
 
-#def test_delete_version(client):
-#    test_version = {
-#            "name": "delete", "isoLanguage": "eng",
-#            "isoScript": "Latn", "abbreviation": "DELETE"
-#            }
-#
-#    with Client(transport=transport,
-#            fetch_schema_from_transport=True) as query_client:
-#
-#        mutation = gql(
-#
-#    test_delete_version = {
-#            "version_abbreviation": "DELETE"
-#            }
-#
-#    test_response = client.delete("/version", params=test_delete_version)
-#
-#    assert test_response == 200
+# Test for the List Versions endpoint
+def test_list_versions(client):
+    response = client.get("/version")
+
+    assert response.status_code == 200
 
 
 def test_upload_bible(client):
     test_abv_revision = {
-            "version_abbreviation": "TEST",
-            "published": False}
+            "version_abbreviation": "DEL",
+            "published": False
+            }
  
     test_upload_file = Path("fixtures/uploadtest.txt")
     file = {"file": test_upload_file.open("rb")}
     response_abv = client.post("/revision", params=test_abv_revision, files=file)
 
-    revision_abv = response_abv.json()["Revision ID"]
-
-    delete_verse_response_abv = queries.delete_verses_mutation(revision_abv)
-    delete_revision_response_abv = queries.delete_revisions_mutation(revision_abv)
-
-    with Client(transport=transport,
-            fetch_schema_from_transport=True) as mutation_client:
-
-        verse_mutation_abv = gql(delete_verse_response_abv)
-        revision_mutation_abv = gql(delete_revision_response_abv)
-
-        verse_revised_abv = mutation_client.execute(verse_mutation_abv)
-        revision_revised_abv = mutation_client.execute(revision_mutation_abv)
-
     assert response_abv.status_code == 200
 
 
 def test_list_revisions(client):
+    test_version = {
+            "version_abbreviation": "DEL"
+            }
+
     fail_version = {
             "version_abbreviation": "FAIL"
             }
 
-    test_version = {
-            "version_abbreviation": "TEST"
+    test_response = client.get("/revision", params=test_version)
+    fail_response = client.get("/revision", params=fail_version)
+    
+    assert test_response.status_code == 200
+    assert fail_response.status_code == 400
+
+
+def test_get_chapter(client): 
+    version_abv = {
+            "version_abbreviation": "DEL"
             }
 
-    fail_response = client.get("/revision", params=fail_version)
-    test_response = client.get("/revision", params=test_version)
+    version_response = client.get("/revision", params=version_abv)
+    version_fixed = ast.literal_eval(version_response.text)
 
-    assert fail_response.status_code == 400
-    assert test_response.status_code == 200
+    for version_data in version_fixed:
+        if version_data["versionName"] == "delete":
+            revision_id = version_data["id"]
 
-
-def test_get_chapter(client):
     test_chapter = {
-            "revision": 3,
+            "revision": revision_id,
             "book": "GEN",
             "chapter": 1
             }
 
     response = client.get("/chapter", params=test_chapter)
+
     assert response.status_code == 200
 
 
-def test_get_verse(client):
+def test_get_verse(client): 
+    version_abv = {
+            "version_abbreviation": "DEL"
+            }
+
+    version_response = client.get("/revision", params=version_abv)
+    version_fixed = ast.literal_eval(version_response.text)
+
+    for version_data in version_fixed:
+        if version_data["versionName"] == "delete":
+            revision_id = version_data["id"]
+
     test_version = {
-            "revision": 3,
+            "revision": revision_id,
             "book": "GEN",
             "chapter": 1,
             "verse": 1
             }
 
     response = client.get("/verse", params=test_version)
+
     assert response.status_code == 200
+
+
+def test_delete_revision(client):
+    
+    test_version_abv = {
+           "version_abbreviation": "DEL"
+           }
+
+    version_response = client.get("/revision", params=test_version_abv)
+    version_fixed = ast.literal_eval(version_response.text)
+
+    for version_data in version_fixed:
+        if version_data["versionName"] == "delete":
+            revision_id = version_data["id"]
+
+    delete_revision_data = {
+            "revision": revision_id
+            }
+
+    fail_revision_data = {
+            "revision": 0
+            }
+
+    test_delete_response = client.delete("/revision", params=delete_revision_data)
+    fail_delete_response = client.delete("/revision", params=fail_revision_data)
+
+    assert test_delete_response.status_code == 200
+    assert fail_delete_response.status_code == 400
+
+
+def test_delete_version(client):
+    test_delete_version = {
+            "version_abbreviation": "DEL"
+            }
+
+    fail_delete_version = {
+            "version_abbreviation": "THIS_WILL_FAIL"
+            }
+
+    test_response = client.delete("/version", params=test_delete_version)
+    fail_response = client.delete("/version", params=fail_delete_version)
+
+    assert test_response.status_code == 200
+    assert fail_response.status_code == 400
