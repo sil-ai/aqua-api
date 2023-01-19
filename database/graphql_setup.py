@@ -50,7 +50,7 @@ con = psycopg2.connect(db_conn)
 db_con = {
     "type": "pg_add_source",
     "args": {
-        "name": "default",
+        "name": new_db_name,
         "configuration": {
           "connection_info": {
             "database_url": new_db_conn,
