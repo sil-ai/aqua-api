@@ -3,12 +3,11 @@ import os
 
 import psycopg2
 
-new_db_name = 'fill_in_new_db_name' #added to pass ruff validation, fix ASAP
 
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
 new_headers = {"x-hasura-admin-secret": os.getenv("NEW_HASURA_SECRET")}
 db_conn = os.getenv("NEW_DB")
-new_db_conn = os.getenv("NEW_DB") + "/" + new_db_name
+new_db_conn = os.getenv("NEW_DB")
 
 migrate_url = os.getenv("GRAPHQL_URL")
 if migrate_url[-3::] == "app":
@@ -47,7 +46,7 @@ con = psycopg2.connect(db_conn)
 db_con = {
     "type": "pg_add_source",
     "args": {
-        "name": new_db_name,
+        "name": "default",
         "configuration": {
           "connection_info": {
             "database_url": new_db_conn,
