@@ -1,11 +1,7 @@
-import json
 import requests
 import os
 
-import sqlalchemy as db
 import psycopg2
-from psycopg2 import sql
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
 
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}

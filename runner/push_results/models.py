@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey, DateTime, Enum
+from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey, DateTime
 from sqlalchemy.orm import declarative_base
 from pydantic import BaseModel
 from typing import List, Optional

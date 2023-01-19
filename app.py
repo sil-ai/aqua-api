@@ -1,19 +1,13 @@
-import json
 import os
 from datetime import date
-from typing import List, Union
+from typing import Union
 from tempfile import NamedTemporaryFile
 
-from fastapi import FastAPI, Body, Security, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi import File, UploadFile
-from fastapi.security.api_key import APIKeyQuery, APIKeyCookie, APIKeyHeader, APIKey
-from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.security import OAuth2PasswordBearer
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
-from starlette.status import HTTP_403_FORBIDDEN
-from starlette.responses import RedirectResponse, JSONResponse
-import pandas as pd
 import numpy as np
 
 import queries
@@ -96,17 +90,17 @@ def create_app():
         isoScpt_fixed = '"' + isoScript + '"'
         abbv_fixed = '"' + abbreviation + '"'
         
-        if rights == None:
+        if rights is None:
             rights_fixed = "null"
         else:
             rights_fixed = '"' + rights + '"'
 
-        if forwardTranslation == None:
+        if forwardTranslation is None:
             fT = "null"
         else:
             fT = forwardTranslation
 
-        if backTranslation == None:
+        if backTranslation is None:
             bT = "null"
         else:
             bT = backTranslation
@@ -154,15 +148,14 @@ def create_app():
             revision_query = gql(fetch_revisions)
             revision_result = client.execute(revision_query)
 
-            revisions_data = []
             for revision in revision_result["bibleRevision"]:
                 delete_verses = queries.delete_verses_mutation(revision["id"])
                 verses_mutation = gql(delete_verses)
-                verse_deletion = client.execute(verses_mutation)
+                client.execute(verses_mutation)
 
                 delete_revision = queries.delete_revision_mutation(revision["id"])
                 revision_mutation = gql(delete_revision)
-                revision_deletion = client.execute(revision_mutation)
+                client.execute(revision_mutation)
 
             version_delete_mutation = gql(delete_version)
             version_delete_result = client.execute(version_delete_mutation)        
@@ -282,7 +275,7 @@ def create_app():
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
             verse_mutation = gql(delete_verses_mutation)
-            verse_result = client.execute(verse_mutation)
+            client.execute(verse_mutation)
 
             revision_mutation = gql(delete_revision)
             revision_result = client.execute(revision_mutation)
