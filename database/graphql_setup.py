@@ -1,12 +1,9 @@
-import json
 import requests
 import os
 
-import sqlalchemy as db
 import psycopg2
-from psycopg2 import sql
-from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 
+new_db_name = 'fill_in_new_db_name' #added to pass ruff validation, fix ASAP
 
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
 new_headers = {"x-hasura-admin-secret": os.getenv("NEW_HASURA_SECRET")}

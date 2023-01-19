@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 from typing import List
 import modal
 import pandas as pd
@@ -61,8 +61,7 @@ def test_push_df_rows():
 def test_push_wrong_data_type():
     with stub.run():
         with pytest.raises(ValidationError):
-            results = []
-            result = Result(
+            Result(
                 assessment_id=1,
                 vref=2,
                 score="abc123",

@@ -1,11 +1,7 @@
 import os
 
-import boto3
-import base64
-from botocore.exceptions import ClientError
 
 import key_fetch
-import app
 
 
 def test_get_secret():
