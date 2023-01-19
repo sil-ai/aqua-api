@@ -223,3 +223,47 @@ def get_verses_query(revision, verseReference):
               """.format(revision, verseReference)
     
     return get_verses
+
+
+def list_assessments_query():
+    list_assessment = """
+                query MyQuery {
+                  assessment {
+                    id
+                    revision
+                    reference
+                    type
+                    requested_time
+                    start_time
+                    end_time
+                    status
+                  }
+                }
+                """
+        
+    return list_assessment
+
+
+def add_assessment_query(revision, assessment_type, requested_time, status, reference):
+    
+    add_assessment = """
+                  mutation MyMutation {{
+                    insert_assessment(objects: {{
+                      revision: {}, type: {}, requested_time: {}, 
+                      status: {}, reference: {}
+                    }}) {{
+                      returning {{
+                        id
+                        revision
+                        type
+                        requested_time
+                        status
+                        reference
+                      }}
+                    }}
+                  }}
+                  """.format(revision, assessment_type, 
+                          requested_time, status, reference
+                          )
+
+    return add_assessment

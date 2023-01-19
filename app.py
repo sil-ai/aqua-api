@@ -1,8 +1,9 @@
 import json
 import os
-from datetime import date
-from typing import List, Union
+from datetime import date, datetime
+from typing import List, Union, Optional
 from tempfile import NamedTemporaryFile
+from enum import Enum
 
 from fastapi import FastAPI, Body, Security, Depends, HTTPException, status
 from fastapi import File, UploadFile
@@ -15,6 +16,7 @@ from starlette.status import HTTP_403_FORBIDDEN
 from starlette.responses import RedirectResponse, JSONResponse
 import pandas as pd
 import numpy as np
+from pydantic import BaseModel
 
 import queries
 import bible_loading
@@ -40,7 +42,18 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
         )
 
     return True
-    
+
+
+class AssessmentType(Enum):
+    dummy = 1
+    word_alignment = 2
+
+
+class Assessment(BaseModel):
+    revision_id: int
+    type: AssessmentType
+    revision: Optional[int]
+
 
 # Creates the FastAPI app object
 def create_app():
@@ -323,7 +336,67 @@ def create_app():
                 verses_data.append(verse_data)
 
         return verses_data
+    
 
+    @app.get("/assessment", dependencies=[Depends(api_key_auth)])
+    async def get_assessment():
+        list_assessments = queries.list_assessments_query()
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            query = gql(list_assessments)
+            result = client.execute(query)
+
+            version_data = []
+            for assessment in result["assessment"]: 
+                ind_data = {
+                        "id": assessment["id"], 
+                        "revision": assessment["revision"], 
+                        "reference": assessment["reference"],
+                        "type": assessment["type"], 
+                        "requested_time": assessment["requested_time"], 
+                        "start_time": assessment["start_time"],
+                        "end_time": assessment["end_time"],
+                        "status": assessment["status"],
+                        }
+
+                version_data.append(ind_data)
+
+        return version_data
+    
+
+    @app.post("/assessment", dependencies=[Depends(api_key_auth)])
+    async def add_version(file: UploadFile):
+        config_file = await file.read()
+        with open(config_file) as f:
+            config = json.loads(f)
+        revision = 
+        assessment_type = config['type']
+        assessment_type_fixed = '"' + assessment_type +  '"'
+        requested_time = '"' + datetime.now().isoformat() + '"'
+        status = '"' + 'queued' + '"'
+        if reference == None:
+            reference = "null"
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+
+            new_assessment = queries.add_assessment_query(
+                    revision, assessment_type_fixed, requested_time, status, reference,
+                    )
+            mutation = gql(new_assessment)
+
+            assessment = client.execute(mutation)
+        
+        new_assessment = {
+                "id": assessment["insert_assessment"]["returning"][0]["id"],
+                "revision": assessment["insert_assessment"]["returning"][0]["revision"],
+                "type": assessment["insert_assessment"]["returning"][0]["type"],
+                "requested_time": assessment["insert_assessment"]["returning"][0]["requested_time"],
+                "reference": assessment["insert_assessment"]["returning"][0]["reference"],
+                "status": assessment["insert_assessment"]["returning"][0]["status"],
+
+                }
+
+        return new_assessment
     return app
 
 
