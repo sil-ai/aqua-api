@@ -2,7 +2,6 @@ import os
 from typing import List
 
 import modal
-from sqlalchemy.exc import IntegrityError
 
 from db_connect import get_session
 from models import AssessmentResult, Results
@@ -32,6 +31,8 @@ class PushResults:
         self.session.close()
 
     def insert(self, results: Results):
+        from sqlalchemy.exc import IntegrityError
+
         self.results = results
         self.create_bulk_results()
 
