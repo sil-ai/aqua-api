@@ -100,6 +100,18 @@ def delete_revision_mutation(bibleRevision):
     return delete_revision
 
 
+def check_revisions_query():
+    check_revision = """
+                    query {
+                      bibleRevision {
+                        id
+                      }
+                    }
+                    """
+
+    return check_revision
+
+
 def delete_verses_mutation(bibleRevision):
     delete_verses = """ 
                     mutation {{
