@@ -68,6 +68,8 @@ class SemanticSimilarity:
         sent2_embedding = sent2_output.pooler_output
 
         sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
+        #TODO: remove print
+        print(sent1,sent2, sim_matrix)
         sim_score = round(float(sim_matrix[0][0]),precision)
         logging.info(f'{ref} has a score of {sim_score}')
         #??? What values do you want for flag and note @dwhitena?
@@ -89,7 +91,7 @@ def merge(draft_id: int, draft_verses: DataFrame,
     return mr.merge_revision()
 
 @stub.function(image=semsim_image,
-               timeout=300,
+               timeout=1000,
                cpu=4)
 def assess(assessment: SemSimAssessment, offset=-1)-> Results:
     draft = get_text.call(assessment.configuration.draft_revision)

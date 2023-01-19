@@ -38,8 +38,6 @@ def test_assessment_object(draft_id, ref_id, expected, valuestorage):
         assert type(results) == Results
         #test for the expected length of results
         assert len(results.results)==expected
-        #import pickle
-        #pickle.dump(results, open('results.pkl', 'wb'))
         valuestorage.results = results.results
 
 #tests the sem sim model
@@ -61,8 +59,11 @@ def test_tokenizer_vocab(vocab_item,vocab_id,tokenizer):
 @pytest.mark.parametrize('idx,expected',[(42,4),(103,3)],ids=['GEN 2:12','GEN 4:24'])
 #test sem_sim predictions
 def test_predictions(idx, expected, valuestorage):
-    score = valuestorage.results[idx].score
-    assert int(round(score,0)) == expected
+    try:
+        score = valuestorage.results[idx].score
+        assert int(round(score,0)) == expected
+    except TypeError:
+        raise ValueError('No result values')
 
 #TODO: find a better way to test the accuracy of the sem sim
 # @pytest.mark.parametrize('ref', ['GEN 1:1','GEN 3:21', 'GEN 4:8'])
