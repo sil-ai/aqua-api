@@ -3,8 +3,6 @@ from pathlib import Path
 import logging
 
 import modal
-import pandas as pd
-import numpy as np
 
 from db_connect import get_session, VerseText
 
@@ -39,6 +37,8 @@ class RecordNotFoundError(Exception):
 
 class PullRevision:
     def __init__(self, revision_id: int):
+        import pandas as pd
+        import numpy as np
         self.revision_id = revision_id
         self.revision_text = pd.DataFrame()
         self.vref = self.prepare_vref()
