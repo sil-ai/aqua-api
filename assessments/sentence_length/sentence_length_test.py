@@ -1,8 +1,8 @@
 import modal
-from sentence_length import SentLengthConfig
 import pandas as pd
 import requests
 from pathlib import Path
+import sentence_length
 
 def test_runner():
     url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
@@ -15,7 +15,7 @@ def test_runner():
     assert response.status_code == 200
 
 stub = modal.Stub(
-    name="assess_test",
+    name="sentence_length_test",
     image=modal.Image.debian_slim().pip_install(
         'pydantic',
         'pytest',
@@ -23,27 +23,27 @@ stub = modal.Stub(
         'requests',
     ),
 )
-stub.sentence_length_test = modal.Function.from_name("sentence_length_test", "sentence_length")
+stub.run_sentence_length = modal.Function.from_name("sentence_length_test", "sentence_length")
 
 @stub.function
 def get_results(assessment_id, configuration):
-    results = modal.container_app.sentence_length_test.call(assessment_id, configuration)
+    results = modal.container_app.run_sentence_length.call(assessment_id, configuration)
     return results
 
 
 def test_assess_draft_10():
     with stub.run():
-        # Initialize some SentLengthAssessment value.
+    # Initialize some SentLengthAssessment value.
         config = {'draft_revision': 10}     # This will then be validated as a SentLengthConfig in the app
         results = get_results.call(assessment_id=2, configuration=config)
 
-        #assert the length of results is 41899
-        assert len(results.results) == 41899
+    #assert the length of results is 41899
+    assert len(results.results) == 41899
 
-        #assert the first verse is empty and has a score of 0.0
-        assert results.results[0].score == 0.0
-        assert results.results[0].flag == False
-        assert results.results[0].verse == ''
+    #assert the first verse is empty and has a score of 0.0
+    assert results.results[0].score == 0.0
+    assert results.results[0].flag == False
+    assert results.results[0].verse == ''
 
 def test_assess_draft_11():
     with stub.run():
