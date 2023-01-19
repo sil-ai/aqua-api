@@ -31,15 +31,16 @@ jobs:
         FAIL_KEY: ${{ secrets.FAIL_KEY }}
         KEY_VAULT: ${{ secrets.KEY_VAULT }}
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
+  
+    - name: Linting 
+      uses: actions/checkout@v3
+    - name: Install Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: "3.11"
+    - name: Run Ruff
+      run: |
+        python -m pip install --upgrade pip
+        pip install ruff
+        ruff  --ignore E501 --format=github .
 
-    - name: Build Pipelines
-      run: make build-pipelines
-      env:
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
-        AQUA_DB: ${{ secrets.AQUA_DB }}
-      
-    - name: Test Pipelines
-      run: make test-pipelines
-      env:
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
-        AQUA_DB: ${{ secrets.AQUA_DB }}

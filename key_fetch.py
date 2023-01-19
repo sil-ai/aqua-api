@@ -1,5 +1,4 @@
 import boto3
-import base64
 from botocore.exceptions import ClientError
 
 def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
