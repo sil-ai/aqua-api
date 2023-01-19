@@ -73,8 +73,9 @@ def get_words_per_sentence(text):
 #run the assessment
 #for now, average words per sentence
 @stub.function
-def assess(assessment: SentLengthAssessment):
-
+def sentence_length(configuration: dict):
+    print(configuration)
+    assessment = SentLengthAssessment(configuration)
     #pull the revision
     rev_num = assessment.configuration.draft_revision
     lines = modal.container_app.pull_revision.call(rev_num)
