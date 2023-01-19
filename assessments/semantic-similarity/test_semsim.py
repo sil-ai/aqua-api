@@ -1,19 +1,26 @@
+import os
 import modal
 import pytest
+from fuzzywuzzy import fuzz
 from models import SemSimConfig, SemSimAssessment, Results
 
+# Manage suffix on modal endpoint if testing.
+suffix = ''
+if os.environ.get('MODAL_TEST') == 'TRUE':
+    suffix = '_test'
+
 stub = modal.Stub(
-    name="semantic_similarity_test",
+    name="semantic_similarity" + suffix,
     image=modal.Image.debian_slim().pip_install_from_requirements(
         "pytest_requirements.txt"
     ),
 )
 
-stub.assess = modal.Function.from_name("semantic_similarity_test", "assess")
+stub.assess = modal.Function.from_name("semantic_similarity", "assess")
 
 @stub.function
-def get_assessment(ss_assessment: SemSimAssessment) -> Results:
-    return modal.container_app.assess.call(ss_assessment)
+def get_assessment(ss_assessment: SemSimAssessment, offset: int=-1) -> Results:
+    return modal.container_app.assess.call(ss_assessment, offset)
 
 #tests the assessment object
 @pytest.mark.parametrize(
@@ -26,13 +33,13 @@ def test_assessment_object(draft_id, ref_id, expected, valuestorage):
     with stub.run():
         config = SemSimConfig(draft_revision=draft_id, reference_revision=ref_id)
         assessment = SemSimAssessment(assessment_id=1, configuration=config)
-        results = get_assessment.call(assessment)
+        results = get_assessment.call(assessment, offset=105)
         #test for the right type of results
         assert type(results) == Results
         #test for the expected length of results
         assert len(results.results)==expected
-        import pickle
-        pickle.dump(results, open('results.pkl', 'wb'))
+        #import pickle
+        #pickle.dump(results, open('results.pkl', 'wb'))
         valuestorage.results = results.results
 
 #tests the sem sim model
@@ -51,42 +58,45 @@ def test_tokenizer_vocab(vocab_item,vocab_id,tokenizer):
     except Exception as err:
         raise AssertionError(f'Error is {err}') from err
 
-@pytest.mark.parametrize('idx,expected',[(42,4),(103,3)],ids=['Gen 2:12','Gen 4:24'])
+@pytest.mark.parametrize('idx,expected',[(42,4),(103,3)],ids=['GEN 2:12','GEN 4:24'])
 #test sem_sim predictions
 def test_predictions(idx, expected, valuestorage):
     score = valuestorage.results[idx].score
     assert int(round(score,0)) == expected
 
-# @pytest.mark.parametrize('ref', ['JOB 10:19','JOB 12:19','JOB 16:12','JOB 18:9'])
-# #test sem_sim json output
-# def test_sem_sim_json(ref,json_output):
+#TODO: find a better way to test the accuracy of the sem sim
+# @pytest.mark.parametrize('ref', ['GEN 1:1','GEN 3:21', 'GEN 4:8'])
+# # #test sem_sim json output
+# def test_sem_sim_results(ref,valuestorage, rev1_2):
     
 #     try:
 #         #extract the verse with reference 'ref'
-#         sem_sim_verse = list(filter(lambda item:item['ref']==ref, json_output))[0]
-#         #count    311.000000
-#         #mean       3.960161
-#         #std        0.465435
-#         #min        1.990000
-#         #25%        3.685000
-#         #50%        4.010000
-#         #75%        4.290000
-#         #max        4.840000
+#         result = list(filter(lambda item:item.verse==ref, valuestorage.results))[0]
+#         # count    105.000000
+#         # mean       4.450095
+#         # std        0.267357
+#         # min        3.490000
+#         # 25%        4.290000
+#         # 50%        4.500000
+#         # 75%        4.660000
+#         # max        4.910000
+
 
 #         #calculate the fuzzywuzzy ratio between 'sent1' and 'sent2'
-#         fuzzy_score = fuzz.ratio(sem_sim_verse['sent1'], sem_sim_verse['sent2'])
-#         #normalize the fuzzy_score to a 5 scale using a ratio of 1.22 to overcome bias
-#         #count    311.000000
-#         #mean       4.016977
-#         #std        0.585760
-#         #min        2.684000
-#         #25%        3.599000
-#         #50%        3.965000
-#         #75%        4.392000
-#         #max        5.612000
+#         sent1, sent2 = rev1_2[rev1_2['verseReference']==ref].iloc[0]['text_x','text_y']
+#         fuzzy_score = fuzz.ratio(sent1, sent2)
+#         #normalize the fuzzy_score to a 5 scale adding 0.7 mean difference to overcome bias
+#         # count    105.000000
+#         # mean       3.751905
+#         # std        0.393818
+#         # min        2.800000
+#         # 25%        3.500000
+#         # 50%        3.800000
+#         # 75%        4.050000
+#         # max        4.750000
 
-#         fuzzy_normalized = fuzzy_score/20*1.22
+#         fuzzy_normalized = fuzzy_score/20 + 0.7
 #         #fuzzy score should be within one standard deviation for its sem_sim_score
-#         assert (fuzzy_normalized - 0.585) <= sem_sim_verse['score'] <= (fuzzy_normalized + 0.585)
+#         assert (fuzzy_normalized - 0.39) <= result.score <= (fuzzy_normalized + 0.39)
 #     except IndexError:
 #         raise AssertionError(f'{ref} is not in output')

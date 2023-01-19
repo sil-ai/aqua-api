@@ -1,4 +1,5 @@
 import pytest
+import pandas as pd
 from assess import SemanticSimilarity
 
 @pytest.fixture(scope='session')
@@ -15,3 +16,7 @@ class ValueStorage:
 @pytest.fixture(scope='session')
 def valuestorage():
     return ValueStorage()
+
+@pytest.fixture(scope='session')
+def rev1_2():
+    return pd.read_pickle('combo.pkl')

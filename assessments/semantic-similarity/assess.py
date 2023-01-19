@@ -1,15 +1,10 @@
-import os
 import modal
 from models import Result, Results, SemSimAssessment, SemSimConfig
+from pandas import DataFrame
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
-#Manage suffix on modal endpoint if testing
-suffix = ""
-if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "_test"
-
-stub = modal.Stub("semantic_similarity" + suffix,
+stub = modal.Stub("semantic_similarity",
                      image = modal.Image.debian_slim().pip_install_from_requirements(
                       "requirements.txt"
                      ).copy(modal.Mount(
@@ -42,6 +37,7 @@ stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
 class SemanticSimilarity:
 
     def __init__(self):
+        #!!! can't test the model and tokenizer if I user __enter__
         from transformers import BertTokenizerFast, BertModel
         self.semsim_model = BertModel.from_pretrained('setu4993/LaBSE').eval()
         logging.info('Semantic model initialized...')
@@ -50,7 +46,8 @@ class SemanticSimilarity:
 
     #??? May want to raise the concurrency limit
     @stub.function(image=semsim_image,cpu=4, concurrency_limit=2)
-    def predict(self, sent1, sent2, ref, assessment_id, precision=2):
+    def predict(self, sent1: str, sent2: str, ref: str,
+                assessment_id: int, precision: int=2)-> Result:
         import torch
         """
         Return a prediction.
@@ -73,6 +70,7 @@ class SemanticSimilarity:
         sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
         sim_score = round(float(sim_matrix[0][0]),precision)
         logging.info(f'{ref} has a score of {sim_score}')
+        #??? What values do you want for flag and note @dwhitena?
         return Result(assessment_id=assessment_id,
                       verse=ref,
                       score=sim_score,
@@ -80,11 +78,12 @@ class SemanticSimilarity:
                       note='')
 
 @stub.function
-def get_text(rev_id):
+def get_text(rev_id: int)-> DataFrame:
     return modal.container_app.run_pull_rev.call(rev_id)
 
 @stub.function
-def merge(draft_id, draft_verses, reference_id, reference_verses):
+def merge(draft_id: int, draft_verses: DataFrame,
+          reference_id: int, reference_verses: DataFrame)-> DataFrame:
     from merge_revision import MergeRevision
     mr = MergeRevision(draft_id, draft_verses, reference_id, reference_verses)
     return mr.merge_revision()
@@ -92,7 +91,7 @@ def merge(draft_id, draft_verses, reference_id, reference_verses):
 @stub.function(image=semsim_image,
                timeout=300,
                cpu=4)
-def assess(assessment: SemSimAssessment)-> Results:
+def assess(assessment: SemSimAssessment, offset=-1)-> Results:
     draft = get_text.call(assessment.configuration.draft_revision)
     reference = get_text.call(assessment.configuration.reference_revision)
     df = merge.call(assessment.configuration.draft_revision,
@@ -100,8 +99,7 @@ def assess(assessment: SemSimAssessment)-> Results:
                     assessment.configuration.reference_revision,
                     reference)
     sem_sim = SemanticSimilarity()
-    #TODO: remove delimiter later
-    offset=105
+    #default offset is all of the verses
     sents1 = df['draft'].to_list()[:offset]
     sents2 = df['reference'].to_list()[:offset]
     refs = df.index.to_list()[:offset]
@@ -113,6 +111,5 @@ if __name__ == '__main__':
     with stub.run():
         config = SemSimConfig(draft_revision=1, reference_revision=2)
         assessment = SemSimAssessment(assessment_id=1, configuration=config)
-        results = assess.call(assessment)
-        import pickle
-        pickle.dump(results,open('results.pkl','wb'))
+        offset = 105
+        results = assess.call(assessment, offset)
