@@ -259,26 +259,26 @@ def list_assessments_query():
     return list_assessment
 
 
-def add_assessment_query(revision, assessment_type, requested_time, status, reference):
+def add_assessment_query(revision, reference, assessment_type, requested_time, status):
     
     add_assessment = """
                   mutation MyMutation {{
                     insert_assessment(objects: {{
-                      revision: {}, type: {}, requested_time: {}, 
-                      status: {}, reference: {}
+                      revision: {}, reference: {}, type: {},
+                      requested_time: {}, status: {}
                     }}) {{
                       returning {{
                         id
                         revision
+                        reference
                         type
                         requested_time
                         status
-                        reference
                       }}
                     }}
                   }}
-                  """.format(revision, assessment_type, 
-                          requested_time, status, reference
+                  """.format(revision, reference, assessment_type, 
+                          requested_time, status 
                           )
 
     return add_assessment

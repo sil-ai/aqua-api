@@ -46,9 +46,9 @@ class AssessmentType(Enum):
 
 
 class Assessment(BaseModel):
-    revision_id: int
+    revision: int
+    reference: Union[int, str]  # Can be an int or 'null'
     type: AssessmentType
-    reference: Optional[int]
 
 
 # Creates the FastAPI app object
@@ -418,24 +418,26 @@ def create_app():
         reference = config.get('reference', None)
         if reference:
             reference = int(reference)
+        else:
+            reference = 'null'
         assessment = Assessment(
-                    revision_id=revision_id, 
+                    revision=revision_id,
+                    reference=reference,
                     type=AssessmentType[assessment_type], 
-                    reference=reference)
-        assessment_type_fixed = '"' + assessment_type +  '"'
+                    )
+        assessment_type_fixed = '"' + assessment.type.name +  '"'
         requested_time = '"' + datetime.now().isoformat() + '"'
         status = '"' + 'queued' + '"'
-        if reference is None:
-            reference = "null"
+        
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
             new_assessment = queries.add_assessment_query(
                     revision_id, 
+                    reference,
                     assessment_type_fixed, 
                     requested_time, 
                     status, 
-                    reference,
                     )
             mutation = gql(new_assessment)
 
@@ -444,9 +446,9 @@ def create_app():
         new_assessment = {
                 "id": assessment["insert_assessment"]["returning"][0]["id"],
                 "revision": assessment["insert_assessment"]["returning"][0]["revision"],
+                "reference": assessment["insert_assessment"]["returning"][0]["reference"],
                 "type": assessment["insert_assessment"]["returning"][0]["type"],
                 "requested_time": assessment["insert_assessment"]["returning"][0]["requested_time"],
-                "reference": assessment["insert_assessment"]["returning"][0]["reference"],
                 "status": assessment["insert_assessment"]["returning"][0]["status"],
 
                 }
