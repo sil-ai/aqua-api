@@ -1,8 +1,7 @@
 import os
 import modal
 import pytest
-from fuzzywuzzy import fuzz
-from models import SemSimConfig, SemSimAssessment, Results
+from semsim_models import SemSimConfig, SemSimAssessment
 
 # Manage suffix on modal endpoint if testing.
 suffix = ''
@@ -13,15 +12,21 @@ stub = modal.Stub(
     name="semantic_similarity" + suffix,
     image=modal.Image.debian_slim().pip_install(
         "pytest==7.1.2",
+        "sqlalchemy"
         #"fuzzywuzzy",
         #"python-Levenshtein"
-    ),
+    ).copy(
+    modal.Mount(
+        local_file="../../runner/push_results/models.py",
+        remote_dir="/root"
+        )
+    )
 )
 
 stub.assess = modal.Function.from_name("semantic_similarity", "assess")
 
 @stub.function
-def get_assessment(ss_assessment: SemSimAssessment, offset: int=-1) -> Results:
+def get_assessment(ss_assessment: SemSimAssessment, offset: int=-1):
     return modal.container_app.assess.call(ss_assessment, offset)
 
 #tests the assessment object
@@ -33,6 +38,7 @@ def get_assessment(ss_assessment: SemSimAssessment, offset: int=-1) -> Results:
 )
 def test_assessment_object(draft_id, ref_id, expected, valuestorage):
     with stub.run():
+        from models import Results
         config = SemSimConfig(draft_revision=draft_id, reference_revision=ref_id)
         assessment = SemSimAssessment(assessment_id=1, configuration=config)
         results = get_assessment.call(assessment, offset=105)

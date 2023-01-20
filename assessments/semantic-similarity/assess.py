@@ -23,11 +23,11 @@ semsim_image = modal.Image.debian_slim().pip_install(
     "torch==1.12.0",
     "transformers==4.21.0",
     "SQLAlchemy==1.4.46"
-).copy(
-    modal.Mount(
-        local_file="../../runner/push_results/models.py",
-        remote_dir="/root"
-    )
+    ).copy(
+        modal.Mount(
+            local_file="../../runner/push_results/models.py",
+            remote_dir="/root"
+        )
 )
 
 def similarity(embeddings_1, embeddings_2):
@@ -53,7 +53,7 @@ class SemanticSimilarity:
         logging.info('Tokenizer initialized...')
 
     #??? May want to raise the concurrency limit
-    @stub.function(image=semsim_image,cpu=4, concurrency_limit=2)
+    @stub.function(image=semsim_image,cpu=4, concurrency_limit=10)
     def predict(self, sent1: str, sent2: str, ref: str,
                 assessment_id: int, precision: int=2):
         import torch
@@ -77,8 +77,8 @@ class SemanticSimilarity:
         sent2_embedding = sent2_output.pooler_output
 
         sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
-        #TODO: remove print
-        print(sent1,sent2, sim_matrix)
+        #prints the ref to see how we are doing
+        print(ref)
         sim_score = round(float(sim_matrix[0][0]),precision)
         logging.info(f'{ref} has a score of {sim_score}')
         #??? What values do you want for flag and note @dwhitena?
@@ -121,5 +121,8 @@ if __name__ == '__main__':
     with stub.run():
         config = SemSimConfig(draft_revision=1, reference_revision=2)
         assessment = SemSimAssessment(assessment_id=1, configuration=config)
-        offset = 105
-        results = assess.call(assessment, offset)
+        #offset = 105
+        #from models import Results
+        results = assess.call(assessment)#, offset)
+        import pickle
+        pickle.dump(results,open('results_jan_20.pkl','wb'))
