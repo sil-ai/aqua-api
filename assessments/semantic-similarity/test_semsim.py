@@ -3,13 +3,8 @@ import modal
 import pytest
 from semsim_models import SemSimConfig, SemSimAssessment
 
-# Manage suffix on modal endpoint if testing.
-suffix = ''
-if os.environ.get('MODAL_TEST') == 'TRUE':
-    suffix = '_test'
-
 stub = modal.Stub(
-    name="semantic_similarity" + suffix,
+    name="semantic_similarity",
     image=modal.Image.debian_slim().pip_install(
         "pytest==7.1.2",
         "sqlalchemy"

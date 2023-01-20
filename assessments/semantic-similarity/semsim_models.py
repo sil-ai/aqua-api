@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import List
 
 # The information needed to run a semantic similarity assessment configuration.
 class SemSimConfig(BaseModel):

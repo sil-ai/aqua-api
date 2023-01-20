@@ -1,10 +1,16 @@
+import os
 import modal
 from semsim_models import SemSimAssessment, SemSimConfig
 from pandas import DataFrame
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
-stub = modal.Stub("semantic_similarity",
+# Manage suffix on modal endpoint if testing.
+suffix = ''
+if os.environ.get('MODAL_TEST') == 'TRUE': 
+    suffix = '_test'
+
+stub = modal.Stub("semantic_similarity" + suffix,
                      image = modal.Image.debian_slim().pip_install(
                         "pandas==1.4.3"
                      ).copy(modal.Mount(
