@@ -1,10 +1,14 @@
-from pydantic import BaseModel
 from typing import List
-import modal
 import os
-import pandas as pd
 from pathlib import Path
 import string
+from typing import Optional
+
+from pydantic import BaseModel
+import pandas as pd
+import modal
+
+
 
 # Manage suffix on modal endpoint if testing.
 suffix = ''
@@ -33,10 +37,10 @@ class SentLengthConfig(BaseModel):
 # Results model to record in the DB.
 class Result(BaseModel):
     assessment_id: int
-    verse: str
-    lix_score: float
-    flag: bool
-    note: str
+    vref: str
+    score: float
+    flag: bool = False
+    note: Optional[str] = None
 
 
 # Results is a list of results to push to the DB
@@ -125,7 +129,7 @@ def sentence_length(assessment_id: int, configuration: dict):
     #add to results
     results = []
     for index, row in df.iterrows():
-        results.append(Result(assessment_id=assessment_id, verse=row['verse'], lix_score=row['lix_score'], flag=False, note=''))
+        results.append(Result(assessment_id=assessment_id, vref=row['verse'], score=row['lix_score'], flag=False))
 
     modal.container_app.run_push_results.call(Results(results=results))
 
