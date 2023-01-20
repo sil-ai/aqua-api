@@ -5,7 +5,7 @@ import modal
 from sqlalchemy.exc import IntegrityError
 
 from db_connect import get_session
-from models import AssessmentResult, Results
+from models import AssessmentResult, Result, Results
 
 
 # Manage suffix on modal endpoint if testing.
@@ -35,14 +35,14 @@ class PushResults:
         self.results = results
         self.create_bulk_results()
 
-        try:
-            ids = self.bulk_insert_items()
-            self.session.commit()
+        # try:
+        ids = self.bulk_insert_items()
+        self.session.commit()
 
-            return 200, ids
-        except (IntegrityError, AssertionError) as err:
-            self.session.rollback()
-            return 500, err
+        return 200, ids
+        # except (IntegrityError, AssertionError) as err:
+        #     self.session.rollback()
+        #     return 500, err
 
     def create_bulk_results(self):
         self.assessment_results = []
@@ -73,9 +73,14 @@ class PushResults:
     timeout=600,
     secret=modal.Secret.from_name("aqua-db"),
 )
-def push_results(results: Results):
+def push_results(results: List):
+    results_obj = []
+    for result in results:
+        result_obj = Result(**result)
+        results_obj.append(result_obj)
+    results_obj = Results(results=results_obj)
     pr = PushResults()
-    response, ids = pr.insert(results)
+    response, ids = pr.insert(results_obj)
     return response, ids
 
 
