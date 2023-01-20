@@ -452,8 +452,22 @@ def create_app():
                 "status": assessment["insert_assessment"]["returning"][0]["status"],
 
                 }
-
-        return new_assessment
+        # assessment_config = runner.AssessmentConfig(
+        #                 assessment=new_assessment['id'],
+        #                 assessment_type=new_assessment['type'],
+        #                 configuration=config,
+        #                 )
+        url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
+        json_file = json.dumps({
+            'assessment': new_assessment['id'],
+            'assessment_type': new_assessment['type'],
+            'configuration': config,
+        })
+        import requests
+        response = requests.post(url, files={"file": json_file})
+        assert response.status_code == 200
+        
+        return {200, f'OK. Assessment id {new_assessment["id"]} added to the database and assessment started'}
 
 
     @app.delete("/assessment", dependencies=[Depends(api_key_auth)])
