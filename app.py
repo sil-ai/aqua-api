@@ -171,14 +171,15 @@ def create_app():
             revision_query = gql(fetch_revisions)
             revision_result = client.execute(revision_query)
 
-            for revision in revision_result["bibleRevision"]:
-                delete_verses = queries.delete_verses_mutation(revision["id"])
-                verses_mutation = gql(delete_verses)
-                client.execute(verses_mutation)
+            if version_abbreviation in version_list:
 
-                delete_revision = queries.delete_revisions_mutation(revision["id"])
-                revision_mutation = gql(delete_revision)
-                client.execute(revision_mutation)
+                revision_query = gql(fetch_revisions)
+                revision_result = client.execute(revision_query)
+
+                for revision in revision_result["bibleRevision"]:
+                    delete_verses = queries.delete_verses_mutation(revision["id"])
+                    verses_mutation = gql(delete_verses)
+                    client.execute(verses_mutation)
 
                 version_delete_mutation = gql(delete_version)
                 version_delete_result = client.execute(version_delete_mutation)        
