@@ -509,7 +509,7 @@ def create_app():
             else: 
                 raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Revision is invalid, this revision id does not exist."
+                        detail="Assessment is invalid, this assessment id does not exist."
                         )
 
         return delete_response
