@@ -4,6 +4,7 @@ import modal
 import os
 import pandas as pd
 from pathlib import Path
+import string
 
 # Manage suffix on modal endpoint if testing.
 suffix = ''
@@ -32,7 +33,7 @@ class SentLengthConfig(BaseModel):
 class Result(BaseModel):
     assessment_id: int
     verse: str
-    score: float
+    lix_score: float
     flag: bool
     note: str
 
@@ -59,12 +60,33 @@ def get_words_per_sentence(text):
     avg_words = len(words) / len(sentences)
 
     #round to 2 decimal places
-    avg_words = round(avg_words, 2)
+    #avg_words = round(avg_words, 2)
     
     return avg_words
 
+def get_long_words(text, n=7):
+    #get % of words that are >= n characters
+    #if text contains only spaces, return 0
+    if text.isspace():
+        return 0
+    
+    #clean text
+    text = text.translate(str.maketrans('', '', string.punctuation))
+
+    #get score
+    words = text.split(' ')
+    long_words = [word for word in words if len(word) > n]
+    percent_long_words = float(len(long_words) / len(words))
+    return percent_long_words*100
+
+def get_lix_score(text):
+    lix = (get_long_words(text)+get_words_per_sentence(text))
+    #round
+    lix = round(lix, 2)
+    return lix
+
 #run the assessment
-#for now, average words per sentence
+#for now, use the Lix formula
 @stub.function
 def sentence_length(assessment_id: int, configuration: dict):
     assessment_config = SentLengthConfig(**configuration)
@@ -85,21 +107,23 @@ def sentence_length(assessment_id: int, configuration: dict):
     #get book, chapter, and verse columns
     df['book'] = df['vref'].str.split(' ').str[0]
     df['chapter'] = df['vref'].str.split(' ').str[1].str.split(':').str[0]
-    #df['verse'] = df['vref'].str.split(' ').str[1].str.split(':').str[1]
 
     #group by book and chapter
     chapter_df = df.groupby(['book', 'chapter']).agg({'verse': ' '.join}).reset_index()
 
-    #calculate average words per sentence for each chapter
-    chapter_df['score'] = chapter_df['verse'].apply(get_words_per_sentence)
-
+    #calculate lix score for each chapter
+    chapter_df['lix_score'] = chapter_df['verse'].apply(get_lix_score)
+    chapter_df['wps'] = chapter_df['verse'].apply(get_words_per_sentence)
+    chapter_df['percent_long_words'] = chapter_df['verse'].apply(get_long_words)
+    
     #add scores to original df
     #every verse in a chapter will have the same score
-    df = df.merge(chapter_df[['book', 'chapter', 'score']], on=['book', 'chapter'])
+    #df = df.merge(chapter_df[['book', 'chapter', 'score']], on=['book', 'chapter'])
+    df = df.merge(chapter_df[['book', 'chapter', 'lix_score', 'wps', 'percent_long_words']], on=['book', 'chapter'])
 
     #add to results
     results = []
     for index, row in df.iterrows():
-        results.append(Result(assessment_id=assessment_id, verse=row['verse'], score=row['score'], flag=False, note=''))
+        results.append(Result(assessment_id=assessment_id, verse=row['verse'], lix_score=row['lix_score'], flag=False, note=''))
 
     return Results(results=results)
