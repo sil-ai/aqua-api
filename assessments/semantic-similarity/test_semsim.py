@@ -1,4 +1,3 @@
-import os
 import modal
 import pytest
 from semsim_models import SemSimConfig, SemSimAssessment
