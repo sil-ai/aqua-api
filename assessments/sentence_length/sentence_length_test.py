@@ -53,7 +53,9 @@ def test_assess_draft_10():
     with stub.run():
     # Initialize some SentLengthAssessment value.
         config = {'draft_revision': 10}     # This will then be validated as a SentLengthConfig in the app
-        response, results = get_results.call(assessment_id=2, configuration=config)
+        response, results, ids = get_results.call(assessment_id=4, configuration=config)
+
+        assert response == 200
 
         # assert response.status_code == 200
         #assert the length of results is 41899
@@ -62,26 +64,27 @@ def test_assess_draft_10():
         #assert the first verse is empty and has a score of 0.0
         assert results[0]['score'] == 0.0
         assert results[0]['flag'] == False
-        assert results[0]['vref'] == ''
+        assert results[0]['vref'] == 'GEN 1:1'
 
 def test_assess_draft_11():
     with stub.run():
         # Initialize some SentLengthAssessment value.
         config = {'draft_revision': 11}     # This will then be validated as a SentLengthConfig in the app
-        response, results = get_results.call(assessment_id=2, configuration=config)
+        response, results, ids = get_results.call(assessment_id=3, configuration=config)
 
+        assert response == 200
         #assert the length of results is 41899
         assert len(results) == 41899
 
         #assert that results[0] has a score of 12.15
         #assert results.results[0].score == 12.15
         assert results[0]['flag'] == False
-        assert results[0]['vref'] == 'Hapo mwanzo Mungu aliumba mbingu na dunia.'
+        assert results[0]['vref'] == 'GEN 1:1'
 
         #assert that results[24995] has a score or 17.19
         #assert results.results[24995].score == 17.19
         assert results[24995]['flag'] == False
-        assert results[24995]['vref'] == 'Maria akamuuliza huyo malaika, “Maadamu mimi ni bikira, jambo hili litawezekanaje?”'
+        assert results[24995]['vref'] == 'LUK 1:34'
 
 
     return results

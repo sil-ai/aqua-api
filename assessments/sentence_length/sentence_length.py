@@ -112,6 +112,7 @@ def sentence_length(assessment_id: int, configuration: dict):
     #replace <range> with blank
     df['verse'] = df['verse'].replace('<range>', '')
 
+
     #get book, chapter, and verse columns
     df['book'] = df['vref'].str.split(' ').str[0]
     df['chapter'] = df['vref'].str.split(' ').str[1].str.split(':').str[0]
@@ -133,8 +134,8 @@ def sentence_length(assessment_id: int, configuration: dict):
     results = []
     for index, row in df.iterrows():
         # results.append(Result(assessment_id=assessment_id, vref=row['verse'], score=row['lix_score'], flag=False))
-        results.append({'assessment_id': assessment_id, 'vref': row['verse'], 'score': row['lix_score'], 'flag': False})
+        results.append({'assessment_id': assessment_id, 'vref': row['vref'], 'score': row['lix_score'], 'flag': False})
 
     print('Pushing results to the database')
-    response, _ = modal.container_app.run_push_results.call(results)
-    return response, results
+    response, ids = modal.container_app.run_push_results.call(results)
+    return response, results, ids
