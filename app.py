@@ -1,6 +1,6 @@
 import os
 from datetime import date, datetime
-from typing import Union, Optional
+from typing import Union
 from tempfile import NamedTemporaryFile
 from enum import Enum
 import json
