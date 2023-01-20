@@ -18,8 +18,10 @@ stub = modal.Stub("semantic_similarity",
                      )
 )
 
-semsim_image = modal.Image.debian_slim().pip_install_from_requirements(
-    "semsim_requirements.txt"    
+semsim_image = modal.Image.debian_slim().pip_install(
+    "pandas==1.4.3",
+    "torch==1.12.0",
+    "transformers==4.21.0"
 )
 
 def similarity(embeddings_1, embeddings_2):

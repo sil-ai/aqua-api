@@ -11,16 +11,3 @@ class SemSimAssessment(BaseModel):
     assessment_id: int
     assessment_type = 'semantic-similarity'
     configuration: SemSimConfig
-
-# Results model to record in the DB.
-class Result(BaseModel):
-    assessment_id: int
-    verse: str
-    score: float
-    flag: bool
-    note: str
-
-
-# Results is a list of results to push to the DB
-class Results(BaseModel):
-    results: List[Result]
