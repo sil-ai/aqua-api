@@ -2,4 +2,4 @@
 
 MODAL_TEST=TRUE modal deploy app.py
 
-pytest
+pytest -sv

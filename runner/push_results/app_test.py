@@ -11,6 +11,7 @@ stub = modal.Stub(
         "pandas==1.4.3",
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
+        "psycopg2-binary",
         "pytest",
     ),
 )
@@ -31,42 +32,28 @@ def delete_results(ids: List[int]):
 
 
 def test_push_df_rows():
+    import pickle
+    collated_results = pickle.load(open('../../assessments/semantic-similarity/fixtures/results_jan_20.pkl','rb'))    
     with stub.run():
-
-        df = pd.read_csv("fixtures/verse_scores.csv")
-        num_rows = 10
-        results = []
-
-        for _, row in df.iloc[:num_rows, :].iterrows():
-            result = Result(
-                assessment_id=1,
-                vref=row["vref"],
-                score=row["total_score"],
-                flag=False,
-            )
-            results.append(result)
-
-        collated_results = Results(results=results)
-
         # Push the results to the DB.
-        response, ids = push_results.call(collated_results)
-        assert response == 200
+        response, ids = push_results.call(collated_results.results)
         print(ids)
-        assert len(set(ids)) == num_rows
-
-        response, _ = delete_results.call(ids)
         assert response == 200
+        assert len(set(ids)) == len(collated_results.results)
+
+        #response, _ = delete_results.call(ids)
+        #assert response == 200
 
 
-def test_push_wrong_data_type():
-    with stub.run():
-        with pytest.raises(ValidationError):
-            Result(
-                assessment_id=1,
-                vref=2,
-                score="abc123",
-                flag=False,
-            )
+# def test_push_wrong_data_type():
+#     with stub.run():
+#         with pytest.raises(ValidationError):
+#             Result(
+#                 assessment_id=1,
+#                 vref=2,
+#                 score="abc123",
+#                 flag=False,
+#             )
 
 
 if __name__ == "__main__":

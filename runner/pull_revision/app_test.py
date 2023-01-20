@@ -14,7 +14,6 @@ stub = modal.Stub(
     ),
 )
 
-
 stub.run_pull_rev = modal.Function.from_name("pull_revision_test", "pull_revision")
 
 

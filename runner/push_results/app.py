@@ -2,11 +2,6 @@ import os
 from typing import List
 
 import modal
-from sqlalchemy.exc import IntegrityError
-
-from db_connect import get_session
-from models import AssessmentResult, Results
-
 
 # Manage suffix on modal endpoint if testing.
 suffix = ""
@@ -20,64 +15,86 @@ stub = modal.Stub(
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
         "psycopg2-binary",
+    ).copy(modal.Mount(
+            local_file="models.py",
+            remote_dir="/root"
+            )
+    ).copy(modal.Mount(
+            local_file="db_connect.py",
+            remote_dir="/root"
+        )
     ),
+    secret=modal.Secret.from_name('aqua-db')
 )
-
 
 class PushResults:
     def __init__(self):
-        self.engine, self.session = next(get_session())
+        pass
 
-    def __del__(self):
-        self.session.close()
+    @stub.function(secret=modal.Secret.from_name('aqua-db'))
+    def insert(self, results):
+        from sqlalchemy.exc import IntegrityError
+        from db_connect import get_session
+        from sqlalchemy.ext.declarative import declarative_base
+        from sqlalchemy import Column, Integer, String, Numeric, Boolean
+        __, session = next(get_session())
 
-    def insert(self, results: Results):
-        self.results = results
-        self.create_bulk_results()
+        Base = declarative_base()
 
+        class AssessmentResult(Base):
+            __tablename__ = "assessmentResult"
+            id = Column(Integer, primary_key=True)
+            assessment = Column(Integer, nullable=False)
+            score = Column(Numeric, nullable=True)
+            flag = Column(Boolean, default=False)
+            note = Column(String(1024, "utf8_unicode_ci"), nullable=True)
+
+        bulk_results = [AssessmentResult(assessment = result.assessment_id,
+                                         score=result.score,
+                                         note=result.vref)
+                             for result in results]
+        ids = [ar.id for ar in bulk_results]
         try:
-            ids = self.bulk_insert_items()
-            self.session.commit()
-
+            session.bulk_save_objects(bulk_results, return_defaults=True)
+        
+            session.commit()
+            session.close()
             return 200, ids
         except (IntegrityError, AssertionError) as err:
-            self.session.rollback()
+            session.rollback()
+            session.close()
             return 500, err
 
-    def create_bulk_results(self):
-        self.assessment_results = []
-        for result in self.results.results:
-            ar = AssessmentResult(
-                assessment=result.assessment_id,
-                vref=result.vref,
-                score=result.score,
-                flag=False,
-            )
-            self.assessment_results.append(ar)
-
-    def bulk_insert_items(self):
-        self.session.bulk_save_objects(self.assessment_results, return_defaults=True)
-        self.session.flush()
-        ids = [ar.id for ar in self.assessment_results]
-
-        return ids
-
+    @stub.function(secret=modal.Secret.from_name('aqua-db'))
     def delete(self, ids: List[int]):
-        self.session.query(AssessmentResult).filter(
+        from db_connect import get_session
+        from sqlalchemy.ext.declarative import declarative_base
+        from sqlalchemy import Column, Integer, String, Numeric, Boolean
+        __, session = get_session()
+
+        Base = declarative_base()
+
+        class AssessmentResult(Base):
+            __tablename__ = "assessmentResult"
+            id = Column(Integer, primary_key=True)
+            assessment = Column(Integer, nullable=False)
+            score = Column(Numeric, nullable=True)
+            flag = Column(Boolean, default=False)
+            note = Column(String(1024, "utf8_unicode_ci"), nullable=True)
+
+        session.query(AssessmentResult).filter(
             AssessmentResult.id.in_(ids)
         ).delete(synchronize_session="fetch")
-        self.session.commit()
-
+        session.commit()
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
 )
-def push_results(results: Results):
+def push_results(results):
     pr = PushResults()
-    response, ids = pr.insert(results)
-    return response, ids
-
+    #response, ids = pr.insert(results)
+    #return response, ids
+    return pr.insert.call(results)
 
 @stub.function(
     timeout=600,
@@ -87,3 +104,9 @@ def delete_results(ids: List[int]):
     pr = PushResults()
     pr.delete(ids)
     return 200, "OK"
+
+if __name__ == '__main__':
+    import pickle
+    results = pickle.load(open('../../assessments/semantic-similarity/fixtures/results_jan_20.pkl','rb'))
+    with stub.run():
+        status = push_results.call(results.results[:10])

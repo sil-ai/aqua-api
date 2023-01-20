@@ -1,4 +1,3 @@
-from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey, DateTime
 from sqlalchemy.orm import declarative_base
 from pydantic import BaseModel
 from typing import List, Optional
@@ -8,6 +7,7 @@ Base = declarative_base()
 
 
 class AssessmentResult(Base):
+    from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey
 
     __tablename__ = "assessmentResult"
     id = Column(Integer, primary_key=True)  # autoincrements by default
@@ -27,6 +27,7 @@ class AssessmentResult(Base):
 
 
 class Assessment(Base):
+    from sqlalchemy import Column, Integer, Text, Boolean, ForeignKey, DateTime
 
     __tablename__ = "assessment"
     id = Column(Integer, primary_key=True)  # autoincrements by default
@@ -44,6 +45,8 @@ class Assessment(Base):
 
 
 class VerseReference(Base):
+    from sqlalchemy import Column, Integer, Text, ForeignKey
+
     __tablename__ = "verseReference"
     fullVerseId = Column(Text, primary_key=True)
     number = Column(Integer)
@@ -51,18 +54,20 @@ class VerseReference(Base):
 
 
 class ChapterReference(Base):
+    from sqlalchemy import Column, Integer, Text, ForeignKey
+
     __tablename__ = "chapterReference"
     fullChapterId = Column(Text, primary_key=True)
     number = Column(Integer)
     bookReference = Column(Text, ForeignKey("bookReference.abbreviation"))
 
-
 class BookReference(Base):
+    from sqlalchemy import Column, Integer, Text
+
     __tablename__ = "bookReference"
     abbreviation = Column(Text, primary_key=True)
     name = Column(Text)
     number = Column(Integer)
-
 
 # Results model to record in the DB.
 class Result(BaseModel):

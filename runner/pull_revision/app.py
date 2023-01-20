@@ -53,9 +53,25 @@ class PullRevision:
 
     @stub.function(secret=modal.Secret.from_name("aqua-db"))
     def pull_revision(self, revision_id):
-        from db_connect import get_session, VerseText
         import pandas as pd
+        from db_connect import get_session
+        from sqlalchemy.ext.declarative import declarative_base
+        Base = declarative_base()
 
+        class VerseText(Base):
+            from sqlalchemy import Column, Integer, String
+
+            __tablename__ = "verseText"
+            #TODO: check what the original field lengths are
+            id = Column(Integer, primary_key=True)
+            #transfers all but one Apocryphal verse ESG 10:3
+            text = Column(
+                String(550, "utf8_unicode_ci"), nullable=False)
+            bibleRevision = Column(Integer, nullable=False, index=True)
+            #transfers across all reference strings
+            verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
+
+        #get the session
         __, session = next(get_session())
         logging.info("Loading verses from Revision %s...", revision_id)
         revision_verses = pd.read_sql(
@@ -112,6 +128,9 @@ class PullRevision:
     secret=modal.Secret.from_name("aqua-db"),
 )
 def pull_revision(revision_id: int) -> bytes:
+    from sqlalchemy.ext.declarative import declarative_base
+    global Base
+    Base=declarative_base()
     pr = PullRevision()
     revision_text = pr.pull_revision.call(revision_id)
     revision_bytes = pr.output_revision.call(revision_text)
