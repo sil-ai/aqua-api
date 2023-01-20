@@ -16,7 +16,7 @@
 - `/revision`
     - ✔️ `GET` - lists revisions
     - ✔️ `POST` - uploads Bible data to create a new revision
-    - ❌ `DELETE` - removes a revision and the downstream `verseText` data
+    - ✔️ `DELETE` - removes a revision and the downstream `verseText` data
 - `/assessment`
     - ❌ `GET` - lists assessments
     - ❌ `POST` - triggers a new assessment (regardless of assessment type)
@@ -24,9 +24,9 @@
 - `/result`
     - ❌ `GET` - retrieves results of assessments from the database
 
-## Local development
+## Developing the API
 
-To run the API locally:
+To run the API locally while developing:
 
 1. Get the necessary DB creds, etc.
 
@@ -43,3 +43,39 @@ To run the API locally:
     ```
     
 4. Use Postman or cURL to interact with (i.e., call) the various endpoints to see how they work. And/or pull up the docs at `localhost:8080/docs`
+
+## Using the API
+
+To use a deployed version of the API, you will need:
+
+- The URL of the deployed API endpoint (referred to below as `<url>`, which should be replaced by the actual URL endpoint)
+- An active API key (referred to below as `<key>`, which should be replace by your actual API key)
+
+You can review the live swagger docs of the API by visiting `<url>/docs`. This will list out the endpoints, HTTP methods, parameters, etc. that are available. 
+
+To call the API, you need to use OAuth 2.0 and set the current token for authentication to your API key. Here are some examples that show how to list versions in the API:
+
+### cURL
+
+```
+$ curl --location --request GET '<url>/version' \
+--header 'Authorization: Bearer <key>'
+```
+
+### Python - requests
+
+```
+import requests
+
+url = "<url>"
+
+payload={}
+headers = {
+  'Authorization': 'Bearer <key>'
+}
+
+response = requests.request("GET", url, headers=headers, data=payload)
+
+print(response.text)
+
+```
