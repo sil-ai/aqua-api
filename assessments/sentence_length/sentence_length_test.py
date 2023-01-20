@@ -68,7 +68,7 @@ def test_assess_draft_11():
     with stub.run():
         # Initialize some SentLengthAssessment value.
         config = {'draft_revision': 11}     # This will then be validated as a SentLengthConfig in the app
-        results = get_results.call(assessment_id=2, configuration=config)
+        response, results = get_results.call(assessment_id=2, configuration=config)
 
         #assert the length of results is 41899
         assert len(results) == 41899
