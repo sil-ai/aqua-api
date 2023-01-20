@@ -406,19 +406,17 @@ def create_app():
 
                 version_data.append(ind_data)
 
-        return version_data
+        return {'status_code': 200, 'assessments': version_data}
     
 
     @app.post("/assessment", dependencies=[Depends(api_key_auth)])
     async def add_version(file: UploadFile):
         config_bytes = await file.read()
         config = json.loads(config_bytes)
-        revision_id = int(config['revision'])
+        revision_id = config['revision']
         assessment_type = config['type']
         reference = config.get('reference', None)
-        if reference:
-            reference = int(reference)
-        else:
+        if not reference:
             reference = 'null'
         try:
             assessment = Assessment(
@@ -426,12 +424,14 @@ def create_app():
                     reference=reference,
                     type=AssessmentType[assessment_type], 
                     )
-        except ValidationError as e:
-            return [400, {error['loc'][0]: error['msg']  for error in e.errors()}]
+        except ValidationError:
+            raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Assessment config is invalid."
+        )
         assessment_type_fixed = '"' + assessment.type.name +  '"'
         requested_time = '"' + datetime.now().isoformat() + '"'
-        status = '"' + 'queued' + '"'
-        
+        assessment_status = '"' + 'queued' + '"'
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
@@ -440,7 +440,7 @@ def create_app():
                     reference,
                     assessment_type_fixed, 
                     requested_time, 
-                    status, 
+                    assessment_status, 
                     )
             mutation = gql(new_assessment)
 
@@ -455,22 +455,24 @@ def create_app():
                 "status": assessment["insert_assessment"]["returning"][0]["status"],
 
                 }
-        # assessment_config = runner.AssessmentConfig(
-        #                 assessment=new_assessment['id'],
-        #                 assessment_type=new_assessment['type'],
-        #                 configuration=config,
-        #                 )
+      
+        # Call runner to run assessment
+        import requests
         url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
         json_file = json.dumps({
             'assessment': new_assessment['id'],
             'assessment_type': new_assessment['type'],
             'configuration': config,
         })
-        import requests
+        
         response = requests.post(url, files={"file": json_file})
         assert response.status_code == 200
         
-        return [200, f'OK. Assessment id {new_assessment["id"]} added to the database and assessment started']
+        return {
+                    'status_code': 200, 
+                    'message': f'OK. Assessment id {new_assessment["id"]} added to the database and assessment started',
+                    'data': new_assessment,
+        }
 
 
     @app.delete("/assessment", dependencies=[Depends(api_key_auth)])

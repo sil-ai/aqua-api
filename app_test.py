@@ -193,3 +193,44 @@ def test_delete_version(client):
 
     assert test_response.status_code == 200
     assert fail_response.status_code == 400
+
+
+def test_assessment(client):
+    import json
+
+    bad_config = {
+            "revision": "eleven",
+            "reference": 10,
+            "type": "dummy"
+            }
+
+    good_config = {
+            "revision": 11,
+            "reference": 10,
+            "type": "dummy"
+            }
+    
+    # Try to post bad config
+    bad_config_json = json.dumps(bad_config)
+    response = client.post("/assessment", files={'file': bad_config_json})
+    assert response.status_code == 400
+
+    # Post good config
+    good_config_json = json.dumps(good_config)
+    response = client.post("/assessment", files={'file': good_config_json})
+    assert response.status_code == 200
+    id = response.json()['data']['id']
+
+    # Verify good config id is now in assessments
+    response = client.get("/assessment")
+    assert response.status_code == 200
+    assert id in [assessment['id'] for assessment in response.json()['assessments']]
+
+    # Remove good config from assessments
+    response = client.delete("/assessment", params={'assessment_id': id})
+    assert response.status_code == 200
+
+    # Verify good config is no longer in assessments
+    response = client.get("/assessment")
+    assert response.status_code == 200
+    assert id not in [assessment['id'] for assessment in response.json()['assessments']]
