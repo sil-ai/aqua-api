@@ -20,8 +20,9 @@ stub = modal.Stub(
     )
     .copy(mount=modal.Mount(local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root"))),
 )
-#get the pull_revision function
-stub.pull_revision = modal.Function.from_name("pull_revision", "pull_revision")
+#get the pull_revision and push_results functions
+stub.run_pull_revision = modal.Function.from_name("pull_revision", "pull_revision")
+stub.run_push_results = modal.Function.from_name("push_results_test", "push_results")
 
 
 # The information needed to run a sentence length assessment configuration.
@@ -93,7 +94,7 @@ def sentence_length(assessment_id: int, configuration: dict):
     
     #pull the revision
     rev_num = assessment_config.draft_revision
-    lines = modal.container_app.pull_revision.call(rev_num)
+    lines = modal.container_app.run_pull_revision.call(rev_num)
     lines = [line.strip() for line in lines]
 
     #get vrefs
@@ -125,5 +126,7 @@ def sentence_length(assessment_id: int, configuration: dict):
     results = []
     for index, row in df.iterrows():
         results.append(Result(assessment_id=assessment_id, verse=row['verse'], lix_score=row['lix_score'], flag=False, note=''))
+
+    modal.container_app.run_push_results.call(Results(results=results))
 
     return Results(results=results)
