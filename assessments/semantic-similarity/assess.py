@@ -1,12 +1,12 @@
 import modal
-from models import Result, Results, SemSimAssessment, SemSimConfig
+from semsim_models import SemSimAssessment, SemSimConfig
 from pandas import DataFrame
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
 stub = modal.Stub("semantic_similarity",
-                     image = modal.Image.debian_slim().pip_install_from_requirements(
-                      "requirements.txt"
+                     image = modal.Image.debian_slim().pip_install(
+                        "pandas==1.4.3"
                      ).copy(modal.Mount(
                          local_file='../../fixtures/vref.txt',
                          remote_dir='/root'
@@ -21,7 +21,13 @@ stub = modal.Stub("semantic_similarity",
 semsim_image = modal.Image.debian_slim().pip_install(
     "pandas==1.4.3",
     "torch==1.12.0",
-    "transformers==4.21.0"
+    "transformers==4.21.0",
+    "SQLAlchemy==1.4.46"
+).copy(
+    modal.Mount(
+        local_file="../../runner/push_results/models.py",
+        remote_dir="/root"
+    )
 )
 
 def similarity(embeddings_1, embeddings_2):
@@ -49,8 +55,9 @@ class SemanticSimilarity:
     #??? May want to raise the concurrency limit
     @stub.function(image=semsim_image,cpu=4, concurrency_limit=2)
     def predict(self, sent1: str, sent2: str, ref: str,
-                assessment_id: int, precision: int=2)-> Result:
+                assessment_id: int, precision: int=2):
         import torch
+        from models import  Result
         """
         Return a prediction.
 
@@ -76,10 +83,8 @@ class SemanticSimilarity:
         logging.info(f'{ref} has a score of {sim_score}')
         #??? What values do you want for flag and note @dwhitena?
         return Result(assessment_id=assessment_id,
-                      verse=ref,
-                      score=sim_score,
-                      flag=False,
-                      note='')
+                      vref=ref,
+                      score=sim_score)
 
 @stub.function
 def get_text(rev_id: int)-> DataFrame:
@@ -95,7 +100,8 @@ def merge(draft_id: int, draft_verses: DataFrame,
 @stub.function(image=semsim_image,
                timeout=1000,
                cpu=4)
-def assess(assessment: SemSimAssessment, offset=-1)-> Results:
+def assess(assessment: SemSimAssessment, offset=-1):
+    from models import  Results
     draft = get_text.call(assessment.configuration.draft_revision)
     reference = get_text.call(assessment.configuration.reference_revision)
     df = merge.call(assessment.configuration.draft_revision,

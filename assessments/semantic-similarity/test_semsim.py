@@ -12,7 +12,7 @@ if os.environ.get('MODAL_TEST') == 'TRUE':
 stub = modal.Stub(
     name="semantic_similarity" + suffix,
     image=modal.Image.debian_slim().pip_install(
-        "pytest",
+        "pytest==7.1.2",
         #"fuzzywuzzy",
         #"python-Levenshtein"
     ),
