@@ -40,6 +40,18 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
         aws-region: us-east-1
 
+    - name: Linting (Ruff)
+      run: |
+        python -m pip install --upgrade pip
+        pip install ruff
+        ruff --ignore E501 --format=github .
+
+    - name: Modal app tests
+      run: ./modal_test.sh
+      env:
+        MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+        MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
@@ -49,14 +61,8 @@ jobs:
       env:
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
 
-    - name: Linting 
-      uses: actions/checkout@v3
-    - name: Install Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.11"
-    - name: Run Ruff
-      run: |
-        python -m pip install --upgrade pip
-        pip install ruff
-        ruff --ignore E501 --format=github .
+    - name: Deploy Modal apps
+      run: ./modal_deploy.sh
+      env:
+        MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+        MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
