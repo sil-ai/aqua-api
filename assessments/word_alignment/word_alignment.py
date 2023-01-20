@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import List
-from word_alignment_steps import prepare_data, create_cache, alignment_scores, translation_scores, match_scores
+from word_alignment_steps import prepare_data, create_cache, alignment_scores, translation_scores, match_scores, embeddings
 import modal.aio
 import asyncio
 from pathlib import Path
@@ -20,6 +20,11 @@ stub = modal.aio.AioStub(
     .copy(
         mount=modal.Mount(
             local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root")
+        )
+    )
+    .copy(
+        mount=modal.Mount(
+            local_file=Path("data/models/encoder_weights.txt"), remote_dir=Path("/root")
         )
     ),
 )
@@ -92,6 +97,10 @@ async def run_match_scores(src_revision_id, condensed_df, src_index_cache, targe
     match_scores_df = match_scores.run_match_scores(condensed_df, src_index_cache, target_index_cache)
     return {src_revision_id: {'match_scores': match_scores_df}}
 
+@stub.function
+async def run_embedding_scores(src_revision_id, condensed_df, src_index_cache, target_index_cache):
+    embedding_scores_df = embeddings.run_embeddings(condensed_df, src_index_cache, target_index_cache)
+    return {src_revision_id: {'embedding_scores': embedding_scores_df}}
 
 @stub.function
 async def create_condensed_df(src_tokenized_df, trg_tokenized_df, src_revision_id):
@@ -135,13 +144,13 @@ async def word_alignment(assessment: AlignmentAssessment, refresh: bool = False)
         )
 
         for src_revision_id, condensed_df in results:
-            print(condensed_df.columns)
             condensed_dfs[src_revision_id] = condensed_df
         
         results = await asyncio.gather(
             *[run_alignment_scores.call(src_revision_id, condensed_df) for src_revision_id, condensed_df in condensed_dfs.items()],
             *[run_translation_scores.call(src_revision_id, condensed_df) for src_revision_id, condensed_df in condensed_dfs.items()],
             *[run_match_scores.call(src_revision_id, condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]) for src_revision_id, condensed_df in condensed_dfs.items()],
+            *[run_embedding_scores.call(src_revision_id, condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]) for src_revision_id, condensed_df in condensed_dfs.items()],
 
         )
         print(results)

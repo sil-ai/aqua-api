@@ -3,6 +3,7 @@ from machine.corpora import TextFileTextCorpus
 from machine.tokenization import LatinWordTokenizer
 from typing import List
 import pandas as pd
+import numpy as np
 import re
 from typing import Dict
 
@@ -16,6 +17,19 @@ class Word():
     def get_indices(self, word_series):
         self.index_list = list(set(word_series[word_series == self.normalized].index))
 
+    def get_ohe(self, max_num=41899):
+        a = np.zeros(max_num)
+        np.put(a, np.array(self.index_list, dtype='int64'), 1)    
+        self.index_ohe = a
+
+    def get_encoding(self, weights: np.ndarray):
+        self.get_ohe()
+        self.encoding = np.matmul(weights, self.index_ohe)
+        self.norm_encoding = self.encoding / np.linalg.norm(self.encoding)
+        self.index_ohe = np.array([])
+    
+    def get_norm_distance(self, word):
+        return np.linalg.norm(self.norm_encoding - word.norm_encoding)
 
 
 def normalize_word(word:str)-> str:
