@@ -1,5 +1,4 @@
 import modal
-import pandas as pd
 import requests
 from pathlib import Path
 import sentence_length
@@ -63,7 +62,7 @@ def test_assess_draft_10():
 
         #assert the first verse is empty and has a score of 0.0
         assert results[0]['score'] == 0.0
-        assert results[0]['flag'] == False
+        assert results[0]['flag'] is False
         assert results[0]['vref'] == 'GEN 1:1'
 
 def test_assess_draft_11():
@@ -78,12 +77,12 @@ def test_assess_draft_11():
 
         #assert that results[0] has a score of 12.15
         #assert results.results[0].score == 12.15
-        assert results[0]['flag'] == False
+        assert results[0]['flag'] is False
         assert results[0]['vref'] == 'GEN 1:1'
 
         #assert that results[24995] has a score or 17.19
         #assert results.results[24995].score == 17.19
-        assert results[24995]['flag'] == False
+        assert results[24995]['flag'] is False
         assert results[24995]['vref'] == 'LUK 1:34'
 
 
