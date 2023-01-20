@@ -1,11 +1,10 @@
-import os
-from sqlalchemy import Column, Integer, String, create_engine
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session
 
 Base = declarative_base()
 
 class VerseText(Base):
+    from sqlalchemy import Column, Integer, String
+
     __tablename__ = "verseText"
     #TODO: check what the original field lengths are
     id = Column(Integer, primary_key=True)
@@ -17,6 +16,10 @@ class VerseText(Base):
     verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
 
 def get_session():
+    import os
+    from sqlalchemy create_engine
+    from sqlalchemy.orm import Session
+
     #??? Should this yield only session?
     #Need engine in testing but maybe I can pull out of session?
     try:
