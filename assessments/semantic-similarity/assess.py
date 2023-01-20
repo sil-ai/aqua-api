@@ -10,6 +10,9 @@ suffix = ''
 if os.environ.get('MODAL_TEST') == 'TRUE': 
     suffix = '_test'
 
+#default concurrency limit is 10
+concurrency_limit = int(os.environ.get('CONCURRENCY_LIMIT', 10))
+
 stub = modal.Stub("semantic_similarity" + suffix,
                      image = modal.Image.debian_slim().pip_install(
                         "pandas==1.4.3"
@@ -58,8 +61,7 @@ class SemanticSimilarity:
         self.semsim_tokenizer = BertTokenizerFast.from_pretrained('setu4993/LaBSE')
         logging.info('Tokenizer initialized...')
 
-    #??? May want to raise the concurrency limit
-    @stub.function(image=semsim_image,cpu=4, concurrency_limit=10)
+    @stub.function(image=semsim_image,cpu=4, concurrency_limit=concurrency_limit)
     def predict(self, sent1: str, sent2: str, ref: str,
                 assessment_id: int, precision: int=2):
         import torch
