@@ -4,7 +4,7 @@ from typing import List
 import modal
 
 from db_connect import get_session
-from models import AssessmentResult, Results
+from models import Results
 
 
 # Manage suffix on modal endpoint if testing.
@@ -46,6 +46,29 @@ class PushResults:
             return 500, err
 
     def create_bulk_results(self):
+        from sqlalchemy.orm import declarative_base
+        Base = declarative_base()
+
+        class AssessmentResult(Base):
+            from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey
+
+
+            __tablename__ = "assessmentResult"
+            id = Column(Integer, primary_key=True)  # autoincrements by default
+            assessment = Column(Integer, ForeignKey("assessment.id"), nullable=False)
+            vref = Column(
+                Text, ForeignKey("verseReference.fullVerseId")
+            )  # vref format 'Gen 1:1'
+            score = Column(Float)
+            flag = Column(Boolean, default=False)
+            note = Column(Text)
+
+            def __repr__(self):
+                return (
+                    f"Assessment Result({self.id}) -> {self.assessment}/{self.vref}\n"
+                    f"score={self.score} flag={self.flag}, note={self.note}"
+                )
+
         self.assessment_results = []
         for result in self.results.results:
             ar = AssessmentResult(
@@ -64,6 +87,29 @@ class PushResults:
         return ids
 
     def delete(self, ids: List[int]):
+        from sqlalchemy.orm import declarative_base
+        Base = declarative_base()
+
+        class AssessmentResult(Base):
+            from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey
+
+
+            __tablename__ = "assessmentResult"
+            id = Column(Integer, primary_key=True)  # autoincrements by default
+            assessment = Column(Integer, ForeignKey("assessment.id"), nullable=False)
+            vref = Column(
+                Text, ForeignKey("verseReference.fullVerseId")
+            )  # vref format 'Gen 1:1'
+            score = Column(Float)
+            flag = Column(Boolean, default=False)
+            note = Column(Text)
+
+            def __repr__(self):
+                return (
+                    f"Assessment Result({self.id}) -> {self.assessment}/{self.vref}\n"
+                    f"score={self.score} flag={self.flag}, note={self.note}"
+                )
+
         self.session.query(AssessmentResult).filter(
             AssessmentResult.id.in_(ids)
         ).delete(synchronize_session="fetch")
