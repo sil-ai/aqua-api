@@ -153,11 +153,11 @@ def test_get_verse(client):
 
 def test_delete_revision(client):
     
-    version_abv = {
+    test_version_abv = {
            "version_abbreviation": "DEL"
            }
 
-    version_response = client.get("/revision", params=version_abv)
+    version_response = client.get("/revision", params=test_version_abv)
     version_fixed = ast.literal_eval(version_response.text)
 
     for version_data in version_fixed:
@@ -168,9 +168,15 @@ def test_delete_revision(client):
             "revision": revision_id
             }
 
-    delete_response = client.delete("/revision", params=delete_revision_data)
+    fail_revision_data = {
+            "revision": 0
+            }
 
-    assert delete_response.status_code == 200
+    test_delete_response = client.delete("/revision", params=delete_revision_data)
+    fail_delete_response = client.delete("/revision", params=fail_revision_data)
+
+    assert test_delete_response.status_code == 200
+    assert fail_delete_response.status_code == 400
 
 
 def test_delete_version(client):
@@ -178,6 +184,12 @@ def test_delete_version(client):
             "version_abbreviation": "DEL"
             }
 
+    fail_delete_version = {
+            "version_abbreviation": "THIS_WILL_FAIL"
+            }
+
     test_response = client.delete("/version", params=test_delete_version)
+    fail_response = client.delete("/version", params=fail_delete_version)
 
     assert test_response.status_code == 200
+    assert fail_response.status_code == 400

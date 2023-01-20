@@ -141,29 +141,47 @@ def create_app():
     @app.delete("/version", dependencies=[Depends(api_key_auth)])
     async def delete_version(version_abbreviation: str):
         bibleVersion = '"' + version_abbreviation + '"'
+        fetch_versions = queries.list_versions_query()
         fetch_revisions = queries.list_revisions_query(bibleVersion)
         delete_version = queries.delete_bible_version(bibleVersion)
         
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            version_query = gql(fetch_versions)
+            version_result = client.execute(version_query)
+
+            version_list = []
+            for version in version_result["bibleVersion"]:
+                version_list.append(version["abbreviation"])
+
             revision_query = gql(fetch_revisions)
             revision_result = client.execute(revision_query)
+            
+            if version_abbreviation in version_list:
+                revision_query = gql(fetch_revisions)
+                revision_result = client.execute(revision_query)
+            
+                for revision in revision_result["bibleRevision"]:
+                    delete_verses = queries.delete_verses_mutation(revision["id"])
+                    verses_mutation = gql(delete_verses)
+                    client.execute(verses_mutation)
 
-            for revision in revision_result["bibleRevision"]:
-                delete_verses = queries.delete_verses_mutation(revision["id"])
-                verses_mutation = gql(delete_verses)
-                client.execute(verses_mutation)
+                    delete_revision = queries.delete_revision_mutation(revision["id"])
+                    revision_mutation = gql(delete_revision)
+                    client.execute(revision_mutation)
 
-                delete_revision = queries.delete_revision_mutation(revision["id"])
-                revision_mutation = gql(delete_revision)
-                client.execute(revision_mutation)
+                version_delete_mutation = gql(delete_version)
+                version_delete_result = client.execute(version_delete_mutation)        
 
-            version_delete_mutation = gql(delete_version)
-            version_delete_result = client.execute(version_delete_mutation)        
+                delete_response = ("Version " + 
+                        version_delete_result["delete_bibleVersion"]["returning"][0]["name"] +
+                        " successfully deleted."
+                        )
 
-        delete_response = ("Version " + 
-                version_delete_result["delete_bibleVersion"]["returning"][0]["name"] +
-                " successfully deleted."
-                )
+            else:
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Version abbreviation invalid, version does not exist"
+                        )
 
         return delete_response
 
@@ -200,7 +218,7 @@ def create_app():
             else:
                 raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="version_abbreviation invalid"
+                        detail="Version abbreviation is invalid"
                         )
 
         return revisions_data 
@@ -270,20 +288,36 @@ def create_app():
     
     @app.delete("/revision", dependencies=[Depends(api_key_auth)])
     async def delete_revision(revision: int):
+        fetch_revisions = queries.check_revisions_query()
         delete_revision = queries.delete_revision_mutation(revision)
         delete_verses_mutation = queries.delete_verses_mutation(revision)
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
-            verse_mutation = gql(delete_verses_mutation)
-            client.execute(verse_mutation)
+            revision_data = gql(fetch_revisions)
+            revision_result = client.execute(revision_data)
 
-            revision_mutation = gql(delete_revision)
-            revision_result = client.execute(revision_mutation)
+            revisions_list = []
+            for revisions in revision_result["bibleRevision"]:
+                revisions_list.append(revisions["id"])
+
+            if revision in revisions_list:
+                verse_mutation = gql(delete_verses_mutation)
+                client.execute(verse_mutation)
+
+                revision_mutation = gql(delete_revision)
+                revision_result = client.execute(revision_mutation)
             
-        delete_response = ("Revision " + 
-                str(revision_result["delete_bibleRevision"]["returning"][0]["id"]) + 
-                " deleted successfully"
-                )
+                delete_response = ("Revision " + 
+                    str(
+                        revision_result["delete_bibleRevision"]["returning"][0]["id"]
+                        ) + "deleted successfully"
+                    )
+
+            else: 
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Revision is invalid, this revision id does not exist."
+                        )
 
         return delete_response
 
