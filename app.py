@@ -11,7 +11,7 @@ from fastapi.security import OAuth2PasswordBearer
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 import numpy as np
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 import queries
 import bible_loading
@@ -420,11 +420,14 @@ def create_app():
             reference = int(reference)
         else:
             reference = 'null'
-        assessment = Assessment(
+        try:
+            assessment = Assessment(
                     revision=revision_id,
                     reference=reference,
                     type=AssessmentType[assessment_type], 
                     )
+        except ValidationError as e:
+            return [400, {error['loc'][0]: error['msg']  for error in e.errors()}]
         assessment_type_fixed = '"' + assessment.type.name +  '"'
         requested_time = '"' + datetime.now().isoformat() + '"'
         status = '"' + 'queued' + '"'
@@ -467,7 +470,7 @@ def create_app():
         response = requests.post(url, files={"file": json_file})
         assert response.status_code == 200
         
-        return {200, f'OK. Assessment id {new_assessment["id"]} added to the database and assessment started'}
+        return [200, f'OK. Assessment id {new_assessment["id"]} added to the database and assessment started']
 
 
     @app.delete("/assessment", dependencies=[Depends(api_key_auth)])
