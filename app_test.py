@@ -211,8 +211,23 @@ def test_assessment(client):
     assert id not in [assessment['id'] for assessment in response.json()['assessments']]
 
 
+def test_get_result(client): 
+    test_config = {
+            "assessment_id": 6
+            }
+
+    fail_config = {
+            "assessment_id": 0
+            }
+
+    test_response = client.get("/result", params=test_config)
+    fail_response = client.get("/result", params=fail_config)
+
+    assert test_response.status_code == 200
+    assert fail_response.status_code == 400
+
+
 def test_delete_revision(client):
-    
     test_version_abv = {
            "version_abbreviation": "DEL"
            }

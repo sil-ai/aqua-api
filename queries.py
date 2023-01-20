@@ -329,3 +329,29 @@ def delete_assessment_results_mutation(assessment):
                     """.format(assessment)
     
     return delete_assessment_results
+
+
+def get_results_query(assessment_id):
+    get_results = """
+                query {{
+                  assessmentResult(
+                    where: {{
+                      assessment: {{
+                        _eq: {}
+                      }}
+                    }}
+                  ) {{
+                    id
+                    score
+                    flag
+                    note
+                    vref
+                    assessmentByAssessment {{
+                      reference
+                      type
+                    }}
+                  }}
+                }}
+                """.format(assessment_id)
+
+    return get_results
