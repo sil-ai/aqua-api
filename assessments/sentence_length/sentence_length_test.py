@@ -15,7 +15,7 @@ def test_runner():
     assert response.status_code == 200
 
 stub = modal.Stub(
-    name="sentence_length_test",
+    name="run_sentence_length_test",
     image=modal.Image.debian_slim().pip_install(
         'pydantic',
         'pytest',
@@ -58,7 +58,7 @@ def test_assess_draft_10():
     #assert the first verse is empty and has a score of 0.0
     assert results.results[0].score == 0.0
     assert results.results[0].flag == False
-    assert results.results[0].verse == ''
+    assert results.results[0].vref == ''
 
 def test_assess_draft_11():
     with stub.run():
@@ -72,12 +72,12 @@ def test_assess_draft_11():
     #assert that results[0] has a score of 12.15
     #assert results.results[0].score == 12.15
     assert results.results[0].flag == False
-    assert results.results[0].verse == 'Hapo mwanzo Mungu aliumba mbingu na dunia.'
+    assert results.results[0].vref == 'Hapo mwanzo Mungu aliumba mbingu na dunia.'
 
     #assert that results[24995] has a score or 17.19
     #assert results.results[24995].score == 17.19
     assert results.results[24995].flag == False
-    assert results.results[24995].verse == 'Maria akamuuliza huyo malaika, “Maadamu mimi ni bikira, jambo hili litawezekanaje?”'
+    assert results.results[24995].vref == 'Maria akamuuliza huyo malaika, “Maadamu mimi ni bikira, jambo hili litawezekanaje?”'
 
 
     return results

@@ -21,12 +21,15 @@ stub = modal.Stub(
     image=modal.Image.debian_slim().pip_install(
         'pydantic',
         'pandas',
+        "psycopg2-binary",
+        "requests_toolbelt==0.9.1",
+        "sqlalchemy==1.4.36",
     )
     .copy(mount=modal.Mount(local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root"))),
 )
 #get the pull_revision and push_results functions
 stub.run_pull_revision = modal.Function.from_name("pull_revision", "pull_revision")
-stub.run_push_results = modal.Function.from_name("push_results_test", "push_results")
+stub.run_push_results = modal.Function.from_name("push_results", "push_results")
 
 
 # The information needed to run a sentence length assessment configuration.
@@ -130,7 +133,8 @@ def sentence_length(assessment_id: int, configuration: dict):
     results = []
     for index, row in df.iterrows():
         results.append(Result(assessment_id=assessment_id, vref=row['verse'], score=row['lix_score'], flag=False))
-
-    modal.container_app.run_push_results.call(Results(results=results))
-
-    return Results(results=results)
+    print('Pushing results to the database')
+    print(Results(results=results))
+    response = modal.container_app.run_push_results.call(Results(results=results))
+    print(response)
+    return response
