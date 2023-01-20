@@ -107,6 +107,6 @@ if __name__ == "__main__":
     Hello?
     """
 
-    print(f"Words per sentence: {sentence_length.get_words_per_sentence(test_text)}")
-    print(f"Long words: {sentence_length.get_long_words(test_text)}")
-    print(f"LIX score: {sentence_length.get_lix_score(test_text)}")
+    print(f"Words per sentence: {app.get_words_per_sentence(test_text)}")
+    print(f"Long words: {app.get_long_words(test_text)}")
+    print(f"LIX score: {app.get_lix_score(test_text)}")
