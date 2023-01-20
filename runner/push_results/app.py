@@ -38,8 +38,8 @@ class PushResults:
         try:
             ids = self.bulk_insert_items()
             self.session.commit()
-
             return 200, ids
+        
         except (IntegrityError, AssertionError) as err:
             self.session.rollback()
             return 500, err
