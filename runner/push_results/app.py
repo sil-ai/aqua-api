@@ -35,14 +35,14 @@ class PushResults:
         self.results = results
         self.create_bulk_results()
 
-        # try:
-        ids = self.bulk_insert_items()
-        self.session.commit()
+        try:
+            ids = self.bulk_insert_items()
+            self.session.commit()
 
-        return 200, ids
-        # except (IntegrityError, AssertionError) as err:
-        #     self.session.rollback()
-        #     return 500, err
+            return 200, ids
+        except (IntegrityError, AssertionError) as err:
+            self.session.rollback()
+            return 500, err
 
     def create_bulk_results(self):
         self.assessment_results = []
