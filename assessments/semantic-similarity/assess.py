@@ -108,7 +108,7 @@ def merge(draft_id: int, draft_verses: DataFrame,
 @stub.function(image=semsim_image,
                timeout=1000,
                cpu=4)
-def assess(assessment: SemSimAssessment, offset=-1):
+def assess(assessment: SemSimAssessment, offset=0):
     from models import  Results
     draft = get_text.call(assessment.configuration.draft_revision)
     reference = get_text.call(assessment.configuration.reference_revision)
@@ -118,9 +118,15 @@ def assess(assessment: SemSimAssessment, offset=-1):
                     reference)
     sem_sim = SemanticSimilarity()
     #default offset is all of the verses
-    sents1 = df['draft'].to_list()[:offset]
-    sents2 = df['reference'].to_list()[:offset]
-    refs = df.index.to_list()[:offset]
+    if offset == 0:
+        sents1 = df['draft'].to_list()
+        sents2 = df['reference'].to_list()
+        refs = df.index.to_list()
+    else:
+        sents1 = df['draft'].to_list()[:offset]
+        sents2 = df['reference'].to_list()[:offset]
+        refs = df.index.to_list()[:offset]
+
     assessment_id = [assessment.assessment_id]*len(refs)
     results = list(sem_sim.predict.map(sents1,sents2,refs, assessment_id))
     return Results(results=results)
@@ -129,8 +135,6 @@ if __name__ == '__main__':
     with stub.run():
         config = SemSimConfig(draft_revision=1, reference_revision=2)
         assessment = SemSimAssessment(assessment_id=1, configuration=config)
-        #offset = 105
-        #from models import Results
-        results = assess.call(assessment)#, offset)
+        results = assess.call(assessment)
         import pickle
         pickle.dump(results,open('results_jan_20.pkl','wb'))
