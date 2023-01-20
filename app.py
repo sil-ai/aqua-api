@@ -414,7 +414,7 @@ def create_app():
     
 
     @app.post("/assessment", dependencies=[Depends(api_key_auth)])
-    async def add_version(file: UploadFile):
+    async def add_assessment(file: UploadFile):
         config_bytes = await file.read()
         config = json.loads(config_bytes)
         revision_id = config['revision']
