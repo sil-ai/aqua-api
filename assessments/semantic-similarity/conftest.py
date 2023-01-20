@@ -1,5 +1,4 @@
 import pytest
-import pandas as pd
 from assess import SemanticSimilarity
 
 @pytest.fixture(scope='session')
