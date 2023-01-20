@@ -1,7 +1,7 @@
 import modal
 import requests
 from pathlib import Path
-import sentence_length
+import app
 
 def test_runner():
     url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
@@ -44,9 +44,9 @@ def test_metrics():
     Hello?
     """
 
-    assert sentence_length.get_words_per_sentence(test_text) == 8.625
-    assert round(sentence_length.get_long_words(test_text), 2) == 2.90
-    assert sentence_length.get_lix_score(test_text) == 11.52
+    assert app.get_words_per_sentence(test_text) == 8.625
+    assert round(app.get_long_words(test_text), 2) == 2.90
+    assert app.get_lix_score(test_text) == 11.52
 
 def test_assess_draft_10():
     with stub.run():
