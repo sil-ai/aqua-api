@@ -424,7 +424,7 @@ def create_app():
                     reference=reference,
                     type=AssessmentType[assessment_type], 
                     )
-        except ValidationError:
+        except (ValidationError, KeyError):
             raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Assessment config is invalid."

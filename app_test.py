@@ -198,10 +198,16 @@ def test_delete_version(client):
 def test_assessment(client):
     import json
 
-    bad_config = {
+    bad_config_1 = {
             "revision": "eleven",
             "reference": 10,
             "type": "dummy"
+            }
+
+    bad_config_2 = {
+            "revision": 11,
+            "reference": 10,
+            "type": "non-existent assessment"
             }
 
     good_config = {
@@ -211,9 +217,10 @@ def test_assessment(client):
             }
     
     # Try to post bad config
-    bad_config_json = json.dumps(bad_config)
-    response = client.post("/assessment", files={'file': bad_config_json})
-    assert response.status_code == 400
+    for bad_config in [bad_config_1, bad_config_2]:
+        bad_config_json = json.dumps(bad_config)
+        response = client.post("/assessment", files={'file': bad_config_json})
+        assert response.status_code == 400
 
     # Post good config
     good_config_json = json.dumps(good_config)
