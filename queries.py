@@ -282,3 +282,50 @@ def add_assessment_query(revision, assessment_type, requested_time, status, refe
                           )
 
     return add_assessment
+
+
+def check_assessments_query():
+    check_assessment = """
+                    query {
+                      assessment {
+                        id
+                      }
+                    }
+                    """
+
+    return check_assessment
+
+
+def delete_assessment_mutation(assessment):
+    delete_assessment = """
+                    mutation {{
+                      delete_assessment(where: {{
+                        id: {{
+                          _eq: {}
+                        }}
+                      }}) {{
+                        affected_rows
+                        returning {{
+                          id
+                        }}
+                      }}
+                    }}
+                    """.format(assessment)
+
+    return delete_assessment
+
+
+def delete_assessment_results_mutation(assessment):
+    delete_assessment_results = """ 
+                    mutation {{
+                      delete_assessmentResult(where: {{
+                        assessment: {{
+                          _eq: {}
+                        }}
+                      }}) {{
+                        affected_rows
+                      }}
+                    }}
+                    """.format(assessment)
+    
+    return delete_assessment_results
