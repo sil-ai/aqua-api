@@ -514,6 +514,54 @@ def create_app():
 
         return delete_response
 
+
+    @app.get("/result", dependencies=[Depends(api_key_auth)])
+    async def get_result(assessment_id: int):
+        list_assessments = queries.list_assessments_query()
+            
+        fetch_results = queries.get_results_query(assessment_id)
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+
+            fetch_assessments = gql(list_assessments)
+            assessment_response = client.execute(fetch_assessments)
+
+            assessment_data = []
+            for assessment in assessment_response["assessment"]:
+                if assessment["id"] not in assessment_data:
+                    assessment_data.append(assessment["id"])
+
+            if assessment_id in assessment_data:
+                result_query = gql(fetch_results)
+                result_data = client.execute(result_query)
+
+                result_response = {
+                        "assessment_id": assessment_id, 
+                        "assessments": []
+                        }
+                for result in result_data["assessmentResult"]:
+                    results = {
+                            "id": result["id"],
+                            "type": result["assessmentByAssessment"]["type"],
+                            "reference": result["assessmentByAssessment"]["reference"],
+                            "results": {
+                                "vref": result["vref"],
+                                "score": result["score"],
+                                "flag": result["flag"],
+                                "note": result["note"]
+                                }
+                            }
+                    
+                    result_response["assessments"].append(results)
+
+            else:
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Revision Id invalid, this revision does not exist"
+                        )
+
+        return result_response
+
     return app
 
 
