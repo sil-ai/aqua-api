@@ -21,6 +21,9 @@ stub = modal.Stub(
         'pytest',
         'pandas',
         'requests',
+        "sqlalchemy==1.4.36",
+        "psycopg2-binary",
+        "requests_toolbelt==0.9.1",
     ),
 )
 stub.run_sentence_length = modal.Function.from_name("sentence_length_test", "sentence_length")
@@ -50,15 +53,16 @@ def test_assess_draft_10():
     with stub.run():
     # Initialize some SentLengthAssessment value.
         config = {'draft_revision': 10}     # This will then be validated as a SentLengthConfig in the app
-        results = get_results.call(assessment_id=2, configuration=config)
+        response, results = get_results.call(assessment_id=2, configuration=config)
 
-    #assert the length of results is 41899
-    assert len(results.results) == 41899
+        # assert response.status_code == 200
+        #assert the length of results is 41899
+        assert len(results) == 41899
 
-    #assert the first verse is empty and has a score of 0.0
-    assert results.results[0].score == 0.0
-    assert results.results[0].flag == False
-    assert results.results[0].vref == ''
+        #assert the first verse is empty and has a score of 0.0
+        assert results[0]['score'] == 0.0
+        assert results[0]['flag'] == False
+        assert results[0]['vref'] == ''
 
 def test_assess_draft_11():
     with stub.run():
@@ -66,18 +70,18 @@ def test_assess_draft_11():
         config = {'draft_revision': 11}     # This will then be validated as a SentLengthConfig in the app
         results = get_results.call(assessment_id=2, configuration=config)
 
-    #assert the length of results is 41899
-    assert len(results.results) == 41899
+        #assert the length of results is 41899
+        assert len(results) == 41899
 
-    #assert that results[0] has a score of 12.15
-    #assert results.results[0].score == 12.15
-    assert results.results[0].flag == False
-    assert results.results[0].vref == 'Hapo mwanzo Mungu aliumba mbingu na dunia.'
+        #assert that results[0] has a score of 12.15
+        #assert results.results[0].score == 12.15
+        assert results[0]['flag'] == False
+        assert results[0]['vref'] == 'Hapo mwanzo Mungu aliumba mbingu na dunia.'
 
-    #assert that results[24995] has a score or 17.19
-    #assert results.results[24995].score == 17.19
-    assert results.results[24995].flag == False
-    assert results.results[24995].vref == 'Maria akamuuliza huyo malaika, “Maadamu mimi ni bikira, jambo hili litawezekanaje?”'
+        #assert that results[24995] has a score or 17.19
+        #assert results.results[24995].score == 17.19
+        assert results[24995]['flag'] == False
+        assert results[24995]['vref'] == 'Maria akamuuliza huyo malaika, “Maadamu mimi ni bikira, jambo hili litawezekanaje?”'
 
 
     return results

@@ -29,7 +29,7 @@ stub = modal.Stub(
 )
 #get the pull_revision and push_results functions
 stub.run_pull_revision = modal.Function.from_name("pull_revision", "pull_revision")
-stub.run_push_results = modal.Function.from_name("push_results", "push_results")
+stub.run_push_results = modal.Function.from_name("push_results_test", "push_results")
 
 
 # The information needed to run a sentence length assessment configuration.
@@ -132,9 +132,9 @@ def sentence_length(assessment_id: int, configuration: dict):
     #add to results
     results = []
     for index, row in df.iterrows():
-        results.append(Result(assessment_id=assessment_id, vref=row['verse'], score=row['lix_score'], flag=False))
+        # results.append(Result(assessment_id=assessment_id, vref=row['verse'], score=row['lix_score'], flag=False))
+        results.append({'assessment_id': assessment_id, 'vref': row['verse'], 'score': row['lix_score'], 'flag': False})
+
     print('Pushing results to the database')
-    print(Results(results=results))
-    response = modal.container_app.run_push_results.call(Results(results=results))
-    print(response)
-    return response
+    response, _ = modal.container_app.run_push_results.call(results)
+    return response, results
