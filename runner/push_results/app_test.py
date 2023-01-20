@@ -1,9 +1,10 @@
 from pydantic import ValidationError
 from typing import List
+
 import modal
-import pandas as pd
-from models import Result, Results
 import pytest
+
+from models import Result, Results
 
 stub = modal.Stub(
     name="push_results_test",
@@ -32,6 +33,7 @@ def delete_results(ids: List[int]):
 
 def test_push_df_rows():
     with stub.run():
+        import pandas as pd
 
         df = pd.read_csv("fixtures/verse_scores.csv")
         num_rows = 10
