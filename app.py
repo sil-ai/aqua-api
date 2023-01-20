@@ -6,7 +6,6 @@ from enum import Enum
 import json
 
 from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi import File, UploadFile
 from fastapi.security import OAuth2PasswordBearer
 from gql import Client, gql
