@@ -1,7 +1,9 @@
 import os
-from datetime import date
+from datetime import date, datetime
 from typing import Union
 from tempfile import NamedTemporaryFile
+from enum import Enum
+import json
 
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi import File, UploadFile
@@ -9,6 +11,7 @@ from fastapi.security import OAuth2PasswordBearer
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 import numpy as np
+from pydantic import BaseModel, ValidationError
 
 import queries
 import bible_loading
@@ -34,7 +37,19 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
         )
 
     return True
-    
+
+
+class AssessmentType(Enum):
+    dummy = 1
+    word_alignment = 2
+    sentence_length = 3
+
+
+class Assessment(BaseModel):
+    revision: int
+    reference: Union[int, str]  # Can be an int or 'null'
+    type: AssessmentType
+
 
 # Creates the FastAPI app object
 def create_app():
@@ -155,7 +170,7 @@ def create_app():
 
             revision_query = gql(fetch_revisions)
             revision_result = client.execute(revision_query)
-            
+
             if version_abbreviation in version_list:
                 revision_query = gql(fetch_revisions)
                 revision_result = client.execute(revision_query)
@@ -370,6 +385,182 @@ def create_app():
                 verses_data.append(verse_data)
 
         return verses_data
+    
+
+    @app.get("/assessment", dependencies=[Depends(api_key_auth)])
+    async def get_assessment():
+        list_assessments = queries.list_assessments_query()
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            query = gql(list_assessments)
+            result = client.execute(query)
+
+            version_data = []
+            for assessment in result["assessment"]: 
+                ind_data = {
+                        "id": assessment["id"], 
+                        "revision": assessment["revision"], 
+                        "reference": assessment["reference"],
+                        "type": assessment["type"], 
+                        "requested_time": assessment["requested_time"], 
+                        "start_time": assessment["start_time"],
+                        "end_time": assessment["end_time"],
+                        "status": assessment["status"],
+                        }
+
+                version_data.append(ind_data)
+
+        return {'status_code': 200, 'assessments': version_data}
+    
+
+    @app.post("/assessment", dependencies=[Depends(api_key_auth)])
+    async def add_assessment(file: UploadFile):
+        config_bytes = await file.read()
+        config = json.loads(config_bytes)
+        revision_id = config['revision']
+        assessment_type = config['type']
+        reference = config.get('reference', None)
+        if not reference:
+            reference = 'null'
+        try:
+            assessment = Assessment(
+                    revision=revision_id,
+                    reference=reference,
+                    type=AssessmentType[assessment_type], 
+                    )
+        except (ValidationError, KeyError):
+            raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Assessment config is invalid."
+        )
+        assessment_type_fixed = '"' + assessment.type.name +  '"'
+        requested_time = '"' + datetime.now().isoformat() + '"'
+        assessment_status = '"' + 'queued' + '"'
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+
+            new_assessment = queries.add_assessment_query(
+                    revision_id, 
+                    reference,
+                    assessment_type_fixed, 
+                    requested_time, 
+                    assessment_status, 
+                    )
+            mutation = gql(new_assessment)
+
+            assessment = client.execute(mutation)
+        
+        new_assessment = {
+                "id": assessment["insert_assessment"]["returning"][0]["id"],
+                "revision": assessment["insert_assessment"]["returning"][0]["revision"],
+                "reference": assessment["insert_assessment"]["returning"][0]["reference"],
+                "type": assessment["insert_assessment"]["returning"][0]["type"],
+                "requested_time": assessment["insert_assessment"]["returning"][0]["requested_time"],
+                "status": assessment["insert_assessment"]["returning"][0]["status"],
+
+                }
+      
+        # Call runner to run assessment
+        import requests
+        url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
+        json_file = json.dumps({
+            'assessment': new_assessment['id'],
+            'assessment_type': new_assessment['type'],
+            'configuration': config,
+        })
+        
+        response = requests.post(url, files={"file": json_file})
+        assert response.status_code == 200
+        
+        return {
+                    'status_code': 200, 
+                    'message': f'OK. Assessment id {new_assessment["id"]} added to the database and assessment started',
+                    'data': new_assessment,
+        }
+
+
+    @app.delete("/assessment", dependencies=[Depends(api_key_auth)])
+    async def delete_assessment(assessment_id: int):
+        fetch_assessments = queries.check_assessments_query()
+        delete_assessment = queries.delete_assessment_mutation(assessment_id)
+        delete_assessment_results_mutation = queries.delete_assessment_results_mutation(assessment_id)
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            assessment_data = gql(fetch_assessments)
+            assessment_result = client.execute(assessment_data)
+
+            assessments_list = []
+            for assessment in assessment_result["assessment"]:
+                assessments_list.append(assessment["id"])
+
+            if assessment_id in assessments_list:
+                assessment_results_mutation = gql(delete_assessment_results_mutation)
+                client.execute(assessment_results_mutation)
+
+                assessment_mutation = gql(delete_assessment)
+                assessment_result = client.execute(assessment_mutation)
+            
+                delete_response = ("Assessment " + 
+                    str(
+                        assessment_result["delete_assessment"]["returning"][0]["id"]
+                        ) + " deleted successfully"
+                    )
+
+            else: 
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Assessment is invalid, this assessment id does not exist."
+                        )
+
+        return delete_response
+
+
+    @app.get("/result", dependencies=[Depends(api_key_auth)])
+    async def get_result(assessment_id: int):
+        list_assessments = queries.list_assessments_query()
+            
+        fetch_results = queries.get_results_query(assessment_id)
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+
+            fetch_assessments = gql(list_assessments)
+            assessment_response = client.execute(fetch_assessments)
+
+            assessment_data = []
+            for assessment in assessment_response["assessment"]:
+                if assessment["id"] not in assessment_data:
+                    assessment_data.append(assessment["id"])
+
+            if assessment_id in assessment_data:
+                result_query = gql(fetch_results)
+                result_data = client.execute(result_query)
+
+                result_response = {
+                        "assessment_id": assessment_id, 
+                        "assessments": []
+                        }
+                for result in result_data["assessmentResult"]:
+                    results = {
+                            "id": result["id"],
+                            "type": result["assessmentByAssessment"]["type"],
+                            "reference": result["assessmentByAssessment"]["reference"],
+                            "results": {
+                                "vref": result["vref"],
+                                "score": result["score"],
+                                "flag": result["flag"],
+                                "note": result["note"]
+                                }
+                            }
+                    
+                    result_response["assessments"].append(results)
+
+            else:
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Revision Id invalid, this revision does not exist"
+                        )
+
+        return result_response
 
     return app
 
