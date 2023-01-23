@@ -17,6 +17,7 @@ stub = modal.Stub(name="runner" + suffix, image=modal.Image.debian_slim().pip_in
 
 class AssessmentType(Enum):
     dummy = 1
+    sentence_length = 2
 
 
 for assessment_type in AssessmentType:
@@ -34,7 +35,7 @@ class AssessmentConfig(BaseModel):
 @stub.function(timeout=7200)
 def run_assessment_runner(assessment_config: AssessmentConfig):
     return modal.container_app[assessment_config.assessment_type.name].call(
-        assessment_config.configuration
+        assessment_id = assessment_config.assessment, configuration = assessment_config.configuration
     )
 
 
