@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from typing import List
-from word_alignment_steps import prepare_data, create_cache, alignment_scores, translation_scores, match_scores, embeddings
+from word_alignment_steps import prepare_data, create_cache, alignment_scores, translation_scores, match_scores, embeddings, total_scores
 import modal.aio
 import asyncio
 from pathlib import Path
@@ -103,6 +103,11 @@ async def run_embedding_scores(src_revision_id, condensed_df, src_index_cache, t
     return {src_revision_id: {'embedding_scores': embedding_scores_df}}
 
 @stub.function
+async def run_total_scores(src_revision_id, condensed_df, alignment_scores_df, avg_alignment_scores_df, translation_scores_df, match_scores_df, embedding_scores_df):
+    total_scores_df, top_source_scores_df, verse_scores_df = total_scores.run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df, translation_scores_df, match_scores_df, embedding_scores_df)
+    return {src_revision_id: {'total_scores': total_scores_df, 'top_source_scores': top_source_scores_df, 'verse_scores': verse_scores_df}}
+
+@stub.function
 async def create_condensed_df(src_tokenized_df, trg_tokenized_df, src_revision_id):
     combined_df = src_tokenized_df.join(
         trg_tokenized_df.drop(["vref"], axis=1).rename(
@@ -118,7 +123,6 @@ async def create_condensed_df(src_tokenized_df, trg_tokenized_df, src_revision_i
 async def word_alignment(assessment: AlignmentAssessment, refresh: bool = False):
     async with stub.run():
         tokenized_dfs = {}
-        combined_dfs = {}
         condensed_dfs = {}
         index_caches = {}
         src_revision_ids = assessment.configuration.reference_revisions
@@ -153,7 +157,27 @@ async def word_alignment(assessment: AlignmentAssessment, refresh: bool = False)
             *[run_embedding_scores.call(src_revision_id, condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]) for src_revision_id, condensed_df in condensed_dfs.items()],
 
         )
-        print(results)
+        step_results = {}
+        for item in results:
+            for key, value in item.items():
+                if key in step_results:
+                    step_results[key].update(value)
+                else:
+                    step_results[key] = value
+        print(step_results)
+        
+        results = await asyncio.gather(
+            *[run_total_scores.call(
+                            src_revision_id, 
+                            condensed_df, 
+                            step_results[src_revision_id]['alignment_scores'],
+                            step_results[src_revision_id]['avg_alignment_scores'],
+                            step_results[src_revision_id]['translation_scores'],
+                            step_results[src_revision_id]['match_scores'],
+                            step_results[src_revision_id]['embedding_scores'],
+                            ) for src_revision_id, condensed_df in condensed_dfs.items()]
+        )
+
         combined_results = {}
         for item in results:
             for key, value in item.items():
@@ -162,8 +186,6 @@ async def word_alignment(assessment: AlignmentAssessment, refresh: bool = False)
                 else:
                     combined_results[key] = value
         print(combined_results)
-        
-
     #     alignment_scores_df, avg_alignment_scores_df = results[0]
     #     translation_scores_df = results[1]
     #     print(alignment_scores_df.head(50))
