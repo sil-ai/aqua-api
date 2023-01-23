@@ -8,6 +8,6 @@ stub = modal.Stub(name="dummy", image=modal.Image.debian_slim())
 
 
 @stub.function(timeout=sleep_time + 300)
-def dummy(configuration: dict):
+def dummy(assessment_id: int, configuration: dict):
     time.sleep(sleep_time)
     return (200, configuration)

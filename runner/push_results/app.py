@@ -1,10 +1,9 @@
 import os
 from typing import List
-
 import modal
 
 from db_connect import get_session
-from models import Results
+from models import Result, Results
 
 
 # Manage suffix on modal endpoint if testing.
@@ -39,8 +38,8 @@ class PushResults:
         try:
             ids = self.bulk_insert_items()
             self.session.commit()
-
             return 200, ids
+        
         except (IntegrityError, AssertionError) as err:
             self.session.rollback()
             return 500, err
@@ -48,11 +47,9 @@ class PushResults:
     def create_bulk_results(self):
         from sqlalchemy.orm import declarative_base
         Base = declarative_base()
+        from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey, DateTime
 
         class AssessmentResult(Base):
-            from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey
-
-
             __tablename__ = "assessmentResult"
             id = Column(Integer, primary_key=True)  # autoincrements by default
             assessment = Column(Integer, ForeignKey("assessment.id"), nullable=False)
@@ -68,6 +65,41 @@ class PushResults:
                     f"Assessment Result({self.id}) -> {self.assessment}/{self.vref}\n"
                     f"score={self.score} flag={self.flag}, note={self.note}"
                 )
+        
+        class Assessment(Base):
+            __tablename__ = "assessment"
+            id = Column(Integer, primary_key=True)  # autoincrements by default
+            revision = Column(Integer)
+            reference = Column(Integer, ForeignKey("bibleRevision.id"))
+            type = Column(Text)
+            finished = Column(Boolean)
+            time_inserted = Column(DateTime)
+
+            def __repr__(self):
+                return (
+                    f"Assessment({self.id}) - {self.type} "
+                    f"revision={self.revision} reference={self.reference}, finished={self.finished}"
+                )
+        
+        class VerseReference(Base):
+            __tablename__ = "verseReference"
+            fullVerseId = Column(Text, primary_key=True)
+            number = Column(Integer)
+            chapter = Column(Text, ForeignKey("chapterReference.fullChapterId"))
+
+
+        class ChapterReference(Base):
+            __tablename__ = "chapterReference"
+            fullChapterId = Column(Text, primary_key=True)
+            number = Column(Integer)
+            bookReference = Column(Text, ForeignKey("bookReference.abbreviation"))
+
+
+        class BookReference(Base):
+            __tablename__ = "bookReference"
+            abbreviation = Column(Text, primary_key=True)
+            name = Column(Text)
+            number = Column(Integer)
 
         self.assessment_results = []
         for result in self.results.results:
@@ -120,9 +152,14 @@ class PushResults:
     timeout=600,
     secret=modal.Secret.from_name("aqua-db"),
 )
-def push_results(results: Results):
+def push_results(results: List):
+    results_obj = []
+    for result in results:
+        result_obj = Result(**result)
+        results_obj.append(result_obj)
+    results_obj = Results(results=results_obj)
     pr = PushResults()
-    response, ids = pr.insert(results)
+    response, ids = pr.insert(results_obj)
     return response, ids
 
 
