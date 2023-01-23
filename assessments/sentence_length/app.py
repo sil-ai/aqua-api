@@ -5,7 +5,6 @@ import string
 from typing import Optional
 
 from pydantic import BaseModel
-import pandas as pd
 import modal
 
 
@@ -98,6 +97,7 @@ def get_lix_score(text):
 #for now, use the Lix formula
 @stub.function
 def sentence_length(assessment_id: int, configuration: dict):
+    import pandas as pd
     assessment_config = SentLengthConfig(**configuration)
     
     #pull the revision

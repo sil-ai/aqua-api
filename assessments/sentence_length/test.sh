@@ -2,4 +2,4 @@
 
 MODAL_TEST=TRUE modal deploy app.py
 
-pytest sentence_length_test.py
+pytest app_test.py
