@@ -16,7 +16,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     # run api key fetch function requiring 
     # input of AWS credentials
     import sys
-    sys.path.append('../../../')
+    sys.path.append('/app/')
     from key_fetch import get_secret
     
     api_keys = get_secret(
