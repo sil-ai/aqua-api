@@ -9,7 +9,7 @@ from db_connect import get_session
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 import sys
-sys.path.append('../aqua-api')
+sys.path.append('../..')
 
 
 # Use Token authentication

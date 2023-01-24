@@ -8,7 +8,7 @@ from fastapi import UploadFile, BackgroundTasks, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
 import sys
-sys.path.append('../aqua-api')
+sys.path.append('../../../')
 
 # Use Token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
