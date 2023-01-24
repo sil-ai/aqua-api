@@ -5,6 +5,28 @@ import modal
 from db_connect import get_session
 from models import Result, Results
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from key_fetch import get_secret
+
+# Use Token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+def api_key_auth(api_key: str = Depends(oauth2_scheme)):
+    # run api key fetch function requiring 
+    # input of AWS credentials
+    api_keys = get_secret(
+            os.getenv("KEY_VAULT"),
+            os.getenv("AWS_ACCESS_KEY"),
+            os.getenv("AWS_SECRET_KEY")
+            )
+    if api_key not in api_keys:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Forbidden"
+        )
+
+    return True
 
 # Manage suffix on modal endpoint if testing.
 suffix = ""
@@ -24,6 +46,7 @@ stub = modal.Stub(
 
 class PushResults:
     def __init__(self):
+        self.has_auth = api_key_auth()
         self.engine, self.session = next(get_session())
 
     def __del__(self):

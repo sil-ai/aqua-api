@@ -6,6 +6,28 @@ import modal
 
 from db_connect import get_session
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from key_fetch import get_secret
+
+# Use Token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+def api_key_auth(api_key: str = Depends(oauth2_scheme)):
+    # run api key fetch function requiring 
+    # input of AWS credentials
+    api_keys = get_secret(
+            os.getenv("KEY_VAULT"),
+            os.getenv("AWS_ACCESS_KEY"),
+            os.getenv("AWS_SECRET_KEY")
+            )
+    if api_key not in api_keys:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Forbidden"
+        )
+
+    return True
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -38,6 +60,7 @@ class RecordNotFoundError(Exception):
 class PullRevision:
     def __init__(self, revision_id: int):
         import pandas as pd
+        self.has_auth = api_key_auth()
         self.revision_id = revision_id
         self.revision_text = pd.DataFrame()
         self.vref = self.prepare_vref()

@@ -7,7 +7,28 @@ from typing import Optional
 from pydantic import BaseModel
 import modal
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from key_fetch import get_secret
 
+# Use Token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+def api_key_auth(api_key: str = Depends(oauth2_scheme)):
+    # run api key fetch function requiring 
+    # input of AWS credentials
+    api_keys = get_secret(
+            os.getenv("KEY_VAULT"),
+            os.getenv("AWS_ACCESS_KEY"),
+            os.getenv("AWS_SECRET_KEY")
+            )
+    if api_key not in api_keys:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Forbidden"
+        )
+
+    return True
 
 # Manage suffix on modal endpoint if testing.
 suffix = ''
@@ -95,7 +116,7 @@ def get_lix_score(text):
 
 #run the assessment
 #for now, use the Lix formula
-@stub.function
+@stub.function(dependencies=[Depends(api_key_auth)])
 def sentence_length(assessment_id: int, configuration: dict):
     import pandas as pd
     assessment_config = SentLengthConfig(**configuration)
