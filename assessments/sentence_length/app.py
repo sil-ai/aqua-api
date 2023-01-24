@@ -9,7 +9,11 @@ import modal
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from key_fetch import get_secret
+
+import sys
+sys.path.append('../aqua-api')
+
+
 
 # Use Token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -17,6 +21,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     # run api key fetch function requiring 
     # input of AWS credentials
+    from key_fetch import get_secret
+    
     api_keys = get_secret(
             os.getenv("KEY_VAULT"),
             os.getenv("AWS_ACCESS_KEY"),
