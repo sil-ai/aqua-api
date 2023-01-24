@@ -8,9 +8,6 @@ from db_connect import get_session
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-import sys
-sys.path.append('../..')
-
 
 # Use Token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -18,6 +15,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     # run api key fetch function requiring 
     # input of AWS credentials
+    import sys
+    sys.path.append('../../../')
     from key_fetch import get_secret
     
     api_keys = get_secret(
