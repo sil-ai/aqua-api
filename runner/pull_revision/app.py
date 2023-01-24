@@ -17,6 +17,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     # input of AWS credentials
     import sys
     sys.path.append('/app/')
+    sys.path.append('/home/runner/work/aqua-api/aqua-api/')
     from key_fetch import get_secret
     
     api_keys = get_secret(
