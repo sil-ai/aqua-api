@@ -90,23 +90,23 @@ async def get_tokenized_df(revision_id: int):
     return df
 
 
-# @stub.function
+@stub.function
 async def run_alignment_scores(condensed_df):
     alignment_scores_df, avg_alignment_scores_df = alignment_scores.run_alignment_scores(condensed_df)
     return {'alignment_scores': alignment_scores_df, 'avg_alignment_scores': avg_alignment_scores_df}
 
-# @stub.function
+@stub.function
 async def run_translation_scores(condensed_df):
     translation_scores_df = translation_scores.run_translation_scores(condensed_df)
     return {'translation_scores': translation_scores_df}
 
 
-# @stub.function
+@stub.function
 async def run_match_scores(condensed_df, src_index_cache, target_index_cache):
     match_scores_df = match_scores.run_match_scores(condensed_df, src_index_cache, target_index_cache)
     return {'match_scores': match_scores_df}
 
-# @stub.function
+@stub.function
 async def run_embedding_scores(condensed_df, src_index_cache, target_index_cache):
     embedding_scores_df = embeddings.run_embeddings(condensed_df, src_index_cache, target_index_cache)
     return {'embedding_scores': embedding_scores_df}
@@ -168,10 +168,10 @@ async def run_word_alignment(assessment_id: int, configuration: dict):
     # )
     # await asyncio.gather(func1(), func2())
     results = await asyncio.gather(*[
-                *[run_alignment_scores(condensed_df) for _ in range(1)], 
-                *[run_translation_scores(condensed_df) for _ in range(1)],
-                *[run_match_scores(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]) for _ in range(1)], 
-                *[run_embedding_scores(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]) for _ in range(1)], 
+                run_alignment_scores(condensed_df), 
+                run_translation_scores(condensed_df),
+                run_match_scores(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]), 
+                run_embedding_scores(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]), 
                 ])
 
     step_results = {}
