@@ -18,6 +18,7 @@ stub = modal.Stub(name="runner" + suffix, image=modal.Image.debian_slim().pip_in
 class AssessmentType(Enum):
     dummy = 1
     sentence_length = 2
+    word_alignment = 3
 
 
 for assessment_type in AssessmentType:
@@ -39,7 +40,7 @@ def run_assessment_runner(assessment_config: AssessmentConfig):
     )
 
 
-@stub.webhook(method="POST")
+@stub.webhook(method="POST", timeout=7200)
 async def assessment_runner(file: UploadFile, background_tasks: BackgroundTasks):
     config_file = await file.read()
     config = json.loads(config_file)
@@ -47,7 +48,7 @@ async def assessment_runner(file: UploadFile, background_tasks: BackgroundTasks)
         raise ValueError(f"Invalid assessment type: {config['assessment_type']}")
     config["assessment_type"] = AssessmentType[config["assessment_type"]]
     assessment_config = AssessmentConfig(**config)
-    background_tasks.add_task(run_assessment_runner, assessment_config)
+    background_tasks.add_task(run_assessment_runner.call, assessment_config)
     return {
         "status_code": 200,
         "content": "Assessment runner started in the background, will take approximately 20 minutes to finish.",
