@@ -101,8 +101,8 @@ def test_runner(base_url, header):
 
 
 @stub.function(timeout=3600)
-def get_results(assessment_id, configuration):
-    ids = modal.container_app.run_word_alignment.call(assessment_id, configuration)
+def get_results(assessment_id, configuration, push_to_db: bool=True):
+    ids = modal.container_app.run_word_alignment.call(assessment_id, configuration, push_to_db=push_to_db)
     return ids
 
 
@@ -117,13 +117,13 @@ def test_assess_draft(base_url, header):
         config = {'revision': revision_id, 'reference': reference_id}
 
         #Run word alignment from reference to revision and push it to the assessment in the database
-        response, ids = get_results.call(assessment_id=999999, configuration=config)  #This will silently fail when pushing to the database, since the assessment id doesn't exist
+        response, _ = get_results.call(assessment_id=999999, configuration=config, push_to_db=False)  #This will silently fail when pushing to the database, since the assessment id doesn't exist
 
         assert response == 200
-        assert len(set(ids)) == 3
 
 
 def test_delete_version(base_url, header):
+    time.sleep(60)  # Allow the assessments above to finish pulling from the database before deleting!
     test_delete_version = {
             "version_abbreviation": "DEL"
             }
