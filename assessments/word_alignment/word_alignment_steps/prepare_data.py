@@ -42,7 +42,6 @@ def normalize_word(word:str)-> str:
         return word
     return word_norm
 
-
 def create_tokens(src_data: List[str], vref_filepath: Path):
     """
     Takes a dataframe with 'vref' and 'src' columns, where vref is the verse references and src is the raw text data from the database via pull_revision.
