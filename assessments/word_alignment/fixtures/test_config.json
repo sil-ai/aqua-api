@@ -1,0 +1,8 @@
+{
+    "assessment":2,
+    "assessment_type":"word_alignment",
+    "configuration":{
+       "draft_revision":10,
+       "reference_revisions": [30]
+    }
+ }
