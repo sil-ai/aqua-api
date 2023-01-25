@@ -28,9 +28,9 @@ def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
         elif e.response['Error']['Code'] == 'ResourceNotFoundException':
             raise e
    
-    else:
-        if 'SecretString' in get_secret_value_response:
-            secret = get_secret_value_response['SecretString']
+        else:
+            if 'SecretString' in get_secret_value_response:
+                secret = get_secret_value_response['SecretString']
 
     API_KEYS = []
     removable = ["{", "}", '"']

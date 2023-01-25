@@ -17,11 +17,13 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     # run api key fetch function requiring 
     # input of AWS credentials
+    if not os.getenv("KEY_VAULT"):
+        raise KeyError("Key vault not specified")
     api_keys = get_secret(
-            os.getenv("KEY_VAULT"),
-            os.getenv("AWS_ACCESS_KEY"),
-            os.getenv("AWS_SECRET_KEY")
-            )
+        os.getenv("KEY_VAULT"),
+        os.getenv("AWS_ACCESS_KEY"),
+        os.getenv("AWS_SECRET_KEY")
+        )
     if api_key not in api_keys:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
