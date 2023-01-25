@@ -1,11 +1,7 @@
-import logging
-import argparse
-from typing import Tuple, List, Optional
-import json
+from typing import Tuple, List
 
 import pandas as pd
 from collections import Counter
-from pathlib import Path
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -127,17 +123,10 @@ def run_match_scores(
     refresh_cache    Whether to force a cache refresh or use any cached data from previous runs on this source and/or target
 
     """
-    # condensed_df.loc[:, 'src_list'] = condensed_df['src_tokenized'].apply(lambda x: str(x).split())
-
-    # freq_cache_file = cache_dir / f"{source.stem}-{target.stem}-freq-cache.json"
-    # freq_cache = get_data.initialize_cache(freq_cache_file, to_tuples=True, refresh=refresh_cache)
     freq_cache = {}    
     word_dict_src = prepare_data.get_words_from_cache(source_index_cache)
     word_dict_trg = prepare_data.get_words_from_cache(target_index_cache)
 
-    # ref_df = get_data.get_ref_df(source, target, is_bible=is_bible)
-    # condensed_df = get_data.condense_files(ref_df)
-    # condensed_df = get_data.get_words_from_txt_file(condensed_df, outpath)
     condensed_df.loc[:, 'src_list'] = condensed_df['src'].apply(lambda x: str(x).split())
     condensed_df.loc[:, 'trg_list'] = condensed_df['trg'].apply(lambda x: str(x).split())
     condensed_df.loc[:, 'normalized_src_words'] = condensed_df['src'].apply(lambda x: prepare_data.normalize_word(x).split())
@@ -162,8 +151,7 @@ def run_match_scores(
             jaccard_similarity_threshold=jaccard_similarity_threshold,
             count_threshold=count_threshold,
         )
-    # get_data.write_dictionary_to_file(freq_cache, freq_cache_file, to_strings=True)
-    # get_data.write_dictionary_to_file(matches, matches_file)
+    
     flat_list = [
        {'source': k, **x}
         for k, v in matches.items()

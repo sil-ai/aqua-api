@@ -2,11 +2,9 @@ import modal
 import requests
 from pathlib import Path
 import json
-import os
 import time
 import pytest
 
-import pandas as pd
 
 import word_alignment_steps.prepare_data as prepare_data
 

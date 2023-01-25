@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 import pandas as pd
 from machine.corpora import TextFileTextCorpus

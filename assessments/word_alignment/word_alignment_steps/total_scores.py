@@ -1,11 +1,6 @@
-import argparse
-from pathlib import Path
-import json
-from typing import Tuple
 
 import pandas as pd
 
-import word_alignment_steps.prepare_data as prepare_data
 
 
 def faster_df_apply(df, func):

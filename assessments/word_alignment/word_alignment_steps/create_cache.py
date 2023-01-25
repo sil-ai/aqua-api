@@ -1,11 +1,6 @@
-from pathlib import Path
-from typing import Optional, Tuple, Dict
-import re
+from typing import Dict
 
 import pandas as pd
-from machine.corpora import TextFileTextCorpus
-from machine.corpora.parallel_text_corpus import ParallelTextCorpus
-from machine.tokenization import LatinWordTokenizer
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -15,10 +10,6 @@ def create_index_cache(tokenized_df):
     word_dict = get_indices_from_df(tokenized_df)
     index_cache = {key: value.index_list for key, value in word_dict.items()}
     return index_cache
-
-
-
-
 
 
 def get_indices_from_df(tokenized_df: pd.DataFrame) -> Dict[str, prepare_data.Word]:

@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import List
 from word_alignment_steps import prepare_data, create_cache, alignment_scores, translation_scores, match_scores, embeddings, total_scores
 import modal.aio
 import asyncio

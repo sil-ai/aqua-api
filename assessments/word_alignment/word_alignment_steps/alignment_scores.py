@@ -1,18 +1,10 @@
-# imports
-import argparse
 from typing import List, Tuple, Optional
-import json
-import sys
-from pathlib import Path
 
 import pandas as pd
 from machine.corpora import TextFileTextCorpus
-from machine.tokenization import LatinWordTokenizer
-from machine.translation import SymmetrizationHeuristic
 import word_alignment_steps.train_fa_model as train_fa_model
 
 from machine.translation.thot import (
-    ThotFastAlignWordAlignmentModel,
     ThotSymmetrizedWordAlignmentModel,
 )
 
