@@ -43,11 +43,10 @@ def normalize_word(word:str)-> str:
     return word_norm
 
 def create_tokens(src_data: List[str], vref_filepath: Path):
-# def create_tokens():
 
     """
     Takes a dataframe with 'vref' and 'src' columns, where vref is the verse references and src is the raw text data from the database via pull_revision.
-    Returns a list of words for each verse, tokenized using the LatinWordTokenizer.
+    Returns a (pickled) tokenixed dataframe of words for each verse, tokenized using the LatinWordTokenizer.
     """
     from machine.corpora import TextFileTextCorpus
     from machine.tokenization import LatinWordTokenizer
@@ -69,13 +68,9 @@ def create_tokens(src_data: List[str], vref_filepath: Path):
     tokenized_list = list(tokenized_corpus.align_rows(tokenized_corpus).lowercase().to_pandas()['source'])
     condensed_df.loc[:, 'src_tokenized'] = tokenized_list
     tokenized_df = condensed_df[['vref', 'src_tokenized']]
-    # (Path('condensed_src.txt')).unlink()
     tokenized_df_pkl = pickle.dumps(tokenized_df)
 
     return tokenized_df_pkl
-    # df = pd.DataFrame()
-    # df_pkl = pickle.dumps(df)
-    # return df_pkl
 
 
 def condense_df(df_pkl: bytes) -> bytes:
