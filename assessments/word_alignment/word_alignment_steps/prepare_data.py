@@ -1,14 +1,14 @@
 from pathlib import Path
-from machine.corpora import TextFileTextCorpus
-from machine.tokenization import LatinWordTokenizer
 from typing import List
-import pandas as pd
-import numpy as np
 import re
 from typing import Dict
 
+import pandas as pd
+
 class Word():
     def __init__(self, word: str):
+        import numpy as np
+
         self.word = word
         self.matched = []
         self.index_list = []
@@ -48,6 +48,9 @@ def create_tokens(src_data: List[str], vref_filepath: Path):
     Takes a dataframe with 'vref' and 'src' columns, where vref is the verse references and src is the raw text data from the database via pull_revision.
     Returns a list of words for each verse, tokenized using the LatinWordTokenizer.
     """
+    from machine.corpora import TextFileTextCorpus
+    from machine.tokenization import LatinWordTokenizer
+    
     with open(vref_filepath, "r") as f:
         vrefs = f.readlines()
         vrefs = [line.strip() for line in vrefs]
