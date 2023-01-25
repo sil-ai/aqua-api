@@ -51,7 +51,7 @@ def test_metrics():
 def test_assess_draft_10():
     with stub.run():
     # Initialize some SentLengthAssessment value.
-        config = {'draft_revision': 10}     # This will then be validated as a SentLengthConfig in the app
+        config = {'revision': 10}     # This will then be validated as a SentLengthConfig in the app
         response, results, ids = get_results.call(assessment_id=4, configuration=config)
 
         assert response == 200
@@ -68,7 +68,7 @@ def test_assess_draft_10():
 def test_assess_draft_11():
     with stub.run():
         # Initialize some SentLengthAssessment value.
-        config = {'draft_revision': 11}     # This will then be validated as a SentLengthConfig in the app
+        config = {'revision': 11}     # This will then be validated as a SentLengthConfig in the app
         response, results, ids = get_results.call(assessment_id=3, configuration=config)
 
         assert response == 200

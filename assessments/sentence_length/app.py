@@ -34,7 +34,7 @@ stub.run_delete_results = modal.Function.from_name("push_results_test", "delete_
 
 # The information needed to run a sentence length assessment configuration.
 class SentLengthConfig(BaseModel):
-    draft_revision:int
+    revision:int
 
 
 # Results model to record in the DB.
@@ -101,7 +101,7 @@ def sentence_length(assessment_id: int, configuration: dict):
     assessment_config = SentLengthConfig(**configuration)
     
     #pull the revision
-    rev_num = assessment_config.draft_revision
+    rev_num = assessment_config.revision
     lines = modal.container_app.run_pull_revision.call(rev_num)
     lines = [line.strip() for line in lines]
 
@@ -137,6 +137,6 @@ def sentence_length(assessment_id: int, configuration: dict):
 
     print('Pushing results to the database')
     response, ids = modal.container_app.run_push_results.call(results)
-    response, ids = modal.container_app.run_delete_results.call(ids)
+    # response, ids = modal.container_app.run_delete_results.call(ids)
 
     return response, results, ids
