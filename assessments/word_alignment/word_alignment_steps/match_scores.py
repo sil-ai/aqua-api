@@ -100,8 +100,8 @@ def update_matches_for_lists(
 
                 matches[source_item.normalized].append(
                     {
-                        "value": target_item.normalized,
-                        "jaccard_similarity": jaccard_similarity,
+                        "target": target_item.normalized,
+                        "match_score": jaccard_similarity,
                         "count": count,
                     }
                 )
