@@ -91,7 +91,7 @@ async def get_text(revision_id: int) -> bytes:
 async def get_tokenized_df(revision_id: int):
     vref_filepath = Path("/root/vref.txt")
     src_data = await get_text.call(revision_id)
-    df = prepare_data.create_tokens(src_data, vref_filepath)
+    df = pickle.loads(prepare_data.create_tokens(src_data, vref_filepath))
     return df
 
 

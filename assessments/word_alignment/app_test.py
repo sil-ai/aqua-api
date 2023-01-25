@@ -8,6 +8,7 @@ import pickle
 
 import word_alignment_steps.prepare_data as prepare_data
 
+
 stub = modal.Stub(
     name="run_word_alignment_test",
     image=modal.Image.debian_slim().pip_install(
@@ -21,8 +22,14 @@ stub = modal.Stub(
         "pytest",
     ).copy(
         mount=modal.Mount(
-            local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root")
-        )
+            local_dir=Path("fixtures/"), remote_dir=Path("/")
+        ),
+        remote_path='/root/fixtures'
+    ).copy(
+        mount=modal.Mount(
+            local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/")
+        ),
+        remote_path='/root/fixtures'
     ),
 )
 stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_alignment")
@@ -30,48 +37,40 @@ stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_
 
 @stub.function(mounts=[
     *modal.create_package_mounts(["word_alignment_steps.prepare_data"]),
-    modal.Mount(local_dir="word_alignment_steps", remote_dir="/"),
+    modal.Mount(local_dir="./", remote_dir="/"),
 ])
-def create_tokens(src_data, vref_filepath):
-    src_tokenized_df = prepare_data.create_tokens(src_data, vref_filepath)
-    return src_tokenized_df
+def run_prepare_data():
+    for file in Path('/root/fixtures').iterdir():
+        print(file.name)
+    with open('/root/fixtures/hebrew_lemma_mini.txt') as f:
+        src_data = f.readlines()
 
+    with open('/root/fixtures/en-NASB_mini.txt') as f:
+        trg_data = f.readlines()
 
-@stub.function(mounts=[
-    *modal.create_package_mounts(["word_alignment_steps.prepare_data"]),
-    modal.Mount(local_dir="word_alignment_steps", remote_dir="/"),
-])
-def condense_df(combined_df_pkl):
-    return prepare_data.condense_df(combined_df_pkl)
+    vref_filepath = Path('/root/fixtures/vref.txt')
+
+    src_tokenized_df = pickle.loads(prepare_data.create_tokens(src_data, vref_filepath))
+    trg_tokenized_df = pickle.loads(prepare_data.create_tokens(trg_data, vref_filepath))
+    combined_df = src_tokenized_df.join(
+            trg_tokenized_df.drop(["vref"], axis=1).rename(
+                columns={"src_tokenized": "trg_tokenized", "src_list": "trg_list"}
+            ),
+            how="inner",
+        )
+    
+    combined_df_pkl = pickle.dumps(combined_df)
+    condensed_df = pickle.loads(prepare_data.condense_df(combined_df_pkl))
+    assert condensed_df.shape[0] > 10
+    assert condensed_df.shape[0] < 50
+    assert 'vref' in condensed_df.columns
+    assert 'src' in condensed_df.columns
+    assert 'trg' in condensed_df.columns
 
 
 def test_prepare_data():
     with stub.run():
-
-        with open('fixtures/hebrew_lemma_mini.txt') as f:
-            src_data = f.readlines()
-
-        with open('fixtures/en-NASB_mini.txt') as f:
-            trg_data = f.readlines()
-
-        vref_filepath = Path('/root/vref.txt')
-
-        src_tokenized_df = create_tokens.call(src_data, vref_filepath)
-        trg_tokenized_df = create_tokens.call(trg_data, vref_filepath)
-        combined_df = src_tokenized_df.join(
-                trg_tokenized_df.drop(["vref"], axis=1).rename(
-                    columns={"src_tokenized": "trg_tokenized", "src_list": "trg_list"}
-                ),
-                how="inner",
-            )
-        
-        combined_df_pkl = pickle.dumps(combined_df)
-        condensed_df = pickle.loads(condense_df.call(combined_df_pkl))
-        assert condensed_df.shape[0] > 10
-        assert condensed_df.shape[0] < 50
-        assert 'vref' in condensed_df.columns
-        assert 'src' in condensed_df.columns
-        assert 'trg' in condensed_df.columns
+        run_prepare_data()
 
 
 def test_add_version(base_url, header):
@@ -100,9 +99,6 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
     return response_abv.json()['Revision ID']
-
-
-
 
 
 def test_runner(base_url, header):
@@ -141,8 +137,8 @@ def test_assess_draft(base_url, header):
 
         config = {'revision': revision_id, 'reference': reference_id}
 
-        #Run word alignment from reference to revision and push it to the assessment in the database
-        response, _ = get_results.call(assessment_id=999999, configuration=config, push_to_db=False)  #This will silently fail when pushing to the database, since the assessment id doesn't exist
+        #Run word alignment from reference to revision, but don't push it to the database
+        response, _ = get_results.call(assessment_id=999999, configuration=config, push_to_db=False)
 
         assert response == 200
 
@@ -156,4 +152,3 @@ def test_delete_version(base_url, header):
     test_response = requests.delete(url, params=test_delete_version, headers=header)
     print(test_response.json())
     assert test_response.status_code == 200
-
