@@ -6,6 +6,9 @@ import json
 import os
 from typing import Optional
 
+import word_alignment_steps.prepare_data as prepare_data
+
+
 index_cache_volume = modal.SharedVolume().persist("index_cache")
 
 # Manage suffix on modal endpoint if testing.
@@ -85,7 +88,6 @@ async def get_text(revision_id: int) -> bytes:
 
 @stub.function
 async def get_tokenized_df(revision_id: int):
-    from word_alignment_steps import prepare_data
     vref_filepath = Path("/root/vref.txt")
     src_data = await get_text.call(revision_id)
     df = prepare_data.create_tokens(src_data, vref_filepath)
@@ -93,7 +95,6 @@ async def get_tokenized_df(revision_id: int):
 
 
 def create_condensed_df(src_tokenized_df, trg_tokenized_df):
-    from word_alignment_steps import prepare_data
     combined_df = src_tokenized_df.join(
         trg_tokenized_df.drop(["vref"], axis=1).rename(
             columns={"src_tokenized": "trg_tokenized", "src_list": "trg_list"}
