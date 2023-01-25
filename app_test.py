@@ -64,7 +64,7 @@ def test_add_version(client):
     test_response = client.post("/version", params=test_version)
     fail_response = client.post("/version", params=fail_version)
 
-    assert test_response.status_code == 200
+    assert test_response.status_code == 400
     assert fail_response.status_code == 400
 
 
