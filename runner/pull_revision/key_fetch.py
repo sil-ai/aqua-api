@@ -1,6 +1,7 @@
 def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
     import boto3
     from botocore.exceptions import ClientError
+    import json
     region_name = "us-east-1"
 
     session = boto3.session.Session()
@@ -15,6 +16,7 @@ def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
         get_secret_value_response = client.get_secret_value(
             SecretId=KEY_VAULT
         )
+        response_dict = json.loads(get_secret_value_response)
 
     except ClientError as e:
         if e.response['Error']['Code'] == 'DecryptionFailureException':
@@ -32,9 +34,8 @@ def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
         print(e.message, e.args)
         raise e
 
-    else:
-        if 'SecretString' in get_secret_value_response:
-            secret = get_secret_value_response['SecretString']
+    if response_dict.get('SecretString', False):
+        secret = response_dict['SecretString']
 
     API_KEYS = []
     removable = ["{", "}", '"']
