@@ -174,7 +174,7 @@ class PushResults:
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
+    secrets=[modal.Secret.from_name("aqua-db"),modal.Secret.from_name("my-aws-secret")],
     mounts=modal.create_package_mounts(['key_fetch']),
 )
 def push_results(results: List):
@@ -190,7 +190,7 @@ def push_results(results: List):
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
+    secrets=[modal.Secret.from_name("aqua-db"),modal.Secret.from_name("my-aws-secret")],
     mounts=modal.create_package_mounts(['key_fetch']),
 )
 def delete_results(ids: List[int]):

@@ -148,7 +148,7 @@ class PullRevision:
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
+    secrets=[modal.Secret.from_name("aqua-db"),modal.Secret.from_name("my-aws-secret")],
     mounts=modal.create_package_mounts(['key_fetch']),
 )
 def pull_revision(revision_id: int) -> bytes:
