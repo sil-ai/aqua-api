@@ -53,14 +53,14 @@ class AssessmentConfig(BaseModel):
     configuration: dict  # This will later be validated as a BaseModel by the specific assessment
 
 
-@stub.function(timeout=7200, dependencies=[Depends(api_key_auth)], mounts=modal.create_package_mounts(['get_secret']))
+@stub.function(timeout=7200, secret=modal.Secret.from_name("aqua-db"), dependencies=[Depends(api_key_auth)], mounts=modal.create_package_mounts(['key_fetch']))
 def run_assessment_runner(assessment_config: AssessmentConfig):
     return modal.container_app[assessment_config.assessment_type.name].call(
         assessment_id = assessment_config.assessment, configuration = assessment_config.configuration
     )
 
 
-@stub.webhook(method="POST", dependencies=[Depends(api_key_auth)], mounts=modal.create_package_mounts(['get_secret']))
+@stub.webhook(method="POST", secret=modal.Secret.from_name("aqua-db"), dependencies=[Depends(api_key_auth)], mounts=modal.create_package_mounts(['key_fetch']))
 async def assessment_runner(file: UploadFile, background_tasks: BackgroundTasks):
     config_file = await file.read()
     config = json.loads(config_file)
