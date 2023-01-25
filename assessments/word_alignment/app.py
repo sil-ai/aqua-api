@@ -60,7 +60,6 @@ class WordAlignmentAssessment(BaseModel):
 
 async def create_index_cache(tokenized_df, refresh: bool = False):
     index_cache = create_cache.create_index_cache(tokenized_df)
-    # index_cache = {word.word: word.index_list for word in word_dict.values()}
 
     return index_cache
 
@@ -192,30 +191,10 @@ async def word_alignment(assessment_id: int, configuration: dict):
     return response, ids
 
 
-# @stub.function(
-#     timeout=7200,
-# )
 async def run_word_alignment(assessment_id: int, configuration: dict):
     async with stub.run():
         print('starting word alignment')
         response, ids = await run_word_alignment(assessment_id, configuration)
     
     return response, ids
-
-    
-if __name__ == "__main__":
-    config = {
-            'revision': 138,
-            'reference': 10,
-        }
-    assessment = WordAlignmentAssessment(
-        assessment_id=99,
-        assessment_type="word_alignment",
-        configuration=config
-    )
-    
-    response, ids = asyncio.run(word_alignment(assessment.assessment_id, config))
-    print(response)
-    print(ids[:20])
-    
 
