@@ -64,8 +64,6 @@ def test_add_revision(base_url, header, filepath: Path):
     return response_abv.json()['Revision ID']
 
 
-
-
 stub = modal.Stub(
     name="run_word_alignment_test",
     image=modal.Image.debian_slim().pip_install(
@@ -80,6 +78,7 @@ stub = modal.Stub(
     ),
 )
 stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_alignment")
+
 
 def test_runner(base_url, header):
     webhook_url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
@@ -122,44 +121,6 @@ def test_assess_draft(base_url, header):
 
         assert response == 200
         assert len(set(ids)) == 3
-
-
-time.sleep(180) # The assessments continue after the runner has returned a response and this script
-            # has finished. This sleep gives time for the assessment to pull the revision before it's deleted.
-
-# def test_add_assessment(base_url, header):
-#     url = base_url + "revision"
-#     response = requests.get(url, headers=header, params={'version_abbreviation': 'DEL'})
-#     revision_id = response.json()[0]['id']
-
-#     config = {
-#             "revision": revision_id,
-#             "type": "word_alignment",
-#             "reference": reference_id
-#             }
-#     config_json = json.dumps(config)
-#     url = base_url + "assessment"
-#     response = requests.post(url, files={'file': config_json}, headers=header)
-#     # assert response.status_code == 200
-#     id = response.json()['data']['id']
-
-#     return id
-
-
-# def delete_assessment(base_url, header):
-#     url = base_url + "assessment"
-#     response = requests.get(url, headers=header, params={'version_abbreviation': 'DEL'})
-#     revision_id = response.json()[0]['id']
-
-#     response = requests.get(url, headers=header)
-#     assessments = response.json()['assessments']
-
-#     assessments_to_delete = [assessment for assessment in assessments if assessment['revision'] == revision_id]
-
-#     url = base_url + "assessment"
-#     for assessment in assessments_to_delete:
-#         response = requests.delete(url, params={'assessment_id': assessment['id']}, headers=header)
-#         assert response.status_code == 200
 
 
 def test_delete_version(base_url, header):
