@@ -177,7 +177,7 @@ class PushResults:
     mounts=modal.create_package_mounts(['key_fetch']),
 )
 def push_results(results: List):
-    assert api_key_auth()
+    assert api_key_auth() is True
     results_obj = []
     for result in results:
         result_obj = Result(**result)
@@ -194,7 +194,7 @@ def push_results(results: List):
     mounts=modal.create_package_mounts(['key_fetch']),
 )
 def delete_results(ids: List[int]):
-    assert api_key_auth()
+    assert api_key_auth() is True
     pr = PushResults()
     pr.delete(ids)
     return 200, "OK"

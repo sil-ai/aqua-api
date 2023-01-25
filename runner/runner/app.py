@@ -59,7 +59,7 @@ class AssessmentConfig(BaseModel):
     mounts=modal.create_package_mounts(['key_fetch']),
     )
 def run_assessment_runner(assessment_config: AssessmentConfig):
-    assert api_key_auth()
+    assert api_key_auth() is True
     return modal.container_app[assessment_config.assessment_type.name].call(
         assessment_id = assessment_config.assessment, configuration = assessment_config.configuration
     )
@@ -71,7 +71,7 @@ def run_assessment_runner(assessment_config: AssessmentConfig):
     mounts=modal.create_package_mounts(['key_fetch']),
     )
 async def assessment_runner(file: UploadFile, background_tasks: BackgroundTasks):
-    assert api_key_auth()
+    assert api_key_auth() is True
     config_file = await file.read()
     config = json.loads(config_file)
     if config["assessment_type"] not in [e.name for e in AssessmentType]:

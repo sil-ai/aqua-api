@@ -151,7 +151,7 @@ class PullRevision:
     mounts=modal.create_package_mounts(['key_fetch']), 
 )
 def pull_revision(revision_id: int) -> bytes:
-    assert api_key_auth()
+    assert api_key_auth() is True
     pr = PullRevision(revision_id)
     pr.pull_revision()
     revision_bytes = pr.output_revision()
