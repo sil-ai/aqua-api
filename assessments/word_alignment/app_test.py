@@ -9,7 +9,6 @@ import pytest
 import pandas as pd
 
 import word_alignment_steps.prepare_data as prepare_data
-import word_alignment
 
 
 def test_prepare_data():
