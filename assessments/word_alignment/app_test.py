@@ -6,7 +6,7 @@ import time
 import pytest
 import pickle
 
-import word_alignment_steps.prepare_data as prepare_data
+# import word_alignment_steps.prepare_data as prepare_data
 
 stub = modal.Stub(
     name="run_word_alignment_test",
@@ -26,6 +26,8 @@ stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_
 
 def test_prepare_data():
     with stub.run():
+        import word_alignment_steps.prepare_data as prepare_data
+
         with open('fixtures/hebrew_lemma_mini.txt') as f:
             src_data = f.readlines()
 
