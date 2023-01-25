@@ -6,7 +6,7 @@ import time
 import pytest
 import pickle
 
-# import word_alignment_steps.prepare_data as prepare_data
+import word_alignment_steps.prepare_data as prepare_data
 
 stub = modal.Stub(
     name="run_word_alignment_test",
@@ -19,14 +19,34 @@ stub = modal.Stub(
         "psycopg2-binary",
         "requests_toolbelt==0.9.1",
         "pytest",
+    ).copy(
+        mount=modal.Mount(
+            local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root")
+        )
     ),
 )
 stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_alignment")
 
 
+@stub.function(mounts=[
+    *modal.create_package_mounts(["word_alignment_steps.prepare_data"]),
+    modal.Mount(local_dir="word_alignment_steps", remote_dir="/"),
+])
+def create_tokens(src_data, vref_filepath):
+    src_tokenized_df = prepare_data.create_tokens(src_data, vref_filepath)
+    return src_tokenized_df
+
+
+@stub.function(mounts=[
+    *modal.create_package_mounts(["word_alignment_steps.prepare_data"]),
+    modal.Mount(local_dir="word_alignment_steps", remote_dir="/"),
+])
+def condense_df(combined_df_pkl):
+    return prepare_data.condense_df(combined_df_pkl)
+
+
 def test_prepare_data():
     with stub.run():
-        import word_alignment_steps.prepare_data as prepare_data
 
         with open('fixtures/hebrew_lemma_mini.txt') as f:
             src_data = f.readlines()
@@ -34,10 +54,10 @@ def test_prepare_data():
         with open('fixtures/en-NASB_mini.txt') as f:
             trg_data = f.readlines()
 
-        vref_filepath = Path('../../fixtures/vref.txt')
+        vref_filepath = Path('/root/vref.txt')
 
-        src_tokenized_df = prepare_data.create_tokens(src_data, vref_filepath)
-        trg_tokenized_df = prepare_data.create_tokens(trg_data, vref_filepath)
+        src_tokenized_df = create_tokens.call(src_data, vref_filepath)
+        trg_tokenized_df = create_tokens.call(trg_data, vref_filepath)
         combined_df = src_tokenized_df.join(
                 trg_tokenized_df.drop(["vref"], axis=1).rename(
                     columns={"src_tokenized": "trg_tokenized", "src_list": "trg_list"}
@@ -46,7 +66,7 @@ def test_prepare_data():
             )
         
         combined_df_pkl = pickle.dumps(combined_df)
-        condensed_df = pickle.loads(prepare_data.condense_df(combined_df_pkl))
+        condensed_df = pickle.loads(condense_df.call(combined_df_pkl))
         assert condensed_df.shape[0] > 10
         assert condensed_df.shape[0] < 50
         assert 'vref' in condensed_df.columns
