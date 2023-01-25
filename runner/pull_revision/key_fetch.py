@@ -12,6 +12,8 @@ def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
         aws_secret_access_key=AWS_SECRET_KEY
     )
 
+    response_dict = {}
+
     try:
         get_secret_value_response = client.get_secret_value(
             SecretId=KEY_VAULT
@@ -34,8 +36,11 @@ def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
         print(e.message, e.args)
         raise e
 
+
     if response_dict.get('SecretString', False):
         secret = response_dict['SecretString']
+    else:
+        print(get_secret_value_response)
 
     API_KEYS = []
     removable = ["{", "}", '"']
