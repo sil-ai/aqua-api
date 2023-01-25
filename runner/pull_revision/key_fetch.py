@@ -1,7 +1,6 @@
-import boto3
-from botocore.exceptions import ClientError
-
 def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
+    import boto3
+    from botocore.exceptions import ClientError
     region_name = "us-east-1"
 
     session = boto3.session.Session()
