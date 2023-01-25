@@ -8,32 +8,48 @@ import pickle
 
 import word_alignment_steps.prepare_data as prepare_data
 
+stub = modal.Stub(
+    name="run_word_alignment_test",
+    image=modal.Image.debian_slim().pip_install(
+        "pandas==1.4.3",
+        "machine==0.0.1",
+        "sil-machine[thot]>=0.8.3",
+        "asyncio",
+        "sqlalchemy",
+        "psycopg2-binary",
+        "requests_toolbelt==0.9.1",
+        "pytest",
+    ),
+)
+stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_alignment")
+
 
 def test_prepare_data():
-    with open('fixtures/hebrew_lemma_mini.txt') as f:
-        src_data = f.readlines()
+    with stub.run():
+        with open('fixtures/hebrew_lemma_mini.txt') as f:
+            src_data = f.readlines()
 
-    with open('fixtures/en-NASB_mini.txt') as f:
-        trg_data = f.readlines()
+        with open('fixtures/en-NASB_mini.txt') as f:
+            trg_data = f.readlines()
 
-    vref_filepath = Path('../../fixtures/vref.txt')
+        vref_filepath = Path('../../fixtures/vref.txt')
 
-    src_tokenized_df = prepare_data.create_tokens(src_data, vref_filepath)
-    trg_tokenized_df = prepare_data.create_tokens(trg_data, vref_filepath)
-    combined_df = src_tokenized_df.join(
-            trg_tokenized_df.drop(["vref"], axis=1).rename(
-                columns={"src_tokenized": "trg_tokenized", "src_list": "trg_list"}
-            ),
-            how="inner",
-        )
-    
-    combined_df_pkl = pickle.dumps(combined_df)
-    condensed_df = pickle.loads(prepare_data.condense_df(combined_df_pkl))
-    assert condensed_df.shape[0] > 10
-    assert condensed_df.shape[0] < 50
-    assert 'vref' in condensed_df.columns
-    assert 'src' in condensed_df.columns
-    assert 'trg' in condensed_df.columns
+        src_tokenized_df = prepare_data.create_tokens(src_data, vref_filepath)
+        trg_tokenized_df = prepare_data.create_tokens(trg_data, vref_filepath)
+        combined_df = src_tokenized_df.join(
+                trg_tokenized_df.drop(["vref"], axis=1).rename(
+                    columns={"src_tokenized": "trg_tokenized", "src_list": "trg_list"}
+                ),
+                how="inner",
+            )
+        
+        combined_df_pkl = pickle.dumps(combined_df)
+        condensed_df = pickle.loads(prepare_data.condense_df(combined_df_pkl))
+        assert condensed_df.shape[0] > 10
+        assert condensed_df.shape[0] < 50
+        assert 'vref' in condensed_df.columns
+        assert 'src' in condensed_df.columns
+        assert 'trg' in condensed_df.columns
 
 
 def test_add_version(base_url, header):
@@ -64,20 +80,7 @@ def test_add_revision(base_url, header, filepath: Path):
     return response_abv.json()['Revision ID']
 
 
-stub = modal.Stub(
-    name="run_word_alignment_test",
-    image=modal.Image.debian_slim().pip_install(
-        "pandas==1.4.3",
-        "machine==0.0.1",
-        "sil-machine[thot]>=0.8.3",
-        "asyncio",
-        "sqlalchemy",
-        "psycopg2-binary",
-        "requests_toolbelt==0.9.1",
-        "pytest",
-    ),
-)
-stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_alignment")
+
 
 
 def test_runner(base_url, header):
