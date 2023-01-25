@@ -175,9 +175,9 @@ class PushResults:
     timeout=600,
     secrets=[modal.Secret.from_name("aqua-db"),modal.Secret.from_name("my-aws-secret")],
     mounts=modal.create_package_mounts(['key_fetch']),
-    dependencies=[Depends(api_key_auth)],
 )
 def push_results(results: List):
+    assert api_key_auth()
     results_obj = []
     for result in results:
         result_obj = Result(**result)
@@ -192,9 +192,9 @@ def push_results(results: List):
     timeout=600,
     secrets=[modal.Secret.from_name("aqua-db"),modal.Secret.from_name("my-aws-secret")],
     mounts=modal.create_package_mounts(['key_fetch']),
-    dependencies=[Depends(api_key_auth)],
 )
 def delete_results(ids: List[int]):
+    assert api_key_auth()
     pr = PushResults()
     pr.delete(ids)
     return 200, "OK"

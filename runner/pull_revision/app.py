@@ -149,9 +149,9 @@ class PullRevision:
     timeout=600,
     secrets=[modal.Secret.from_name("aqua-db"),modal.Secret.from_name("my-aws-secret")],
     mounts=modal.create_package_mounts(['key_fetch']), 
-    dependencies=[Depends(api_key_auth)],
 )
 def pull_revision(revision_id: int) -> bytes:
+    assert api_key_auth()
     pr = PullRevision(revision_id)
     pr.pull_revision()
     revision_bytes = pr.output_revision()
