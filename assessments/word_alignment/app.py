@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from word_alignment_steps import prepare_data, create_cache, alignment_scores, translation_scores, match_scores, embeddings, total_scores
 import modal.aio
 import asyncio
 from pathlib import Path
@@ -58,6 +57,7 @@ class WordAlignmentAssessment(BaseModel):
 
 
 async def create_index_cache(tokenized_df, refresh: bool = False):
+    from word_alignment_steps import create_cache
     index_cache = create_cache.create_index_cache(tokenized_df)
 
     return index_cache
@@ -85,14 +85,15 @@ async def get_text(revision_id: int) -> bytes:
 
 @stub.function
 async def get_tokenized_df(revision_id: int):
+    from word_alignment_steps import prepare_data
     vref_filepath = Path("/root/vref.txt")
     src_data = await get_text.call(revision_id)
     df = prepare_data.create_tokens(src_data, vref_filepath)
     return df
 
 
-# @stub.function
 def create_condensed_df(src_tokenized_df, trg_tokenized_df):
+    from word_alignment_steps import prepare_data
     combined_df = src_tokenized_df.join(
         trg_tokenized_df.drop(["vref"], axis=1).rename(
             columns={"src_tokenized": "trg_tokenized", "src_list": "trg_list"}
@@ -106,27 +107,32 @@ def create_condensed_df(src_tokenized_df, trg_tokenized_df):
 
 @stub.function
 async def run_alignment_scores(condensed_df):
+    from word_alignment_steps import alignment_scores
     alignment_scores_df, avg_alignment_scores_df = alignment_scores.run_alignment_scores(condensed_df)
     return {'alignment_scores': alignment_scores_df, 'avg_alignment_scores': avg_alignment_scores_df}
 
 @stub.function
 async def run_translation_scores(condensed_df):
+    from word_alignment_steps import translation_scores
     translation_scores_df = translation_scores.run_translation_scores(condensed_df)
     return {'translation_scores': translation_scores_df}
 
 
 @stub.function
 async def run_match_scores(condensed_df, src_index_cache, target_index_cache):
+    from word_alignment_steps import match_scores
     match_scores_df = match_scores.run_match_scores(condensed_df, src_index_cache, target_index_cache)
     return {'match_scores': match_scores_df}
 
 @stub.function
 async def run_embedding_scores(condensed_df, src_index_cache, target_index_cache):
+    from word_alignment_steps import embeddings
     embedding_scores_df = embeddings.run_embeddings(condensed_df, src_index_cache, target_index_cache)
     return {'embedding_scores': embedding_scores_df}
 
 # @stub.function
 def run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df, translation_scores_df, match_scores_df, embedding_scores_df):
+    from word_alignment_steps import total_scores
     total_scores_df, top_source_scores_df, verse_scores_df = total_scores.run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df, translation_scores_df, match_scores_df, embedding_scores_df)
     return  {'total_scores': total_scores_df, 'top_source_scores': top_source_scores_df, 'verse_scores': verse_scores_df}
 
