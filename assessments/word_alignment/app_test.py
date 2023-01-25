@@ -70,7 +70,7 @@ def run_prepare_data():
 
 def test_prepare_data():
     with stub.run():
-        run_prepare_data()
+        run_prepare_data.call()
 
 
 def test_add_version(base_url, header):
