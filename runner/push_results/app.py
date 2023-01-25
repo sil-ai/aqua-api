@@ -47,7 +47,6 @@ stub = modal.Stub(
 
 class PushResults:
     def __init__(self):
-        self.has_auth = api_key_auth()
         self.engine, self.session = next(get_session())
 
     def __del__(self):
@@ -176,6 +175,7 @@ class PushResults:
     timeout=600,
     secrets=[modal.Secret.from_name("aqua-db"),modal.Secret.from_name("my-aws-secret")],
     mounts=modal.create_package_mounts(['key_fetch']),
+    dependencies=[Depends(api_key_auth)],
 )
 def push_results(results: List):
     results_obj = []
@@ -192,6 +192,7 @@ def push_results(results: List):
     timeout=600,
     secrets=[modal.Secret.from_name("aqua-db"),modal.Secret.from_name("my-aws-secret")],
     mounts=modal.create_package_mounts(['key_fetch']),
+    dependencies=[Depends(api_key_auth)],
 )
 def delete_results(ids: List[int]):
     pr = PushResults()

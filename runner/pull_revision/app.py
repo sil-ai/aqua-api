@@ -62,7 +62,6 @@ class RecordNotFoundError(Exception):
 class PullRevision:
     def __init__(self, revision_id: int):
         import pandas as pd
-        self.has_auth = api_key_auth()
         self.revision_id = revision_id
         self.revision_text = pd.DataFrame()
         self.vref = self.prepare_vref()
@@ -149,7 +148,8 @@ class PullRevision:
 @stub.function(
     timeout=600,
     secrets=[modal.Secret.from_name("aqua-db"),modal.Secret.from_name("my-aws-secret")],
-    mounts=modal.create_package_mounts(['key_fetch']),
+    mounts=modal.create_package_mounts(['key_fetch']), 
+    dependencies=[Depends(api_key_auth)],
 )
 def pull_revision(revision_id: int) -> bytes:
     pr = PullRevision(revision_id)
