@@ -40,6 +40,7 @@ stub = modal.Stub(
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
         "psycopg2-binary",
+        "boto3==1.26.56",
     ),
 )
 
