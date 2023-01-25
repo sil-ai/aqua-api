@@ -4,10 +4,11 @@ import re
 from typing import Dict
 
 import pandas as pd
+import numpy as np
+
 
 class Word():
     def __init__(self, word: str):
-        import numpy as np
 
         self.word = word
         self.matched = []
