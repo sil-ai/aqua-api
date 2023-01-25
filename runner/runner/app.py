@@ -12,7 +12,10 @@ if os.environ.get("MODAL_TEST") == "TRUE":
     suffix = "_test"
 
 
-stub = modal.Stub(name="runner" + suffix, image=modal.Image.debian_slim().pip_install())
+stub = modal.Stub(name="runner" + suffix, image=modal.Image.debian_slim().pip_install(
+        "sqlalchemy==1.4.36",
+        "psycopg2-binary",
+))
 
 
 class AssessmentType(Enum):
