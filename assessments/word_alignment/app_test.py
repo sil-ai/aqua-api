@@ -4,7 +4,7 @@ from pathlib import Path
 import json
 import time
 import pytest
-
+import pickle
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -26,7 +26,9 @@ def test_prepare_data():
             ),
             how="inner",
         )
-    condensed_df = prepare_data.condense_df(combined_df)
+    
+    combined_df_pkl = pickle.dumps(combined_df)
+    condensed_df = pickle.loads(prepare_data.condense_df(combined_df_pkl))
     assert condensed_df.shape[0] > 10
     assert condensed_df.shape[0] < 50
     assert 'vref' in condensed_df.columns
@@ -127,5 +129,6 @@ def test_delete_version(base_url, header):
             }
     url = base_url + "version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
+    print(test_response.json())
     assert test_response.status_code == 200
 

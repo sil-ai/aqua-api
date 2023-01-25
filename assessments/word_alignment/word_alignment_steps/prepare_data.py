@@ -2,14 +2,10 @@ from pathlib import Path
 from typing import List
 import re
 from typing import Dict
-
-import pandas as pd
-import numpy as np
-
+import pickle
 
 class Word():
     def __init__(self, word: str):
-
         self.word = word
         self.matched = []
         self.index_list = []
@@ -19,17 +15,20 @@ class Word():
         self.index_list = list(set(word_series[word_series == self.normalized].index))
 
     def get_ohe(self, max_num=41899):
+        import numpy as np
         a = np.zeros(max_num)
         np.put(a, np.array(self.index_list, dtype='int64'), 1)    
         self.index_ohe = a
 
-    def get_encoding(self, weights: np.ndarray):
+    def get_encoding(self, weights):
+        import numpy as np
         self.get_ohe()
         self.encoding = np.matmul(weights, self.index_ohe)
         self.norm_encoding = self.encoding / np.linalg.norm(self.encoding)
         self.index_ohe = np.array([])
     
     def get_norm_distance(self, word):
+        import numpy as np
         return np.linalg.norm(self.norm_encoding - word.norm_encoding)
 
 
@@ -51,6 +50,7 @@ def create_tokens(src_data: List[str], vref_filepath: Path):
     """
     from machine.corpora import TextFileTextCorpus
     from machine.tokenization import LatinWordTokenizer
+    import pandas as pd
     
     with open(vref_filepath, "r") as f:
         vrefs = f.readlines()
@@ -72,7 +72,7 @@ def create_tokens(src_data: List[str], vref_filepath: Path):
     return tokenized_df
 
 
-def condense_df(df: pd.DataFrame) -> pd.DataFrame:
+def condense_df(df_pkl: bytes) -> bytes:
     """
     Takes an input dataframe  with src_tokenized and trg_tokenized coumns, and outputs
     a dataframe which only include those lines that are not blank in both input files.
@@ -81,12 +81,13 @@ def condense_df(df: pd.DataFrame) -> pd.DataFrame:
     column, so you know which indices have been combined.
 
     Inputs:
-    df                 A dataframe with vref, source and target columns
+    df_pkl                 A pickled dataframe with vref, source and target columns
 
     Outputs:
-    df                  The condensed dataframe
+    df_pkl                  The (pickled) condensed dataframe
 
     """
+    df = pickle.loads(df_pkl)
     df = df.rename(columns={'src_tokenized': 'src', 'trg_tokenized': 'trg'})
     df['indices'] = df.index
     df.loc[:, 'indices'] = df['indices'].apply(lambda x: str(x))
@@ -106,8 +107,8 @@ def condense_df(df: pd.DataFrame) -> pd.DataFrame:
                 df.loc[index, 'trg'] += ' ' + df.loc[index+1, 'trg'].replace('< range >', '')
     df = df[(df['src'] != '< range >') & (df['trg'] != '< range >')]
     df = df.drop(['next_src', 'next_trg', 'range_next'], axis=1)
-
-    return df
+    df_pkl = pickle.dumps(df)
+    return df_pkl
 
 
 def get_words_from_cache(index_cache: dict) -> Dict[str, Word]:
@@ -118,6 +119,7 @@ def get_words_from_cache(index_cache: dict) -> Dict[str, Word]:
     Outputs:
     word_dict      A dictionary of {word (str): Word} items
     """
+
     word_dict = {word: Word(word) for word in index_cache}
     for word in word_dict.values():
         word.index_list = index_cache[word.word]

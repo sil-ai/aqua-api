@@ -5,6 +5,7 @@ from pathlib import Path
 import json
 import os
 from typing import Optional
+import pickle
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -101,7 +102,8 @@ def create_condensed_df(src_tokenized_df, trg_tokenized_df):
         ),
         how="inner",
     )
-    condensed_df = prepare_data.condense_df(combined_df)
+    combined_df_pkl = pickle.dumps(combined_df)
+    condensed_df = pickle.loads(prepare_data.condense_df(combined_df_pkl))
 
     return condensed_df
 
