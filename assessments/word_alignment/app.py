@@ -22,7 +22,10 @@ stub = modal.aio.AioStub(
         "pandas==1.4.3",
         "machine==0.0.1",
         "sil-machine[thot]>=0.8.3",
-        "asyncio"
+        "asyncio",
+        "sqlalchemy",
+        "psycopg2-binary",
+
     )
     .copy(
         mount=modal.Mount(
@@ -62,7 +65,7 @@ async def create_index_cache(tokenized_df, refresh: bool = False):
     return index_cache
 
 
-@stub.function(shared_volumes={CACHE_DIR: index_cache_volume})
+@stub.function(shared_volumes={CACHE_DIR: index_cache_volume}, timeout=7200)
 async def get_index_cache(revision_id, refresh: bool = False):
     tokenized_df = await get_tokenized_df.call(revision_id)
     CACHE_DIR.mkdir(exist_ok=True)
@@ -90,6 +93,19 @@ async def get_tokenized_df(revision_id: int):
     return df
 
 
+# @stub.function
+def create_condensed_df(src_tokenized_df, trg_tokenized_df):
+    combined_df = src_tokenized_df.join(
+        trg_tokenized_df.drop(["vref"], axis=1).rename(
+            columns={"src_tokenized": "trg_tokenized", "src_list": "trg_list"}
+        ),
+        how="inner",
+    )
+    condensed_df = prepare_data.condense_df(combined_df)
+
+    return condensed_df
+
+
 @stub.function
 async def run_alignment_scores(condensed_df):
     alignment_scores_df, avg_alignment_scores_df = alignment_scores.run_alignment_scores(condensed_df)
@@ -114,31 +130,11 @@ async def run_embedding_scores(condensed_df, src_index_cache, target_index_cache
 # @stub.function
 def run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df, translation_scores_df, match_scores_df, embedding_scores_df):
     total_scores_df, top_source_scores_df, verse_scores_df = total_scores.run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df, translation_scores_df, match_scores_df, embedding_scores_df)
-    return {'total_scores': total_scores_df, 'top_source_scores': top_source_scores_df, 'verse_scores': verse_scores_df}
-
-# @stub.function
-def create_condensed_df(src_tokenized_df, trg_tokenized_df):
-    combined_df = src_tokenized_df.join(
-        trg_tokenized_df.drop(["vref"], axis=1).rename(
-            columns={"src_tokenized": "trg_tokenized"}
-        ),
-        how="inner",
-    )
-    condensed_df = prepare_data.condense_df(combined_df)
-
-    return condensed_df
+    return  {'total_scores': total_scores_df, 'top_source_scores': top_source_scores_df, 'verse_scores': verse_scores_df}
 
 
-async def func1():
-    await asyncio.sleep(1)
-    print("Function 1 done!")
-
-async def func2():
-    await asyncio.sleep(2)
-    print("Function 2 done!")
-
-# @stub.function
-async def run_word_alignment(assessment_id: int, configuration: dict):
+@stub.function(timeout=7200)
+async def word_alignment(assessment_id: int, configuration: dict):
     # async with stub.run():
     assessment_config = WordAlignmentConfig(**configuration)
     tokenized_dfs = {}
@@ -156,31 +152,27 @@ async def run_word_alignment(assessment_id: int, configuration: dict):
         tokenized_dfs[revision_id] = df
         index_caches[revision_id] = index_cache
 
-    print(type(tokenized_dfs[src_revision_id]))
     condensed_df = create_condensed_df(
                 tokenized_dfs[src_revision_id], tokenized_dfs[trg_revision_id]
             )
-    print(type(condensed_df))
-    # results = await asyncio.gather(*[run_alignment_scores.call(condensed_df), run_translation_scores.call(condensed_df),
-    #     run_match_scores.call(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]),
-    #     run_embedding_scores.call(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]),
-    # ]
-    # )
-    # await asyncio.gather(func1(), func2())
+
+    if condensed_df.shape[0] == 0:
+        print("There are no verses in common between the revision and reference")
+        return 200, []  # There are no verses in common, so no word alignment to run
+
     results = await asyncio.gather(*[
-                run_alignment_scores(condensed_df), 
-                run_translation_scores(condensed_df),
-                run_match_scores(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]), 
-                run_embedding_scores(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]), 
+                run_alignment_scores.call(condensed_df), 
+                run_translation_scores.call(condensed_df),
+                run_match_scores.call(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]), 
+                run_embedding_scores.call(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]), 
                 ])
 
     step_results = {}
     for item in results:
         for key, value in item.items():
             step_results[key] = value
-    print(step_results)
     
-    results = run_total_scores(
+    total_results = run_total_scores(
                         condensed_df, 
                         step_results['alignment_scores'],
                         step_results['avg_alignment_scores'],
@@ -189,46 +181,41 @@ async def run_word_alignment(assessment_id: int, configuration: dict):
                         step_results['embedding_scores'],
                         )
 
-
-# return results
     print('Pushing results to the database')
-    df = results['verse_scores']
+    df = total_results['verse_scores']
     results = []
     for _, row in df.iterrows():
         results.append({'assessment_id': assessment_id, 'vref': row['vref'], 'score': row['total_score'], 'flag': False})
 
     response, ids = modal.container_app.run_push_results.call(results)
     
-    return ids
+    return response, ids
 
 
-@stub.function(
-    timeout=7200,
-)
-def word_alignment(assessment_id: int, configuration: dict):
-    # with stub.run():
-    import modal.aio
-    import asyncio
-    print('starting word alignment')
-    ids = asyncio.run(run_word_alignment(assessment_id, configuration))
-    return 200, ids
+# @stub.function(
+#     timeout=7200,
+# )
+async def run_word_alignment(assessment_id: int, configuration: dict):
+    async with stub.run():
+        print('starting word alignment')
+        response, ids = await run_word_alignment(assessment_id, configuration)
+    
+    return response, ids
 
-# # @stub.function
-# def main():
-#     # with stub.run():
-#     assessment = WordAlignmentAssessment(
-#         assessment_id=1,
-#         assessment_type="word_alignment",
-#         configuration={
-#             'revision': 138,
-#             'reference': 10,
-#         },
-#     )
-#     # configuration = {
-#     #     'revision': 138,
-#     #     'reference': 10,
-#     # }
-#     word_alignment.call(assessment.assessment_id, assessment.configuration)
+    
+if __name__ == "__main__":
+    config = {
+            'revision': 138,
+            'reference': 10,
+        }
+    assessment = WordAlignmentAssessment(
+        assessment_id=99,
+        assessment_type="word_alignment",
+        configuration=config
+    )
+    
+    response, ids = asyncio.run(word_alignment(assessment.assessment_id, config))
+    print(response)
+    print(ids[:20])
+    
 
-# if __name__ == "__main__":
-#     main()
