@@ -77,6 +77,7 @@ stub = modal.Stub(
         "sqlalchemy",
         "psycopg2-binary",
         "requests_toolbelt==0.9.1",
+        "pytest",
     ),
 )
 stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_alignment")
