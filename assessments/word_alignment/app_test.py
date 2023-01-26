@@ -78,7 +78,7 @@ def test_add_version(base_url, header):
             "name": "word alignment delete", "isoLanguage": "eng",
             "isoScript": "Latn", "abbreviation": "WA-DEL"
             }
-    url = base_url + 'version'
+    url = base_url + '/version'
     new_version = requests.post(url, params=test_version, headers=header)
     assert new_version.json()['name'] == 'word alignment delete'
     
@@ -93,7 +93,7 @@ def test_add_revision(base_url, header, filepath: Path):
             }
  
     file = {"file": filepath.open("rb")}
-    url = base_url + "revision"
+    url = base_url + "/revision"
     response_abv = requests.post(url, params=test_abv_revision, files=file, headers=header)
 
     assert response_abv.status_code == 200
@@ -102,8 +102,8 @@ def test_add_revision(base_url, header, filepath: Path):
 
 
 def test_runner(base_url, header):
-    webhook_url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
-    api_url = base_url + "revision"
+    webhook_url = "https://sil-ai--runner-test-assessment-runner.modal.run"
+    api_url = base_url + "/revision"
     response = requests.get(api_url, headers=header, params={'version_abbreviation': 'WA-DEL'})
     revision_id = response.json()[0]['id']
     reference_id = response.json()[1]['id']
@@ -130,7 +130,7 @@ def get_results(assessment_id, configuration, push_to_db: bool=True):
 def test_assess_draft(base_url, header):
     with stub.run():
         # Use the two revisions of the "WA-DEL" version as revision and reference
-        url = base_url + "revision"
+        url = base_url + "/revision"
         response = requests.get(url, headers=header, params={'version_abbreviation': 'WA-DEL'})
         revision_id = response.json()[0]['id']
         reference_id = response.json()[1]['id']
@@ -148,7 +148,7 @@ def test_delete_version(base_url, header):
     test_delete_version = {
             "version_abbreviation": "WA-DEL"
             }
-    url = base_url + "version"
+    url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
     print(test_response.json())
     assert test_response.status_code == 200
