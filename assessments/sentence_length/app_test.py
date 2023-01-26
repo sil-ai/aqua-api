@@ -16,7 +16,7 @@ def test_add_version(base_url, header):
             "name": version_name, "isoLanguage": "swh",
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
-    url = base_url + 'version'
+    url = base_url + '/version'
     new_version = requests.post(url, params=test_version, headers=header)
     assert new_version.json()['name'] == version_name
     
@@ -30,7 +30,7 @@ def test_add_revision(base_url, header, filepath: Path):
             }
  
     file = {"file": filepath.open("rb")}
-    url = base_url + "revision"
+    url = base_url + "/revision"
     response_abv = requests.post(url, params=test_abv_revision, files=file, headers=header)
 
     assert response_abv.status_code == 200
@@ -39,8 +39,8 @@ def test_add_revision(base_url, header, filepath: Path):
 
 
 def test_runner(base_url, header):
-    webhook_url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
-    api_url = base_url + "revision"
+    webhook_url = "https://sil-ai--runner-test-assessment-runner.modal.run"
+    api_url = base_url + "/revision"
     response = requests.get(api_url, params={'version_abbreviation': version_abbreviation}, headers=header)
     revision_id = response.json()[0]['id']
     config = {
@@ -118,7 +118,7 @@ def run_assess_draft(config):
 
 
 def test_assess_draft(base_url, header):
-    url = base_url + "revision"
+    url = base_url + "/revision"
     response = requests.get(url, params={'version_abbreviation': version_abbreviation}, headers=header)
     revision_id = response.json()[0]['id']
     # Initialize some SentLengthAssessment value.
@@ -132,7 +132,7 @@ def test_delete_version(base_url, header):
     test_delete_version = {
             "version_abbreviation": version_abbreviation
             }
-    url = base_url + "version"
+    url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
     print(test_response.json())
     assert test_response.status_code == 200
