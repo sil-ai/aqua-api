@@ -3,9 +3,9 @@ import pytest
 
 @pytest.fixture
 def base_url():
-    return os.getenv("API_URL")
+    return os.getenv("AQUA_URL")
 
 @pytest.fixture
 def header():
-    key =  "Bearer" + " " + str(os.getenv("API_KEY"))
+    key =  "Bearer" + " " + str(os.getenv("TEST_KEY"))
     return {"Authorization": key}
