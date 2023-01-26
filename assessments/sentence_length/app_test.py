@@ -5,8 +5,6 @@ import pytest
 import time
 import json
 
-from fastapi import HTTPException, status
-
 import app
 
 version_abbreviation = 'SL-DEL'
