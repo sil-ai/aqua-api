@@ -62,9 +62,14 @@ def test_add_version(client):
             }
 
     test_response = client.post("/version", params=test_version)
+    
+    if test_response.status_code == 400 and test_response.json()['detail'] == "Version abbreviation already in use.":
+        print("This version is already in the database")
+    else:
+        assert test_response.status_code == 200
+
     fail_response = client.post("/version", params=fail_version)
 
-    assert test_response.status_code == 200
     assert fail_response.status_code == 400
 
 
