@@ -144,7 +144,7 @@ def test_assess_draft(base_url, header):
 
 
 def test_delete_version(base_url, header):
-    time.sleep(60)  # Allow the assessments above to finish pulling from the database before deleting!
+    time.sleep(10)  # Allow the assessments above to finish pulling from the database before deleting!
     test_delete_version = {
             "version_abbreviation": "WA-DEL"
             }
