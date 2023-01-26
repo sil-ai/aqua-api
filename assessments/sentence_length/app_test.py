@@ -12,15 +12,12 @@ version_name = 'sentence length delete'
 
 # Add a version to the database for this test
 def test_add_version(base_url, header):
-    print(base_url)
-    print(header)
     test_version = {
             "name": version_name, "isoLanguage": "swh",
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
     response = requests.post(url, params=test_version, headers=header)
-    print(response)
     assert response.json()['name'] == version_name
     
 
@@ -137,5 +134,4 @@ def test_delete_version(base_url, header):
             }
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
-    print(test_response.json())
     assert test_response.status_code == 200
