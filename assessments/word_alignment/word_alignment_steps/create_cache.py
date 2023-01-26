@@ -27,5 +27,3 @@ def get_indices_from_df(tokenized_df: pd.DataFrame) -> Dict[str, prepare_data.Wo
     for word in word_dict.values():
         word.get_indices(word_series)
     return word_dict
-
-

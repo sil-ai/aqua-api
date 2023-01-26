@@ -206,4 +206,3 @@ async def run_word_alignment(assessment_id: int, configuration: dict):
         response, ids = await run_word_alignment(assessment_id, configuration)
     
     return response, ids
-

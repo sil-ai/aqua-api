@@ -160,6 +160,3 @@ def run_match_scores(
     df = pd.DataFrame(flat_list)
 
     return df
-
-
-    
