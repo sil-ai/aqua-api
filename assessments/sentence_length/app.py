@@ -1,10 +1,7 @@
-from typing import List
 import os
 from pathlib import Path
 import string
-from typing import Optional
 
-from pydantic import BaseModel
 import modal
 
 
@@ -14,7 +11,6 @@ suffix = ''
 if os.environ.get('MODAL_TEST') == 'TRUE':
     suffix = '_test'
 
-# Define the modal stub.
 stub = modal.Stub(
     "sentence_length" + suffix,
     image=modal.Image.debian_slim().pip_install(
@@ -26,37 +22,17 @@ stub = modal.Stub(
     )
     .copy(mount=modal.Mount(local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root"))),
 )
-#get the pull_revision and push_results functions
+
 stub.run_pull_revision = modal.Function.from_name("pull_revision", "pull_revision")
 stub.run_push_results = modal.Function.from_name("push_results_test", "push_results")
-stub.run_delete_results = modal.Function.from_name("push_results_test", "delete_results")
 
 
-# The information needed to run a sentence length assessment configuration.
-class SentLengthConfig(BaseModel):
-    draft_revision:int
-
-
-# Results model to record in the DB.
-class Result(BaseModel):
-    assessment_id: int
-    vref: str
-    score: float
-    flag: bool = False
-    note: Optional[str] = None
-
-
-# Results is a list of results to push to the DB
-class Results(BaseModel):
-    results: List[Result]
-
-
-#read in vref
 def get_vrefs():
     with open('/root/vref.txt', 'r') as f:
         vrefs = f.readlines()
     vrefs = [vref.strip() for vref in vrefs]
     return vrefs
+
 
 def get_words_per_sentence(text):
     #if text contains only spaces, return 0
@@ -71,6 +47,7 @@ def get_words_per_sentence(text):
     #avg_words = round(avg_words, 2)
     
     return avg_words
+
 
 def get_long_words(text, n=7):
     #get % of words that are >= n characters
@@ -96,12 +73,18 @@ def get_lix_score(text):
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def sentence_length(assessment_id: int, configuration: dict):
+def sentence_length(assessment_id: int, configuration: dict, push_to_db: bool=True):
     import pandas as pd
+    from pydantic import BaseModel
+
+    # The information needed to run a sentence length assessment configuration.
+    class SentLengthConfig(BaseModel):
+        revision:int
+    
     assessment_config = SentLengthConfig(**configuration)
     
     #pull the revision
-    rev_num = assessment_config.draft_revision
+    rev_num = assessment_config.revision
     lines = modal.container_app.run_pull_revision.call(rev_num)
     lines = [line.strip() for line in lines]
 
@@ -135,8 +118,10 @@ def sentence_length(assessment_id: int, configuration: dict):
     for index, row in df.iterrows():
         results.append({'assessment_id': assessment_id, 'vref': row['vref'], 'score': row['lix_score'], 'flag': False})
 
+    if not push_to_db:
+        return 200, results, []
+
     print('Pushing results to the database')
     response, ids = modal.container_app.run_push_results.call(results)
-    response, ids = modal.container_app.run_delete_results.call(ids)
 
     return response, results, ids
