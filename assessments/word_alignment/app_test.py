@@ -81,8 +81,6 @@ def test_add_version(base_url, header):
     url = base_url + '/version'
     new_version = requests.post(url, params=test_version, headers=header)
     assert new_version.json()['name'] == 'word alignment delete'
-    
-    return new_version.json()['id']
 
 
 @pytest.mark.parametrize("filepath", [Path("../../fixtures/test_bible.txt"), Path("../../fixtures/uploadtest.txt")])
@@ -97,8 +95,6 @@ def test_add_revision(base_url, header, filepath: Path):
     response_abv = requests.post(url, params=test_abv_revision, files=file, headers=header)
 
     assert response_abv.status_code == 200
-
-    return response_abv.json()['Revision ID']
 
 
 def test_runner(base_url, header):

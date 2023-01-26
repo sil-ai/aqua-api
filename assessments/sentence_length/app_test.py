@@ -35,8 +35,6 @@ def test_add_revision(base_url, header, filepath: Path):
 
     assert response_abv.status_code == 200
 
-    return response_abv.json()['Revision ID']
-
 
 def test_runner(base_url, header):
     webhook_url = "https://sil-ai--runner-test-assessment-runner.modal.run"
