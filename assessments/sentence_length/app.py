@@ -4,7 +4,7 @@ from pathlib import Path
 import string
 from typing import Optional
 
-from pydantic import BaseModel
+# from pydantic import BaseModel
 import modal
 
 
@@ -32,23 +32,21 @@ stub.run_push_results = modal.Function.from_name("push_results_test", "push_resu
 stub.run_delete_results = modal.Function.from_name("push_results_test", "delete_results")
 
 
-# The information needed to run a sentence length assessment configuration.
-class SentLengthConfig(BaseModel):
-    draft_revision:int
 
 
-# Results model to record in the DB.
-class Result(BaseModel):
-    assessment_id: int
-    vref: str
-    score: float
-    flag: bool = False
-    note: Optional[str] = None
+
+# # Results model to record in the DB.
+# class Result(BaseModel):
+#     assessment_id: int
+#     vref: str
+#     score: float
+#     flag: bool = False
+#     note: Optional[str] = None
 
 
-# Results is a list of results to push to the DB
-class Results(BaseModel):
-    results: List[Result]
+# # Results is a list of results to push to the DB
+# class Results(BaseModel):
+#     results: List[Result]
 
 
 #read in vref
@@ -96,12 +94,18 @@ def get_lix_score(text):
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def sentence_length(assessment_id: int, configuration: dict):
+def sentence_length(assessment_id: int, configuration: dict, push_to_db: bool=True):
     import pandas as pd
+    from pydantic import BaseModel
+
+    # The information needed to run a sentence length assessment configuration.
+    class SentLengthConfig(BaseModel):
+        revision:int
+    
     assessment_config = SentLengthConfig(**configuration)
     
     #pull the revision
-    rev_num = assessment_config.draft_revision
+    rev_num = assessment_config.revision
     lines = modal.container_app.run_pull_revision.call(rev_num)
     lines = [line.strip() for line in lines]
 
@@ -135,8 +139,10 @@ def sentence_length(assessment_id: int, configuration: dict):
     for index, row in df.iterrows():
         results.append({'assessment_id': assessment_id, 'vref': row['vref'], 'score': row['lix_score'], 'flag': False})
 
+    if not push_to_db:
+        return 200, results, []
+
     print('Pushing results to the database')
     response, ids = modal.container_app.run_push_results.call(results)
-    response, ids = modal.container_app.run_delete_results.call(ids)
 
     return response, results, ids
