@@ -3,7 +3,7 @@ import pytest
 
 @pytest.fixture
 def base_url():
-    return os.getenv("API_URL")
+    return os.getenv("AQUA_URL")
 
 @pytest.fixture
 def header():
