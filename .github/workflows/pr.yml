@@ -44,4 +44,4 @@ jobs:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
         AQUA_URL: ${{ secrets.AQUA_URL }}
-
+        TEST_KEY: ${{ secrets.TEST_KEY }}
