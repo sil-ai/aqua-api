@@ -66,6 +66,7 @@ stub = modal.Stub(
         "psycopg2-binary",
         "requests_toolbelt==0.9.1",
     ),
+    secret=modal.Secret.from_name("aqua-api")
 )
 
 stub.run_sentence_length = modal.Function.from_name("sentence_length_test", "sentence_length")
