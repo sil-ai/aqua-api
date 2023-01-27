@@ -104,12 +104,12 @@ def run_assess_draft(config):
     #assert the length of results is 41899
     assert len(results) == 41899
 
-    #assert that results[0] has a score of 12.15
+    #assert that results[0] has a score of 23.12
     assert results[0]['score'] == 23.12
     assert results[0]['flag'] is False
     assert results[0]['vref'] == 'GEN 1:1'
 
-    #assert that results[24995] has a score of 17.19
+    #assert that results[24995] has a score of 37.77
     assert results[24995]['score'] == 37.77
     assert results[24995]['flag'] is False
     assert results[24995]['vref'] == 'LUK 1:34'
