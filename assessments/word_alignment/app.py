@@ -4,7 +4,6 @@ import asyncio
 from pathlib import Path
 import json
 import os
-from typing import Optional
 import pickle
 
 import word_alignment_steps.prepare_data as prepare_data
@@ -50,7 +49,7 @@ CACHE_DIR = Path("/cache")
 # The information needed to run an alignment configuration.
 class WordAlignmentConfig(BaseModel):
     revision: int
-    reference: Optional[int]
+    reference: int
 
 
 # The information corresponding to the given assessment.

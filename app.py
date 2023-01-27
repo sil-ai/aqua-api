@@ -462,7 +462,7 @@ def create_app():
       
         # Call runner to run assessment
         import requests
-        url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
+        url = "https://sil-ai--runner-assessment-runner.modal.run/"
         json_file = json.dumps({
             'assessment': new_assessment['id'],
             'assessment_type': new_assessment['type'],

@@ -8,6 +8,7 @@ import pickle
 
 import word_alignment_steps.prepare_data as prepare_data
 
+
 version_abbreviation = 'WA-DEL'
 version_name = 'word alignment delete'
 
@@ -75,6 +76,7 @@ def test_prepare_data():
         run_prepare_data.call()
 
 
+
 # Add a version to the database for this test
 def test_add_version(base_url, header):
     test_version = {
@@ -87,6 +89,7 @@ def test_add_version(base_url, header):
         print("This version is already in the database")
     else:
         assert response.json()['name'] == version_name
+
 
 
 @pytest.mark.parametrize("filepath", [Path("../../fixtures/test_bible.txt"), Path("../../fixtures/uploadtest.txt")])
@@ -107,6 +110,7 @@ def test_runner(base_url, header):
     webhook_url = "https://sil-ai--runner-test-assessment-runner.modal.run"
     api_url = base_url + "/revision"
     response = requests.get(api_url, headers=header, params={'version_abbreviation': version_abbreviation})
+
     revision_id = response.json()[0]['id']
     reference_id = response.json()[1]['id']
     config = {
@@ -134,6 +138,7 @@ def test_assess_draft(base_url, header):
         # Use the two revisions of the version_abbreviation version as revision and reference
         url = base_url + "/revision"
         response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
+
         revision_id = response.json()[0]['id']
         reference_id = response.json()[1]['id']
 

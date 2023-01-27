@@ -19,11 +19,12 @@ def test_add_version(base_url, header):
             }
     url = base_url + '/version'
     response = requests.post(url, params=test_version, headers=header)
+
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
     else:
         assert response.json()['name'] == version_name
-    
+
 
 # Add one or more revisions to the database for this test
 @pytest.mark.parametrize("filepath", [Path('fixtures/swh-ONEN.txt')])
@@ -108,12 +109,13 @@ def run_assess_draft(config):
     #assert the length of results is 41899
     assert len(results) == 41899
 
-    #assert that results[0] has a score of 12.15
+    #assert that results[0] has a score of 23.12
     assert results[0]['score'] == 23.12
     assert results[0]['flag'] is False
     assert results[0]['vref'] == 'GEN 1:1'
 
-    #assert that results[24995] has a score of 17.19
+    #assert that results[24995] has a score of 37.77
+
     assert results[24995]['score'] == 37.77
     assert results[24995]['flag'] is False
     assert results[24995]['vref'] == 'LUK 1:34'
