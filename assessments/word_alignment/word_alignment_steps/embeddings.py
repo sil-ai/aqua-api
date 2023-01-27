@@ -11,7 +11,25 @@ def run_embeddings(
         condensed_df: pd.DataFrame,
         source_index_cache: dict,
         target_index_cache: dict,
-        ):
+        ) -> pd.DataFrame:
+    """
+    run_embeddings
+
+    This function takes in a DataFrame of source and target sentences (condensed_df), 
+    and two dictionaries (source_index_cache and target_index_cache) that contain 
+    indexes of the verses in which each word occurs. It then uses these inputs to
+    calculate embedding scores for each pair of source and target words.
+
+    Inputs:
+
+    condensed_df: a DataFrame containing two columns, 'src' and 'trg', with verse 
+    strings as their values
+    source_index_cache: a dictionary containing indexes of the verses in which each source word occurs.
+    target_index_cache: a dictionary containing indexes of the verses in which each target word occurs.
+    Outputs:
+
+    df: a DataFrame containing the source and target words, as well as their embedding scores
+    """
     word_dict_src = prepare_data.get_words_from_cache(source_index_cache)
     word_dict_trg = prepare_data.get_words_from_cache(target_index_cache)
     weights_path = Path('/root/encoder_weights.txt') 

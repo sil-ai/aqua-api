@@ -19,8 +19,7 @@ def create_corpus(condensed_df: pd.DataFrame) -> ParallelTextCorpus:
     Takes two line-aligned condensed input files and produces a tokenized corpus. Note that this must be run on the
     output of write_condensed_files(), which removes the lines that are blank in either file.
     Inputs:
-    condensed_fd            A DataFrame with 
-    condensed_target            A Path to the target file
+    condensed_df            A DataFrame with the vref, source and target texts
 
     Outputs:
     parallel_corpus     A tokenized TextFileTextCorpus
@@ -53,9 +52,11 @@ def train_model(condensed_df: pd.DataFrame) -> Tuple[ThotSymmetrizedWordAlignmen
     """
     Takes an aligned corpus as input and trains a model on that corpus
     Inputs:
-    corpus          A TextFileTextCorpus
+    condensed_df            A DataFrame with the vref, source and target texts
+    
     Outputs:
     symmetrized_model       A ThotSymmetrizedWordAlignmentModel trained on the corpus
+    parallel_corpus         A ParallelTextCorpus made from condensed_df
     """
     parallel_corpus = create_corpus(condensed_df)
     src_trg_model = ThotFastAlignWordAlignmentModel()

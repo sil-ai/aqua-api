@@ -45,7 +45,7 @@ def normalize_word(word:str)-> str:
 def create_tokens(src_data: List[str], vref_filepath: Path):
 
     """
-    Takes a dataframe with 'vref' and 'src' columns, where vref is the verse references and src is the raw text data from the database via pull_revision.
+    Takes a list of strings where each item corresponds to a verse, and the filepath for vref.text.
     Returns a (pickled) tokenixed dataframe of words for each verse, tokenized using the LatinWordTokenizer.
     """
     from machine.corpora import TextFileTextCorpus
@@ -75,7 +75,7 @@ def create_tokens(src_data: List[str], vref_filepath: Path):
 
 def condense_df(df_pkl: bytes) -> bytes:
     """
-    Takes an input dataframe  with src_tokenized and trg_tokenized coumns, and outputs
+    Takes a (pickled) input dataframe with src_tokenized and trg_tokenized coumns, and outputs
     a dataframe which only include those lines that are not blank in both input files.
     Also condenses < range > lines into the previous line in both source and target, 
     and removes the vref for that line, adding the removed indices into the 'indices'

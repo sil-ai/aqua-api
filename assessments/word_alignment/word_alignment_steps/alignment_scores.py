@@ -41,7 +41,6 @@ def get_best_alignment_scores(
     segments = list(corpus.lowercase().to_tuples())
     alignments = model.align_batch(segments)
     c = 0
-    # for source_segments, target_segments in batch(segments, model.batch_size):
 
     for (source_segment, target_segment), alignment in zip(list(segments), alignments):
         word_pairs = alignment.to_aligned_word_pairs()
@@ -57,8 +56,8 @@ def get_best_alignment_scores(
             data["alignment_count"] = 1
             data["alignment_score"].append(pair.alignment_score)
             data["vref"].append(vref)
-
     df = pd.DataFrame(data)
+
     return df
 
 
@@ -92,24 +91,18 @@ def run_alignment_scores(
     is_bible: bool = True,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Takes two input text files, runs get_alignments on them, and saves the resulting dataframe
-    to a csv file in a directory within outpath.
+    run_alignment_scores: Compute alignment scores between two texts using the 
+    fast_align model.
 
     Inputs:
-    source           Path to a source text file of line-aligned text
-    target           Path to a target text file of line-aligned text
-    outpath            Path to base output directory
-    is_bible           Boolean for whether the text is Bible, and hence vref references should be used.
-    parallel_corpus    A corpus to process. Normally the corpus is produced from the source and target,
-                        but if it has already been produced it can optionally be provided here to save
-                        calculating it again.
-    symmetrized_model   The model to use. Normally the model is instantiated and trained with the source and target,
-                        but if it has already been created and trained it can optionally be provided here to save
-                        training it again.
+    condensed_df: a DataFrame containing the parallel texts to be aligned.
+    is_bible: a Boolean flag indicating whether the texts are from the Bible (True) or 
+    not (False). Default is True.
 
     Outputs:
-    TextFileTextCorpus      In case you want to re-use it without creating it from scratch
-    ThotSymmetrizedWordAlignmentModel       In case you want to re-use it without training from scratch
+    A tuple of two DataFrames, the first one containing the alignment scores for each 
+    pair of sentences, and the second one containing the average alignment scores for 
+    each verse reference.
     """
 
     # Train fast_align model

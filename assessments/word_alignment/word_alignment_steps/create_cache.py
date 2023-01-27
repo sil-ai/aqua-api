@@ -16,7 +16,7 @@ def get_indices_from_df(tokenized_df: pd.DataFrame) -> Dict[str, prepare_data.Wo
     """
     Takes a DataFrame and constructs a dictionary of Words from all the words in a column of that dataframe.
     Inputs:
-    df          A dataframe containing the words
+    tokenized_df          A dataframe containing the words
     Outputs:
     word_dict      A dictionary of {word (str): Word} items
     """
