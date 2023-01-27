@@ -18,6 +18,7 @@ stub = modal.Stub(name="runner" + suffix, image=modal.Image.debian_slim().pip_in
 class AssessmentType(Enum):
     dummy = 1
     sentence_length = 2
+    word_alignment = 3
 
 
 for assessment_type in AssessmentType:
@@ -44,10 +45,10 @@ async def run_assessment_runner(config):
         configuration: dict  # This will later be validated as a BaseModel by the specific assessment
     assessment_config = AssessmentConfig(**config)
 
-
-    return modal.container_app[assessment_config.assessment_type.name].call(
+    response = modal.container_app[assessment_config.assessment_type.name].call(
         assessment_id = assessment_config.assessment, configuration = assessment_config.configuration
     )
+    return response
 
 
 @stub.webhook(method="POST")

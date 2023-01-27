@@ -114,10 +114,9 @@ def run_match_scores(
     """
     Runs the matching algorithm, taking source and target text files and returning a dictionary.json file of matches.
     Inputs:
-    source          Path to source txt file
-    target          Path to target txt file
-    outpath         Output path
-    logging_level   Logging level. Default is 'INFO'
+    condensed_df    A pd.DataFrame with source and target texts
+    source_index_cache  A dictionary of indexes where each word appears in the source
+    target_index_cache  A dictionary of indexes where each word appears in the target
     jaccard_similarity_threshold    Jaccard Similarity threshold for being included in the dictionary
     count_threshold                 Count threshold for being included in the dictionary
     refresh_cache    Whether to force a cache refresh or use any cached data from previous runs on this source and/or target

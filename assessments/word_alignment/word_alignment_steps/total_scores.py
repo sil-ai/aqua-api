@@ -1,9 +1,13 @@
+from typing import Tuple
 
 import pandas as pd
 
 
 
 def faster_df_apply(df, func):
+    """
+    A faster apply method than the default one that comes with pandas.
+    """
     cols = list(df.columns)
     data, index = [], []
     for row in df.itertuples(index=True):
@@ -20,7 +24,22 @@ def run_total_scores(
                 translation_scores_df: pd.DataFrame,
                 match_scores_df: pd.DataFrame,
                 embedding_scores_df: pd.DataFrame,
-                ):
+                ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """
+    Combines the scores from the four steps.
+    Inputs:
+    condensed_df        A dataframe with the source and target texts and vrefs. Used as
+                        the blank template to store the results.
+    alignment_scores_df  Output from alignment_scores
+    translation_scores_df   Output from translation_scores
+    match_scores_df     Output from match_scores
+    embedding_scores_df Output from embeddings
+
+    Outputs:
+    total_scores_df     A dataframe with the total score for each vref-source-target
+    top_source_scores_df    A datarame with the top score for each vref-source
+    verse_scores_df     A dataframe with the average top_source_score for each vref
+    """
     condensed_df.loc[:, 'source'] = condensed_df['src'].apply(lambda x: str(x).split())
     condensed_df.loc[:, 'target'] = condensed_df['trg'].apply(lambda x: str(x).split())
     condensed_df = condensed_df.explode('source').explode('target')
