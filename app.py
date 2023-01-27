@@ -1,6 +1,6 @@
 import os
 from datetime import date, datetime
-from typing import Union
+from typing import Union, Optional
 from tempfile import NamedTemporaryFile
 from enum import Enum
 import json
@@ -202,10 +202,14 @@ def create_app():
 
     
     @app.get("/revision", dependencies=[Depends(api_key_auth)])
-    async def list_revisions(version_abbreviation: str):
-        bibleVersion = '"' + version_abbreviation + '"'
-        
-        list_revision = queries.list_revisions_query(bibleVersion)
+    async def list_revisions(version_abbreviation: Optional[str]=None):
+
+        if version_abbreviation:
+            bibleVersion = '"' + version_abbreviation + '"'
+            list_revision = queries.list_revisions_query(bibleVersion)
+        else:
+            list_revision = queries.list_all_revisions_query()
+
         list_versions = queries.list_versions_query()
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
@@ -216,7 +220,12 @@ def create_app():
             for version in version_result["bibleVersion"]:
                 version_list.append(version["abbreviation"])
 
-            if version_abbreviation in version_list:
+            if version_abbreviation is not None and version_abbreviation not in version_list:
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Version abbreviation is invalid"
+                        )
+            else:
                 revision_query = gql(list_revision)
                 revision_result = client.execute(revision_query)
 
@@ -229,12 +238,6 @@ def create_app():
                             }
 
                     revisions_data.append(revision_data)
-
-            else:
-                raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Version abbreviation is invalid"
-                        )
 
         return revisions_data 
 
