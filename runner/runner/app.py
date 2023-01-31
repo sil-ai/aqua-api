@@ -24,18 +24,15 @@ secret=modal.Secret.from_name("aqua-db"),
 
 
 # Available assessment types.
-assessments = [
-    "dummy",
-    "sentence-length"
-]
-for a in assessments:
-    stub.a = modal.Function.from_name(a, "assess")
-
-
 class AssessmentType(Enum):
     dummy = 'dummy'
     word_alignment = 'word-alignment'
     sentence_length = 'sentence-length'
+
+
+for a in AssessmentType:
+    app_name = a.value
+    stub.app_name = modal.Function.from_name(app_name, "assess")
 
 
 class Assessment(BaseModel):
@@ -116,7 +113,7 @@ def run_assessment_runner(config):
 async def assessment_runner(config: Assessment):
 
     # Handle the case where the requested assessment type isn't available.
-    if config.type not in a:
+    if config.type not in [a.value for a in AssessmentType]:
         # TODO: We need to record this as a failed assessment in the database.
         return fastapi.Response(content="Assessment type not available.", status_code=500)
     
