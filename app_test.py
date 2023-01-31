@@ -99,9 +99,11 @@ def test_list_revisions(client):
 
     test_response = client.get("/revision", params=test_version)
     fail_response = client.get("/revision", params=fail_version)
+    all_response = client.get("/revision")
     
     assert test_response.status_code == 200
     assert fail_response.status_code == 400
+    assert all_response.status_code == 200
 
 
 def test_get_chapter(client): 
