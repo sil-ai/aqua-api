@@ -188,7 +188,7 @@ def test_assessment(client):
     for bad_config in [bad_config_1, bad_config_2]:
         bad_config_json = json.dumps(bad_config)
         response = client.post("/assessment", json=bad_config_json)
-        assert response.status_code == 400
+        assert response.status_code == 422
 
     # Post good config
     good_config_json = json.dumps(good_config)
