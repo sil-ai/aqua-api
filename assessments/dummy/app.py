@@ -1,6 +1,6 @@
 import time
 from pydantic import BaseModel
-from typing import Union, Literal
+from typing import Literal
 
 import modal
 
