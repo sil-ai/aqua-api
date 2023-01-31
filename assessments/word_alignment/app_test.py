@@ -1,7 +1,6 @@
 import modal
 import requests
 from pathlib import Path
-import json
 import time
 import pytest
 import pickle
