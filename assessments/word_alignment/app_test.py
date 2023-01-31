@@ -5,9 +5,16 @@ import json
 import time
 import pytest
 import pickle
+from enum import Enum
+from typing import Union
+
+from pydantic import BaseModel
 
 import word_alignment_steps.prepare_data as prepare_data
 
+
+version_abbreviation = 'WA-DEL'
+version_name = 'word alignment delete'
 
 stub = modal.Stub(
     name="run_word_alignment_test",
@@ -32,7 +39,7 @@ stub = modal.Stub(
         remote_path='/root/fixtures'
     ),
 )
-stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_alignment")
+stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "assess")
 
 
 @stub.function(mounts=[
@@ -73,20 +80,26 @@ def test_prepare_data():
         run_prepare_data.call()
 
 
+
+# Add a version to the database for this test
 def test_add_version(base_url, header):
     test_version = {
-            "name": "word alignment delete", "isoLanguage": "eng",
-            "isoScript": "Latn", "abbreviation": "WA-DEL"
+            "name": version_name, "isoLanguage": "swh",
+            "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    new_version = requests.post(url, params=test_version, headers=header)
-    assert new_version.json()['name'] == 'word alignment delete'
+    response = requests.post(url, params=test_version, headers=header)
+    if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
+        print("This version is already in the database")
+    else:
+        assert response.json()['name'] == version_name
+
 
 
 @pytest.mark.parametrize("filepath", [Path("../../fixtures/test_bible.txt"), Path("../../fixtures/uploadtest.txt")])
 def test_add_revision(base_url, header, filepath: Path):
     test_abv_revision = {
-            "version_abbreviation": "WA-DEL",
+            "version_abbreviation": version_abbreviation,
             "published": False
             }
  
@@ -97,23 +110,37 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
 
+class AssessmentType(Enum):
+    dummy = 'dummy'
+    word_alignment = 'word-alignment'
+    sentence_length = 'sentence-length'
+
+
+class Assessment(BaseModel):
+    assessment: int
+    revision: int
+    reference: Union[int, None] = None  # Can be an int or 'null'
+    type: AssessmentType
+
+    class Config:  
+        use_enum_values = True
+
+
 def test_runner(base_url, header):
-    webhook_url = "https://sil-ai--runner-test-assessment-runner.modal.run"
+    webhook_url = "https://sil-ai--runner-assessment-runner.modal.run"
     api_url = base_url + "/revision"
-    response = requests.get(api_url, headers=header, params={'version_abbreviation': 'WA-DEL'})
+    response = requests.get(api_url, headers=header, params={'version_abbreviation': version_abbreviation})
+
     revision_id = response.json()[0]['id']
     reference_id = response.json()[1]['id']
-    config = {
-        "assessment":999999,    #This will silently fail when pushing to the database, since it doesn't exist
-        "assessment_type":"word_alignment",
-        "configuration":{
-        "revision": revision_id,
-        "reference": reference_id
-        }
-    }
-    json_file = json.dumps(config)
-    response = requests.post(webhook_url, files={"file": json_file})
-
+    config = Assessment(
+        assessment = 999999,    #This will silently fail when pushing to the database, since it doesn't exist
+        type = "word-alignment",
+        revision = revision_id,
+        reference = reference_id,
+    )
+    
+    response = requests.post(webhook_url, json={'config': config.dict()})
     assert response.status_code == 200
 
 
@@ -125,9 +152,10 @@ def get_results(assessment_id, configuration, push_to_db: bool=True):
 
 def test_assess_draft(base_url, header):
     with stub.run():
-        # Use the two revisions of the "WA-DEL" version as revision and reference
+        # Use the two revisions of the version_abbreviation version as revision and reference
         url = base_url + "/revision"
-        response = requests.get(url, headers=header, params={'version_abbreviation': 'WA-DEL'})
+        response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
+
         revision_id = response.json()[0]['id']
         reference_id = response.json()[1]['id']
 
@@ -142,7 +170,7 @@ def test_assess_draft(base_url, header):
 def test_delete_version(base_url, header):
     time.sleep(10)  # Allow the assessments above to finish pulling from the database before deleting!
     test_delete_version = {
-            "version_abbreviation": "WA-DEL"
+            "version_abbreviation": version_abbreviation
             }
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
