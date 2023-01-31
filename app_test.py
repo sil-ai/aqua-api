@@ -61,8 +61,8 @@ def test_add_version(client):
             "isoScript": "Latn", "abbreviation": "DEL"
             }
 
-    test_response = client.post("/version", params=test_version)
-    fail_response = client.post("/version", params=fail_version)
+    test_response = client.post("/version", json=test_version)
+    fail_response = client.post("/version", json=fail_version)
 
     assert test_response.status_code == 200
     assert fail_response.status_code == 400
@@ -154,7 +154,6 @@ def test_get_verse(client):
 
 
 def test_assessment(client):
-    import json
 
     test_version_abv = {
            "version_abbreviation": "DEL"
@@ -178,23 +177,20 @@ def test_assessment(client):
             "reference": 10,
             "type": "non-existent assessment"
             }
-    
-
 
     good_config = {
             "revision": revision_id,
+            "reference": 10,
             "type": "dummy"
             }
-    
+
     # Try to post bad config
     for bad_config in [bad_config_1, bad_config_2]:
-        bad_config_json = json.dumps(bad_config)
-        response = client.post("/assessment", files={'file': bad_config_json})
-        assert response.status_code == 400
+        response = client.post("/assessment", json=bad_config)
+        assert response.status_code == 422
 
     # Post good config
-    good_config_json = json.dumps(good_config)
-    response = client.post("/assessment", files={'file': good_config_json})
+    response = client.post("/assessment", json=good_config)
     assert response.status_code == 200
     id = response.json()['data']['id']
 

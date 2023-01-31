@@ -169,6 +169,9 @@ def list_all_revisions_query():
                       bibleVersionByBibleversion {
                         name
                       }
+                      bibleVersionByBibleversion {
+                        abbreviation
+                      }
                     }
                   }
                   """
@@ -190,6 +193,9 @@ def list_revisions_query(bibleVersion):
                       date
                       bibleVersionByBibleversion {{
                         name
+                      }}
+                      bibleVersionByBibleversion {{
+                        abbreviation
                       }}
                     }}
                   }}
