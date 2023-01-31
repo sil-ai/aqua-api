@@ -25,7 +25,8 @@ secret=modal.Secret.from_name("aqua-db"),
 
 # Available assessment types.
 assessments = [
-    "dummy"
+    "dummy",
+    "sentence-length"
 ]
 for a in assessments:
     stub.a = modal.Function.from_name(a, "assess")
