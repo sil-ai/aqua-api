@@ -234,7 +234,8 @@ def create_app():
                     revision_data = {
                             "id": revision["id"],
                             "date": revision["date"],
-                            "versionName": revision["bibleVersionByBibleversion"]["name"]
+                            "versionName": revision["bibleVersionByBibleversion"]["name"],
+                            "versionAbbreviation": revision["bibleVersionByBibleversion"]["abbreviation"],
                             }
 
                     revisions_data.append(revision_data)
