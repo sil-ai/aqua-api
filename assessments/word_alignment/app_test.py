@@ -119,7 +119,7 @@ class AssessmentType(Enum):
 class Assessment(BaseModel):
     assessment: int
     revision: int
-    reference: Union[int, None] = None  # Can be an int or 'null'
+    reference: Union[int, None] = None 
     type: AssessmentType
 
     class Config:  
@@ -140,7 +140,7 @@ def test_runner(base_url, header):
         reference = reference_id,
     )
     
-    response = requests.post(webhook_url, json={'config': config.dict()})
+    response = requests.post(webhook_url, json=config.dict())
     assert response.status_code == 200
 
 
