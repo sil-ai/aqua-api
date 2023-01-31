@@ -46,8 +46,7 @@ stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "asses
     modal.Mount(local_dir="./", remote_dir="/"),
 ])
 def run_prepare_data():
-    for file in Path('/root/fixtures').iterdir():
-        print(file.name)
+    
     with open('/root/fixtures/hebrew_lemma_mini.txt') as f:
         src_data = f.readlines()
 
@@ -173,5 +172,4 @@ def test_delete_version(base_url, header):
             }
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
-    print(test_response.json())
     assert test_response.status_code == 200
