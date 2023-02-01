@@ -32,7 +32,7 @@ class AssessmentType(Enum):
 
 for a in AssessmentType:
     app_name = a.value
-    stub.app_name = modal.Function.from_name(app_name, "assess")
+    stub[app_name] = modal.Function.from_name(app_name, "assess")
 
 
 class Assessment(BaseModel):
