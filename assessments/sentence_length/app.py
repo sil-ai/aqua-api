@@ -73,7 +73,7 @@ def get_lix_score(text):
     return lix
 
 
-class SentenceLengthConfig(BaseModel):
+class Assessment(BaseModel):
     assessment: int
     revision: int
     type: Literal["sentence-length"]
@@ -82,11 +82,11 @@ class SentenceLengthConfig(BaseModel):
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def assess(assessment_config: SentenceLengthConfig, push_to_db: bool=True):
+def assess(assessment_config: Assessment, push_to_db: bool=True):
     import pandas as pd
     
     #pull the revision
-    rev_num = assessment_config['revision']
+    rev_num = assessment_config.revision
     lines = modal.container_app.run_pull_revision.call(rev_num)
     lines = [line.strip() for line in lines]
 
@@ -124,7 +124,7 @@ def assess(assessment_config: SentenceLengthConfig, push_to_db: bool=True):
     #add to results
     results = []
     for index, row in df.iterrows():
-        results.append({'assessment_id': assessment_config['assessment'], 
+        results.append({'assessment_id': assessment_config.assessment, 
                         'vref': row['vref'], 'score': row['lix_score'], 
                         'flag': False})
 
