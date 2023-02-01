@@ -58,8 +58,8 @@ def test_add_version(client):
             }
 
     fail_version = {
-            "name": "fail_delete", "isoLanguage": "eng",
-            "isoScript": "Latn", "abbreviation": "DEL"
+            "name": version_name, "isoLanguage": "eng",
+            "isoScript": "Latn", "abbreviation": version_abbreviation
             }
 
     test_response = client.post("/version", json=test_version)
@@ -70,8 +70,7 @@ def test_add_version(client):
     else:
         assert test_response.json()['name'] == version_name
     
-    # assert test_response.status_code == 200
-    # assert fail_response.status_code == 400
+    assert fail_response.status_code == 400
 
 
 # Test for the List Versions endpoint
