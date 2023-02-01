@@ -25,6 +25,7 @@ class Assessment(BaseModel):
     revision: int
     reference: Union[int, None] = None  # Can be an int or 'null'
     type: AssessmentType
+    status: Union[str, None] = None
 
     class Config:  
         use_enum_values = True
