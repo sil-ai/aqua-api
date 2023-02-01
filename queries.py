@@ -160,6 +160,22 @@ def fetch_bible_version(abbreviation):
     return version_id
 
 
+def list_all_revisions_query():
+    list_revisions = """
+                  query {
+                    bibleRevision {
+                      id
+                      date
+                      bibleVersionByBibleversion {
+                        name
+                      }
+                    }
+                  }
+                  """
+
+    return list_revisions
+
+
 def list_revisions_query(bibleVersion):
     list_revisions = """
                   query {{

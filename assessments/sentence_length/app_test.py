@@ -3,7 +3,6 @@ import requests
 from pathlib import Path
 import pytest
 import time
-import json
 
 import app
 
@@ -47,13 +46,11 @@ def test_runner(base_url, header):
     response = requests.get(api_url, params={'version_abbreviation': version_abbreviation}, headers=header)
     revision_id = response.json()[0]['id']
     config = {
-        "assessment":999999,    #This will silently fail when pushing to the database, since it doesn't exist
-        "assessment_type":"sentence_length",
-        "configuration":{
-        "revision": revision_id
-        }
+        "assessment": 999999,    #This will silently fail when pushing to the database, since it doesn't exist
+        "revision": revision_id,
+        "type": "sentence-length"
     }
-    response = requests.post(webhook_url, files={"file": json.dumps(config)})
+    response = requests.post(webhook_url, json=config)
     assert response.status_code == 200
 
 
@@ -72,7 +69,7 @@ stub = modal.Stub(
     secret=modal.Secret.from_name("aqua-api")
 )
 
-stub.run_sentence_length = modal.Function.from_name("sentence_length_test", "sentence_length")
+stub.run_sentence_length = modal.Function.from_name("sentence-length_test", "assess")
 
 
 @stub.function(mounts=[
@@ -103,7 +100,7 @@ def test_metrics():
     
 @stub.function
 def run_assess_draft(config):
-    response, results, _ = modal.container_app.run_sentence_length.call(999999, configuration=config, push_to_db=False)
+    response, results, _ = modal.container_app.run_sentence_length.call(config, push_to_db=False)
     assert response == 200
 
     #assert the length of results is 41899
@@ -126,7 +123,11 @@ def test_assess_draft(base_url, header):
     response = requests.get(url, params={'version_abbreviation': version_abbreviation}, headers=header)
     revision_id = response.json()[0]['id']
     # Initialize some SentLengthAssessment value.
-    config = {'revision': revision_id}
+    config = {
+        'revision': revision_id,
+        'assessment': 999999,
+        'type': 'sentence-length'
+    }
     with stub.run():
         run_assess_draft.call(config)    
 

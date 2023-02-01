@@ -1,10 +1,13 @@
 import modal
 import requests
 from pathlib import Path
-import json
 import time
 import pytest
 import pickle
+from enum import Enum
+from typing import Union
+
+from pydantic import BaseModel
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -35,7 +38,7 @@ stub = modal.Stub(
         remote_path='/root/fixtures'
     ),
 )
-stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_alignment")
+stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "assess")
 
 
 @stub.function(mounts=[
@@ -43,8 +46,7 @@ stub.run_word_alignment = modal.Function.from_name("word_alignment_test", "word_
     modal.Mount(local_dir="./", remote_dir="/"),
 ])
 def run_prepare_data():
-    for file in Path('/root/fixtures').iterdir():
-        print(file.name)
+    
     with open('/root/fixtures/hebrew_lemma_mini.txt') as f:
         src_data = f.readlines()
 
@@ -106,24 +108,37 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
 
+class AssessmentType(Enum):
+    dummy = 'dummy'
+    word_alignment = 'word-alignment'
+    sentence_length = 'sentence-length'
+
+
+class Assessment(BaseModel):
+    assessment: int
+    revision: int
+    reference: Union[int, None] = None 
+    type: AssessmentType
+
+    class Config:  
+        use_enum_values = True
+
+
 def test_runner(base_url, header):
-    webhook_url = "https://sil-ai--runner-test-assessment-runner.modal.run"
+    webhook_url = "https://sil-ai--runner-assessment-runner.modal.run"
     api_url = base_url + "/revision"
     response = requests.get(api_url, headers=header, params={'version_abbreviation': version_abbreviation})
 
     revision_id = response.json()[0]['id']
     reference_id = response.json()[1]['id']
-    config = {
-        "assessment":999999,    #This will silently fail when pushing to the database, since it doesn't exist
-        "assessment_type":"word_alignment",
-        "configuration":{
-        "revision": revision_id,
-        "reference": reference_id
-        }
-    }
-    json_file = json.dumps(config)
-    response = requests.post(webhook_url, files={"file": json_file})
-
+    config = Assessment(
+        assessment = 999999,    #This will silently fail when pushing to the database, since it doesn't exist
+        type = "word-alignment",
+        revision = revision_id,
+        reference = reference_id,
+    )
+    
+    response = requests.post(webhook_url, json=config.dict())
     assert response.status_code == 200
 
 
@@ -157,5 +172,4 @@ def test_delete_version(base_url, header):
             }
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
-    print(test_response.json())
     assert test_response.status_code == 200
