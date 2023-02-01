@@ -9,7 +9,6 @@ import app
 version_abbreviation = 'SL-DEL'
 version_name = 'sentence length delete'
 
-
 # Add a version to the database for this test
 def test_add_version(base_url, header):
     test_version = {
@@ -112,7 +111,6 @@ def run_assess_draft(config):
     assert results[0]['vref'] == 'GEN 1:1'
 
     #assert that results[24995] has a score of 37.77
-
     assert results[24995]['score'] == 37.77
     assert results[24995]['flag'] is False
     assert results[24995]['vref'] == 'LUK 1:34'
