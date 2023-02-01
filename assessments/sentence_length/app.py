@@ -1,9 +1,10 @@
 import os
 from pathlib import Path
 import string
+from pydantic import BaseModel
+from typing import Literal
 
 import modal
-
 
 
 # Manage suffix on modal endpoint if testing.
@@ -12,7 +13,7 @@ if os.environ.get('MODAL_TEST') == 'TRUE':
     suffix = '_test'
 
 stub = modal.Stub(
-    "sentence_length" + suffix,
+    "sentence-length" + suffix,
     image=modal.Image.debian_slim().pip_install(
         'pydantic',
         'pandas',
@@ -64,27 +65,28 @@ def get_long_words(text, n=7):
     percent_long_words = float(len(long_words) / len(words))
     return percent_long_words*100
 
+
 def get_lix_score(text):
     lix = (get_long_words(text)+get_words_per_sentence(text))
     #round
     lix = round(lix, 2)
     return lix
 
+
+class SentenceLengthConfig(BaseModel):
+    assessment: int
+    revision: int
+    type: Literal["sentence-length"]
+
+
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def sentence_length(assessment_id: int, configuration: dict, push_to_db: bool=True):
+def assess(assessment_config: SentenceLengthConfig, push_to_db: bool=True):
     import pandas as pd
-    from pydantic import BaseModel
-
-    # The information needed to run a sentence length assessment configuration.
-    class SentLengthConfig(BaseModel):
-        revision:int
-    
-    assessment_config = SentLengthConfig(**configuration)
     
     #pull the revision
-    rev_num = assessment_config.revision
+    rev_num = assessment_config['revision']
     lines = modal.container_app.run_pull_revision.call(rev_num)
     lines = [line.strip() for line in lines]
 
@@ -111,12 +113,20 @@ def sentence_length(assessment_id: int, configuration: dict, push_to_db: bool=Tr
     
     #add scores to original df
     #every verse in a chapter will have the same score
-    df = df.merge(chapter_df[['book', 'chapter', 'lix_score', 'wps', 'percent_long_words']], on=['book', 'chapter'])
+    df = df.merge(chapter_df[[
+        'book', 
+        'chapter', 
+        'lix_score', 
+        'wps', 
+        'percent_long_words']], 
+        on=['book', 'chapter'])
 
     #add to results
     results = []
     for index, row in df.iterrows():
-        results.append({'assessment_id': assessment_id, 'vref': row['vref'], 'score': row['lix_score'], 'flag': False})
+        results.append({'assessment_id': assessment_config['assessment'], 
+                        'vref': row['vref'], 'score': row['lix_score'], 
+                        'flag': False})
 
     if not push_to_db:
         return 200, results, []

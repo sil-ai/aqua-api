@@ -1,10 +1,11 @@
 import os
-import json
-from enum import Enum
 import datetime
+from pydantic import BaseModel
+from enum import Enum
+from typing import Union
 
 import modal
-from fastapi import Request
+import fastapi
 
 
 # Manage suffix on modal endpoint if testing.
@@ -15,27 +16,37 @@ if os.environ.get("MODAL_TEST") == "TRUE":
 
 stub = modal.Stub(name="runner" + suffix, image=modal.Image.debian_slim().pip_install(
     "pydantic",
-            "sqlalchemy==1.4.36",
-            "psycopg2-binary",
+    "sqlalchemy==1.4.36",
+    "psycopg2-binary",
 ),
 secret=modal.Secret.from_name("aqua-db"),
 )
 
 
+# Available assessment types.
 class AssessmentType(Enum):
-    dummy = 1
-    sentence_length = 2
-    word_alignment = 3
+    dummy = 'dummy'
+    word_alignment = 'word-alignment'
+    sentence_length = 'sentence-length'
 
 
-for assessment_type in AssessmentType:
-    stub[assessment_type.name] = modal.Function.from_name(
-        assessment_type.name, assessment_type.name
-    )
+for a in AssessmentType:
+    app_name = a.value
+    stub.app_name = modal.Function.from_name(app_name, "assess")
+
+
+class Assessment(BaseModel):
+    assessment: int
+    revision: int
+    reference: Union[int, None] = None  # Can be an int or 'null'
+    type: AssessmentType
+
+    class Config:  
+        use_enum_values = True
 
 
 class RunAssessment:
-    def __init__(self, config: dict):
+    def __init__(self, config: Assessment):
         self.config = config
         from sqlalchemy.orm import declarative_base
         from sqlalchemy import Column, Integer, Text, DateTime
@@ -66,26 +77,24 @@ class RunAssessment:
 
     def log_start(self):
         with next(self.yield_session()) as session:
-            session.query(self.Assessment).filter(self.Assessment.id == self.config['assessment']).update({"status": "running", "start_time": datetime.datetime.utcnow()})
+            session.query(self.Assessment).filter(
+                self.Assessment.id == self.config.assessment
+                ).update(
+                    {"status": "running", "start_time": datetime.datetime.utcnow()}
+                )
             session.commit()
     
     def log_end(self):
         with next(self.yield_session()) as session:
-            session.query(self.Assessment).filter(self.Assessment.id == self.config['assessment']).update({"status": "finished", "end_time": datetime.datetime.utcnow()})
+            session.query(self.Assessment).filter(
+                self.Assessment.id == self.config.assessment
+            ).update(
+                {"status": "finished", "end_time": datetime.datetime.utcnow()}
+            )
             session.commit()
     
     def run_assessment(self):
-        from pydantic import BaseModel
-        self.config["assessment_type"] = AssessmentType[self.config["assessment_type"]]
-        class AssessmentConfig(BaseModel):
-            assessment: int
-            assessment_type: AssessmentType
-            configuration: dict  # This will later be validated as a BaseModel by the specific assessment
-        self.assessment_config = AssessmentConfig(**self.config)
-
-        response = modal.container_app[self.assessment_config.assessment_type.name].call(
-            assessment_id = self.assessment_config.assessment, configuration = self.assessment_config.configuration
-        )
+        response = modal.container_app[self.config.type].call(self.config)
         return response
 
 
@@ -101,14 +110,14 @@ def run_assessment_runner(config):
 
 
 @stub.webhook(method="POST")
-async def assessment_runner(request: Request):
-    body = await request.form()
-    config_file = await body['file'].read()
-    config = json.loads(config_file)
-    if config["assessment_type"] not in [e.name for e in AssessmentType]:
-        raise ValueError(f"Invalid assessment type: {config['assessment_type']}")
+async def assessment_runner(config: Assessment):
+
+    # Handle the case where the requested assessment type isn't available.
+    if config.type not in [a.value for a in AssessmentType]:
+        # TODO: We need to record this as a failed assessment in the database.
+        return fastapi.Response(content="Assessment type not available.", status_code=500)
     
-    #Start the assessment, while continuing on to return a response to the user
+    # Start the assessment, while continuing on to return a response to the user
     run_assessment_runner.spawn(config)
     
     return "Assessment runner started in the background, will take approximately 20 minutes to finish."

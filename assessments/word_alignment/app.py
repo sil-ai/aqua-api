@@ -140,7 +140,7 @@ def run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df,
 
 
 @stub.function(timeout=7200)
-async def word_alignment(assessment_id: int, configuration: dict, push_to_db: bool=True):
+async def assess(assessment_id: int, configuration: dict, push_to_db: bool=True):
     assessment_config = WordAlignmentConfig(**configuration)
     tokenized_dfs = {}
     index_caches = {}
@@ -195,13 +195,5 @@ async def word_alignment(assessment_id: int, configuration: dict, push_to_db: bo
         results.append({'assessment_id': assessment_id, 'vref': row['vref'], 'score': row['total_score'], 'flag': False})
 
     response, ids = modal.container_app.run_push_results.call(results)
-    
-    return response, ids
-
-
-async def run_word_alignment(assessment_id: int, configuration: dict):
-    async with stub.run():
-        print('starting word alignment')
-        response, ids = await run_word_alignment(assessment_id, configuration)
     
     return response, ids
