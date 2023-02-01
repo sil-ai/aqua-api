@@ -1,14 +1,16 @@
 import requests
-from pathlib import Path
-
 
 def test_runner():
     url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
 
-    config_filepath = Path('fixtures/test_config.json')
+    config = {
+        "assessment":2,
+        "type":"dummy",
+        "reference":10,
+        "revision":11
+    }
 
-    with open(config_filepath) as json_file:
-        response = requests.post(url, files={"file": json_file})
+    response = requests.post(url, json=config)
 
     assert response.status_code == 200
 

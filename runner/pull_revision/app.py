@@ -117,7 +117,7 @@ class PullRevision:
             return output_text
 
         else:
-            logging.info("Revision text is empty. Nothing printed.")
+            print("Revision text is empty. Nothing printed.")
             return []
 
 

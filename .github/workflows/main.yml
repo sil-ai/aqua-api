@@ -51,6 +51,8 @@ jobs:
       env:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        AQUA_URL: ${{ secrets.AQUA_URL }}
+        TEST_KEY: ${{ secrets.TEST_KEY }}
 
     - name: Login to Amazon ECR
       id: login-ecr
@@ -66,3 +68,4 @@ jobs:
       env:
         MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
         MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        

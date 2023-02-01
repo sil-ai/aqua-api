@@ -18,6 +18,7 @@ stub = modal.Stub(
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
         "psycopg2-binary",
+        "pandas==1.4.3"
     ),
 )
 

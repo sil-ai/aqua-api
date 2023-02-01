@@ -6,6 +6,7 @@ import sqlalchemy as db
 
 import bible_loading
 
+revision_id = 13
 
 def test_text_dataframe(): 
     verses = []
@@ -17,7 +18,7 @@ def test_text_dataframe():
                 bibleRevision.append(np.nan)
             else:
                 verses.append(line.replace("\n", ""))
-                bibleRevision.append(3)
+                bibleRevision.append(revision_id)
 
     verseText = bible_loading.text_dataframe(verses, bibleRevision)
 
@@ -59,7 +60,7 @@ def test_text_loading():
     
     verse_dict = {
         "text": ["TEST"], 
-        "bibleRevision": [3], 
+        "bibleRevision": [revision_id], 
         "verseReference": ["GEN 1:1"]
         }
 
@@ -82,7 +83,7 @@ def test_upload_bible():
                 bibleRevision.append(np.nan)
             else:
                 verses.append(line.replace("\n", ""))
-                bibleRevision.append(3)
+                bibleRevision.append(revision_id)
 
     bible_upload = bible_loading.upload_bible(verses, bibleRevision)
 

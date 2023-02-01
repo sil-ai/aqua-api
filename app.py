@@ -1,21 +1,21 @@
 import os
 from datetime import date, datetime
-from typing import Union
+from typing import Optional
 from tempfile import NamedTemporaryFile
-from enum import Enum
-import json
 
-from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi import File, UploadFile
+import fastapi
+from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
 from fastapi.security import OAuth2PasswordBearer
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 import numpy as np
-from pydantic import BaseModel, ValidationError
+import requests
 
 import queries
 import bible_loading
 from key_fetch import get_secret
+from models import Assessment, Version
+
 
 # run api key fetch function requiring 
 # input of AWS credentials
@@ -28,6 +28,9 @@ api_keys = get_secret(
 # Use Token authentication
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+# Runner URL
+runner_url = "https://sil-ai--runner-assessment-runner.modal.run/"
+
 
 def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     if api_key not in api_keys:
@@ -37,18 +40,6 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
         )
 
     return True
-
-
-class AssessmentType(Enum):
-    dummy = 1
-    word_alignment = 2
-    sentence_length = 3
-
-
-class Assessment(BaseModel):
-    revision: int
-    reference: Union[int, str]  # Can be an int or 'null'
-    type: AssessmentType
 
 
 # Creates the FastAPI app object
@@ -92,33 +83,27 @@ def create_app():
 
    
     @app.post("/version", dependencies=[Depends(api_key_auth)])
-    async def add_version(
-            name: str, isoLanguage: str, isoScript: str,
-            abbreviation: str, rights: Union[str, None] = None, 
-            forwardTranslation: Union[int, None] = None,
-            backTranslation: Union[int, None] = None, 
-            machineTranslation: bool = False
-            ):
+    async def add_version(v: Version):
 
-        name_fixed = '"' + name +  '"'
-        isoLang_fixed = '"' + isoLanguage + '"'
-        isoScpt_fixed = '"' + isoScript + '"'
-        abbv_fixed = '"' + abbreviation + '"'
+        name_fixed = '"' + v.name +  '"'
+        isoLang_fixed = '"' + v.isoLanguage + '"'
+        isoScpt_fixed = '"' + v.isoScript + '"'
+        abbv_fixed = '"' + v.abbreviation + '"'
         
-        if rights is None:
+        if v.rights is None:
             rights_fixed = "null"
         else:
-            rights_fixed = '"' + rights + '"'
+            rights_fixed = '"' + v.rights + '"'
 
-        if forwardTranslation is None:
+        if v.forwardTranslation is None:
             fT = "null"
         else:
-            fT = forwardTranslation
+            fT = v.forwardTranslation
 
-        if backTranslation is None:
+        if v.backTranslation is None:
             bT = "null"
         else:
-            bT = backTranslation
+            bT = v.backTranslation
 
         check_version = queries.check_version_query()
 
@@ -127,7 +112,8 @@ def create_app():
             check_data = client.execute(check_query)
 
             for version in check_data["bibleVersion"]:
-                if abbreviation.lower() == version["abbreviation"].lower():
+                print(version)
+                if version['abbreviation'].lower() == v.abbreviation.lower():
                     raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Version abbreviation already in use."
@@ -136,7 +122,7 @@ def create_app():
             new_version = queries.add_version_query(
                     name_fixed, isoLang_fixed, isoScpt_fixed,
                     abbv_fixed, rights_fixed, fT,
-                    bT, str(machineTranslation).lower()
+                    bT, str(v.machineTranslation).lower()
                     )
             mutation = gql(new_version)
 
@@ -202,10 +188,14 @@ def create_app():
 
     
     @app.get("/revision", dependencies=[Depends(api_key_auth)])
-    async def list_revisions(version_abbreviation: str):
-        bibleVersion = '"' + version_abbreviation + '"'
-        
-        list_revision = queries.list_revisions_query(bibleVersion)
+    async def list_revisions(version_abbreviation: Optional[str]=None):
+
+        if version_abbreviation:
+            bibleVersion = '"' + version_abbreviation + '"'
+            list_revision = queries.list_revisions_query(bibleVersion)
+        else:
+            list_revision = queries.list_all_revisions_query()
+
         list_versions = queries.list_versions_query()
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
@@ -216,7 +206,12 @@ def create_app():
             for version in version_result["bibleVersion"]:
                 version_list.append(version["abbreviation"])
 
-            if version_abbreviation in version_list:
+            if version_abbreviation is not None and version_abbreviation not in version_list:
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Version abbreviation is invalid"
+                        )
+            else:
                 revision_query = gql(list_revision)
                 revision_result = client.execute(revision_query)
 
@@ -229,12 +224,6 @@ def create_app():
                             }
 
                     revisions_data.append(revision_data)
-
-            else:
-                raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Version abbreviation is invalid"
-                        )
 
         return revisions_data 
 
@@ -414,33 +403,18 @@ def create_app():
     
 
     @app.post("/assessment", dependencies=[Depends(api_key_auth)])
-    async def add_assessment(file: UploadFile):
-        config_bytes = await file.read()
-        config = json.loads(config_bytes)
-        revision_id = config['revision']
-        assessment_type = config['type']
-        reference = config.get('reference', None)
+    async def add_assessment(a: Assessment):
+        reference = a.reference
         if not reference:
             reference = 'null'
-        try:
-            assessment = Assessment(
-                    revision=revision_id,
-                    reference=reference,
-                    type=AssessmentType[assessment_type], 
-                    )
-        except (ValidationError, KeyError):
-            raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Assessment config is invalid."
-        )
-        assessment_type_fixed = '"' + assessment.type.name +  '"'
+        assessment_type_fixed = '"' + str(a.type) +  '"'
         requested_time = '"' + datetime.now().isoformat() + '"'
         assessment_status = '"' + 'queued' + '"'
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
             new_assessment = queries.add_assessment_query(
-                    revision_id, 
+                    a.revision, 
                     reference,
                     assessment_type_fixed, 
                     requested_time, 
@@ -457,20 +431,14 @@ def create_app():
                 "type": assessment["insert_assessment"]["returning"][0]["type"],
                 "requested_time": assessment["insert_assessment"]["returning"][0]["requested_time"],
                 "status": assessment["insert_assessment"]["returning"][0]["status"],
-
                 }
       
         # Call runner to run assessment
-        import requests
-        url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
-        json_file = json.dumps({
-            'assessment': new_assessment['id'],
-            'assessment_type': new_assessment['type'],
-            'configuration': config,
-        })
-        
-        response = requests.post(url, files={"file": json_file})
-        assert response.status_code == 200
+        a.assessment = new_assessment["id"]
+        response = requests.post(runner_url, json=a.dict())
+        if response.status_code != 200:
+            # TODO: Is 500 the right status code here?
+            return fastapi.Response(content=str(response), status_code=500)
         
         return {
                     'status_code': 200, 
