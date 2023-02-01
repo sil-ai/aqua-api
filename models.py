@@ -23,7 +23,7 @@ class AssessmentType(Enum):
 class Assessment(BaseModel):
     assessment: Union[int, None] = None
     revision: int
-    reference: Union[int, None] = None  # Can be an int or 'null'
+    reference: Union[int, None] = None 
     type: AssessmentType
     status: Union[str, None] = None
 
