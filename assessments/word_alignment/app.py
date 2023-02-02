@@ -5,6 +5,8 @@ from pathlib import Path
 import json
 import os
 import pickle
+from typing import Literal, Union
+from enum import Enum
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -17,7 +19,7 @@ if os.environ.get("MODAL_TEST") == "TRUE":
     suffix = "_test"
 
 stub = modal.aio.AioStub(
-    "word_alignment" + suffix,
+    "word-alignment" + suffix,
     image=modal.Image.debian_slim()
     .pip_install(
         "pandas==1.4.3",
@@ -46,17 +48,19 @@ stub.run_push_results = modal.Function.from_name("push_results", "push_results")
 
 CACHE_DIR = Path("/cache")
 
-# The information needed to run an alignment configuration.
-class WordAlignmentConfig(BaseModel):
-    revision: int
-    reference: int
+# Available assessment types.
+class AssessmentType(Enum):
+    dummy = 'dummy'
+    word_alignment = 'word-alignment'
+    sentence_length = 'sentence-length'
 
 
 # The information corresponding to the given assessment.
-class WordAlignmentAssessment(BaseModel):
-    assessment_id: int
-    assessment_type: str
-    configuration: WordAlignmentConfig
+class Assessment(BaseModel):
+    assessment: int
+    revision: int
+    reference: int
+    type: Literal["word-alignment"]
 
 
 async def create_index_cache(tokenized_df, refresh: bool = False):
@@ -140,8 +144,9 @@ def run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df,
 
 
 @stub.function(timeout=7200)
-async def assess(assessment_id: int, configuration: dict, push_to_db: bool=True):
-    assessment_config = WordAlignmentConfig(**configuration)
+async def assess(assessment_config: Assessment, push_to_db: bool=True):
+
+    # assessment_config = Assessment(**assessment_config)
     tokenized_dfs = {}
     index_caches = {}
     src_revision_id = assessment_config.reference
@@ -189,11 +194,12 @@ async def assess(assessment_id: int, configuration: dict, push_to_db: bool=True)
     print('Pushing results to the database')
     df = total_results['verse_scores']
     if not push_to_db:
-        return 200, []
+        return {'status': 'finished (not pushed to database)', 'ids': []}
+
     results = []
     for _, row in df.iterrows():
-        results.append({'assessment_id': assessment_id, 'vref': row['vref'], 'score': row['total_score'], 'flag': False})
+        results.append({'assessment_id': assessment_config.assessment, 'vref': row['vref'], 'score': row['total_score'], 'flag': False})
 
     response, ids = modal.container_app.run_push_results.call(results)
     
-    return response, ids
+    return {'status': 'finished', 'ids': ids}
