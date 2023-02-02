@@ -48,12 +48,6 @@ stub.run_push_results = modal.Function.from_name("push_results", "push_results")
 
 CACHE_DIR = Path("/cache")
 
-# Available assessment types.
-class AssessmentType(Enum):
-    dummy = 'dummy'
-    word_alignment = 'word-alignment'
-    sentence_length = 'sentence-length'
-
 
 # The information corresponding to the given assessment.
 class Assessment(BaseModel):
@@ -145,8 +139,6 @@ def run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df,
 
 @stub.function(timeout=7200)
 async def assess(assessment_config: Assessment, push_to_db: bool=True):
-
-    # assessment_config = Assessment(**assessment_config)
     tokenized_dfs = {}
     index_caches = {}
     src_revision_id = assessment_config.reference
