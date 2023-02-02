@@ -8,7 +8,8 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from gql.transport.requests import RequestsHTTPTransport
 
-
+version_name = 'App delete test'
+version_abbreviation = 'APP-DEL'
 
 headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
 transport = RequestsHTTPTransport(
@@ -52,19 +53,19 @@ def test_read_main(client):
 
 def test_add_version(client):
     test_version = {
-            "name": "delete", "isoLanguage": "eng",
-            "isoScript": "Latn", "abbreviation": "DEL"
-            }
-
-    fail_version = {
-            "name": "fail_delete", "isoLanguage": "eng",
-            "isoScript": "Latn", "abbreviation": "DEL"
+            "name": version_name, "isoLanguage": "eng",
+            "isoScript": "Latn", "abbreviation": version_abbreviation
             }
 
     test_response = client.post("/version", json=test_version)
-    fail_response = client.post("/version", json=fail_version)
+    fail_response = client.post("/version", json=test_version)  # Push the same version a second time, which should give 400
 
-    assert test_response.status_code == 200
+    if test_response.status_code == 400 and test_response.json()['detail'] == "Version abbreviation already in use.":
+        print("This version is already in the database")
+    else:
+        assert test_response.status_code == 200
+        assert test_response.json()['name'] == version_name
+    
     assert fail_response.status_code == 400
 
 
@@ -77,7 +78,7 @@ def test_list_versions(client):
 
 def test_upload_bible(client):
     test_abv_revision = {
-            "version_abbreviation": "DEL",
+            "version_abbreviation": version_abbreviation,
             "published": False
             }
  
@@ -90,7 +91,7 @@ def test_upload_bible(client):
 
 def test_list_revisions(client):
     test_version = {
-            "version_abbreviation": "DEL"
+            "version_abbreviation": version_abbreviation
             }
 
     fail_version = {
@@ -108,14 +109,14 @@ def test_list_revisions(client):
 
 def test_get_chapter(client): 
     version_abv = {
-            "version_abbreviation": "DEL"
+            "version_abbreviation": version_abbreviation
             }
 
     version_response = client.get("/revision", params=version_abv)
     version_fixed = ast.literal_eval(version_response.text)
 
     for version_data in version_fixed:
-        if version_data["versionName"] == "delete":
+        if version_data["versionName"] == version_name:
             revision_id = version_data["id"]
 
     test_chapter = {
@@ -131,14 +132,14 @@ def test_get_chapter(client):
 
 def test_get_verse(client): 
     version_abv = {
-            "version_abbreviation": "DEL"
+            "version_abbreviation": version_abbreviation
             }
 
     version_response = client.get("/revision", params=version_abv)
     version_fixed = ast.literal_eval(version_response.text)
 
     for version_data in version_fixed:
-        if version_data["versionName"] == "delete":
+        if version_data["versionName"] == version_name:
             revision_id = version_data["id"]
 
     test_version = {
@@ -156,14 +157,14 @@ def test_get_verse(client):
 def test_assessment(client):
 
     test_version_abv = {
-           "version_abbreviation": "DEL"
+           "version_abbreviation": version_abbreviation
            }
 
     version_response = client.get("/revision", params=test_version_abv)
     version_fixed = ast.literal_eval(version_response.text)
 
     for version_data in version_fixed:
-        if version_data["versionName"] == "delete":
+        if version_data["versionName"] == version_name:
             revision_id = version_data["id"]
 
     bad_config_1 = {
@@ -209,10 +210,32 @@ def test_assessment(client):
     assert id not in [assessment['id'] for assessment in response.json()['assessments']]
 
 
-def test_get_result(client): 
-    test_config = {
-            "assessment_id": 6
+def test_result(client):
+
+    test_version_abv = {
+           "version_abbreviation": version_abbreviation
+           }
+
+    revision_response = client.get("/revision", params=test_version_abv)
+    revision_fixed = ast.literal_eval(revision_response.text)
+
+    for revision_data in revision_fixed:
+        if revision_data["versionName"] == version_name:
+            revision_id = revision_data["id"]
+
+    good_config = {
+            "revision": revision_id,
+            "reference": 10,
+            "type": "dummy"
             }
+
+    response = client.post("/assessment", json=good_config)
+    assert response.status_code == 200
+    assessment_id = response.json()['data']['id']
+    
+    test_config = {
+            "assessment_id": assessment_id
+    }
 
     fail_config = {
             "assessment_id": 0
@@ -227,14 +250,14 @@ def test_get_result(client):
 
 def test_delete_revision(client):
     test_version_abv = {
-           "version_abbreviation": "DEL"
+           "version_abbreviation": version_abbreviation
            }
 
     version_response = client.get("/revision", params=test_version_abv)
     version_fixed = ast.literal_eval(version_response.text)
 
     for version_data in version_fixed:
-        if version_data["versionName"] == "delete":
+        if version_data["versionName"] == version_name:
             revision_id = version_data["id"]
 
     delete_revision_data = {
@@ -254,7 +277,7 @@ def test_delete_revision(client):
 
 def test_delete_version(client):
     test_delete_version = {
-            "version_abbreviation": "DEL"
+            "version_abbreviation": version_abbreviation
             }
 
     fail_delete_version = {

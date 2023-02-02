@@ -17,8 +17,12 @@ def test_add_version(base_url, header):
             }
     url = base_url + '/version'
     response = requests.post(url, params=test_version, headers=header)
-    assert response.json()['name'] == version_name
-    
+
+    if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
+        print("This version is already in the database")
+    else:
+        assert response.json()['name'] == version_name
+
 
 # Add one or more revisions to the database for this test
 @pytest.mark.parametrize("filepath", [Path('fixtures/swh-ONEN.txt')])
