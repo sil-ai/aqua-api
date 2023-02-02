@@ -160,9 +160,9 @@ def test_assess_draft(base_url, header):
         config = {'revision': revision_id, 'reference': reference_id}
 
         #Run word alignment from reference to revision, but don't push it to the database
-        response, _ = get_results.call(assessment_id=999999, configuration=config, push_to_db=False)
+        response = get_results.call(assessment_id=999999, configuration=config, push_to_db=False)
 
-        assert response == 200
+        assert response['status'] == 'finished (not pushed to database)'
 
 
 def test_delete_version(base_url, header):
