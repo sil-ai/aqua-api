@@ -16,7 +16,7 @@ index_cache_volume = modal.SharedVolume().persist("index_cache")
 # Manage suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "_test"
+    suffix = "-test"
 
 stub = modal.aio.AioStub(
     "word-alignment" + suffix,

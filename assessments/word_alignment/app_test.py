@@ -16,7 +16,7 @@ version_abbreviation = 'WA-DEL'
 version_name = 'word alignment delete'
 
 stub = modal.Stub(
-    name="run_word_alignment_test",
+    name="run_word_alignment-test",
     image=modal.Image.debian_slim().pip_install(
         "pandas==1.4.3",
         "machine==0.0.1",
@@ -86,7 +86,7 @@ def test_add_version(base_url, header):
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    response = requests.post(url, params=test_version, headers=header)
+    response = requests.post(url, json=test_version, headers=header)
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
     else:
