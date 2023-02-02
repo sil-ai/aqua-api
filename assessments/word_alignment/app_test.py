@@ -4,10 +4,7 @@ from pathlib import Path
 import time
 import pytest
 import pickle
-from enum import Enum
-from typing import Union
 
-from pydantic import BaseModel
 
 import word_alignment_steps.prepare_data as prepare_data
 from app import Assessment
