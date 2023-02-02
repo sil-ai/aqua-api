@@ -16,4 +16,4 @@ class Assessment(BaseModel):
 @stub.function(timeout=sleep_time + 300)
 def assess(assessment_config: Assessment):
     time.sleep(sleep_time)
-    return (200, assessment_config)
+    return {'status': 'finished', 'ids': []}
