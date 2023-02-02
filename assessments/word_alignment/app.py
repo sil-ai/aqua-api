@@ -6,7 +6,6 @@ import json
 import os
 import pickle
 from typing import Literal
-from enum import Enum
 
 import word_alignment_steps.prepare_data as prepare_data
 
