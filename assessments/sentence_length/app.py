@@ -90,6 +90,8 @@ def assess(assessment_config: Assessment, push_to_db: bool=True):
     lines = modal.container_app.run_pull_revision.call(rev_num)
     lines = [line.strip() for line in lines]
 
+    assert len(lines) == 41899
+
     #get vrefs
     vrefs = get_vrefs()
 
@@ -129,9 +131,9 @@ def assess(assessment_config: Assessment, push_to_db: bool=True):
                         'flag': False})
 
     if not push_to_db:
-        return 200, results, []
+        return {'status': 'finished (not pushed to database)', 'ids': []}
 
     print('Pushing results to the database')
     response, ids = modal.container_app.run_push_results.call(results)
 
-    return response, results, ids
+    return {'status': 'finished', 'ids': ids}
