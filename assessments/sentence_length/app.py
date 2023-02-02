@@ -10,7 +10,7 @@ import modal
 # Manage suffix on modal endpoint if testing.
 suffix = ''
 if os.environ.get('MODAL_TEST') == 'TRUE':
-    suffix = '_test'
+    suffix = '-test'
 
 stub = modal.Stub(
     "sentence-length" + suffix,

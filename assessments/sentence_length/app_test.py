@@ -16,7 +16,7 @@ def test_add_version(base_url, header):
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    response = requests.post(url, params=test_version, headers=header)
+    response = requests.post(url, json=test_version, headers=header)
 
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
@@ -68,7 +68,7 @@ stub = modal.Stub(
     secret=modal.Secret.from_name("aqua-api")
 )
 
-stub.run_sentence_length = modal.Function.from_name("sentence-length_test", "assess")
+stub.run_sentence_length = modal.Function.from_name("sentence-length-test", "assess")
 
 
 @stub.function(mounts=[
