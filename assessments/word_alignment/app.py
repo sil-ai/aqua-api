@@ -5,19 +5,22 @@ from pathlib import Path
 import json
 import os
 import pickle
+from typing import Literal
 
 import word_alignment_steps.prepare_data as prepare_data
 
 
 index_cache_volume = modal.SharedVolume().persist("index_cache")
+word_alignment_results_volume = modal.SharedVolume().persist("word_alignment_results")
+
 
 # Manage suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "_test"
+    suffix = "-test"
 
 stub = modal.aio.AioStub(
-    "word_alignment" + suffix,
+    "word-alignment" + suffix,
     image=modal.Image.debian_slim()
     .pip_install(
         "pandas==1.4.3",
@@ -45,18 +48,15 @@ stub.run_push_results = modal.Function.from_name("push_results", "push_results")
 
 
 CACHE_DIR = Path("/cache")
-
-# The information needed to run an alignment configuration.
-class WordAlignmentConfig(BaseModel):
-    revision: int
-    reference: int
+RESULTS_DIR = Path("/results")
 
 
 # The information corresponding to the given assessment.
-class WordAlignmentAssessment(BaseModel):
-    assessment_id: int
-    assessment_type: str
-    configuration: WordAlignmentConfig
+class Assessment(BaseModel):
+    assessment: int
+    revision: int
+    reference: int
+    type: Literal["word-alignment"]
 
 
 async def create_index_cache(tokenized_df, refresh: bool = False):
@@ -139,9 +139,34 @@ def run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df,
     return  {'total_scores': total_scores_df, 'top_source_scores': top_source_scores_df, 'verse_scores': verse_scores_df}
 
 
+@stub.function(
+    shared_volumes={RESULTS_DIR: word_alignment_results_volume}, 
+    secret=modal.Secret.from_name("aqua-db"),
+    )
+def save_to_results(revision_id: int, reference_id: int, top_source_scores_df):
+    AQUA_DB = os.getenv("AQUA_DB")
+    database_id = AQUA_DB.split('@')[1].split('.')[0]
+    results_dir = RESULTS_DIR / f"{database_id}/{reference_id}-{revision_id}"
+    results_dir.mkdir(parents=True, exist_ok=True)
+    print(os.listdir(results_dir))
+    top_source_scores_df.to_csv(results_dir / "top_source_scores.csv", index=False)
+
+
+@stub.function(
+    shared_volumes={RESULTS_DIR: word_alignment_results_volume}, 
+    secret=modal.Secret.from_name("aqua-db"),
+    )
+def get_results(revision_id: int, reference_id: int):
+    import pandas as pd
+    AQUA_DB = os.getenv("AQUA_DB")
+    database_id = AQUA_DB.split('@')[1].split('.')[0]
+    results_dir = RESULTS_DIR / f"{database_id}/{reference_id}-{revision_id}"
+    top_source_scores_df = pd.read_csv(results_dir / "top_source_scores.csv")
+    return top_source_scores_df
+
+
 @stub.function(timeout=7200)
-async def assess(assessment_id: int, configuration: dict, push_to_db: bool=True):
-    assessment_config = WordAlignmentConfig(**configuration)
+async def assess(assessment_config: Assessment, push_to_db: bool=True):
     tokenized_dfs = {}
     index_caches = {}
     src_revision_id = assessment_config.reference
@@ -188,12 +213,21 @@ async def assess(assessment_id: int, configuration: dict, push_to_db: bool=True)
 
     print('Pushing results to the database')
     df = total_results['verse_scores']
+
+    # List items in RESULTS_DIR
+    print(os.listdir(RESULTS_DIR))
+
+    save_to_results.call(assessment_config.revision, assessment_config.reference, total_results['top_source_scores'])
+
     if not push_to_db:
-        return 200, []
+        return {'status': 'finished (not pushed to database)', 'ids': []}
+
     results = []
     for _, row in df.iterrows():
-        results.append({'assessment_id': assessment_id, 'vref': row['vref'], 'score': row['total_score'], 'flag': False})
+        results.append({'assessment_id': assessment_config.assessment, 'vref': row['vref'], 'score': row['total_score'], 'flag': False})
 
     response, ids = modal.container_app.run_push_results.call(results)
+
+    # Save the top source scores to the results directory for comparison, e.g. for missing words
     
-    return response, ids
+    return {'status': 'finished', 'ids': ids}
