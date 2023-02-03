@@ -32,7 +32,7 @@ class AssessmentType(Enum):
 
 for a in AssessmentType:
     app_name = a.value
-    stub.app_name = modal.Function.from_name(app_name, "assess")
+    stub[app_name] = modal.Function.from_name(app_name, "assess")
 
 
 class Assessment(BaseModel):
@@ -84,16 +84,17 @@ class RunAssessment:
                 )
             session.commit()
     
-    def log_end(self):
+    def log_end(self, status='finished'):
         with next(self.yield_session()) as session:
             session.query(self.Assessment).filter(
                 self.Assessment.id == self.config.assessment
             ).update(
-                {"status": "finished", "end_time": datetime.datetime.utcnow()}
+                {"status": status, "end_time": datetime.datetime.utcnow()}
             )
             session.commit()
     
     def run_assessment(self):
+        print(self.config)
         response = modal.container_app[self.config.type].call(self.config)
         return response
 
@@ -105,8 +106,12 @@ secret=modal.Secret.from_name("aqua-db"),
 def run_assessment_runner(config):
     assessment = RunAssessment(config=config)
     assessment.log_start()
-    assessment.run_assessment()
-    assessment.log_end()
+    response = assessment.run_assessment()
+    print(response)
+    if response['status'] == 'finished':
+        assessment.log_end(status='finished')
+    else:
+        assessment.log_end(status='failed')
 
 
 @stub.webhook(method="POST")

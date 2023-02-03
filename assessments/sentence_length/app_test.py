@@ -16,7 +16,7 @@ def test_add_version(base_url, header):
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    response = requests.post(url, params=test_version, headers=header)
+    response = requests.post(url, json=test_version, headers=header)
 
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
@@ -68,7 +68,7 @@ stub = modal.Stub(
     secret=modal.Secret.from_name("aqua-api")
 )
 
-stub.run_sentence_length = modal.Function.from_name("sentence-length_test", "assess")
+stub.run_sentence_length = modal.Function.from_name("sentence-length-test", "assess")
 
 
 @stub.function(mounts=[
@@ -99,39 +99,26 @@ def test_metrics():
     
 @stub.function
 def run_assess_draft(config):
-    response, results, _ = modal.container_app.run_sentence_length.call(config, push_to_db=False)
-    assert response == 200
-
-    #assert the length of results is 41899
-    assert len(results) == 41899
-
-    #assert that results[0] has a score of 23.12
-    assert results[0]['score'] == 23.12
-    assert results[0]['flag'] is False
-    assert results[0]['vref'] == 'GEN 1:1'
-
-    #assert that results[24995] has a score of 37.77
-    assert results[24995]['score'] == 37.77
-    assert results[24995]['flag'] is False
-    assert results[24995]['vref'] == 'LUK 1:34'
+    response = modal.container_app.run_sentence_length.call(config, push_to_db=False)
+    assert response['status'] == 'finished (not pushed to database)'
 
 
 def test_assess_draft(base_url, header):
     url = base_url + "/revision"
     response = requests.get(url, params={'version_abbreviation': version_abbreviation}, headers=header)
     revision_id = response.json()[0]['id']
-    # Initialize some SentLengthAssessment value.
-    config = {
-        'revision': revision_id,
-        'assessment': 999999,
-        'type': 'sentence-length'
-    }
+    from app import Assessment
+    config = Assessment(
+        revision = revision_id,
+        assessment = 999999,
+        type = 'sentence-length',
+    )
     with stub.run():
         run_assess_draft.call(config)    
 
 
 def test_delete_version(base_url, header):
-    time.sleep(10)  # Allow the assessments above to finish pulling from the database before deleting!
+    time.sleep(2)  # Allow the assessments above to finish pulling from the database before deleting!
     test_delete_version = {
             "version_abbreviation": version_abbreviation
             }

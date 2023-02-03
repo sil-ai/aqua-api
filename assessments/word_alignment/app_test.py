@@ -127,7 +127,7 @@ stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "asses
 
 @stub.function(timeout=3600)
 def get_results(assessment_config: Assessment, push_to_db: bool=True):
-    response = modal.container_app.run_word_alignment(assessment_config=assessment_config, push_to_db=push_to_db)
+    response = modal.container_app.run_word_alignment.call(assessment_config, push_to_db=push_to_db)
     return response
 
 
