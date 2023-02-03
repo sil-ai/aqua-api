@@ -148,8 +148,8 @@ def save_to_results(revision_id: int, reference_id: int, top_source_scores_df):
     database_id = AQUA_DB.split('@')[1].split('.')[0]
     results_dir = RESULTS_DIR / f"{database_id}/{reference_id}-{revision_id}"
     results_dir.mkdir(parents=True, exist_ok=True)
-    print(os.listdir(results_dir))
     top_source_scores_df.to_csv(results_dir / "top_source_scores.csv", index=False)
+    print(os.listdir(results_dir))
 
 
 @stub.function(
@@ -214,10 +214,13 @@ async def assess(assessment_config: Assessment, push_to_db: bool=True):
     print('Pushing results to the database')
     df = total_results['verse_scores']
 
-    # List items in RESULTS_DIR
-    print(os.listdir(RESULTS_DIR))
+    # Create the results directory if it doesn't exist
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    save_to_results.call(assessment_config.revision, assessment_config.reference, total_results['top_source_scores'])
+    await save_to_results.call(assessment_config.revision, assessment_config.reference, total_results['top_source_scores'])
+
+    # List items in the results directory
+    print(os.listdir(RESULTS_DIR))
 
     if not push_to_db:
         return {'status': 'finished (not pushed to database)', 'ids': []}

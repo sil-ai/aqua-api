@@ -153,17 +153,12 @@ def test_assess_draft(base_url, header):
         assert response['status'] == 'finished (not pushed to database)'
 
 
-RESULTS_DIR = Path("/results")
-word_alignment_results_volume = modal.SharedVolume().persist("word_alignment_results")
 
-stub.get_results = modal.Function.from_name("word-alignment-test", "get_results")
+stub.get_word_alignment_results = modal.Function.from_name("word-alignment-test", "get_results")
 
-@stub.function(
-    shared_volumes={RESULTS_DIR: word_alignment_results_volume},
-    secret=modal.Secret.from_name("aqua-db"),
-    )
+@stub.function
 def check_word_alignment_results(assessment_config: Assessment):
-    top_source_scores_df = modal.container_app.get_results.call(assessment_config.revision, assessment_config.reference)
+    top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference)
     assert top_source_scores_df.shape[0] > 10
     assert "source" in top_source_scores_df.columns
 
