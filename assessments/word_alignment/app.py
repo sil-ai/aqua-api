@@ -6,6 +6,7 @@ import json
 import os
 import pickle
 from typing import Literal
+import time
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -29,7 +30,7 @@ stub = modal.aio.AioStub(
         "asyncio",
         "sqlalchemy",
         "psycopg2-binary",
-
+        "requests_toolbelt==0.9.1",
     )
     .copy(
         mount=modal.Mount(
@@ -61,6 +62,7 @@ class Assessment(BaseModel):
 
 async def create_index_cache(tokenized_df, refresh: bool = False):
     from word_alignment_steps import create_cache
+
     index_cache = create_cache.create_index_cache(tokenized_df)
 
     return index_cache
@@ -110,63 +112,167 @@ def create_condensed_df(src_tokenized_df, trg_tokenized_df):
 @stub.function
 async def run_alignment_scores(condensed_df):
     from word_alignment_steps import alignment_scores
-    alignment_scores_df, avg_alignment_scores_df = alignment_scores.run_alignment_scores(condensed_df)
-    return {'alignment_scores': alignment_scores_df, 'avg_alignment_scores': avg_alignment_scores_df}
+
+    (
+        alignment_scores_df,
+        avg_alignment_scores_df,
+    ) = alignment_scores.run_alignment_scores(condensed_df)
+    return {
+        "alignment_scores": alignment_scores_df,
+        "avg_alignment_scores": avg_alignment_scores_df,
+    }
+
 
 @stub.function
 async def run_translation_scores(condensed_df):
     from word_alignment_steps import translation_scores
+
     translation_scores_df = translation_scores.run_translation_scores(condensed_df)
-    return {'translation_scores': translation_scores_df}
+    return {"translation_scores": translation_scores_df}
 
 
 @stub.function
 async def run_match_scores(condensed_df, src_index_cache, target_index_cache):
     from word_alignment_steps import match_scores
-    match_scores_df = match_scores.run_match_scores(condensed_df, src_index_cache, target_index_cache)
-    return {'match_scores': match_scores_df}
+
+    match_scores_df = match_scores.run_match_scores(
+        condensed_df, src_index_cache, target_index_cache
+    )
+    return {"match_scores": match_scores_df}
+
 
 @stub.function
 async def run_embedding_scores(condensed_df, src_index_cache, target_index_cache):
     from word_alignment_steps import embeddings
-    embedding_scores_df = embeddings.run_embeddings(condensed_df, src_index_cache, target_index_cache)
-    return {'embedding_scores': embedding_scores_df}
+
+    embedding_scores_df = embeddings.run_embeddings(
+        condensed_df, src_index_cache, target_index_cache
+    )
+    return {"embedding_scores": embedding_scores_df}
+
 
 # @stub.function
-def run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df, translation_scores_df, match_scores_df, embedding_scores_df):
+def run_total_scores(
+    condensed_df,
+    alignment_scores_df,
+    avg_alignment_scores_df,
+    translation_scores_df,
+    match_scores_df,
+    embedding_scores_df,
+):
     from word_alignment_steps import total_scores
-    total_scores_df, top_source_scores_df, verse_scores_df = total_scores.run_total_scores(condensed_df, alignment_scores_df, avg_alignment_scores_df, translation_scores_df, match_scores_df, embedding_scores_df)
-    return  {'total_scores': total_scores_df, 'top_source_scores': top_source_scores_df, 'verse_scores': verse_scores_df}
+
+    (
+        total_scores_df,
+        top_source_scores_df,
+        verse_scores_df,
+    ) = total_scores.run_total_scores(
+        condensed_df,
+        alignment_scores_df,
+        avg_alignment_scores_df,
+        translation_scores_df,
+        match_scores_df,
+        embedding_scores_df,
+    )
+    return {
+        "total_scores": total_scores_df,
+        "top_source_scores": top_source_scores_df,
+        "verse_scores": verse_scores_df,
+    }
 
 
 @stub.function(
-    shared_volumes={RESULTS_DIR: word_alignment_results_volume}, 
+    shared_volumes={RESULTS_DIR: word_alignment_results_volume},
     secret=modal.Secret.from_name("aqua-db"),
-    )
-def save_to_results(revision_id: int, reference_id: int, top_source_scores_df):
+)
+def save_to_results(revision: int, reference: int, top_source_scores_df):
+    """
+    Save the word alignment results to the results directory in the modal shared volume.
+
+    This function saves the word alignment top_source_scores contained in the input 
+    dataframe to a csv file in the results directory in the modal shared volume. The 
+    directory structure is created if it doesn't exist, and the file is saved as 
+    'top_source_scores.csv'.
+
+    Parameters:
+    revision (int): Revision id for the word alignment assessment.
+    reference (int): Reference revision id for the word alignment assessment.
+    top_source_scores_df (pandas.DataFrame): Dataframe containing the word alignment 
+    results with columns 'vref', 'source' and 'score'.
+
+    Returns:
+    None
+    """
     AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split('@')[1].split('.')[0]
-    results_dir = RESULTS_DIR / f"{database_id}/{reference_id}-{revision_id}"
+    database_id = AQUA_DB.split("@")[1].split(".")[0]
+    results_dir = RESULTS_DIR / f"{database_id}/{reference}-{revision}"
     results_dir.mkdir(parents=True, exist_ok=True)
     top_source_scores_df.to_csv(results_dir / "top_source_scores.csv", index=False)
-    print(os.listdir(results_dir))
 
 
 @stub.function(
-    shared_volumes={RESULTS_DIR: word_alignment_results_volume}, 
-    secret=modal.Secret.from_name("aqua-db"),
-    )
-def get_results(revision_id: int, reference_id: int):
+    shared_volumes={RESULTS_DIR: word_alignment_results_volume},
+    secrets=[modal.Secret.from_name("aqua-db"), modal.Secret.from_name("aqua-api")],
+)
+def get_results(revision: int, reference: int):
+    """
+    Get top_source_scores from word alignment between revision and reference.
+
+    This function retrieves the word alignment top_source_scores from the modal shared 
+    volume, if it exists, otherwise it starts a word alignment assessment and waits for 
+    it to finish. The results are then read from the file 'top_source_scores.csv' and 
+    returned as a pandas dataframe.
+
+    Parameters:
+    revision (int): Revision id for the word alignment assessment.
+    reference (int): Reference revision id for the word alignment assessment.
+
+    Returns:
+    pandas.DataFrame: Dataframe containing the word alignment results with columns 
+    'vref', 'source' and 'score'.
+    """
     import pandas as pd
+
     AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split('@')[1].split('.')[0]
-    results_dir = RESULTS_DIR / f"{database_id}/{reference_id}-{revision_id}"
-    top_source_scores_df = pd.read_csv(results_dir / "top_source_scores.csv")
+    database_id = AQUA_DB.split("@")[1].split(".")[0]
+    top_source_scores_file = (
+        RESULTS_DIR / f"{database_id}/{reference}-{revision}" / "top_source_scores.csv"
+    )
+    if not top_source_scores_file.exists():
+        print(f"Starting word alignment for revision {revision}, reference {reference}")
+        import requests
+
+        assessment_config = {
+            "reference": reference,
+            "revision": revision,
+            "type": "word-alignment",
+        }
+        url = os.getenv("AQUA_URL") + "/assessment"
+        header = {"Authorization": "Bearer " + os.getenv("TEST_KEY")}
+        requests.post(url, json=assessment_config, headers=header)
+        # Keep checking the database until it is finished
+        while True:
+            response = requests.get(url, headers=header)
+            assessments = response.json()["assessments"]
+
+            assessment_list = [
+                assessment
+                for assessment in assessments
+                if assessment["revision"] == revision
+                and assessment["reference"] == reference
+                and assessment["type"] == "word-alignment"
+                and assessment["status"] == "finished"
+            ]
+            if len(assessment_list) > 0:
+                break
+            time.sleep(20)
+
+    top_source_scores_df = pd.read_csv(top_source_scores_file)
     return top_source_scores_df
 
 
 @stub.function(timeout=7200)
-async def assess(assessment_config: Assessment, push_to_db: bool=True):
+async def assess(assessment_config: Assessment, push_to_db: bool = True):
     tokenized_dfs = {}
     index_caches = {}
     src_revision_id = assessment_config.reference
@@ -183,54 +289,75 @@ async def assess(assessment_config: Assessment, push_to_db: bool=True):
         index_caches[revision_id] = index_cache
 
     condensed_df = create_condensed_df(
-                tokenized_dfs[src_revision_id], tokenized_dfs[trg_revision_id]
-            )
+        tokenized_dfs[src_revision_id], tokenized_dfs[trg_revision_id]
+    )
 
     if condensed_df.shape[0] == 0:
         print("There are no verses in common between the revision and reference")
         return 200, []  # There are no verses in common, so no word alignment to run
 
-    results = await asyncio.gather(*[
-                run_alignment_scores.call(condensed_df), 
-                run_translation_scores.call(condensed_df),
-                run_match_scores.call(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]), 
-                run_embedding_scores.call(condensed_df, index_caches[src_revision_id], index_caches[trg_revision_id]), 
-                ])
+    results = await asyncio.gather(
+        *[
+            run_alignment_scores.call(condensed_df),
+            run_translation_scores.call(condensed_df),
+            run_match_scores.call(
+                condensed_df,
+                index_caches[src_revision_id],
+                index_caches[trg_revision_id],
+            ),
+            run_embedding_scores.call(
+                condensed_df,
+                index_caches[src_revision_id],
+                index_caches[trg_revision_id],
+            ),
+        ]
+    )
 
     step_results = {}
     for item in results:
         for key, value in item.items():
             step_results[key] = value
-    
-    total_results = run_total_scores(
-                        condensed_df, 
-                        step_results['alignment_scores'],
-                        step_results['avg_alignment_scores'],
-                        step_results['translation_scores'],
-                        step_results['match_scores'],
-                        step_results['embedding_scores'],
-                        )
 
-    print('Pushing results to the database')
-    df = total_results['verse_scores']
+    total_results = run_total_scores(
+        condensed_df,
+        step_results["alignment_scores"],
+        step_results["avg_alignment_scores"],
+        step_results["translation_scores"],
+        step_results["match_scores"],
+        step_results["embedding_scores"],
+    )
+
+    print("Pushing results to the database")
+    df = total_results["verse_scores"]
 
     # Create the results directory if it doesn't exist
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    await save_to_results.call(assessment_config.revision, assessment_config.reference, total_results['top_source_scores'])
+    await save_to_results.call(
+        assessment_config.revision,
+        assessment_config.reference,
+        total_results["top_source_scores"],
+    )
 
     # List items in the results directory
     print(os.listdir(RESULTS_DIR))
 
     if not push_to_db:
-        return {'status': 'finished (not pushed to database)', 'ids': []}
+        return {"status": "finished (not pushed to database)", "ids": []}
 
     results = []
     for _, row in df.iterrows():
-        results.append({'assessment_id': assessment_config.assessment, 'vref': row['vref'], 'score': row['total_score'], 'flag': False})
+        results.append(
+            {
+                "assessment_id": assessment_config.assessment,
+                "vref": row["vref"],
+                "score": row["total_score"],
+                "flag": False,
+            }
+        )
 
     response, ids = modal.container_app.run_push_results.call(results)
 
     # Save the top source scores to the results directory for comparison, e.g. for missing words
-    
-    return {'status': 'finished', 'ids': ids}
+
+    return {"status": "finished", "ids": ids}
