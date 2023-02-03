@@ -104,6 +104,48 @@ async def run_word_alignment(revision, reference):
 
     return {revision: top_source_scores_df}
 
+
+def identify_red_flags(
+            revision: int, top_source_scores, ref_top_source_scores: dict, threshold: float=0.1):
+    """
+    Takes the directory of the source-target outputs, and a dictionary of reference language to reference language source-target outputs.
+    Returns "red flags", which are source words that score low in the target language alignment data, compared to how they
+    score in the source - reference language data.
+    Inputs:
+    target_str              String of the current target language
+    top_source_scores         A dataframe with the top scores for each source word for the target translation
+    ref_top_source_scores        A dataframe with a summary of the top scores for each source word across all translations
+    threshold               A float for the score below which a match will be considered a possible red flag
+
+    Outputs:
+    possible_red_flags      A dataframe with low scores for source-target alignments
+    red_flags               A dataframe with low scores for source-target alignments, when those same source words score highly in that
+                            context in the reference languages.
+    """
+    
+    top_source_scores.loc[:, 'total_score'] = top_source_scores['total_score'].apply(lambda x: max(x, 0))
+    top_source_scores.loc[:, 'total_score'] = top_source_scores['total_score'].fillna(0)
+    possible_red_flags = top_source_scores[top_source_scores['total_score'] < threshold]
+    possible_red_flags = possible_red_flags[['vref', 'source', 'total_score']]
+    
+    if revision in ref_top_source_scores.columns:
+        ref_top_source_scores = ref_top_source_scores.drop([revision], axis=1)
+
+    references  = [col for col in ref_top_source_scores.columns if col not in ['vref', 'source']]
+    if len(references) > 0:
+        ref_top_source_scores['mean'] = ref_top_source_scores.loc[:, references].mean(axis=1)
+        ref_top_source_scores['min'] = ref_top_source_scores.loc[:, references].min(axis=1)
+    elif len(references) > 1:
+        ref_top_source_scores['second_min'] = ref_top_source_scores.loc[:, references].apply(lambda row: sorted(list(row))[1], axis=1)
+    else:
+        return possible_red_flags, possible_red_flags
+    
+    possible_red_flags = possible_red_flags.merge(ref_top_source_scores, how='left', on=['vref', 'source'], sort=False)
+    red_flags = possible_red_flags[possible_red_flags.apply(lambda row: row['mean'] > 5 * row['total_score'] and row['mean'] > 0.35, axis=1)]
+    
+    return possible_red_flags, red_flags
+
+
 @stub.function(
     secret=modal.Secret.from_name("aqua-api"),
 )
@@ -141,7 +183,9 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
     for result in results:
         all_top_source_scores.update(result)
 
-    
+    revision_top_source_scores_df = all_top_source_scores.pop(revision)
+
+    identify_red_flags.call(revision, revision_top_source_scores_df, all_top_source_scores)
 
     return all_top_source_scores
 
