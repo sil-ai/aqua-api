@@ -6,7 +6,8 @@ import json
 import os
 import pickle
 from typing import Literal
-
+import requests
+import time
 
 word_alignment_results_volume = modal.SharedVolume().persist("word_alignment_results")
 
@@ -35,14 +36,14 @@ stub = modal.aio.AioStub(
 
 stub.run_push_results = modal.Function.from_name("push_results", "push_results")
 
-stub.get_word_alignment_results = modal.Function.from_name(
-    "word-alignment-test", "get_results"
+stub.get_results = modal.Function.from_name(
+    "save-results", "get_results"
 )
 
 
 @stub.function
 async def get_top_source_scores(revision, reference):
-    top_source_scores_df = modal.container_app.get_word_alignment_results.call(
+    top_source_scores_df = modal.container_app.get_results.call(
         revision, reference
     )
     return {revision: top_source_scores_df}
@@ -71,6 +72,38 @@ async def get_revision_id(version_abbreviation: str):
     return {version_abbreviation: revision_id}
 
 
+async def run_word_alignment(revision, reference):
+    print(f"Starting word alignment for revision {revision}, reference {reference}")
+
+    assessment_config = {
+        "reference": reference,
+        "revision": revision,
+        "type": "word-alignment",
+    }
+    url = os.getenv("AQUA_URL") + "/assessment"
+    header = {"Authorization": "Bearer " + os.getenv("TEST_KEY")}
+    requests.post(url, json=assessment_config, headers=header)
+    # Keep checking the database until it is finished
+    while True:
+        response = requests.get(url, headers=header)
+        assessments = response.json()["assessments"]
+
+        assessment_list = [
+            assessment
+            for assessment in assessments
+            if assessment["revision"] == revision
+            and assessment["reference"] == reference
+            and assessment["type"] == "word-alignment"
+            and assessment["status"] == "finished"
+        ]
+        if len(assessment_list) > 0:
+            print(f"Word alignment for revision {revision}, reference {reference}, finished")
+            break
+        time.sleep(20)
+    top_source_scores_df = get_top_source_scores.call(revision, reference)
+
+    return {revision: top_source_scores_df}
+
 @stub.function(
     secret=modal.Secret.from_name("aqua-api"),
 )
@@ -95,18 +128,22 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
 
 
     #Run these revisions asynchronously
-    all_top_source_scores = await asyncio.gather(*[get_top_source_scores.call(revision, reference) for revision in [revision, *baseline_revision_ids]])
+    results = await asyncio.gather(*[get_top_source_scores.call(revision, reference) for revision in [revision, *baseline_revision_ids]])
 
-    # for revision in revisions_to_run:
-    #     print(revision)
-    #     assessment_id = modal.container_app.get_word_alignment_results.call(revision, reference)
-    #     completed_assessments[revision] = assessment_id
-    # top_source_scores_df = get_top_source_scores(revision, reference)
-    import pandas as pd
+    all_top_source_scores = {}
+    for result in results:
+        all_top_source_scores = {**all_top_source_scores, **result}
 
-    top_source_scores_df = pd.DataFrame()
+    assessments_to_run = [revision for revision, df in all_top_source_scores.items() if df is None]
 
-    return all_top_source_scores, top_source_scores_df
+    results = await asyncio.gather(*[run_word_alignment.call(revision, reference) for revision in assessments_to_run])
+
+    for result in results:
+        all_top_source_scores.update(result)
+
+    
+
+    return all_top_source_scores
 
     # print('Pushing results to the database')
     # df = total_results['verse_scores']

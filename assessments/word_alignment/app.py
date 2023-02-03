@@ -12,7 +12,6 @@ import word_alignment_steps.prepare_data as prepare_data
 
 
 index_cache_volume = modal.SharedVolume().persist("index_cache")
-word_alignment_results_volume = modal.SharedVolume().persist("word_alignment_results")
 
 
 # Manage suffix on modal endpoint if testing.
@@ -46,10 +45,10 @@ stub = modal.aio.AioStub(
 
 stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
 stub.run_push_results = modal.Function.from_name("push_results", "push_results")
+stub.run_save_results = modal.Function.from_name("save-results", "save_results")
 
 
 CACHE_DIR = Path("/cache")
-RESULTS_DIR = Path("/results")
 
 
 # The information corresponding to the given assessment.
@@ -181,96 +180,6 @@ def run_total_scores(
     }
 
 
-@stub.function(
-    shared_volumes={RESULTS_DIR: word_alignment_results_volume},
-    secret=modal.Secret.from_name("aqua-db"),
-)
-def save_to_results(revision: int, reference: int, top_source_scores_df):
-    """
-    Save the word alignment results to the results directory in the modal shared volume.
-
-    This function saves the word alignment top_source_scores contained in the input 
-    dataframe to a csv file in the results directory in the modal shared volume. The 
-    directory structure is created if it doesn't exist, and the file is saved as 
-    'top_source_scores.csv'.
-
-    Parameters:
-    revision (int): Revision id for the word alignment assessment.
-    reference (int): Reference revision id for the word alignment assessment.
-    top_source_scores_df (pandas.DataFrame): Dataframe containing the word alignment 
-    results with columns 'vref', 'source' and 'score'.
-
-    Returns:
-    None
-    """
-    AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
-    results_dir = RESULTS_DIR / f"{database_id}/{reference}-{revision}"
-    results_dir.mkdir(parents=True, exist_ok=True)
-    top_source_scores_df.to_csv(results_dir / "top_source_scores.csv", index=False)
-
-
-@stub.function(
-    shared_volumes={RESULTS_DIR: word_alignment_results_volume},
-    secrets=[modal.Secret.from_name("aqua-db"), modal.Secret.from_name("aqua-api")],
-)
-def get_results(revision: int, reference: int):
-    """
-    Get top_source_scores from word alignment between revision and reference.
-
-    This function retrieves the word alignment top_source_scores from the modal shared 
-    volume, if it exists, otherwise it starts a word alignment assessment and waits for 
-    it to finish. The results are then read from the file 'top_source_scores.csv' and 
-    returned as a pandas dataframe.
-
-    Parameters:
-    revision (int): Revision id for the word alignment assessment.
-    reference (int): Reference revision id for the word alignment assessment.
-
-    Returns:
-    pandas.DataFrame: Dataframe containing the word alignment results with columns 
-    'vref', 'source' and 'score'.
-    """
-    import pandas as pd
-
-    AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
-    top_source_scores_file = (
-        RESULTS_DIR / f"{database_id}/{reference}-{revision}" / "top_source_scores.csv"
-    )
-    if not top_source_scores_file.exists():
-        print(f"Starting word alignment for revision {revision}, reference {reference}")
-        import requests
-
-        assessment_config = {
-            "reference": reference,
-            "revision": revision,
-            "type": "word-alignment",
-        }
-        url = os.getenv("AQUA_URL") + "/assessment"
-        header = {"Authorization": "Bearer " + os.getenv("TEST_KEY")}
-        requests.post(url, json=assessment_config, headers=header)
-        # Keep checking the database until it is finished
-        while True:
-            response = requests.get(url, headers=header)
-            assessments = response.json()["assessments"]
-
-            assessment_list = [
-                assessment
-                for assessment in assessments
-                if assessment["revision"] == revision
-                and assessment["reference"] == reference
-                and assessment["type"] == "word-alignment"
-                and assessment["status"] == "finished"
-            ]
-            if len(assessment_list) > 0:
-                break
-            time.sleep(20)
-
-    top_source_scores_df = pd.read_csv(top_source_scores_file)
-    return top_source_scores_df
-
-
 @stub.function(timeout=7200)
 async def assess(assessment_config: Assessment, push_to_db: bool = True):
     tokenized_dfs = {}
@@ -330,17 +239,14 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
     print("Pushing results to the database")
     df = total_results["verse_scores"]
 
-    # Create the results directory if it doesn't exist
-    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
-    await save_to_results.call(
+
+    modal.container_app.run_save_results.call(
         assessment_config.revision,
         assessment_config.reference,
         total_results["top_source_scores"],
     )
 
-    # List items in the results directory
-    print(os.listdir(RESULTS_DIR))
 
     if not push_to_db:
         return {"status": "finished (not pushed to database)", "ids": []}

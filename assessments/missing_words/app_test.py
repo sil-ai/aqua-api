@@ -48,7 +48,10 @@ def test_get_missing_words(base_url, header):
                 )
 
         #Run word alignment from reference to revision, but don't push it to the database
-        response = get_missing_words.call(assessment_config=config, push_to_db=False)
-        print(response)
-        # assert response['status'] == 'finished (not pushed to database)'
-        assert response['status'] == 'finished (not pushed to database)'
+        all_top_source_scores = get_missing_words.call(assessment_config=config, push_to_db=False)
+        print(all_top_source_scores)
+        
+        assert len(all_top_source_scores) == 3
+        for df in all_top_source_scores.values():
+            assert df.shape[0] > 10
+            assert "source" in df.columns
