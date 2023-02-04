@@ -146,15 +146,15 @@ def test_assess_draft(base_url, header):
                 reference=reference_id, 
                 type='word-alignment'
                 )
-
+        push_to_db = False
         #Run word alignment from reference to revision, but don't push it to the database
-        response = get_results.call(assessment_config=config, push_to_db=False)
+        response = get_results.call(assessment_config=config, push_to_db=push_to_db)
 
-        assert response['status'] == 'finished (not pushed to database)'
+        assert response['status'] == 'finished' if push_to_db else 'finished (not pushed to database)'
 
 
 
-stub.get_word_alignment_results = modal.Function.from_name("word-alignment-test", "get_results")
+stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_results")
 
 @stub.function
 def check_word_alignment_results(assessment_config: Assessment):
