@@ -59,6 +59,7 @@ def save_results(revision: int, reference: int, top_source_scores_df):
     results_dir = RESULTS_DIR / f"{database_id}/{reference}-{revision}"
     results_dir.mkdir(parents=True, exist_ok=True)
     top_source_scores_df.to_csv(results_dir / "top_source_scores.csv", index=False)
+    print(f'Saved top_source_scores to {results_dir / "top_source_scores.csv"}')
 
 
 @stub.function(
@@ -95,4 +96,33 @@ def get_results(revision: int, reference: int):
         return None
 
     top_source_scores_df = pd.read_csv(top_source_scores_file)
+    print(f'Returning top source scores for {reference}-{revision}')
     return top_source_scores_df
+
+
+@stub.function(
+    shared_volumes={RESULTS_DIR: word_alignment_results_volume},
+    secrets=[modal.Secret.from_name("aqua-db"), modal.Secret.from_name("aqua-api")],
+)
+def delete_results(revision: int, reference: int):
+    """
+    Delete top_source_scores from word alignment between revision and reference.
+
+    This function deletes the word alignment top_source_scores from the modal shared 
+    volume.
+
+    Parameters:
+    revision (int): Revision id for the word alignment assessment.
+    reference (int): Reference revision id for the word alignment assessment.
+
+    Returns:
+    None
+    """
+    AQUA_DB = os.getenv("AQUA_DB")
+    database_id = AQUA_DB.split("@")[1].split(".")[0]
+    top_source_scores_file = (
+        RESULTS_DIR / f"{database_id}/{reference}-{revision}" / "top_source_scores.csv"
+    )
+    if top_source_scores_file.exists():
+        top_source_scores_file.unlink()
+        print(f'Deleted top source scores for {reference}-{revision}')
