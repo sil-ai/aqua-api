@@ -28,6 +28,7 @@ class AssessmentType(Enum):
     dummy = 'dummy'
     word_alignment = 'word-alignment'
     sentence_length = 'sentence-length'
+    missing_words = 'missing-words'
 
 
 for a in AssessmentType:
@@ -102,12 +103,12 @@ class RunAssessment:
 
 @stub.function(
 secret=modal.Secret.from_name("aqua-db"),
+timeout=7200,
 )
 def run_assessment_runner(config):
     assessment = RunAssessment(config=config)
     assessment.log_start()
     response = assessment.run_assessment()
-    print(response)
     if response['status'] == 'finished':
         assessment.log_end(status='finished')
     else:
