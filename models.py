@@ -18,6 +18,7 @@ class AssessmentType(Enum):
     dummy = 'dummy'
     word_alignment = 'word-alignment'
     sentence_length = 'sentence-length'
+    missing_words = 'missing-words'
 
 
 class Assessment(BaseModel):
