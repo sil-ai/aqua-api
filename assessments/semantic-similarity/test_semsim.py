@@ -27,15 +27,20 @@ def get_assessment(ss_assessment: SemSimAssessment, offset: int=-1):
 @pytest.mark.parametrize(
     "draft_id, ref_id,expected",
     [
-        (1,2, 105),
+        #(1,2, 105),
+        (18,29, 3),
     ],  
 )
 def test_assessment_object(draft_id, ref_id, expected, valuestorage):
     with stub.run():
         from models import Results
-        config = SemSimConfig(draft_revision=draft_id, reference_revision=ref_id)
+        config = SemSimConfig(draft_revision=draft_id,
+                              reference_revision=ref_id,
+                              type="semantic-similarity")
         assessment = SemSimAssessment(assessment_id=1, configuration=config)
+        print(assessment)
         results = get_assessment.call(assessment, offset=105)
+        print(results)
         #test for the right type of results
         assert type(results) == Results
         #test for the expected length of results
@@ -58,7 +63,7 @@ def test_tokenizer_vocab(vocab_item,vocab_id,tokenizer):
     except Exception as err:
         raise AssertionError(f'Error is {err}') from err
 
-@pytest.mark.parametrize('idx,expected',[(42,4),(103,3)],ids=['GEN 2:12','GEN 4:24'])
+@pytest.mark.parametrize('idx,expected',[(0,5),(1,5)],ids=['GEN 1:1','GEN 1:2'])
 #test sem_sim predictions
 def test_predictions(idx, expected, valuestorage):
     try:

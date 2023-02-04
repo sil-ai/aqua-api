@@ -1,5 +1,5 @@
 import pytest
-from assess import SemanticSimilarity
+from app import SemanticSimilarity
 
 @pytest.fixture(scope='session')
 def model():

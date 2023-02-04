@@ -134,7 +134,8 @@ def assess(assessment: SemSimAssessment, offset=0):
 if __name__ == '__main__':
     with stub.run():
         config = SemSimConfig(draft_revision=1, reference_revision=2)
+        #??? Where does the assessment id come from?
+        #TODO: look up assessment ID
         assessment = SemSimAssessment(assessment_id=1, configuration=config)
         results = assess.call(assessment)
-        import pickle
-        pickle.dump(results,open('results_jan_20.pkl','wb'))
+        
