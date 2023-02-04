@@ -73,10 +73,10 @@ async def create_index_cache(tokenized_df, refresh: bool = False):
     )
 async def get_index_cache(revision_id, refresh: bool = False):
     tokenized_df = await get_tokenized_df.call(revision_id)
-    CACHE_DIR.mkdir(exist_ok=True, parents=True)
     AQUA_DB = os.getenv("AQUA_DB")
     database_id = AQUA_DB.split("@")[1].split(".")[0]
     index_cache_file = Path(f"{CACHE_DIR}/{database_id}/{revision_id}-index-cache.json")
+    (index_cache_file.parent).mkdir(parents=True, exist_ok=True)
     if index_cache_file.exists() and not refresh:
         with open(index_cache_file) as f:
             index_cache = json.load(f)
