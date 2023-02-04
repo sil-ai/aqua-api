@@ -6,7 +6,6 @@ import json
 import os
 import pickle
 from typing import Literal
-import time
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -67,11 +66,17 @@ async def create_index_cache(tokenized_df, refresh: bool = False):
     return index_cache
 
 
-@stub.function(shared_volumes={CACHE_DIR: index_cache_volume}, timeout=7200)
+@stub.function(
+    shared_volumes={CACHE_DIR: index_cache_volume}, 
+    timeout=7200,
+    secret=modal.Secret.from_name("aqua-db"),
+    )
 async def get_index_cache(revision_id, refresh: bool = False):
     tokenized_df = await get_tokenized_df.call(revision_id)
-    CACHE_DIR.mkdir(exist_ok=True)
-    index_cache_file = Path(f"{CACHE_DIR}/{revision_id}-index-cache.json")
+    CACHE_DIR.mkdir(exist_ok=True, parents=True)
+    AQUA_DB = os.getenv("AQUA_DB")
+    database_id = AQUA_DB.split("@")[1].split(".")[0]
+    index_cache_file = Path(f"{CACHE_DIR}/{database_id}/{revision_id}-index-cache.json")
     if index_cache_file.exists() and not refresh:
         with open(index_cache_file) as f:
             index_cache = json.load(f)
@@ -108,7 +113,7 @@ def create_condensed_df(src_tokenized_df, trg_tokenized_df):
     return condensed_df
 
 
-@stub.function
+@stub.function(timeout=3600)
 async def run_alignment_scores(condensed_df):
     from word_alignment_steps import alignment_scores
 
@@ -122,7 +127,7 @@ async def run_alignment_scores(condensed_df):
     }
 
 
-@stub.function
+@stub.function(timeout=3600)
 async def run_translation_scores(condensed_df):
     from word_alignment_steps import translation_scores
 
@@ -130,7 +135,7 @@ async def run_translation_scores(condensed_df):
     return {"translation_scores": translation_scores_df}
 
 
-@stub.function
+@stub.function(timeout=3600)
 async def run_match_scores(condensed_df, src_index_cache, target_index_cache):
     from word_alignment_steps import match_scores
 
@@ -140,7 +145,7 @@ async def run_match_scores(condensed_df, src_index_cache, target_index_cache):
     return {"match_scores": match_scores_df}
 
 
-@stub.function
+@stub.function(timeout=3600)
 async def run_embedding_scores(condensed_df, src_index_cache, target_index_cache):
     from word_alignment_steps import embeddings
 
