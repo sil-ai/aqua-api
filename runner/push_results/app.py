@@ -1,7 +1,6 @@
 import os
-from typing import List, Optional
+from typing import List
 import modal
-from pydantic import BaseModel
 
 from db_connect import get_session
 from models import Result, Results, MissingWord, MissingWords
@@ -130,7 +129,7 @@ class PushResults:
     def create_bulk_missing_words(self):
         from sqlalchemy.orm import declarative_base
         Base = declarative_base()
-        from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey, DateTime
+        from sqlalchemy import Column, Integer, Text, Boolean, Float
 
         class MissingWord(Base):
             __tablename__ = "assessmentMissingWords"

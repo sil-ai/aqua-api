@@ -67,7 +67,6 @@ def test_get_missing_words(base_url, header):
     with stub.run():
         # Use the two revisions of the version_abbreviation version as revision and reference
         import requests
-        import pandas as pd
         url = base_url + "/revision"
         response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
 

@@ -4,7 +4,6 @@ from pathlib import Path
 import time
 import pytest
 import pickle
-import os
 
 import word_alignment_steps.prepare_data as prepare_data
 from app import Assessment

@@ -1,7 +1,6 @@
 from pydantic import ValidationError
 from typing import List
 from pathlib import Path
-import os
 
 import modal
 import pytest
@@ -110,7 +109,7 @@ def push_df_rows(base_url, header):
         }
         results.append(result)
 
-    collated_results = Results(results=results)
+    Results(results=results)
 
     # Push the results to the DB.
     response, ids = push_results.call(results)
