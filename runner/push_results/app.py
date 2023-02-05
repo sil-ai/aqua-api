@@ -154,7 +154,7 @@ class PushResults:
                 vref=missing_word.vref,
                 source=missing_word.source,
                 score=missing_word.score,
-                flag=False,
+                flag=missing_word.flag,
             )
             self.assessment_missing_words.append(mw)
 
