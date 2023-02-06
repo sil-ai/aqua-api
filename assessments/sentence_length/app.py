@@ -10,7 +10,7 @@ import modal
 # Manage suffix on modal endpoint if testing.
 suffix = ''
 if os.environ.get('MODAL_TEST') == 'TRUE':
-    suffix = '_test'
+    suffix = '-test'
 
 stub = modal.Stub(
     "sentence-length" + suffix,
@@ -73,7 +73,7 @@ def get_lix_score(text):
     return lix
 
 
-class SentenceLengthConfig(BaseModel):
+class Assessment(BaseModel):
     assessment: int
     revision: int
     type: Literal["sentence-length"]
@@ -82,13 +82,15 @@ class SentenceLengthConfig(BaseModel):
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def assess(assessment_config: SentenceLengthConfig, push_to_db: bool=True):
+def assess(assessment_config: Assessment, push_to_db: bool=True):
     import pandas as pd
     
     #pull the revision
-    rev_num = assessment_config['revision']
+    rev_num = assessment_config.revision
     lines = modal.container_app.run_pull_revision.call(rev_num)
     lines = [line.strip() for line in lines]
+
+    assert len(lines) == 41899
 
     #get vrefs
     vrefs = get_vrefs()
@@ -124,14 +126,14 @@ def assess(assessment_config: SentenceLengthConfig, push_to_db: bool=True):
     #add to results
     results = []
     for index, row in df.iterrows():
-        results.append({'assessment_id': assessment_config['assessment'], 
+        results.append({'assessment_id': assessment_config.assessment, 
                         'vref': row['vref'], 'score': row['lix_score'], 
                         'flag': False})
 
     if not push_to_db:
-        return 200, results, []
+        return {'status': 'finished (not pushed to database)', 'ids': []}
 
     print('Pushing results to the database')
     response, ids = modal.container_app.run_push_results.call(results)
 
-    return response, results, ids
+    return {'status': 'finished', 'ids': ids}

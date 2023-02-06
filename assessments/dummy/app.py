@@ -8,12 +8,12 @@ sleep_time = 1200
 
 stub = modal.Stub(name="dummy", image=modal.Image.debian_slim())
 
-class DummyConfiguration(BaseModel):
+class Assessment(BaseModel):
     assessment: int
     revision: int
     type: Literal["dummy"]
 
 @stub.function(timeout=sleep_time + 300)
-def assess(configuration: DummyConfiguration):
+def assess(assessment_config: Assessment):
     time.sleep(sleep_time)
-    return (200, configuration)
+    return {'status': 'finished', 'ids': []}

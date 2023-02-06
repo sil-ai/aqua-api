@@ -4,19 +4,16 @@ from pathlib import Path
 import time
 import pytest
 import pickle
-from enum import Enum
-from typing import Union
 
-from pydantic import BaseModel
 
 import word_alignment_steps.prepare_data as prepare_data
-
+from app import Assessment
 
 version_abbreviation = 'WA-DEL'
 version_name = 'word alignment delete'
 
 stub = modal.Stub(
-    name="run_word_alignment_test",
+    name="run-word-alignment-test",
     image=modal.Image.debian_slim().pip_install(
         "pandas==1.4.3",
         "machine==0.0.1",
@@ -86,7 +83,7 @@ def test_add_version(base_url, header):
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    response = requests.post(url, params=test_version, headers=header)
+    response = requests.post(url, json=test_version, headers=header)
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
     else:
@@ -108,22 +105,6 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
 
-class AssessmentType(Enum):
-    dummy = 'dummy'
-    word_alignment = 'word-alignment'
-    sentence_length = 'sentence-length'
-
-
-class Assessment(BaseModel):
-    assessment: int
-    revision: int
-    reference: Union[int, None] = None 
-    type: AssessmentType
-
-    class Config:  
-        use_enum_values = True
-
-
 def test_runner(base_url, header):
     webhook_url = "https://sil-ai--runner-assessment-runner.modal.run"
     api_url = base_url + "/revision"
@@ -131,6 +112,7 @@ def test_runner(base_url, header):
 
     revision_id = response.json()[0]['id']
     reference_id = response.json()[1]['id']
+    
     config = Assessment(
         assessment = 999999,    #This will silently fail when pushing to the database, since it doesn't exist
         type = "word-alignment",
@@ -143,9 +125,9 @@ def test_runner(base_url, header):
 
 
 @stub.function(timeout=3600)
-def get_results(assessment_id, configuration, push_to_db: bool=True):
-    ids = modal.container_app.run_word_alignment.call(assessment_id, configuration, push_to_db=push_to_db)
-    return ids
+def get_results(assessment_config: Assessment, push_to_db: bool=True):
+    response = modal.container_app.run_word_alignment.call(assessment_config, push_to_db=push_to_db)
+    return response
 
 
 def test_assess_draft(base_url, header):
@@ -156,17 +138,22 @@ def test_assess_draft(base_url, header):
 
         revision_id = response.json()[0]['id']
         reference_id = response.json()[1]['id']
-
-        config = {'revision': revision_id, 'reference': reference_id}
+        
+        config = Assessment(
+                assessment=999999, 
+                revision=revision_id, 
+                reference=reference_id, 
+                type='word-alignment'
+                )
 
         #Run word alignment from reference to revision, but don't push it to the database
-        response, _ = get_results.call(assessment_id=999999, configuration=config, push_to_db=False)
+        response = get_results.call(assessment_config=config, push_to_db=False)
 
-        assert response == 200
+        assert response['status'] == 'finished (not pushed to database)'
 
 
 def test_delete_version(base_url, header):
-    time.sleep(10)  # Allow the assessments above to finish pulling from the database before deleting!
+    time.sleep(2)  # Allow the assessments above to finish pulling from the database before deleting!
     test_delete_version = {
             "version_abbreviation": version_abbreviation
             }
