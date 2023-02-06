@@ -208,7 +208,7 @@ def identify_low_scores(
         ref_top_source_scores['min'] = ref_top_source_scores.loc[:, references].min(axis=1, skipna=True)
     
     else:
-        return low_scores, low_scores
+        return low_scores
     
     low_scores = low_scores.merge(ref_top_source_scores, how='left', on=['vref', 'source'], sort=False)
     low_scores.loc[:, 'flag'] = low_scores.apply(lambda row: row['mean'] > 5 * row['total_score'] and row['mean'] > 0.35, axis=1)
