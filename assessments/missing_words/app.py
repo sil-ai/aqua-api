@@ -154,11 +154,12 @@ async def run_word_alignment(revision: int, reference: int) -> dict:
         ]
         if len(assessment_list) > 0:
             print(f"Word alignment for revision {revision}, reference {reference}, finished")
+            time.sleep(20)  # Give time for the scores to be written to the shared volume
             break
-        time.sleep(20)
+        time.sleep(20)  # Wait and check again in 20 seconds
 
     top_source_scores_dict = await get_top_source_scores.call(revision, reference)
-
+    print(f'{top_source_scores_dict=}')
     return top_source_scores_dict
 
 @stub.function
@@ -262,14 +263,15 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
         all_top_source_scores = {**all_top_source_scores, **result}
 
     assessments_to_run = [revision for revision, df in all_top_source_scores.items() if df is None]
-
+    print(assessments_to_run)
     results = await asyncio.gather(*[run_word_alignment.call(revision, reference) for revision in assessments_to_run])
 
     for result in results:
         all_top_source_scores.update(result)
 
+    print(all_top_source_scores)
     revision_top_source_scores_df = all_top_source_scores.pop(revision)
-
+    
     low_scores = await identify_low_scores.call(revision, revision_top_source_scores_df, all_top_source_scores)
     
     missing_words = []
