@@ -3,7 +3,7 @@ import pickle
 from app import SemanticSimilarity
 
 @pytest.fixture(scope='session')
-def model(semsim):
+def model():
     return SemanticSimilarity().semsim_model
 
 @pytest.fixture(scope='session')

@@ -39,20 +39,18 @@ semsim_image = modal.Image.debian_slim().pip_install(
         )
 )
 
+stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
+
 def similarity(embeddings_1, embeddings_2):
     import torch.nn.functional as F
     import torch
-
     normalized_embeddings_1 = F.normalize(embeddings_1, p=2)
     normalized_embeddings_2 = F.normalize(embeddings_2, p=2)
     return torch.matmul(
         normalized_embeddings_1, normalized_embeddings_2.transpose(0, 1)
     )
 
-stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
-
 class SemanticSimilarity:
-
     def __init__(self):
         #!!! can't test the model and tokenizer if I user __enter__
         from transformers import BertTokenizerFast, BertModel
@@ -65,7 +63,7 @@ class SemanticSimilarity:
     def predict(self, sent1: str, sent2: str, ref: str,
                 assessment_id: int, precision: int=2):
         import torch
-        from models import  Result
+        from models import Result
         """
         Return a prediction.
 
@@ -91,8 +89,8 @@ class SemanticSimilarity:
         logging.info(f'{ref} has a score of {sim_score}')
         #??? What values do you want for flag and note @dwhitena?
         return Result(assessment_id=assessment_id,
-                      vref=ref,
-                      score=sim_score)
+                    vref=ref,
+                    score=sim_score)
 
 @stub.function
 def get_text(rev_id: int)-> DataFrame:
@@ -109,7 +107,8 @@ def merge(draft_id: int, draft_verses: DataFrame,
                timeout=1000,
                cpu=4)
 def assess(assessment: SemSimAssessment, offset=0):
-    from models import  Results
+    from models import Results
+
     draft = get_text.call(assessment.configuration.draft_revision)
     reference = get_text.call(assessment.configuration.reference_revision)
     df = merge.call(assessment.configuration.draft_revision,
@@ -126,14 +125,15 @@ def assess(assessment: SemSimAssessment, offset=0):
         sents1 = df['draft'].to_list()[:offset]
         sents2 = df['reference'].to_list()[:offset]
         refs = df.index.to_list()[:offset]
-
     assessment_id = [assessment.assessment_id]*len(refs)
     results = list(sem_sim.predict.map(sents1,sents2,refs, assessment_id))
     return Results(results=results)
 
+
 if __name__ == '__main__':
     with stub.run():
-        config = SemSimConfig(draft_revision=1, reference_revision=2)
+        config = SemSimConfig(draft_revision=18, reference_revision=29,
+                              type='semantic-similarity')
         #??? Where does the assessment id come from?
         #TODO: look up assessment ID
         assessment = SemSimAssessment(assessment_id=1, configuration=config)
