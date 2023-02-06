@@ -1,7 +1,7 @@
 import os
 import modal
 from semsim_models import SemSimAssessment, SemSimConfig
-from pandas import DataFrame
+#from pandas import DataFrame
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
@@ -93,12 +93,13 @@ class SemanticSimilarity:
                     score=sim_score)
 
 @stub.function
-def get_text(rev_id: int)-> DataFrame:
+def get_text(rev_id: int):#-> DataFrame:
     return modal.container_app.run_pull_rev.call(rev_id)
 
 @stub.function
-def merge(draft_id: int, draft_verses: DataFrame,
-          reference_id: int, reference_verses: DataFrame)-> DataFrame:
+#def merge(draft_id: int, draft_verses: DataFrame,
+#          reference_id: int, reference_verses: DataFrame)-> DataFrame:
+def merge(draft_id, draft_verses, reference_id, reference_verses):
     from merge_revision import MergeRevision
     mr = MergeRevision(draft_id, draft_verses, reference_id, reference_verses)
     return mr.merge_revision()
