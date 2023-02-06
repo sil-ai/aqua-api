@@ -8,13 +8,20 @@ stub = modal.Stub(
     name="semantic_similarity",
     image=modal.Image.debian_slim().pip_install(
         "pytest==7.1.2",
-        "sqlalchemy"
+        "sqlalchemy",
+        "transformers"
     ).copy(
     modal.Mount(
         local_file="../../runner/push_results/models.py",
         remote_dir="/root"
         )
+    ).copy(
+        modal.Mount(
+            local_file="./fixtures/revisions_feb_4.pkl",
+            remote_dir="/root/fixtures"
+        )
     )
+
 )
 
 stub.assess = modal.Function.from_name("semantic_similarity", "assess")
@@ -58,10 +65,11 @@ def test_model(model):
                           ('Thomas',18110),
                           ('imagery',325221)],ids=['jesus','Thomas','imagery'])
 def test_tokenizer_vocab(vocab_item,vocab_id,tokenizer):
-    try:
-        assert tokenizer.vocab[vocab_item] == vocab_id, f'{vocab_item} does not have a vocab_id of {vocab_id}'
-    except Exception as err:
-        raise AssertionError(f'Error is {err}') from err
+    with stub.run():
+        try:
+            assert tokenizer.vocab[vocab_item] == vocab_id, f'{vocab_item} does not have a vocab_id of {vocab_id}'
+        except Exception as err:
+            raise AssertionError(f'Error is {err}') from err
 
 @pytest.mark.parametrize('idx,expected',[(0,5),(1,5)],ids=['GEN 1:1','GEN 1:2'])
 #test sem_sim predictions
@@ -120,8 +128,9 @@ def predict(sent1: str, sent2: str, ref: str,
                                  'Num 16:9 30% <3']
                         )
 def test_swahili_revision(verse_offset, variance, inequality, request, swahili_revision):
-    verse = swahili_revision.iloc[verse_offset]['text']
-    draft_verse = create_draft_verse(verse, variance)
-    assessment_id = 1
-    results = predict(verse, draft_verse, request.node.name, assessment_id)
-    assert eval(f'{results.score}{inequality}')
+    with stub.run():
+        verse = swahili_revision.iloc[verse_offset]['text']
+        draft_verse = create_draft_verse(verse, variance)
+        assessment_id = 1
+        results = predict(verse, draft_verse, request.node.name, assessment_id)
+        assert eval(f'{results.score}{inequality}')
