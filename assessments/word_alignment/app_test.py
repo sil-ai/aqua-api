@@ -5,7 +5,6 @@ import time
 import pytest
 import pickle
 
-
 import word_alignment_steps.prepare_data as prepare_data
 from app import Assessment
 
@@ -35,7 +34,6 @@ stub = modal.Stub(
         remote_path='/root/fixtures'
     ),
 )
-stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "assess")
 
 
 @stub.function(mounts=[
@@ -124,6 +122,8 @@ def test_runner(base_url, header):
     assert response.status_code == 200
 
 
+stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "assess")
+
 @stub.function(timeout=3600)
 def get_results(assessment_config: Assessment, push_to_db: bool=True):
     response = modal.container_app.run_word_alignment.call(assessment_config, push_to_db=push_to_db)
@@ -145,11 +145,41 @@ def test_assess_draft(base_url, header):
                 reference=reference_id, 
                 type='word-alignment'
                 )
-
+        push_to_db = False
         #Run word alignment from reference to revision, but don't push it to the database
-        response = get_results.call(assessment_config=config, push_to_db=False)
+        response = get_results.call(assessment_config=config, push_to_db=push_to_db)
 
-        assert response['status'] == 'finished (not pushed to database)'
+        assert response['status'] == 'finished' if push_to_db else 'finished (not pushed to database)'
+
+
+
+stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_results")
+
+@stub.function
+def check_word_alignment_results(assessment_config: Assessment):
+    top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference)
+    assert top_source_scores_df.shape[0] > 10
+    assert "source" in top_source_scores_df.columns
+
+
+def test_check_word_alignment_results(base_url, header):
+    with stub.run():
+        # Use the two revisions of the version_abbreviation version as revision and reference
+        url = base_url + "/revision"
+        response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
+
+        revision_id = response.json()[0]['id']
+        reference_id = response.json()[1]['id']
+        
+        config = Assessment(
+                assessment=999999, 
+                revision=revision_id, 
+                reference=reference_id, 
+                type='word-alignment'
+                )
+
+        #Check that the results are in the shared volume
+        check_word_alignment_results.call(assessment_config=config)
 
 
 def test_delete_version(base_url, header):
