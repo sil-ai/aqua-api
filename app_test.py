@@ -4,9 +4,17 @@ import ast
 
 import app
 import pytest
+import fastapi
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from gql.transport.requests import RequestsHTTPTransport
+
+import bible_routes.version_routes as version_routes
+import bible_routes.revision_routes as revision_routes
+import bible_routes.verse_routes as verse_routes
+import assessment_routes.assessment_routes as assessments_routes
+import review_routes.results_routes as results_routes
+
 
 version_name = 'App delete test'
 version_abbreviation = 'APP-DEL'
@@ -18,10 +26,10 @@ transport = RequestsHTTPTransport(
 
 def test_key_auth():
     with pytest.raises(HTTPException) as err:
-        app.api_key_auth(os.getenv("FAIL_KEY"))
+        version_routes.api_key_auth(os.getenv("FAIL_KEY"))
     assert err.value.status_code == 401
 
-    response = app.api_key_auth(os.getenv("TEST_KEY"))
+    response = version_routes.api_key_auth(os.getenv("TEST_KEY"))
     assert response is True
 
 
@@ -34,9 +42,16 @@ def client():
         return True
 
     # Get a mock FastAPI app.
-    mock_app = app.create_app()
+    mock_app = fastapi.FastAPI()
+    app.configure(mock_app)
+
     #print(mock_app.dependency_overrides.keys())
-    mock_app.dependency_overrides[app.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[version_routes.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[revision_routes.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[verse_routes.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[assessments_routes.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[results_routes.api_key_auth] = skip_auth
+
 
     # Yield the mock/ test client for the FastAPI
     # app we spun up any time this generator is called.

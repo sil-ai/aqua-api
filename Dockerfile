@@ -9,6 +9,9 @@ RUN apt update && \
 RUN mkdir /app
 COPY *.py /app/
 COPY fixtures/* /app/fixtures/
+COPY bible_routes/* /app/bible_routes/
+COPY assessment_routes/* /app/assessment_routes/
+COPY review_routes/* /app/review_routes/
 
 WORKDIR /app
 
