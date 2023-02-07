@@ -1,10 +1,10 @@
 import fastapi
 
-from bible_routes import version_routes
-from bible_routes import revision_routes
-from bible_routes import verse_routes
-from assessment_routes import assessment_routes
-from review_routes import results_routes
+import bible_routes.version_routes as version_routes
+import bible_routes.revision_routes as revision_routes
+import bible_routes.verse_routes as verse_routes
+import assessment_routes.assessment_routes as assessment_routes
+import review_routes.results_routes as results_routes
 
 
 app = fastapi.FastAPI()
