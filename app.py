@@ -3,7 +3,7 @@ import fastapi
 from bible_routes import version_routes
 from bible_routes import revision_routes
 from bible_routes import verse_routes
-from assessment_routes import assessments
+from assessment_routes import assessment_routes
 from review_routes import results_routes
 
 
@@ -18,7 +18,7 @@ def configure_routing(app):
     app.include_router(revision_routes.router)
     app.include_router(version_routes.router)
     app.include_router(verse_routes.router)
-    app.include_router(assessments.router)
+    app.include_router(assessment_routes.router)
     app.include_router(results_routes.router)
 
 
