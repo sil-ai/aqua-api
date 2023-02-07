@@ -1,7 +1,7 @@
 import os
 
 import fastapi
-from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
+from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
