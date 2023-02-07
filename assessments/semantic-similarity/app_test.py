@@ -1,64 +1,53 @@
 import modal
 import pytest
 
-from semsim_models import Assessment, Results
+from app import Assessment
 
-assessment_id = 99999
+assessment_id = 999999
 
-semsim_image = modal.Image.debian_slim().pip_install(
+volume = modal.SharedVolume().persist("pytorch-model-vol")
+CACHE_PATH = "/root/model_cache"
+
+stub = modal.Stub(
+    name="run-semantic-similarity-test",
+    image=modal.Image.debian_slim().pip_install(
     "pytest",
     "pandas",
     "torch==1.12.0",
     "transformers==4.21.0",
     "SQLAlchemy==1.4.46"
     ).copy(
-        modal.Mount(
-            local_file="../../runner/push_results/models.py",
-            remote_dir="/root"
-        )
-    ).copy(
-        modal.Mount(
-            local_file="./app.py",
-            remote_dir="/root"
-        )
-    ).copy(
-        modal.Mount(
-            local_file="./semsim_models.py",
-            remote_dir="/root"
-        )
-    ).copy(
          modal.Mount(
             local_file="./fixtures/swahili_revision.pkl",
             remote_dir="/root/fixtures/"
         )
     )
-
-stub = modal.Stub(
-    name="run-semantic-similarity-test",
-    image=semsim_image
 )
 
 stub.assess = modal.Function.from_name("semantic-similarity-test", "assess")
+
 
 @stub.function
 def get_assessment(config, offset: int=-1):
     return modal.container_app.assess.call(config, offset)
 
+
 @stub.function
 def assessment_object(draft_id, ref_id, expected):
     config = Assessment(
-                            assessment=999999,
+                            assessment=assessment_id,
                             revision=draft_id,
                             reference=ref_id,
                             type="semantic-similarity")
     results = get_assessment.call(config)
     #test for the right type of results
-    assert type(results) == Results
+    assert type(results) == list
     #test for the expected length of results
-    assert len(results.results)==expected
-    return results.results
+    assert len(results)==expected
+    return results
 
-#tests the assessment object
+
+# tests the assessment object
 @pytest.mark.parametrize(
     "draft_id, ref_id,expected",
     [
@@ -71,7 +60,8 @@ def test_assessment_object(draft_id, ref_id, expected, valuestorage):
         results = assessment_object.call(draft_id, ref_id, expected)
         valuestorage.results = results
 
-@stub.function
+        
+@stub.function(shared_volumes={CACHE_PATH: volume})
 def model_tester():
     from app import SemanticSimilarity
     model = SemanticSimilarity().semsim_model
@@ -79,12 +69,14 @@ def model_tester():
     assert model.config.architectures[0] == 'BertModel'
     assert model.embeddings.word_embeddings.num_embeddings == 501153
 
+
 #tests the sem sim model
 def test_model():
     with stub.run():
         model_tester.call()
 
-@stub.function
+
+@stub.function(shared_volumes={CACHE_PATH: volume})
 def token_tester(vocab_item, vocab_id):
     from app import SemanticSimilarity
     tokenizer = SemanticSimilarity().semsim_tokenizer
@@ -94,6 +86,7 @@ def token_tester(vocab_item, vocab_id):
     except Exception as err:
         raise AssertionError(f'Error is {err}') from err
 
+
 @pytest.mark.parametrize('vocab_item,vocab_id',
                          [('jesus',303796),
                           ('Thomas',18110),
@@ -101,6 +94,7 @@ def token_tester(vocab_item, vocab_id):
 def test_tokenizer_vocab(vocab_item,vocab_id):
     with stub.run():
         token_tester.call(vocab_item, vocab_id)
+
 
 @stub.function
 def prediction_tester(expected, score):
@@ -114,15 +108,14 @@ def prediction_tester(expected, score):
 def test_predictions(idx, expected, request, valuestorage):
     print(request.node.name)
     with stub.run():
-        score = valuestorage.results[idx].score
+        score = valuestorage.results[idx]['score']
         prediction_tester.call(expected, score)
 
-#!!! Assumes stub version of predict doesn't change from app.py
-@stub.function
+
+@stub.function(shared_volumes={CACHE_PATH: volume})
 def predict(sent1: str, sent2: str, ref: str,
             assessment_id: int, precision: int=2):
     import torch
-    from models import Result
     from app import SemanticSimilarity, similarity
 
     ss = SemanticSimilarity()
@@ -139,10 +132,11 @@ def predict(sent1: str, sent2: str, ref: str,
     #prints the ref to see how we are doing
     print(ref)
     sim_score = round(float(sim_matrix[0][0]),precision)
-    #??? What values do you want for flag and note @dwhitena?
-    return Result(assessment_id=assessment_id,
-                vref=ref,
-                score=sim_score)
+    return {
+        'assessment_id': assessment_id,
+        'vref': ref,
+        'score': sim_score,
+    }
 
 def create_draft_verse(verse, variance):
     import random
@@ -180,4 +174,4 @@ def test_swahili_revision(verse_offset, variance, inequality, request):
         print(request.node.name)
         verse, draft_verse = get_swahili_verses.call(verse_offset, variance)
         results = predict.call(verse, draft_verse, request.node.name, assessment_id)
-        assert eval(f'{results.score}{inequality}')
+        assert eval(f'{results["score"]}{inequality}')
