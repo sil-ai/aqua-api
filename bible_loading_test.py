@@ -2,8 +2,6 @@ import os
 
 import pandas as pd
 import numpy as np
-import pytest
-from pytest import fixture
 import sqlalchemy as db
 
 import bible_loading
@@ -42,7 +40,7 @@ def test_text_dataframe():
             }
 
     status = 0
-    for index, row in verseText.iterrows():
+    for _, row in verseText.iterrows():
         if row["verseReference"] in test_data["locations"]:
             location = test_data["locations"].index(row["verseReference"])
             if row["text"] in test_data["text"][location]:
@@ -53,7 +51,7 @@ def test_text_dataframe():
                 success = False
                 break
 
-    assert True == success
+    assert success is True
 
 
 def test_text_loading():
@@ -68,7 +66,7 @@ def test_text_loading():
     verseText = pd.DataFrame(verse_dict)
 
     text_load = bible_loading.text_loading(verseText, db_engine)
-    assert text_load == True
+    assert text_load is True
 
     #TODO - Do an explicit SQL query to check that the data was uploaded.
     # and then another assert.
@@ -88,4 +86,4 @@ def test_upload_bible():
 
     bible_upload = bible_loading.upload_bible(verses, bibleRevision)
 
-    assert bible_upload == True
+    assert bible_upload is True

@@ -1,18 +1,13 @@
 from pathlib import Path
 import os
-from datetime import date
 import ast
 
 import app
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
-import numpy as np
 
-import queries
-import bible_loading
 
 
 headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
@@ -26,7 +21,7 @@ def test_key_auth():
     assert err.value.status_code == 401
 
     response = app.api_key_auth(os.getenv("TEST_KEY"))
-    assert response == True
+    assert response is True
 
 
 # Create a generator that when called gives
@@ -156,13 +151,73 @@ def test_get_verse(client):
     assert response.status_code == 200
 
 
-def test_delete_revision(client):
-    
-    version_abv = {
+def test_assessment(client):
+    import json
+
+    test_version_abv = {
            "version_abbreviation": "DEL"
            }
 
-    version_response = client.get("/revision", params=version_abv)
+    version_response = client.get("/revision", params=test_version_abv)
+    version_fixed = ast.literal_eval(version_response.text)
+
+    for version_data in version_fixed:
+        if version_data["versionName"] == "delete":
+            revision_id = version_data["id"]
+
+    bad_config_1 = {
+            "revision": "eleven",
+            "reference": 10,
+            "type": "dummy"
+            }
+
+    bad_config_2 = {
+            "revision": 11,
+            "reference": 10,
+            "type": "non-existent assessment"
+            }
+    
+
+
+    good_config = {
+            "revision": revision_id,
+            "type": "dummy"
+            }
+    
+    # Try to post bad config
+    for bad_config in [bad_config_1, bad_config_2]:
+        bad_config_json = json.dumps(bad_config)
+        response = client.post("/assessment", files={'file': bad_config_json})
+        assert response.status_code == 400
+
+    # Post good config
+    good_config_json = json.dumps(good_config)
+    response = client.post("/assessment", files={'file': good_config_json})
+    assert response.status_code == 200
+    id = response.json()['data']['id']
+
+    # Verify good config id is now in assessments
+    response = client.get("/assessment")
+    assert response.status_code == 200
+    assert id in [assessment['id'] for assessment in response.json()['assessments']]
+
+    # Remove good config from assessments
+    response = client.delete("/assessment", params={'assessment_id': id})
+    assert response.status_code == 200
+
+    # Verify good config is no longer in assessments
+    response = client.get("/assessment")
+    assert response.status_code == 200
+    assert id not in [assessment['id'] for assessment in response.json()['assessments']]
+
+
+def test_delete_revision(client):
+    
+    test_version_abv = {
+           "version_abbreviation": "DEL"
+           }
+
+    version_response = client.get("/revision", params=test_version_abv)
     version_fixed = ast.literal_eval(version_response.text)
 
     for version_data in version_fixed:
@@ -173,9 +228,15 @@ def test_delete_revision(client):
             "revision": revision_id
             }
 
-    delete_response = client.delete("/revision", params=delete_revision_data)
+    fail_revision_data = {
+            "revision": 0
+            }
 
-    assert delete_response.status_code == 200
+    test_delete_response = client.delete("/revision", params=delete_revision_data)
+    fail_delete_response = client.delete("/revision", params=fail_revision_data)
+
+    assert test_delete_response.status_code == 200
+    assert fail_delete_response.status_code == 400
 
 
 def test_delete_version(client):
@@ -183,6 +244,13 @@ def test_delete_version(client):
             "version_abbreviation": "DEL"
             }
 
+    fail_delete_version = {
+            "version_abbreviation": "THIS_WILL_FAIL"
+            }
+
     test_response = client.delete("/version", params=test_delete_version)
+    fail_response = client.delete("/version", params=fail_delete_version)
 
     assert test_response.status_code == 200
+    assert fail_response.status_code == 400
+

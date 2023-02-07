@@ -1,26 +1,21 @@
-import modal
-from models import Result, Results, Assessment
-# from pandas import DataFrame
 import os
+import modal
+from semsim_models import Assessment, Results
+#from pandas import DataFrame
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
-
 # Manage suffix on modal endpoint if testing.
-suffix = ""
-if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "-test"
+suffix = ''
+if os.environ.get('MODAL_TEST') == 'TRUE': 
+    suffix = '_test'
 
+#default concurrency limit is 10
+concurrency_limit = int(os.environ.get('CONCURRENCY_LIMIT', 10))
 
-stub = modal.Stub("semantic-similarity" + suffix, image = modal.Image.debian_slim().pip_install(
-                "pytest==7.1.2",
-                "pandas==1.4.3",
-                "mock==4.0",
-                "fuzzywuzzy==0.18.0",
-                "python-Levenshtein==0.20.7",
-                "transformers==4.21.0",
-                "torch==1.12.0",
-
+stub = modal.Stub("semantic-similarity" + suffix,
+                     image = modal.Image.debian_slim().pip_install(
+                        "pandas==1.4.3"
                      ).copy(modal.Mount(
                          local_file='../../fixtures/vref.txt',
                          remote_dir='/root'
@@ -32,24 +27,30 @@ stub = modal.Stub("semantic-similarity" + suffix, image = modal.Image.debian_sli
                      )
 )
 
-# semsim_image = modal.Image.debian_slim().pip_install(
-#         "pandas==1.4.3",
-# )
+semsim_image = modal.Image.debian_slim().pip_install(
+    "pandas==1.4.3",
+    "torch==1.12.0",
+    "transformers==4.21.0",
+    "SQLAlchemy==1.4.46"
+    ).copy(
+        modal.Mount(
+            local_file="../../runner/push_results/models.py",
+            remote_dir="/root"
+        )
+)
+
+stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
 
 def similarity(embeddings_1, embeddings_2):
     import torch.nn.functional as F
     import torch
-
     normalized_embeddings_1 = F.normalize(embeddings_1, p=2)
     normalized_embeddings_2 = F.normalize(embeddings_2, p=2)
     return torch.matmul(
         normalized_embeddings_1, normalized_embeddings_2.transpose(0, 1)
     )
 
-stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
-
 class SemanticSimilarity:
-    # @stub.function(image=semsim_image)
     def __init__(self):
         #!!! can't test the model and tokenizer if I user __enter__
         from transformers import BertTokenizerFast, BertModel
@@ -58,11 +59,11 @@ class SemanticSimilarity:
         self.semsim_tokenizer = BertTokenizerFast.from_pretrained('setu4993/LaBSE')
         logging.info('Tokenizer initialized...')
 
-    #??? May want to raise the concurrency limit
-    @stub.function(cpu=4, concurrency_limit=2)
+    @stub.function(image=semsim_image,cpu=4, concurrency_limit=concurrency_limit)
     def predict(self, sent1: str, sent2: str, ref: str,
-                assessment_id: int, precision: int=2)-> Result:
+                assessment_id: int, precision: int=2):
         import torch
+        from models import Result
         """
         Return a prediction.
 
@@ -82,22 +83,23 @@ class SemanticSimilarity:
         sent2_embedding = sent2_output.pooler_output
 
         sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
+        #prints the ref to see how we are doing
+        print(ref)
         sim_score = round(float(sim_matrix[0][0]),precision)
         logging.info(f'{ref} has a score of {sim_score}')
         #??? What values do you want for flag and note @dwhitena?
         return Result(assessment_id=assessment_id,
-                      verse=ref,
-                      score=sim_score,
-                      flag=False,
-                      note='')
+                    vref=ref,
+                    score=sim_score)
 
 @stub.function
-def get_text(rev_id: int):
+def get_text(rev_id: int):#-> DataFrame:
     return modal.container_app.run_pull_rev.call(rev_id)
 
 @stub.function
-def merge(draft_id: int, draft_verses,
-          reference_id: int, reference_verses):
+#def merge(draft_id: int, draft_verses: DataFrame,
+#          reference_id: int, reference_verses: DataFrame)-> DataFrame:
+def merge(draft_id, draft_verses, reference_id, reference_verses):
     from merge_revision import MergeRevision
     mr = MergeRevision(draft_id, draft_verses, reference_id, reference_verses)
     return mr.merge_revision()
@@ -118,6 +120,7 @@ def assess(assessment: Assessment, offset=-1)-> Results:
     assessment_id = [assessment.assessment]*len(refs)
     results = list(sem_sim.predict.map(sents1,sents2,refs, assessment_id))
     return Results(results=results)
+
 
 if __name__ == '__main__':
     with stub.run():

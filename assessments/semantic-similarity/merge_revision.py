@@ -28,7 +28,9 @@ class MergeRevision:
             #merge the two revisions together
             merged_revisions = pd.DataFrame({'draft':self.draft, 'reference': self.reference},index=self.vref)
             merged_revisions.index.name = 'vref'
-            #remove verses/rows in merged_revisions that are not in reference
-            merged_revisions1 = merged_revisions[merged_revisions['draft']!='']
+            #remove verses/rows in merged_revisions that are not in draft and reference
+            #??? Should I handle non-alpha verse entries?
+            merged_revisions1 = merged_revisions[(merged_revisions['draft']!='') &\
+                                                 (merged_revisions['reference']!='')]
             logging.info(f'Revision {self.draft_id} and {self.reference_id} are merged')
             return merged_revisions1

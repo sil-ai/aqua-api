@@ -100,6 +100,18 @@ def delete_revision_mutation(bibleRevision):
     return delete_revision
 
 
+def check_revisions_query():
+    check_revision = """
+                    query {
+                      bibleRevision {
+                        id
+                      }
+                    }
+                    """
+
+    return check_revision
+
+
 def delete_verses_mutation(bibleRevision):
     delete_verses = """ 
                     mutation {{
@@ -226,3 +238,94 @@ def get_verses_query(revision, verseReference):
               """.format(revision, verseReference)
     
     return get_verses
+
+
+def list_assessments_query():
+    list_assessment = """
+                query MyQuery {
+                  assessment {
+                    id
+                    revision
+                    reference
+                    type
+                    requested_time
+                    start_time
+                    end_time
+                    status
+                  }
+                }
+                """
+        
+    return list_assessment
+
+
+def add_assessment_query(revision, reference, assessment_type, requested_time, status):
+    
+    add_assessment = """
+                  mutation MyMutation {{
+                    insert_assessment(objects: {{
+                      revision: {}, reference: {}, type: {},
+                      requested_time: {}, status: {}
+                    }}) {{
+                      returning {{
+                        id
+                        revision
+                        reference
+                        type
+                        requested_time
+                        status
+                      }}
+                    }}
+                  }}
+                  """.format(revision, reference, assessment_type, 
+                          requested_time, status 
+                          )
+
+    return add_assessment
+
+
+def check_assessments_query():
+    check_assessment = """
+                    query {
+                      assessment {
+                        id
+                      }
+                    }
+                    """
+
+    return check_assessment
+
+
+def delete_assessment_mutation(assessment):
+    delete_assessment = """
+                    mutation {{
+                      delete_assessment(where: {{
+                        id: {{
+                          _eq: {}
+                        }}
+                      }}) {{
+                        affected_rows
+                        returning {{
+                          id
+                        }}
+                      }}
+                    }}
+                    """.format(assessment)
+
+    return delete_assessment
+
+
+def delete_assessment_results_mutation(assessment):
+    delete_assessment_results = """ 
+                    mutation {{
+                      delete_assessmentResult(where: {{
+                        assessment: {{
+                          _eq: {}
+                        }}
+                      }}) {{
+                        affected_rows
+                      }}
+                    }}
+                    """.format(assessment)
+    
+    return delete_assessment_results

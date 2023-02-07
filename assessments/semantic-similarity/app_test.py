@@ -1,158 +1,182 @@
-import os
 import modal
 import pytest
-from pathlib import Path
-# from fuzzywuzzy import fuzz
-from models import Assessment, Results
-from app import SemanticSimilarity
+
+assessment_id = 99999
+
+semsim_image = modal.Image.debian_slim().pip_install(
+    "pytest",
+    "pandas",
+    "torch==1.12.0",
+    "transformers==4.21.0",
+    "SQLAlchemy==1.4.46"
+    ).copy(
+        modal.Mount(
+            local_file="../../runner/push_results/models.py",
+            remote_dir="/root"
+        )
+    ).copy(
+        modal.Mount(
+            local_file="./app.py",
+            remote_dir="/root"
+        )
+    ).copy(
+        modal.Mount(
+            local_file="./semsim_models.py",
+            remote_dir="/root"
+        )
+    ).copy(
+         modal.Mount(
+            local_file="./fixtures/swahili_revision.pkl",
+            remote_dir="/root/fixtures/"
+        )
+    )
 
 stub = modal.Stub(
     name="run-semantic-similarity-test",
-    image=modal.Image.debian_slim().pip_install_from_requirements(
-        "pytest_requirements.txt"
-    ),
+    image=semsim_image
 )
 
 stub.assess = modal.Function.from_name("semantic-similarity-test", "assess")
 
-version_abbreviation = 'SS-DEL'
-version_name = 'semantic similarity delete'
-
-@pytest.fixture(scope='session')
 @stub.function
-def model():
-    return SemanticSimilarity().semsim_model
-
-@pytest.fixture(scope='session')
-@stub.function
-def tokenizer():
-    return SemanticSimilarity().semsim_tokenizer
-
-# Add a version to the database for this test
-def test_add_version(base_url, header):
-    import requests
-    test_version = {
-            "name": version_name, "isoLanguage": "swh",
-            "isoScript": "Latn", "abbreviation": version_abbreviation
-            }
-    url = base_url + '/version'
-    response = requests.post(url, json=test_version, headers=header)
-    if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
-        print("This version is already in the database")
-    else:
-        assert response.json()['name'] == version_name
-
-
-# Add two revisions to the database for this test
-@pytest.mark.parametrize("filepath", [Path("../../fixtures/greek_lemma_luke.txt"), Path("../../fixtures/ngq-ngq.txt")])
-def test_add_revision(base_url, header, filepath: Path):
-    import requests
-    test_abv_revision = {
-            "version_abbreviation": version_abbreviation,
-            "published": False
-            }
- 
-    file = {"file": filepath.open("rb")}
-    url = base_url + "/revision"
-    response_abv = requests.post(url, params=test_abv_revision, files=file, headers=header)
-
-    assert response_abv.status_code == 200
-
+def get_assessment(config, offset: int=-1):
+    return modal.container_app.assess.call(config, offset)
 
 @stub.function
-def get_assessment(ss_assessment: Assessment, offset: int=-1) -> Results:
-    return modal.container_app.assess.call(ss_assessment, offset)
+def assessment_object(draft_id, ref_id, expected):
+    from semsim_models import Assessment, Results
+    config = Assessment(
+                            assessment=999999,
+                            revision=draft_id,
+                            reference=ref_id,
+                            type="semantic-similarity")
+    results = get_assessment.call(config)
+    #test for the right type of results
+    assert type(results) == Results
+    #test for the expected length of results
+    assert len(results.results)==expected
+    return results.results
 
 #tests the assessment object
 @pytest.mark.parametrize(
-    "offset",
+    "draft_id, ref_id,expected",
     [
-        (105),
+        #(1,2, 105),
+        (18,29, 2),
     ],  
 )
-def test_assessment_object(base_url, header, offset, valuestorage):
+def test_assessment_object(draft_id, ref_id, expected, valuestorage):
     with stub.run():
-        import requests
-        url = base_url + "/revision"
-        response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
+        results = assessment_object.call(draft_id, ref_id, expected)
+        valuestorage.results = results
 
-        reference = response.json()[0]['id']
-        revision = response.json()[1]['id']
-        assessment = Assessment(
-                assessment=999999, 
-                revision=revision, 
-                reference=reference, 
-                type='semantic-similarity'
-                )
-        results = get_assessment.call(assessment, offset=offset)
-        #test for the right type of results
-        assert type(results) == Results
-        #test for the expected length of results
-        assert len(results.results) == offset
-        #import pickle
-        #pickle.dump(results, open('results.pkl', 'wb'))
-        valuestorage.results = results.results
-
-#tests the sem sim model
 @stub.function
-def get_model(model):
+def model_tester():
+    from app import SemanticSimilarity
+    model = SemanticSimilarity().semsim_model
     assert model.config._name_or_path == 'setu4993/LaBSE'
     assert model.config.architectures[0] == 'BertModel'
     assert model.embeddings.word_embeddings.num_embeddings == 501153
 
-def test_get_model(model):
+#tests the sem sim model
+def test_model():
     with stub.run():
-        get_model.call(model)
+        model_tester.call()
 
-# @pytest.mark.parametrize('vocab_item,vocab_id',
-#                          [('jesus',303796),
-#                           ('Thomas',18110),
-#                           ('imagery',325221)],ids=['jesus','Thomas','imagery'])
-# def test_tokenizer_vocab(vocab_item,vocab_id,tokenizer):
-#     try:
-#         assert tokenizer.vocab[vocab_item] == vocab_id, f'{vocab_item} does not have a vocab_id of {vocab_id}'
-#     except Exception as err:
-#         raise AssertionError(f'Error is {err}') from err
+@stub.function
+def token_tester(vocab_item, vocab_id):
+    from app import SemanticSimilarity
+    tokenizer = SemanticSimilarity().semsim_tokenizer
+    try:
+        assert tokenizer.vocab[vocab_item] == vocab_id,\
+         f'{vocab_item} does not have a vocab_id of {vocab_id}'
+    except Exception as err:
+        raise AssertionError(f'Error is {err}') from err
 
-# @pytest.mark.parametrize('idx,expected',[(42,4),(103,3)],ids=['GEN 2:12','GEN 4:24'])
-# #test sem_sim predictions
-# def test_predictions(idx, expected, valuestorage):
-#     score = valuestorage.results[idx].score
-#     assert int(round(score,0)) == expected
+@pytest.mark.parametrize('vocab_item,vocab_id',
+                         [('jesus',303796),
+                          ('Thomas',18110),
+                          ('imagery',325221)],ids=['jesus','Thomas','imagery'])
+def test_tokenizer_vocab(vocab_item,vocab_id):
+    with stub.run():
+        token_tester.call(vocab_item, vocab_id)
 
-#TODO: find a better way to test the accuracy of the sem sim
-# @pytest.mark.parametrize('ref', ['GEN 1:1','GEN 3:21', 'GEN 4:8'])
-# # #test sem_sim json output
-# def test_sem_sim_results(ref,valuestorage, rev1_2):
-    
-#     try:
-#         #extract the verse with reference 'ref'
-#         result = list(filter(lambda item:item.verse==ref, valuestorage.results))[0]
-#         # count    105.000000
-#         # mean       4.450095
-#         # std        0.267357
-#         # min        3.490000
-#         # 25%        4.290000
-#         # 50%        4.500000
-#         # 75%        4.660000
-#         # max        4.910000
+@stub.function
+def prediction_tester(expected, score):
+    try:
+        assert int(round(score,0)) == expected
+    except TypeError:
+        raise ValueError('No result values')
 
+@pytest.mark.parametrize('idx,expected',[(0,5),(1,5)],ids=['GEN 1:1','GEN 1:2'])
+#test sem_sim predictions
+def test_predictions(idx, expected, request, valuestorage):
+    print(request.node.name)
+    with stub.run():
+        score = valuestorage.results[idx].score
+        prediction_tester.call(expected, score)
 
-#         #calculate the fuzzywuzzy ratio between 'sent1' and 'sent2'
-#         sent1, sent2 = rev1_2[rev1_2['verseReference']==ref].iloc[0]['text_x','text_y']
-#         fuzzy_score = fuzz.ratio(sent1, sent2)
-#         #normalize the fuzzy_score to a 5 scale adding 0.7 mean difference to overcome bias
-#         # count    105.000000
-#         # mean       3.751905
-#         # std        0.393818
-#         # min        2.800000
-#         # 25%        3.500000
-#         # 50%        3.800000
-#         # 75%        4.050000
-#         # max        4.750000
+#!!! Assumes stub version of predict doesn't change from app.py
+@stub.function
+def predict(sent1: str, sent2: str, ref: str,
+            assessment_id: int, precision: int=2):
+    import torch
+    from models import Result
+    from app import SemanticSimilarity, similarity
 
-#         fuzzy_normalized = fuzzy_score/20 + 0.7
-#         #fuzzy score should be within one standard deviation for its sem_sim_score
-#         assert (fuzzy_normalized - 0.39) <= result.score <= (fuzzy_normalized + 0.39)
-#     except IndexError:
-#         raise AssertionError(f'{ref} is not in output')
+    ss = SemanticSimilarity()
+    sent1_input = ss.semsim_tokenizer(sent1, return_tensors="pt", padding=True)
+    sent2_input = ss.semsim_tokenizer(sent2, return_tensors="pt", padding=True)
+    with torch.no_grad():
+        sent1_output = ss.semsim_model(**sent1_input)
+        sent2_output = ss.semsim_model(**sent2_input)
+
+    sent1_embedding = sent1_output.pooler_output
+    sent2_embedding = sent2_output.pooler_output
+
+    sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
+    #prints the ref to see how we are doing
+    print(ref)
+    sim_score = round(float(sim_matrix[0][0]),precision)
+    #??? What values do you want for flag and note @dwhitena?
+    return Result(assessment_id=assessment_id,
+                vref=ref,
+                score=sim_score)
+
+def create_draft_verse(verse, variance):
+    import random
+    from string import ascii_letters
+    num_of_chars = int(round(variance/100*len(verse),0))
+    idx = [i for i,_ in enumerate(verse) if not verse.isspace()]
+    sam = random.sample(idx, num_of_chars)
+    lst = list(verse)
+    for ind in sam:
+        lst[ind] = random.choice(ascii_letters)
+    return "".join(lst)
+
+@stub.function
+def get_swahili_verses(verse_offset, variance):
+    import pandas as pd
+    swahili_revision = pd.read_pickle('./fixtures/swahili_revision.pkl')
+    verse = swahili_revision.iloc[verse_offset]['text']
+    draft_verse = create_draft_verse(verse, variance)
+    return verse, draft_verse
+
+@pytest.mark.parametrize('verse_offset, variance, inequality',
+                            [
+                                (12,5, '>4'),
+                                (42,10, '>3'),
+                                (1042,20,'>2'),
+                                (4242,30, '<3'),
+                            ],
+                            ids=['NEH 10:21 5%>4',
+                                 'GEN 26:21 10%>3',
+                                 'GEN 32:22 20%>2',
+                                 'Num 16:9 30% <3']
+                        )
+def test_swahili_revision(verse_offset, variance, inequality, request):
+    with stub.run():
+        print(request.node.name)
+        verse, draft_verse = get_swahili_verses.call(verse_offset, variance)
+        results = predict.call(verse, draft_verse, request.node.name, assessment_id)
+        assert eval(f'{results.score}{inequality}')

@@ -1,7 +1,4 @@
-from typing import Optional, Dict
 import os
-import json
-
 import sqlalchemy as db
 import pandas as pd
 

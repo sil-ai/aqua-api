@@ -1,20 +1,17 @@
-import json
 import os
-from datetime import date
-from typing import List, Union
+from datetime import date, datetime
+from typing import Union
 from tempfile import NamedTemporaryFile
+from enum import Enum
+import json
 
-from fastapi import FastAPI, Body, Security, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi import File, UploadFile
-from fastapi.security.api_key import APIKeyQuery, APIKeyCookie, APIKeyHeader, APIKey
-from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.security import OAuth2PasswordBearer
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
-from starlette.status import HTTP_403_FORBIDDEN
-from starlette.responses import RedirectResponse, JSONResponse
-import pandas as pd
 import numpy as np
+from pydantic import BaseModel, ValidationError
 
 import queries
 import bible_loading
@@ -40,7 +37,19 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
         )
 
     return True
-    
+
+
+class AssessmentType(Enum):
+    dummy = 1
+    word_alignment = 2
+    sentence_length = 3
+
+
+class Assessment(BaseModel):
+    revision: int
+    reference: Union[int, str]  # Can be an int or 'null'
+    type: AssessmentType
+
 
 # Creates the FastAPI app object
 def create_app():
@@ -96,17 +105,17 @@ def create_app():
         isoScpt_fixed = '"' + isoScript + '"'
         abbv_fixed = '"' + abbreviation + '"'
         
-        if rights == None:
+        if rights is None:
             rights_fixed = "null"
         else:
             rights_fixed = '"' + rights + '"'
 
-        if forwardTranslation == None:
+        if forwardTranslation is None:
             fT = "null"
         else:
             fT = forwardTranslation
 
-        if backTranslation == None:
+        if backTranslation is None:
             bT = "null"
         else:
             bT = backTranslation
@@ -147,30 +156,47 @@ def create_app():
     @app.delete("/version", dependencies=[Depends(api_key_auth)])
     async def delete_version(version_abbreviation: str):
         bibleVersion = '"' + version_abbreviation + '"'
+        fetch_versions = queries.list_versions_query()
         fetch_revisions = queries.list_revisions_query(bibleVersion)
         delete_version = queries.delete_bible_version(bibleVersion)
         
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            version_query = gql(fetch_versions)
+            version_result = client.execute(version_query)
+
+            version_list = []
+            for version in version_result["bibleVersion"]:
+                version_list.append(version["abbreviation"])
+
             revision_query = gql(fetch_revisions)
             revision_result = client.execute(revision_query)
 
-            revisions_data = []
-            for revision in revision_result["bibleRevision"]:
-                delete_verses = queries.delete_verses_mutation(revision["id"])
-                verses_mutation = gql(delete_verses)
-                verse_deletion = client.execute(verses_mutation)
+            if version_abbreviation in version_list:
+                revision_query = gql(fetch_revisions)
+                revision_result = client.execute(revision_query)
+            
+                for revision in revision_result["bibleRevision"]:
+                    delete_verses = queries.delete_verses_mutation(revision["id"])
+                    verses_mutation = gql(delete_verses)
+                    client.execute(verses_mutation)
 
-                delete_revision = queries.delete_revision_mutation(revision["id"])
-                revision_mutation = gql(delete_revision)
-                revision_deletion = client.execute(revision_mutation)
+                    delete_revision = queries.delete_revision_mutation(revision["id"])
+                    revision_mutation = gql(delete_revision)
+                    client.execute(revision_mutation)
 
-            version_delete_mutation = gql(delete_version)
-            version_delete_result = client.execute(version_delete_mutation)        
+                version_delete_mutation = gql(delete_version)
+                version_delete_result = client.execute(version_delete_mutation)        
 
-        delete_response = ("Version " + 
-                version_delete_result["delete_bibleVersion"]["returning"][0]["name"] +
-                " successfully deleted."
-                )
+                delete_response = ("Version " + 
+                        version_delete_result["delete_bibleVersion"]["returning"][0]["name"] +
+                        " successfully deleted."
+                        )
+
+            else:
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Version abbreviation invalid, version does not exist"
+                        )
 
         return delete_response
 
@@ -207,7 +233,7 @@ def create_app():
             else:
                 raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="version_abbreviation invalid"
+                        detail="Version abbreviation is invalid"
                         )
 
         return revisions_data 
@@ -277,20 +303,36 @@ def create_app():
     
     @app.delete("/revision", dependencies=[Depends(api_key_auth)])
     async def delete_revision(revision: int):
+        fetch_revisions = queries.check_revisions_query()
         delete_revision = queries.delete_revision_mutation(revision)
         delete_verses_mutation = queries.delete_verses_mutation(revision)
 
         with Client(transport=transport, fetch_schema_from_transport=True) as client:
-            verse_mutation = gql(delete_verses_mutation)
-            verse_result = client.execute(verse_mutation)
+            revision_data = gql(fetch_revisions)
+            revision_result = client.execute(revision_data)
 
-            revision_mutation = gql(delete_revision)
-            revision_result = client.execute(revision_mutation)
+            revisions_list = []
+            for revisions in revision_result["bibleRevision"]:
+                revisions_list.append(revisions["id"])
+
+            if revision in revisions_list:
+                verse_mutation = gql(delete_verses_mutation)
+                client.execute(verse_mutation)
+
+                revision_mutation = gql(delete_revision)
+                revision_result = client.execute(revision_mutation)
             
-        delete_response = ("Revision " + 
-                str(revision_result["delete_bibleRevision"]["returning"][0]["id"]) + 
-                " deleted successfully"
-                )
+                delete_response = ("Revision " + 
+                    str(
+                        revision_result["delete_bibleRevision"]["returning"][0]["id"]
+                        ) + "deleted successfully"
+                    )
+
+            else: 
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Revision is invalid, this revision id does not exist."
+                        )
 
         return delete_response
 
@@ -343,6 +385,134 @@ def create_app():
                 verses_data.append(verse_data)
 
         return verses_data
+    
+
+    @app.get("/assessment", dependencies=[Depends(api_key_auth)])
+    async def get_assessment():
+        list_assessments = queries.list_assessments_query()
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            query = gql(list_assessments)
+            result = client.execute(query)
+
+            version_data = []
+            for assessment in result["assessment"]: 
+                ind_data = {
+                        "id": assessment["id"], 
+                        "revision": assessment["revision"], 
+                        "reference": assessment["reference"],
+                        "type": assessment["type"], 
+                        "requested_time": assessment["requested_time"], 
+                        "start_time": assessment["start_time"],
+                        "end_time": assessment["end_time"],
+                        "status": assessment["status"],
+                        }
+
+                version_data.append(ind_data)
+
+        return {'status_code': 200, 'assessments': version_data}
+    
+
+    @app.post("/assessment", dependencies=[Depends(api_key_auth)])
+    async def add_assessment(file: UploadFile):
+        config_bytes = await file.read()
+        config = json.loads(config_bytes)
+        revision_id = config['revision']
+        assessment_type = config['type']
+        reference = config.get('reference', None)
+        if not reference:
+            reference = 'null'
+        try:
+            assessment = Assessment(
+                    revision=revision_id,
+                    reference=reference,
+                    type=AssessmentType[assessment_type], 
+                    )
+        except (ValidationError, KeyError):
+            raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Assessment config is invalid."
+        )
+        assessment_type_fixed = '"' + assessment.type.name +  '"'
+        requested_time = '"' + datetime.now().isoformat() + '"'
+        assessment_status = '"' + 'queued' + '"'
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+
+            new_assessment = queries.add_assessment_query(
+                    revision_id, 
+                    reference,
+                    assessment_type_fixed, 
+                    requested_time, 
+                    assessment_status, 
+                    )
+            mutation = gql(new_assessment)
+
+            assessment = client.execute(mutation)
+        
+        new_assessment = {
+                "id": assessment["insert_assessment"]["returning"][0]["id"],
+                "revision": assessment["insert_assessment"]["returning"][0]["revision"],
+                "reference": assessment["insert_assessment"]["returning"][0]["reference"],
+                "type": assessment["insert_assessment"]["returning"][0]["type"],
+                "requested_time": assessment["insert_assessment"]["returning"][0]["requested_time"],
+                "status": assessment["insert_assessment"]["returning"][0]["status"],
+
+                }
+      
+        # Call runner to run assessment
+        import requests
+        url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
+        json_file = json.dumps({
+            'assessment': new_assessment['id'],
+            'assessment_type': new_assessment['type'],
+            'configuration': config,
+        })
+        
+        response = requests.post(url, files={"file": json_file})
+        assert response.status_code == 200
+        
+        return {
+                    'status_code': 200, 
+                    'message': f'OK. Assessment id {new_assessment["id"]} added to the database and assessment started',
+                    'data': new_assessment,
+        }
+
+
+    @app.delete("/assessment", dependencies=[Depends(api_key_auth)])
+    async def delete_assessment(assessment_id: int):
+        fetch_assessments = queries.check_assessments_query()
+        delete_assessment = queries.delete_assessment_mutation(assessment_id)
+        delete_assessment_results_mutation = queries.delete_assessment_results_mutation(assessment_id)
+
+        with Client(transport=transport, fetch_schema_from_transport=True) as client:
+            assessment_data = gql(fetch_assessments)
+            assessment_result = client.execute(assessment_data)
+
+            assessments_list = []
+            for assessment in assessment_result["assessment"]:
+                assessments_list.append(assessment["id"])
+
+            if assessment_id in assessments_list:
+                assessment_results_mutation = gql(delete_assessment_results_mutation)
+                client.execute(assessment_results_mutation)
+
+                assessment_mutation = gql(delete_assessment)
+                assessment_result = client.execute(assessment_mutation)
+            
+                delete_response = ("Assessment " + 
+                    str(
+                        assessment_result["delete_assessment"]["returning"][0]["id"]
+                        ) + " deleted successfully"
+                    )
+
+            else: 
+                raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Assessment is invalid, this assessment id does not exist."
+                        )
+
+        return delete_response
 
     return app
 
