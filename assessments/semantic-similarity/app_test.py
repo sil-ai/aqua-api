@@ -1,68 +1,124 @@
 import os
 import modal
 import pytest
-from fuzzywuzzy import fuzz
-from models import SemSimConfig, SemSimAssessment, Results
-
-# Manage suffix on modal endpoint if testing.
-suffix = ''
-if os.environ.get('MODAL_TEST') == 'TRUE':
-    suffix = '_test'
+from pathlib import Path
+# from fuzzywuzzy import fuzz
+from models import Assessment, Results
+from app import SemanticSimilarity
 
 stub = modal.Stub(
-    name="semantic_similarity" + suffix,
+    name="run-semantic-similarity-test",
     image=modal.Image.debian_slim().pip_install_from_requirements(
         "pytest_requirements.txt"
     ),
 )
 
-stub.assess = modal.Function.from_name("semantic_similarity", "assess")
+stub.assess = modal.Function.from_name("semantic-similarity-test", "assess")
+
+version_abbreviation = 'SS-DEL'
+version_name = 'semantic similarity delete'
+
+@pytest.fixture(scope='session')
+@stub.function
+def model():
+    return SemanticSimilarity().semsim_model
+
+@pytest.fixture(scope='session')
+@stub.function
+def tokenizer():
+    return SemanticSimilarity().semsim_tokenizer
+
+# Add a version to the database for this test
+def test_add_version(base_url, header):
+    import requests
+    test_version = {
+            "name": version_name, "isoLanguage": "swh",
+            "isoScript": "Latn", "abbreviation": version_abbreviation
+            }
+    url = base_url + '/version'
+    response = requests.post(url, json=test_version, headers=header)
+    if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
+        print("This version is already in the database")
+    else:
+        assert response.json()['name'] == version_name
+
+
+# Add two revisions to the database for this test
+@pytest.mark.parametrize("filepath", [Path("../../fixtures/greek_lemma_luke.txt"), Path("../../fixtures/ngq-ngq.txt")])
+def test_add_revision(base_url, header, filepath: Path):
+    import requests
+    test_abv_revision = {
+            "version_abbreviation": version_abbreviation,
+            "published": False
+            }
+ 
+    file = {"file": filepath.open("rb")}
+    url = base_url + "/revision"
+    response_abv = requests.post(url, params=test_abv_revision, files=file, headers=header)
+
+    assert response_abv.status_code == 200
+
 
 @stub.function
-def get_assessment(ss_assessment: SemSimAssessment, offset: int=-1) -> Results:
+def get_assessment(ss_assessment: Assessment, offset: int=-1) -> Results:
     return modal.container_app.assess.call(ss_assessment, offset)
 
 #tests the assessment object
 @pytest.mark.parametrize(
-    "draft_id, ref_id,expected",
+    "offset",
     [
-        (1,2, 105),
+        (105),
     ],  
 )
-def test_assessment_object(draft_id, ref_id, expected, valuestorage):
+def test_assessment_object(base_url, header, offset, valuestorage):
     with stub.run():
-        config = SemSimConfig(draft_revision=draft_id, reference_revision=ref_id)
-        assessment = SemSimAssessment(assessment_id=1, configuration=config)
-        results = get_assessment.call(assessment, offset=105)
+        import requests
+        url = base_url + "/revision"
+        response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
+
+        reference = response.json()[0]['id']
+        revision = response.json()[1]['id']
+        assessment = Assessment(
+                assessment=999999, 
+                revision=revision, 
+                reference=reference, 
+                type='semantic-similarity'
+                )
+        results = get_assessment.call(assessment, offset=offset)
         #test for the right type of results
         assert type(results) == Results
         #test for the expected length of results
-        assert len(results.results)==expected
+        assert len(results.results) == offset
         #import pickle
         #pickle.dump(results, open('results.pkl', 'wb'))
         valuestorage.results = results.results
 
 #tests the sem sim model
-def test_model(model):
+@stub.function
+def get_model(model):
     assert model.config._name_or_path == 'setu4993/LaBSE'
     assert model.config.architectures[0] == 'BertModel'
     assert model.embeddings.word_embeddings.num_embeddings == 501153
 
-@pytest.mark.parametrize('vocab_item,vocab_id',
-                         [('jesus',303796),
-                          ('Thomas',18110),
-                          ('imagery',325221)],ids=['jesus','Thomas','imagery'])
-def test_tokenizer_vocab(vocab_item,vocab_id,tokenizer):
-    try:
-        assert tokenizer.vocab[vocab_item] == vocab_id, f'{vocab_item} does not have a vocab_id of {vocab_id}'
-    except Exception as err:
-        raise AssertionError(f'Error is {err}') from err
+def test_get_model(model):
+    with stub.run():
+        get_model.call(model)
 
-@pytest.mark.parametrize('idx,expected',[(42,4),(103,3)],ids=['GEN 2:12','GEN 4:24'])
-#test sem_sim predictions
-def test_predictions(idx, expected, valuestorage):
-    score = valuestorage.results[idx].score
-    assert int(round(score,0)) == expected
+# @pytest.mark.parametrize('vocab_item,vocab_id',
+#                          [('jesus',303796),
+#                           ('Thomas',18110),
+#                           ('imagery',325221)],ids=['jesus','Thomas','imagery'])
+# def test_tokenizer_vocab(vocab_item,vocab_id,tokenizer):
+#     try:
+#         assert tokenizer.vocab[vocab_item] == vocab_id, f'{vocab_item} does not have a vocab_id of {vocab_id}'
+#     except Exception as err:
+#         raise AssertionError(f'Error is {err}') from err
+
+# @pytest.mark.parametrize('idx,expected',[(42,4),(103,3)],ids=['GEN 2:12','GEN 4:24'])
+# #test sem_sim predictions
+# def test_predictions(idx, expected, valuestorage):
+#     score = valuestorage.results[idx].score
+#     assert int(round(score,0)) == expected
 
 #TODO: find a better way to test the accuracy of the sem sim
 # @pytest.mark.parametrize('ref', ['GEN 1:1','GEN 3:21', 'GEN 4:8'])

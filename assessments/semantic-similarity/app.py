@@ -1,12 +1,26 @@
 import modal
-from models import Result, Results, SemSimAssessment, SemSimConfig
-from pandas import DataFrame
+from models import Result, Results, Assessment
+# from pandas import DataFrame
+import os
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
-stub = modal.Stub("semantic_similarity",
-                     image = modal.Image.debian_slim().pip_install_from_requirements(
-                      "requirements.txt"
+
+# Manage suffix on modal endpoint if testing.
+suffix = ""
+if os.environ.get("MODAL_TEST") == "TRUE":
+    suffix = "-test"
+
+
+stub = modal.Stub("semantic-similarity" + suffix, image = modal.Image.debian_slim().pip_install(
+                "pytest==7.1.2",
+                "pandas==1.4.3",
+                "mock==4.0",
+                "fuzzywuzzy==0.18.0",
+                "python-Levenshtein==0.20.7",
+                "transformers==4.21.0",
+                "torch==1.12.0",
+
                      ).copy(modal.Mount(
                          local_file='../../fixtures/vref.txt',
                          remote_dir='/root'
@@ -18,9 +32,9 @@ stub = modal.Stub("semantic_similarity",
                      )
 )
 
-semsim_image = modal.Image.debian_slim().pip_install_from_requirements(
-    "semsim_requirements.txt"    
-)
+# semsim_image = modal.Image.debian_slim().pip_install(
+#         "pandas==1.4.3",
+# )
 
 def similarity(embeddings_1, embeddings_2):
     import torch.nn.functional as F
@@ -35,7 +49,7 @@ def similarity(embeddings_1, embeddings_2):
 stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
 
 class SemanticSimilarity:
-
+    # @stub.function(image=semsim_image)
     def __init__(self):
         #!!! can't test the model and tokenizer if I user __enter__
         from transformers import BertTokenizerFast, BertModel
@@ -45,7 +59,7 @@ class SemanticSimilarity:
         logging.info('Tokenizer initialized...')
 
     #??? May want to raise the concurrency limit
-    @stub.function(image=semsim_image,cpu=4, concurrency_limit=2)
+    @stub.function(cpu=4, concurrency_limit=2)
     def predict(self, sent1: str, sent2: str, ref: str,
                 assessment_id: int, precision: int=2)-> Result:
         import torch
@@ -78,38 +92,35 @@ class SemanticSimilarity:
                       note='')
 
 @stub.function
-def get_text(rev_id: int)-> DataFrame:
+def get_text(rev_id: int):
     return modal.container_app.run_pull_rev.call(rev_id)
 
 @stub.function
-def merge(draft_id: int, draft_verses: DataFrame,
-          reference_id: int, reference_verses: DataFrame)-> DataFrame:
+def merge(draft_id: int, draft_verses,
+          reference_id: int, reference_verses):
     from merge_revision import MergeRevision
     mr = MergeRevision(draft_id, draft_verses, reference_id, reference_verses)
     return mr.merge_revision()
 
-@stub.function(image=semsim_image,
-               timeout=300,
-               cpu=4)
-def assess(assessment: SemSimAssessment, offset=-1)-> Results:
-    draft = get_text.call(assessment.configuration.draft_revision)
-    reference = get_text.call(assessment.configuration.reference_revision)
-    df = merge.call(assessment.configuration.draft_revision,
+@stub.function(timeout=300, cpu=4)
+def assess(assessment: Assessment, offset=-1)-> Results:
+    draft = get_text.call(assessment.revision)
+    reference = get_text.call(assessment.reference)
+    df = merge.call(assessment.revision,
                     draft,
-                    assessment.configuration.reference_revision,
+                    assessment.reference,
                     reference)
     sem_sim = SemanticSimilarity()
     #default offset is all of the verses
     sents1 = df['draft'].to_list()[:offset]
     sents2 = df['reference'].to_list()[:offset]
     refs = df.index.to_list()[:offset]
-    assessment_id = [assessment.assessment_id]*len(refs)
+    assessment_id = [assessment.assessment]*len(refs)
     results = list(sem_sim.predict.map(sents1,sents2,refs, assessment_id))
     return Results(results=results)
 
 if __name__ == '__main__':
     with stub.run():
-        config = SemSimConfig(draft_revision=1, reference_revision=2)
-        assessment = SemSimAssessment(assessment_id=1, configuration=config)
+        assessment = Assessment(assessment=1, revision=1, reference=2)
         offset = 105
         results = assess.call(assessment, offset)
