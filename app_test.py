@@ -263,6 +263,44 @@ def test_result(client):
     assert fail_response.status_code == 400
 
 
+def test_missing_words(client):
+
+    test_version_abv = {
+           "version_abbreviation": version_abbreviation
+           }
+
+    revision_response = client.get("/revision", params=test_version_abv)
+    revision_fixed = ast.literal_eval(revision_response.text)
+
+    for revision_data in revision_fixed:
+        if revision_data["versionName"] == version_name:
+            revision_id = revision_data["id"]
+
+    good_config = {
+            "revision": revision_id,
+            "reference": 10,
+            "type": "missing-words"
+            }
+
+    response = client.post("/assessment", json=good_config)
+    assert response.status_code == 200
+    assessment_id = response.json()['data']['id']
+    
+    test_config = {
+            "assessment_id": assessment_id
+    }
+
+    fail_config = {
+            "assessment_id": 0
+            }
+
+    test_response = client.get("/result", params=test_config)
+    fail_response = client.get("/result", params=fail_config)
+
+    assert test_response.status_code == 200
+    assert fail_response.status_code == 400
+    
+
 def test_delete_revision(client):
     test_version_abv = {
            "version_abbreviation": version_abbreviation

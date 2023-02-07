@@ -428,3 +428,30 @@ def get_results_query(assessment_id):
                 """.format(assessment_id)
 
     return get_results
+
+
+def get_missing_words_query(assessment_id):
+    get_results = """
+                query {{
+                  assessmentMissingWords(
+                    where: {{
+                      assessment: {{
+                        _eq: {}
+                      }}
+                    }}
+                  ) {{
+                    id
+                    score
+                    flag
+                    note
+                    vref
+                    source
+                    assessmentByAssessment {{
+                      reference
+                      type
+                    }}
+                  }}
+                }}
+                """.format(assessment_id)
+
+    return get_results
