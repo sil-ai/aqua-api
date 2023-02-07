@@ -9,19 +9,14 @@ stub = modal.Stub(
     image=modal.Image.debian_slim().pip_install(
         "pytest==7.1.2",
         "sqlalchemy",
-        "transformers"
+        "transformers",
+        "torch"
     ).copy(
     modal.Mount(
         local_file="../../runner/push_results/models.py",
         remote_dir="/root"
         )
-    ).copy(
-        modal.Mount(
-            local_file="./fixtures/revisions_feb_4.pkl",
-            remote_dir="/root/fixtures"
-        )
     )
-
 )
 
 stub.assess = modal.Function.from_name("semantic_similarity", "assess")
@@ -90,6 +85,7 @@ def create_draft_verse(verse, variance):
     return "".join(lst)
 
 #!!! Assumes stub version of predict doesn't change from app.py
+@stub.function
 def predict(sent1: str, sent2: str, ref: str,
             assessment_id: int, precision: int=2):
     import torch
@@ -131,6 +127,6 @@ def test_swahili_revision(verse_offset, variance, inequality, request, swahili_r
     with stub.run():
         verse = swahili_revision.iloc[verse_offset]['text']
         draft_verse = create_draft_verse(verse, variance)
-        assessment_id = 1
-        results = predict(verse, draft_verse, request.node.name, assessment_id)
+        assessment_id = 1 #some high number
+        results = predict.call(verse, draft_verse, request.node.name, assessment_id)
         assert eval(f'{results.score}{inequality}')
