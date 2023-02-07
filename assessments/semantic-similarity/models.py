@@ -1,16 +1,14 @@
 from pydantic import BaseModel
-from typing import List
+from typing import List, Literal
 
-# The information needed to run a semantic similarity assessment configuration.
-class SemSimConfig(BaseModel):
-    draft_revision: int
-    reference_revision: int
 
 # The information corresponding to the given assessment.
-class SemSimAssessment(BaseModel):
-    assessment_id: int
-    assessment_type = 'semantic-similarity'
-    configuration: SemSimConfig
+class Assessment(BaseModel):
+    assessment: int
+    type: Literal['semantic-similarity']
+    revision: int
+    reference: int
+
 
 # Results model to record in the DB.
 class Result(BaseModel):

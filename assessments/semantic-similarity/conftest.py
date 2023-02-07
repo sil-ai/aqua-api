@@ -1,14 +1,9 @@
 import pytest
+import os
 import pandas as pd
-from assess import SemanticSimilarity
+# from app import SemanticSimilarity
 
-@pytest.fixture(scope='session')
-def model():
-    return SemanticSimilarity().semsim_model
 
-@pytest.fixture(scope='session')
-def tokenizer():
-    return SemanticSimilarity().semsim_tokenizer
 
 class ValueStorage:
     results = None
@@ -20,3 +15,12 @@ def valuestorage():
 @pytest.fixture(scope='session')
 def rev1_2():
     return pd.read_pickle('combo.pkl')
+
+@pytest.fixture
+def base_url():
+    return os.getenv("AQUA_URL")
+
+@pytest.fixture
+def header():
+    key =  "Bearer" + " " + str(os.getenv("TEST_KEY"))
+    return {"Authorization": key}

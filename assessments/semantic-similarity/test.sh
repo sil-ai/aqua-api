@@ -1,5 +1,5 @@
 #!/bin/bash
 
-MODAL_TEST=TRUE modal deploy assess.py
+MODAL_TEST=TRUE modal deploy app.py
 
-pytest -sv 
+pytest app_test.py
