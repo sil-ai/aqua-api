@@ -21,6 +21,10 @@ def configure_routing(app):
     app.include_router(assessment_routes.router)
     app.include_router(results_routes.router)
 
+    @app.get("/")
+    async def read_root():
+        return {"Hello": "World"}
+
 
 if __name__ == "__main__":
     configure(app)
