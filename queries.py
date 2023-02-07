@@ -50,6 +50,7 @@ def add_version_query(name, isoLanguage, isoScript,
 
     return add_version
 
+
 def check_version_query():
     check_version = """
                     query {
@@ -254,6 +255,62 @@ def get_verses_query(revision, verseReference):
               """.format(revision, verseReference)
     
     return get_verses
+
+
+def get_book_query(revision, bookReference):
+    get_book = """
+            query {{
+              verseText(where: {{
+                bibleRevision: {{
+                  _eq: {}
+                }}, _and: {{
+                  verseReferenceByVersereference: {{
+                    chapterReference: {{
+                      bookReference: {{
+                        _eq: {}
+                      }}
+                    }}
+                  }}
+                }}
+              }}) {{
+                id
+                text
+                verseReference
+                bibleRevisionByBiblerevision {{
+                  date
+                  bibleVersionByBibleversion {{
+                    name
+                  }}
+                }}
+                }}
+              }}
+            """.format(revision, bookReference)
+
+    return get_book
+
+
+def get_text_query(revision):
+    get_text = """
+            query {{
+              verseText(where: {{
+                bibleRevision: {{
+                  _eq: {}
+                }}
+              }}) {{
+                id
+                text
+                verseReference
+                bibleRevisionByBiblerevision {{
+                  date
+                  bibleVersionByBibleversion {{
+                    name
+                  }}
+                }}
+              }}
+            }}
+            """.format(revision)
+
+    return get_text
 
 
 def list_assessments_query():
