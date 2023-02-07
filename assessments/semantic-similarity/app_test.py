@@ -10,7 +10,8 @@ stub = modal.Stub(
         "pytest==7.1.2",
         "sqlalchemy",
         "transformers",
-        "torch"
+        "torch",
+        "pandas"
     ).copy(
     modal.Mount(
         local_file="../../runner/push_results/models.py",
@@ -49,12 +50,17 @@ def test_assessment_object(draft_id, ref_id, expected, valuestorage):
         assert len(results.results)==expected
         valuestorage.results = results.results
 
-#tests the sem sim model
-def test_model(model):
+@stub.function
+def model_tester(model):
     assert model.config._name_or_path == 'setu4993/LaBSE'
     assert model.config.architectures[0] == 'BertModel'
     assert model.embeddings.word_embeddings.num_embeddings == 501153
 
+#tests the sem sim model
+def test_model(model):
+    with stub.run():
+        model_tester.call(model)
+    
 @pytest.mark.parametrize('vocab_item,vocab_id',
                          [('jesus',303796),
                           ('Thomas',18110),
