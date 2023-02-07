@@ -1,8 +1,5 @@
 import modal
 import pytest
-import random
-from string import ascii_letters
-from app import SemanticSimilarity, similarity
 
 assessment_id = 99999
 
@@ -15,6 +12,11 @@ semsim_image = modal.Image.debian_slim().pip_install(
     ).copy(
         modal.Mount(
             local_file="../../runner/push_results/models.py",
+            remote_dir="/root"
+        )
+    ).copy(
+        modal.Mount(
+            local_file="./app.py",
             remote_dir="/root"
         )
     ).copy(
@@ -36,11 +38,11 @@ stub = modal.Stub(
 
 stub.assess = modal.Function.from_name("semantic_similarity", "assess")
 
-@stub.function#(image=semsim_image)
+@stub.function
 def get_assessment(ss_assessment, offset: int=-1):
     return modal.container_app.assess.call(ss_assessment, offset)
 
-@stub.function#(image=semsim_image)
+@stub.function
 def assessment_object(draft_id, ref_id, expected):
     from semsim_models import SemSimConfig, SemSimAssessment
     from models import Results
@@ -68,8 +70,9 @@ def test_assessment_object(draft_id, ref_id, expected, valuestorage):
         results = assessment_object.call(draft_id, ref_id, expected)
         valuestorage.results = results
 
-@stub.function#(image=semsim_image)
+@stub.function
 def model_tester():
+    from app import SemanticSimilarity
     model = SemanticSimilarity().semsim_model
     assert model.config._name_or_path == 'setu4993/LaBSE'
     assert model.config.architectures[0] == 'BertModel'
@@ -80,13 +83,15 @@ def test_model():
     with stub.run():
         model_tester.call()
 
-@stub.function#(image=semsim_image)
+@stub.function
 def token_tester(vocab_item, vocab_id):
-        tokenizer = SemanticSimilarity().semsim_tokenizer
-        try:
-            assert tokenizer.vocab[vocab_item] == vocab_id, f'{vocab_item} does not have a vocab_id of {vocab_id}'
-        except Exception as err:
-            raise AssertionError(f'Error is {err}') from err
+    from app import SemanticSimilarity
+    tokenizer = SemanticSimilarity().semsim_tokenizer
+    try:
+        assert tokenizer.vocab[vocab_item] == vocab_id,\
+         f'{vocab_item} does not have a vocab_id of {vocab_id}'
+    except Exception as err:
+        raise AssertionError(f'Error is {err}') from err
 
 @pytest.mark.parametrize('vocab_item,vocab_id',
                          [('jesus',303796),
@@ -105,7 +110,8 @@ def prediction_tester(expected, score):
 
 @pytest.mark.parametrize('idx,expected',[(0,5),(1,5)],ids=['GEN 1:1','GEN 1:2'])
 #test sem_sim predictions
-def test_predictions(idx, expected, valuestorage):
+def test_predictions(idx, expected, request, valuestorage):
+    print(request.node.name)
     with stub.run():
         score = valuestorage.results[idx].score
         prediction_tester.call(expected, score)
@@ -138,6 +144,8 @@ def predict(sent1: str, sent2: str, ref: str,
                 score=sim_score)
 
 def create_draft_verse(verse, variance):
+    import random
+    from string import ascii_letters
     num_of_chars = int(round(variance/100*len(verse),0))
     idx = [i for i,_ in enumerate(verse) if not verse.isspace()]
     sam = random.sample(idx, num_of_chars)
@@ -168,6 +176,7 @@ def get_swahili_verses(verse_offset, variance):
                         )
 def test_swahili_revision(verse_offset, variance, inequality, request):
     with stub.run():
+        print(request.node.name)
         verse, draft_verse = get_swahili_verses.call(verse_offset, variance)
         results = predict.call(verse, draft_verse, request.node.name, assessment_id)
         assert eval(f'{results.score}{inequality}')
