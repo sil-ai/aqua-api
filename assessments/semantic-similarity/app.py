@@ -1,6 +1,6 @@
 import os
 import modal
-from semsim_models import Assessment, Results
+# from semsim_models import Assessment, Results
 #from pandas import DataFrame
 import logging
 logging.basicConfig(level=logging.DEBUG)
@@ -8,7 +8,7 @@ logging.basicConfig(level=logging.DEBUG)
 # Manage suffix on modal endpoint if testing.
 suffix = ''
 if os.environ.get('MODAL_TEST') == 'TRUE': 
-    suffix = '_test'
+    suffix = '-test'
 
 #default concurrency limit is 10
 concurrency_limit = int(os.environ.get('CONCURRENCY_LIMIT', 10))
@@ -24,7 +24,12 @@ stub = modal.Stub("semantic-similarity" + suffix,
                          local_file='merge_revision.py',
                          remote_dir='/root'
                          )
-                     )
+                    #  ).copy(
+                    #     modal.Mount(
+                    #         local_file="./semsim_models.py",
+                    #         remote_dir="/root"
+                    #     )
+                    )
 )
 
 semsim_image = modal.Image.debian_slim().pip_install(
@@ -105,7 +110,9 @@ def merge(draft_id, draft_verses, reference_id, reference_verses):
     return mr.merge_revision()
 
 @stub.function(timeout=300, cpu=4)
-def assess(assessment: Assessment, offset=-1)-> Results:
+def assess(assessment, offset=-1):
+    # from semsim_models import Results, Assessment
+    # assessment = Assessment(**assessment)
     draft = get_text.call(assessment.revision)
     reference = get_text.call(assessment.reference)
     df = merge.call(assessment.revision,

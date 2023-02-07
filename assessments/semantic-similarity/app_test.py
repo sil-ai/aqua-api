@@ -1,6 +1,8 @@
 import modal
 import pytest
 
+from semsim_models import Assessment, Results
+
 assessment_id = 99999
 
 semsim_image = modal.Image.debian_slim().pip_install(
@@ -44,7 +46,6 @@ def get_assessment(config, offset: int=-1):
 
 @stub.function
 def assessment_object(draft_id, ref_id, expected):
-    from semsim_models import Assessment, Results
     config = Assessment(
                             assessment=999999,
                             revision=draft_id,
