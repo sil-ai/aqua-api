@@ -1,4 +1,5 @@
 import modal
+import time
 
 stub = modal.Stub(
     "run-save-results-test",
@@ -54,6 +55,7 @@ def test_run_get_results():
 def run_delete_results():
     #Delete the results from the results directory
     modal.container_app.delete_results_test.call(314159, 271828)
+    time.sleep(5)
     response = modal.container_app.get_results_test.call(314159, 271828)
     assert response is None
 
