@@ -118,4 +118,5 @@ def assess(assessment: Assessment, offset=-1):
     refs = df.index.to_list()[:offset]
     assessment_id = [assessment.assessment]*len(refs)
     results = list(sem_sim.predict.map(sents1,sents2,refs, assessment_id))
+    print(f'Top 20 results: {results[:20]}')
     return results
