@@ -39,8 +39,6 @@ stub.assess = modal.Function.from_name("semantic-similarity-test", "assess")
 def get_assessment(config, offset: int=-1):
     return modal.container_app.assess.call(config, offset)
 
-
-
 version_abbreviation = 'SS-DEL'
 version_name = 'semantic similarity delete'
 
@@ -97,7 +95,6 @@ def test_assessment_object(base_url, header, valuestorage):
         import requests
         url = base_url + "/revision"
         response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
-
         reference = response.json()[0]['id']
         revision = response.json()[1]['id']
         expected = 1142     # Length of verses in common between the two fixture revisions (basically the book of Luke)
@@ -152,10 +149,14 @@ def prediction_tester(expected, score):
 def test_predictions(idx, expected, request, valuestorage):
     print(request.node.name)
     with stub.run():
-        score = valuestorage.results[idx]['score']
-        prediction_tester.call(expected, score)
+        try:
+            score = valuestorage.results[idx]['score']
+            prediction_tester.call(expected, score)
+        except TypeError:
+            raise AssertionError('No result values')
 
 
+#!!! Assumes that predict is the same as app.py
 @stub.function(shared_volumes={CACHE_PATH: volume})
 def predict(sent1: str, sent2: str, ref: str,
             assessment_id: int, precision: int=2):
