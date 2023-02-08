@@ -2,8 +2,6 @@ import os
 import modal
 from typing import Literal
 from pydantic import BaseModel
-import logging
-logging.basicConfig(level=logging.DEBUG)
 
 # Manage suffix on modal endpoint if testing.
 suffix = ''
@@ -52,9 +50,9 @@ class SemanticSimilarity:
     def __init__(self, cache_path=CACHE_PATH):
         from transformers import BertTokenizerFast, BertModel
         self.semsim_model = BertModel.from_pretrained('setu4993/LaBSE', cache_dir=cache_path).eval()
-        logging.info('Semantic model initialized...')
+        print('Semantic model initialized...')
         self.semsim_tokenizer = BertTokenizerFast.from_pretrained('setu4993/LaBSE', cache_dir=cache_path)
-        logging.info('Tokenizer initialized...')
+        print('Tokenizer initialized...')
 
     @stub.function(cpu=4)
     def predict(self, sent1: str, sent2: str, ref: str,
@@ -82,7 +80,7 @@ class SemanticSimilarity:
         #prints the ref to see how we are doing
         print(ref)
         sim_score = round(float(sim_matrix[0][0]),precision)
-        logging.info(f'{ref} has a score of {sim_score}')
+        print(f'{ref} has a score of {sim_score}')
         return {
             'assessment_id': assessment_id,
             'vref': ref,
