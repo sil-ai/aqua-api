@@ -9,10 +9,12 @@ assessment_id = 999999
 volume = modal.SharedVolume().persist("pytorch-model-vol")
 CACHE_PATH = "/root/model_cache"
 
+#??? Is there an advange to putting image definition inside the stub?
 stub = modal.Stub(
     name="run-semantic-similarity-test",
     image=modal.Image.debian_slim().pip_install(
     "pytest",
+    "pyyaml",
     "pandas",
     "torch==1.12.0",
     "transformers==4.21.0",
@@ -20,6 +22,11 @@ stub = modal.Stub(
     ).copy(
          modal.Mount(
             local_file="./fixtures/swahili_revision.pkl",
+            remote_dir="/root/fixtures/"
+        )
+    ).copy(
+         modal.Mount(
+            local_file="./fixtures/swahili_drafts.yml",
             remote_dir="/root/fixtures/"
         )
     )
@@ -31,8 +38,6 @@ stub.assess = modal.Function.from_name("semantic-similarity-test", "assess")
 @stub.function
 def get_assessment(config, offset: int=-1):
     return modal.container_app.assess.call(config, offset)
-
-
 
 version_abbreviation = 'SS-DEL'
 version_name = 'semantic similarity delete'
@@ -90,7 +95,6 @@ def test_assessment_object(base_url, header, valuestorage):
         import requests
         url = base_url + "/revision"
         response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
-
         reference = response.json()[0]['id']
         revision = response.json()[1]['id']
         expected = 1142     # Length of verses in common between the two fixture revisions (basically the book of Luke)
@@ -145,10 +149,14 @@ def prediction_tester(expected, score):
 def test_predictions(idx, expected, request, valuestorage):
     print(request.node.name)
     with stub.run():
-        score = valuestorage.results[idx]['score']
-        prediction_tester.call(expected, score)
+        try:
+            score = valuestorage.results[idx]['score']
+            prediction_tester.call(expected, score)
+        except TypeError:
+            raise AssertionError('No result values')
 
 
+#!!! Assumes that predict is the same as app.py
 @stub.function(shared_volumes={CACHE_PATH: volume})
 def predict(sent1: str, sent2: str, ref: str,
             assessment_id: int, precision: int=2):
@@ -175,43 +183,55 @@ def predict(sent1: str, sent2: str, ref: str,
         'score': sim_score,
     }
 
-def create_draft_verse(verse, variance):
-    import random
-    from string import ascii_letters
-    num_of_chars = int(round(variance/100*len(verse),0))
-    idx = [i for i,_ in enumerate(verse) if not verse.isspace()]
-    sam = random.sample(idx, num_of_chars)
-    lst = list(verse)
-    for ind in sam:
-        lst[ind] = random.choice(ascii_letters)
-    return "".join(lst)
+#!!! Can be used to build random variances in verses for sem-sim testing
+# def create_draft_verse(verse, variance):
+#     import random
+#     from string import ascii_letters
+#     num_of_chars = int(round(variance/100*len(verse),0))
+#     idx = [i for i,char in enumerate(verse) if not char.isspace()]
+#     sam = random.sample(idx, num_of_chars)
+#     lst = list(verse)
+#     for ind in sam:
+#         lst[ind] = random.choice(ascii_letters)
+#     return "".join(lst)
 
+# @stub.function
+# def get_swahili_verses(verse_offset, variance):
+#     import pandas as pd
+#     swahili_revision = pd.read_pickle('./fixtures/swahili_revision.pkl')
+#     verse = swahili_revision.iloc[verse_offset]['text']
+#     draft_verse = create_draft_verse(verse, variance)
+#     return verse, draft_verse
+
+#!!! This get_swahili_verses is deterministic
 @stub.function
 def get_swahili_verses(verse_offset, variance):
     import pandas as pd
+    import yaml
+    drafts = yaml.safe_load(open('./fixtures/swahili_drafts.yml'))['drafts']
+    draft_verse = drafts[f"{verse_offset}-{variance}"]
     swahili_revision = pd.read_pickle('./fixtures/swahili_revision.pkl')
-    verse = swahili_revision.iloc[verse_offset]['text']
-    draft_verse = create_draft_verse(verse, variance)
+    verse = swahili_revision.iloc[verse_offset].text
     return verse, draft_verse
 
-@pytest.mark.parametrize('verse_offset, variance, inequality',
+@pytest.mark.parametrize('verse_offset, variance, expected',
                             [
-                                (12,5, '>4'),
-                                (42,10, '>3'),
-                                (1042,20,'>2'),
-                                (4242,30, '<3'),
+                                (12,5,4.7),
+                                (42,10,3.38),
+                                (1042,20,0.97),
+                                (4242,30,2.14),
                             ],
-                            ids=['NEH 10:21 5%>4',
-                                 'GEN 26:21 10%>3',
-                                 'GEN 32:22 20%>2',
-                                 'Num 16:9 30% <3']
+                            ids=['NEH 10:21 5%',
+                                 'GEN 26:21 10%',
+                                 'GEN 32:22 20%',
+                                 'Num 16:9 30%']
                         )
-def test_swahili_revision(verse_offset, variance, inequality, request):
+def test_swahili_revision(verse_offset, variance, expected, request):
     with stub.run():
         print(request.node.name)
         verse, draft_verse = get_swahili_verses.call(verse_offset, variance)
         results = predict.call(verse, draft_verse, request.node.name, assessment_id)
-        assert eval(f'{results["score"]}{inequality}')
+        assert results['score'] == expected
 
 
 def test_delete_version(base_url, header):
