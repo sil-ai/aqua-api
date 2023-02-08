@@ -93,7 +93,7 @@ def test_assessment_object(base_url, header, valuestorage):
 
         reference = response.json()[0]['id']
         revision = response.json()[1]['id']
-        expected = 2
+        expected = 1142     # Length of verses in common between the two fixture revisions (basically the book of Luke)
         results = assessment_object.call(revision, reference, expected)
         valuestorage.results = results
 
@@ -140,7 +140,7 @@ def prediction_tester(expected, score):
     except TypeError:
         raise ValueError('No result values')
 
-@pytest.mark.parametrize('idx,expected',[(0,5),(1,5)],ids=['GEN 1:1','GEN 1:2'])
+@pytest.mark.parametrize('idx,expected',[(0,1),(1,0)],ids=['LUK 1:1','LUK 1:2'])
 #test sem_sim predictions
 def test_predictions(idx, expected, request, valuestorage):
     print(request.node.name)
