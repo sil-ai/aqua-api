@@ -19,6 +19,7 @@ class AssessmentType(Enum):
     word_alignment = 'word-alignment'
     sentence_length = 'sentence-length'
     missing_words = 'missing-words'
+    semantic_similarity = 'semantic-similarity'
 
 
 class Assessment(BaseModel):
