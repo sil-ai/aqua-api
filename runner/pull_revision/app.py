@@ -3,10 +3,8 @@ from pathlib import Path
 import logging
 
 import modal
-import pandas as pd
-import numpy as np
 
-from db_connect import get_session, VerseText
+from db_connect import get_session
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -39,12 +37,14 @@ class RecordNotFoundError(Exception):
 
 class PullRevision:
     def __init__(self, revision_id: int):
+        import pandas as pd
         self.revision_id = revision_id
         self.revision_text = pd.DataFrame()
         self.vref = self.prepare_vref()
 
     @staticmethod
     def prepare_vref():
+        import pandas as pd
         try:
             return pd.Series(
                 open("/root/vref.txt").read().splitlines(), name="verseReference"
@@ -57,6 +57,23 @@ class PullRevision:
         return len(refs) != len(set(refs))
 
     def pull_revision(self):
+        import pandas as pd
+        from sqlalchemy.ext.declarative import declarative_base
+        from sqlalchemy import Column, Integer, String
+
+        Base = declarative_base()
+
+        class VerseText(Base):
+            __tablename__ = "verseText"
+            #TODO: check what the original field lengths are
+            id = Column(Integer, primary_key=True)
+            #transfers all but one Apocryphal verse ESG 10:3
+            text = Column(
+                String(550, "utf8_unicode_ci"), nullable=False)
+            bibleRevision = Column(Integer, nullable=False, index=True)
+            #transfers across all reference strings
+            verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
+
         __, session = next(get_session())
         logging.info("Loading verses from Revision %s...", self.revision_id)
         revision_verses = pd.read_sql(
@@ -79,6 +96,8 @@ class PullRevision:
             )
 
     def prepare_output(self):
+        import pandas as pd
+        import numpy as np
         # outer merges the vref list on the revision verses
         all_verses = pd.merge(
             self.revision_text, self.vref, on="verseReference", how="outer"
@@ -98,7 +117,7 @@ class PullRevision:
             return output_text
 
         else:
-            logging.info("Revision text is empty. Nothing printed.")
+            print("Revision text is empty. Nothing printed.")
             return []
 
 

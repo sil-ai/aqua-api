@@ -1,21 +1,10 @@
 import os
-from sqlalchemy import Column, Integer, String, Numeric, Boolean, create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import Session
-
-Base = declarative_base()
-
-
-class AssessmentResult(Base):
-    __tablename__ = "assessmentResult"
-    id = Column(Integer, primary_key=True)
-    assessment = Column(Integer, nullable=False)
-    score = Column(Numeric, nullable=True)
-    flag = Column(Boolean, default=False)
-    note = Column(String(1024, "utf8_unicode_ci"), nullable=True)
 
 
 def get_session():
+    from sqlalchemy.orm import Session
+    from sqlalchemy import create_engine
+
     # ??? Should this yield only session?
     # Need engine in testing but maybe I can pull out of session?
     try:
