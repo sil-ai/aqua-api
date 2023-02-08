@@ -79,7 +79,12 @@ async def get_index_cache(revision_id, refresh: bool = False):
     (index_cache_file.parent).mkdir(parents=True, exist_ok=True)
     if index_cache_file.exists() and not refresh:
         with open(index_cache_file) as f:
-            index_cache = json.load(f)
+            try:
+                index_cache = json.load(f)
+            except json.decoder.JSONDecodeError:
+                index_cache = await create_index_cache(tokenized_df, refresh=refresh)
+                with open(index_cache_file, "w") as f:
+                    json.dump(index_cache, f, indent=4)
     else:
         index_cache = await create_index_cache(tokenized_df, refresh=refresh)
         with open(index_cache_file, "w") as f:
