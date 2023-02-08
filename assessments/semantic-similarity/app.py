@@ -77,10 +77,8 @@ class SemanticSimilarity:
         sent2_embedding = sent2_output.pooler_output
 
         sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
-        #prints the ref to see how we are doing
-        print(ref)
         sim_score = round(float(sim_matrix[0][0]),precision)
-        print(f'{ref} has a score of {sim_score}')
+        
         return {
             'assessment_id': assessment_id,
             'vref': ref,
