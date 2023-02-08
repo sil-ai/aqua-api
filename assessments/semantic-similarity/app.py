@@ -2,8 +2,6 @@ import os
 import modal
 from typing import Literal
 from pydantic import BaseModel
-# from semsim_models import Assessment, Results
-#from pandas import DataFrame
 import logging
 logging.basicConfig(level=logging.DEBUG)
 
@@ -20,7 +18,6 @@ stub = modal.Stub("semantic-similarity" + suffix,
                         "pandas==1.4.3",
                         "torch==1.12.0",
                         "transformers==4.21.0",
-                        "SQLAlchemy==1.4.46"
                      ).copy(modal.Mount(
                          local_file='../../fixtures/vref.txt',
                          remote_dir='/root'
@@ -29,14 +26,8 @@ stub = modal.Stub("semantic-similarity" + suffix,
                          local_file='merge_revision.py',
                          remote_dir='/root'
                          )
-                    # ).copy(
-                    #     modal.Mount(
-                    #         local_file="../../runner/push_results/models.py",
-                    #         remote_dir="/root"
-                    #     )
                 )
 )
-
 
 stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
 
@@ -98,15 +89,18 @@ class SemanticSimilarity:
             'score': sim_score
         }
 
+
 @stub.function
 def get_text(rev_id: int):
     return modal.container_app.run_pull_rev.call(rev_id)
 
+
 @stub.function
-def merge(draft_id, draft_verses, reference_id, reference_verses):
+def merge(revision_id, revision_verses, reference_id, reference_verses):
     from merge_revision import MergeRevision
-    mr = MergeRevision(draft_id, draft_verses, reference_id, reference_verses)
+    mr = MergeRevision(revision_id, revision_verses, reference_id, reference_verses)
     return mr.merge_revision()
+
 
 @stub.function(
         timeout=300, 
@@ -114,15 +108,16 @@ def merge(draft_id, draft_verses, reference_id, reference_verses):
         shared_volumes={CACHE_PATH: volume},
 )
 def assess(assessment: Assessment, offset=-1):
-    draft = get_text.call(assessment.revision)
+    revision = get_text.call(assessment.revision)
     reference = get_text.call(assessment.reference)
     df = merge.call(assessment.revision,
-                    draft,
+                    revision,
                     assessment.reference,
                     reference)
     sem_sim = SemanticSimilarity(cache_path=CACHE_PATH)
+
     #default offset is all of the verses
-    sents1 = df['draft'].to_list()[:offset]
+    sents1 = df['revision'].to_list()[:offset]
     sents2 = df['reference'].to_list()[:offset]
     refs = df.index.to_list()[:offset]
     assessment_id = [assessment.assessment]*len(refs)
