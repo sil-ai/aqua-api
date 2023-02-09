@@ -284,10 +284,4 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
                         'vref': row['vref'], 'source': row['source'], 'target': reference_matches_json, 'score': row['total_score'], 
                         'flag': row['flag']})
 
-    if not push_to_db:
-        return {'status': 'finished (not pushed to database)', 'ids': []}
-    
-    print('Pushing results to the database')
-    response, ids = modal.container_app.run_push_missing_words.call(missing_words)
-    print(f"Finished pushing to the database. Response: {response}")
-    return {'status': 'finished', 'ids': ids}
+    return missing_words
