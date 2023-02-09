@@ -15,6 +15,7 @@ class MissingWord(BaseModel):
     assessment_id: int
     vref: str
     source: str
+    target: str
     score: float
     flag: bool = False
     note: Optional[str] = None
