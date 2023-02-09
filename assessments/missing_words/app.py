@@ -5,6 +5,7 @@ import os
 from typing import Literal, List, Dict
 import requests
 import time
+import json
 
 word_alignment_results_volume = modal.SharedVolume().persist("word_alignment_results")
 
@@ -192,8 +193,8 @@ def identify_low_scores(
     for reference, df in ref_top_source_scores_dict.items():
         print(df.head(20))
         print(df.dtypes)
-        ref_top_source_scores = ref_top_source_scores.merge(df[['vref', 'source', 'total_score']], how='outer', on=['vref', 'source'])
-        ref_top_source_scores = ref_top_source_scores.rename(columns={'total_score': reference})
+        ref_top_source_scores = ref_top_source_scores.merge(df[['vref', 'source', 'target', 'total_score']], how='outer', on=['vref', 'source'])
+        ref_top_source_scores = ref_top_source_scores.rename(columns={'total_score': f'{reference}_score', 'target': f'{reference}_match'})
     print(ref_top_source_scores.head(20))
     top_source_scores.loc[:, 'total_score'] = top_source_scores['total_score'].apply(lambda x: max(x, 0))
     top_source_scores.loc[:, 'total_score'] = top_source_scores['total_score'].fillna(0)
@@ -203,7 +204,7 @@ def identify_low_scores(
     if revision in ref_top_source_scores.columns:
         ref_top_source_scores = ref_top_source_scores.drop([revision], axis=1)
 
-    references  = [col for col in ref_top_source_scores.columns if col not in ['vref', 'source']]
+    references  = [col for col in ref_top_source_scores.columns if col[-6:] == '_score']
     if len(references) > 0:
         ref_top_source_scores['mean'] = ref_top_source_scores.loc[:, references].mean(axis=1, skipna=True)
         ref_top_source_scores['min'] = ref_top_source_scores.loc[:, references].min(axis=1, skipna=True)
@@ -276,8 +277,11 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
     
     missing_words = []
     for _, row in low_scores.iterrows():
+        reference_matches = {col[:-6]: row[col] for col in row.index if col[-6:] == '_match'}
+        reference_matches_json = json.dumps(reference_matches, ensure_ascii=False)
+        # print(reference_matches_json)
         missing_words.append({'assessment_id': assessment_config.assessment, 
-                        'vref': row['vref'], 'source': row['source'], 'score': row['total_score'], 
+                        'vref': row['vref'], 'source': row['source'], 'target': reference_matches_json, 'score': row['total_score'], 
                         'flag': row['flag']})
 
     if not push_to_db:

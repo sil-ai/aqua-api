@@ -137,6 +137,7 @@ class PushResults:
             assessment = Column(Integer, nullable=False)
             vref = Column(Text)
             source = Column(Text)
+            target = Column(Text)
             score = Column(Float)
             flag = Column(Boolean, default=False)
             note = Column(Text)
@@ -153,6 +154,7 @@ class PushResults:
                 assessment=missing_word.assessment_id,
                 vref=missing_word.vref,
                 source=missing_word.source,
+                target=missing_word.target,
                 score=missing_word.score,
                 flag=missing_word.flag,
             )
