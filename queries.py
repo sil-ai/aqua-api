@@ -446,6 +446,7 @@ def get_missing_words_query(assessment_id):
                     note
                     vref
                     source
+                    target
                     assessmentByAssessment {{
                       reference
                       type
