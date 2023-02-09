@@ -130,10 +130,5 @@ def assess(assessment_config: Assessment, push_to_db: bool=True):
                         'vref': row['vref'], 'score': row['lix_score'], 
                         'flag': False})
 
-    if not push_to_db:
-        return {'status': 'finished (not pushed to database)', 'ids': []}
+    return results
 
-    print('Pushing results to the database')
-    response, ids = modal.container_app.run_push_results.call(results)
-
-    return {'status': 'finished', 'ids': ids}
