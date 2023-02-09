@@ -88,10 +88,8 @@ class SemanticSimilarity:
         sent2_embedding = sent2_output.pooler_output
 
         sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
-        #prints the ref to see how we are doing
-        print(ref)
         sim_score = round(float(sim_matrix[0][0]),precision)
-        print(f'{ref} has a score of {sim_score}')
+        
         return {
             'assessment_id': assessment_id,
             'vref': ref,
@@ -131,4 +129,6 @@ def assess(assessment: Assessment, offset=-1):
     refs = df.index.to_list()[:offset]
     assessment_id = [assessment.assessment]*len(refs)
     results = list(sem_sim.predict.map(sents1,sents2,refs, assessment_id))
+    print(results[:20])
+
     return results
