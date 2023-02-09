@@ -272,8 +272,4 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
             }
         )
 
-    response, ids = modal.container_app.run_push_results.call(results)
-
-    # Save the top source scores to the results directory for comparison, e.g. for missing words
-
-    return {"status": "finished", "ids": ids}
+    return results
