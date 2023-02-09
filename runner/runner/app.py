@@ -32,6 +32,9 @@ class AssessmentType(Enum):
     semantic_similarity = 'semantic-similarity'
 
 
+stub.run_push_results = modal.Function.from_name("push_results", "push_results")
+stub.run_push_missing_words = modal.Function.from_name("push_results", "push_missing_words")
+
 for a in AssessmentType:
     app_name = a.value
     stub[app_name] = modal.Function.from_name(app_name, "assess")
@@ -97,8 +100,17 @@ class RunAssessment:
     
     def run_assessment(self):
         print(self.config)
-        response = modal.container_app[self.config.type].call(self.config)
-        return response
+        self.results = modal.container_app[self.config.type].call(self.config)
+        return {'status': 'finished'}
+
+    def push_results(self):
+        print('Pushing results to the database')
+        if self.config.type == AssessmentType.missing_words.value:
+            response, ids = modal.container_app.run_push_missing_words.call(self.results)
+        else:
+            response, ids = modal.container_app.run_push_results.call(self.results)
+        print(f"Finished pushing to the database. Response: {response}")
+        return {'status': 'finished', 'ids': ids}
 
 
 
@@ -109,7 +121,20 @@ timeout=7200,
 def run_assessment_runner(config):
     assessment = RunAssessment(config=config)
     assessment.log_start()
-    response = assessment.run_assessment()
+    try:
+        response = assessment.run_assessment()
+    except Exception as e:
+        print(f"Assessment failed: {e}")
+        assessment.log_end(status='failed')
+        return {'status': 'failed'}
+    
+    try:
+        response = assessment.push_results()
+    except Exception as e:
+        print(f"Pushing results failed: {e}")
+        assessment.log_end(status='failed (database push)')
+        return {'status': 'failed'}
+    
     if response['status'] == 'finished':
         assessment.log_end(status='finished')
     else:
