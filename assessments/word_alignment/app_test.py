@@ -125,9 +125,9 @@ def test_runner(base_url, header):
 stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "assess")
 
 @stub.function(timeout=3600)
-def get_results(assessment_config: Assessment, push_to_db: bool=True):
-    response = modal.container_app.run_word_alignment.call(assessment_config, push_to_db=push_to_db)
-    return response
+def get_results(assessment_config: Assessment):
+    results = modal.container_app.run_word_alignment.call(assessment_config)
+    return results
 
 
 def test_assess_draft(base_url, header):
@@ -145,21 +145,28 @@ def test_assess_draft(base_url, header):
                 reference=reference_id, 
                 type='word-alignment'
                 )
-        push_to_db = False
+        
         #Run word alignment from reference to revision, but don't push it to the database
-        response = get_results.call(assessment_config=config, push_to_db=push_to_db)
-
-        assert response['status'] == 'finished' if push_to_db else 'finished (not pushed to database)'
-
+        results = get_results.call(assessment_config=config)
+        print(results[:20])
+        assert len(results) == 3
+        
+        assert results[0]['score'] == pytest.approx(0.626, 0.001)
+        assert results[1]['score'] == pytest.approx(0.711, 0.001)
+        assert results[2]['score'] == pytest.approx(0.746, 0.001)
 
 
 stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_results")
 
+
 @stub.function
 def check_word_alignment_results(assessment_config: Assessment):
     top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference)
-    assert top_source_scores_df.shape[0] > 10
     assert "source" in top_source_scores_df.columns
+    assert "total_score" in top_source_scores_df.columns
+    assert top_source_scores_df.loc[0, 'total_score'] == pytest.approx(0.674, 0.001)
+    assert top_source_scores_df.loc[5, 'total_score'] == pytest.approx(0.778, 0.001)
+    assert top_source_scores_df.loc[10, 'total_score'] == pytest.approx(0.652, 0.001)
 
 
 def test_check_word_alignment_results(base_url, header):
@@ -190,3 +197,16 @@ def test_delete_version(base_url, header):
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
     assert test_response.status_code == 200
+
+
+if __name__ == "__main__":
+    import os
+    key =  "Bearer" + " " + str(os.getenv("TEST_KEY"))
+    header = {"Authorization": key}
+    base_url = os.getenv("AQUA_URL")
+    test_add_version(base_url, header)
+    test_add_revision(base_url, header, Path("../../fixtures/test_bible.txt"))
+    test_add_revision(base_url, header, Path("../../fixtures/uploadtest.txt"))
+    test_assess_draft(base_url, header)
+    test_check_word_alignment_results(base_url, header)
+    test_delete_version(base_url, header)
