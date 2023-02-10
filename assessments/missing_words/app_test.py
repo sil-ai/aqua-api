@@ -76,7 +76,6 @@ def test_get_missing_words(base_url, header):
         revision = response.json()[1]['id']
         
         config = Assessment(
-                # assessment=999999, 
                 revision=revision, 
                 reference=reference, 
                 type='missing-words'

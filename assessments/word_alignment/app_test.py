@@ -121,7 +121,6 @@ def test_assess_draft(base_url, header, assessment_storage):
         reference = response.json()[1]['id']
 
         config = Assessment(
-                # assessment=999999, 
                 revision=revision, 
                 reference=reference, 
                 type='word-alignment'
