@@ -5,7 +5,7 @@ from pathlib import Path
 import json
 import os
 import pickle
-from typing import Literal
+from typing import Literal, Optional
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -52,7 +52,7 @@ CACHE_DIR = Path("/cache")
 
 # The information corresponding to the given assessment.
 class Assessment(BaseModel):
-    assessment: int
+    assessment: Optional[int] = None
     revision: int
     reference: int
     type: Literal["word-alignment"]
@@ -247,7 +247,7 @@ async def assess(assessment_config: Assessment):
     )
 
     df = total_results["verse_scores"]
-    
+
     print("Saving results to modal shared volume")
     modal.container_app.run_save_results.call(
         assessment_config.revision,
