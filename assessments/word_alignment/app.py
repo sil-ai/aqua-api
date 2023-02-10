@@ -191,7 +191,7 @@ def run_total_scores(
 
 
 @stub.function(timeout=7200)
-async def assess(assessment_config: Assessment, push_to_db: bool = True):
+async def assess(assessment_config: Assessment):
     tokenized_dfs = {}
     index_caches = {}
     src_revision_id = assessment_config.reference
@@ -246,20 +246,14 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
         step_results["embedding_scores"],
     )
 
-    print("Pushing results to the database")
     df = total_results["verse_scores"]
-
-
-
+    
+    print("Saving results to modal shared volume")
     modal.container_app.run_save_results.call(
         assessment_config.revision,
         assessment_config.reference,
         total_results["top_source_scores"],
     )
-
-
-    if not push_to_db:
-        return {"status": "finished (not pushed to database)", "ids": []}
 
     results = []
     for _, row in df.iterrows():
