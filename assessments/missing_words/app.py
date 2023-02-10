@@ -276,6 +276,9 @@ async def assess(assessment_config: Assessment):
     low_scores = await identify_low_scores.call(revision, revision_top_source_scores_df, all_top_source_scores)
     
     missing_words = []
+    low_scores = low_scores.fillna({col: '' for col in low_scores.columns if col[-6:] == '_match'})  # Necessary for blank verses, or NaN gives json database error
+    low_scores = low_scores.fillna({col: 0 for col in low_scores.columns if col[-6:] == '_score'})  # Necessary for blank verses, or NaN gives json database error
+
     for _, row in low_scores.iterrows():
         reference_matches = {col[:-6]: row[col] for col in row.index if col[-6:] == '_match'}
         reference_matches_json = json.dumps(reference_matches, ensure_ascii=False)
