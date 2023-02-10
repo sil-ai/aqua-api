@@ -147,7 +147,7 @@ def prediction_tester(expected, score):
 @pytest.mark.parametrize('idx,expected',[(0,1),(1,0)],ids=['LUK 1:1','LUK 1:2'])
 #test sem_sim predictions
 def test_predictions(idx, expected, request, valuestorage):
-    print(request.node.name)
+    
     with stub.run():
         try:
             score = valuestorage.results[idx]['score']
@@ -174,8 +174,6 @@ def predict(sent1: str, sent2: str, ref: str,
     sent2_embedding = sent2_output.pooler_output
 
     sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
-    #prints the ref to see how we are doing
-    print(ref)
     sim_score = round(float(sim_matrix[0][0]),precision)
     return {
         'assessment_id': assessment_id,
@@ -208,7 +206,6 @@ def get_swahili_verses(verse_offset, variance):
                         )
 def test_swahili_revision(verse_offset, variance, expected, request):
     with stub.run():
-        print(request.node.name)
         verse, draft_verse = get_swahili_verses.call(verse_offset, variance)
         results = predict.call(verse, draft_verse, request.node.name, assessment_id)
         assert results['score'] == expected
