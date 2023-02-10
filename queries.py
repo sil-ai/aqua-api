@@ -456,3 +456,29 @@ def get_missing_words_query(assessment_id):
                 """.format(assessment_id)
 
     return get_results
+
+
+def get_scripts_query():
+    iso_scripts = """
+        query list_scripts {
+          isoScript {
+            iso15924
+            name
+          }
+        }
+        """
+
+    return iso_scripts
+
+
+def get_languages_query():
+    iso_languages = """
+        query list_languages {
+          isoLanguage {
+            iso639
+            name
+          }
+        }
+        """
+    
+    return iso_languages
