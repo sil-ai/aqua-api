@@ -1,4 +1,8 @@
 import os
+import pytest
+from pathlib import Path
+import requests
+import time
 
 import pandas as pd
 import numpy as np
@@ -6,9 +10,48 @@ import sqlalchemy as db
 
 import bible_loading
 
-revision_id = 13
+version_abbreviation = 'BL-DEL'
+version_name = 'bible loading delete'
 
-def test_text_dataframe(): 
+def test_add_version(base_url, header):
+    import requests
+    test_version = {
+            "name": version_name, "isoLanguage": "swh",
+            "isoScript": "Latn", "abbreviation": version_abbreviation
+            }
+    url = base_url + '/version'
+    response = requests.post(url, json=test_version, headers=header)
+    if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
+        print("This version is already in the database")
+    else:
+        assert response.json()['name'] == version_name
+
+
+# Add two revisions to the database for this test
+@pytest.mark.parametrize("filepath", [Path("fixtures/greek_lemma_luke.txt")])
+def test_add_revision(base_url, header, filepath: Path):
+    import requests
+    test_abv_revision = {
+            "version_abbreviation": version_abbreviation,
+            "published": False
+            }
+ 
+    file = {"file": filepath.open("rb")}
+    url = base_url + "/revision"
+    response_abv = requests.post(url, params=test_abv_revision, files=file, headers=header)
+
+    assert response_abv.status_code == 200
+
+
+def test_get_revision(base_url, header, revision_storage):
+    # Use the two revisions of the version_abbreviation version as revision and reference
+    api_url = base_url + "/revision"
+    response = requests.get(api_url, headers=header, params={'version_abbreviation': version_abbreviation})
+
+    revision_storage.revision = response.json()[0]['id']
+
+
+def test_text_dataframe(revision_storage): 
     verses = []
     bibleRevision = []
     with open("fixtures/test_bible.txt", "r") as f:
@@ -18,7 +61,7 @@ def test_text_dataframe():
                 bibleRevision.append(np.nan)
             else:
                 verses.append(line.replace("\n", ""))
-                bibleRevision.append(revision_id)
+                bibleRevision.append(revision_storage.revision)
 
     verseText = bible_loading.text_dataframe(verses, bibleRevision)
 
@@ -55,12 +98,12 @@ def test_text_dataframe():
     assert success is True
 
 
-def test_text_loading():
+def test_text_loading(revision_storage):
     db_engine = db.create_engine(os.getenv("AQUA_DB"))
     
     verse_dict = {
         "text": ["TEST"], 
-        "bibleRevision": [revision_id], 
+        "bibleRevision": [revision_storage.revision], 
         "verseReference": ["GEN 1:1"]
         }
 
@@ -73,7 +116,7 @@ def test_text_loading():
     # and then another assert.
 
 
-def test_upload_bible():
+def test_upload_bible(revision_storage):
     verses = []
     bibleRevision = []
     with open("fixtures/test_bible.txt", "r") as f:
@@ -83,8 +126,18 @@ def test_upload_bible():
                 bibleRevision.append(np.nan)
             else:
                 verses.append(line.replace("\n", ""))
-                bibleRevision.append(revision_id)
+                bibleRevision.append(revision_storage.revision)
 
     bible_upload = bible_loading.upload_bible(verses, bibleRevision)
 
     assert bible_upload is True
+
+
+def test_delete_version(base_url, header):
+    time.sleep(2)  # Allow the assessments above to finish pulling from the database before deleting!
+    test_delete_version = {
+            "version_abbreviation": version_abbreviation
+            }
+    url = base_url + "/version"
+    test_response = requests.delete(url, params=test_delete_version, headers=header)
+    assert test_response.status_code == 200
