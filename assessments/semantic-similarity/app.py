@@ -16,13 +16,13 @@ stub = modal.Stub("semantic-similarity" + suffix,
                         "pandas==1.4.3",
                         "torch==1.12.0",
                         "transformers==4.21.0",
-                     ).copy(modal.Mount(
-                         local_file='../../fixtures/vref.txt',
-                         remote_dir='/root'
+                     ).copy(modal.Mount.from_local_file(
+                         local_path='../../fixtures/vref.txt',
+                         remote_path='/root'
                          )
-                     ).copy(modal.Mount(
-                         local_file='merge_revision.py',
-                         remote_dir='/root'
+                     ).copy(modal.Mount.from_local_file(
+                         local_path='merge_revision.py',
+                         remote_path='/root'
                          )
                 )
 )

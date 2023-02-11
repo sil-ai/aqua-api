@@ -20,14 +20,14 @@ stub = modal.Stub(
     "transformers==4.21.0",
     "SQLAlchemy==1.4.46"
     ).copy(
-         modal.Mount(
-            local_file="./fixtures/swahili_revision.pkl",
-            remote_dir="/root/fixtures/"
+         modal.Mount.from_local_file(
+            local_path="./fixtures/swahili_revision.pkl",
+            remote_path="/root/fixtures/"
         )
     ).copy(
-         modal.Mount(
-            local_file="./fixtures/swahili_drafts.yml",
-            remote_dir="/root/fixtures/"
+         modal.Mount.from_local_file(
+            local_path="./fixtures/swahili_drafts.yml",
+            remote_path="/root/fixtures/"
         )
     )
 )
