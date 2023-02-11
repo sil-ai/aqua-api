@@ -25,7 +25,7 @@ stub = modal.Stub(
     ).copy(
          modal.Mount.from_local_file(
             local_path="./fixtures/swahili_drafts.yml",
-            remote_path="/root/fixtures/swahili_revision.pkl"
+            remote_path="/root/fixtures/swahili_drafts.yml"
         )
     )
 )
@@ -181,9 +181,9 @@ def predict(sent1: str, sent2: str, ref: str, precision: int=2):
 def get_swahili_verses(verse_offset, variance):
     import pandas as pd
     import yaml
-    drafts = yaml.safe_load(open('./fixtures/swahili_drafts.yml'))['drafts']
+    drafts = yaml.safe_load(open('/root/fixtures/swahili_drafts.yml'))['drafts']
     draft_verse = drafts[f"{verse_offset}-{variance}"]
-    swahili_revision = pd.read_pickle('./fixtures/swahili_revision.pkl')
+    swahili_revision = pd.read_pickle('/root/fixtures/swahili_revision.pkl')
     verse = swahili_revision.iloc[verse_offset].text
     return verse, draft_verse
 
