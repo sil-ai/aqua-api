@@ -2,7 +2,7 @@ from pydantic import BaseModel
 import modal.aio
 import asyncio
 import os
-from typing import Literal, List, Dict
+from typing import Literal, List, Dict, Optional
 import requests
 import time
 import json
@@ -36,7 +36,7 @@ stub.get_results = modal.Function.from_name(
 
 # The information corresponding to the given assessment.
 class Assessment(BaseModel):
-    assessment: int
+    assessment: Optional[int] = None
     revision: int
     reference: int
     type: Literal["missing-words"]
@@ -223,7 +223,7 @@ def identify_low_scores(
     secret=modal.Secret.from_name("aqua-api"),
     timeout=7200,
 )
-async def assess(assessment_config: Assessment, push_to_db: bool = True):
+async def assess(assessment_config: Assessment):
     """
     Assess the words from the reference text that are missing in the revision.
 
@@ -276,18 +276,15 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
     low_scores = await identify_low_scores.call(revision, revision_top_source_scores_df, all_top_source_scores)
     
     missing_words = []
+    low_scores = low_scores.fillna({col: '' for col in low_scores.columns if col[-6:] == '_match'})  # Necessary for blank verses, or NaN gives json database error
+    low_scores = low_scores.fillna({col: 0 for col in low_scores.columns if col[-6:] == '_score'})  # Necessary for blank verses, or NaN gives json database error
+
     for _, row in low_scores.iterrows():
         reference_matches = {col[:-6]: row[col] for col in row.index if col[-6:] == '_match'}
         reference_matches_json = json.dumps(reference_matches, ensure_ascii=False)
-        # print(reference_matches_json)
+        
         missing_words.append({'assessment_id': assessment_config.assessment, 
                         'vref': row['vref'], 'source': row['source'], 'target': reference_matches_json, 'score': row['total_score'], 
                         'flag': row['flag']})
 
-    if not push_to_db:
-        return {'status': 'finished (not pushed to database)', 'ids': []}
-    
-    print('Pushing results to the database')
-    response, ids = modal.container_app.run_push_missing_words.call(missing_words)
-    print(f"Finished pushing to the database. Response: {response}")
-    return {'status': 'finished', 'ids': ids}
+    return missing_words
