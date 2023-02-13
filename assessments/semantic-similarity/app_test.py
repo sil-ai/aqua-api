@@ -4,8 +4,6 @@ from pathlib import Path
 
 from app import Assessment
 
-assessment_id = 999999
-
 volume = modal.SharedVolume().persist("pytorch-model-vol")
 CACHE_PATH = "/root/model_cache"
 
@@ -20,14 +18,14 @@ stub = modal.Stub(
     "transformers==4.21.0",
     "SQLAlchemy==1.4.46"
     ).copy(
-         modal.Mount(
-            local_file="./fixtures/swahili_revision.pkl",
-            remote_dir="/root/fixtures/"
+         modal.Mount.from_local_file(
+            local_path="./fixtures/swahili_revision.pkl",
+            remote_path="/root/fixtures/swahili_revision.pkl"
         )
     ).copy(
-         modal.Mount(
-            local_file="./fixtures/swahili_drafts.yml",
-            remote_dir="/root/fixtures/"
+         modal.Mount.from_local_file(
+            local_path="./fixtures/swahili_drafts.yml",
+            remote_path="/root/fixtures/swahili_drafts.yml"
         )
     )
 )
@@ -77,7 +75,6 @@ def test_add_revision(base_url, header, filepath: Path):
 @stub.function
 def assessment_object(draft_id, ref_id, expected):
     config = Assessment(
-                            assessment=assessment_id,
                             revision=draft_id,
                             reference=ref_id,
                             type="semantic-similarity")
@@ -158,8 +155,7 @@ def test_predictions(idx, expected, request, valuestorage):
 
 #!!! Assumes that predict is the same as app.py
 @stub.function(shared_volumes={CACHE_PATH: volume})
-def predict(sent1: str, sent2: str, ref: str,
-            assessment_id: int, precision: int=2):
+def predict(sent1: str, sent2: str, ref: str, precision: int=2):
     import torch
     from app import SemanticSimilarity, similarity
 
@@ -176,7 +172,6 @@ def predict(sent1: str, sent2: str, ref: str,
     sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
     sim_score = round(float(sim_matrix[0][0]),precision)
     return {
-        'assessment_id': assessment_id,
         'vref': ref,
         'score': sim_score,
     }
@@ -186,9 +181,9 @@ def predict(sent1: str, sent2: str, ref: str,
 def get_swahili_verses(verse_offset, variance):
     import pandas as pd
     import yaml
-    drafts = yaml.safe_load(open('./fixtures/swahili_drafts.yml'))['drafts']
+    drafts = yaml.safe_load(open('/root/fixtures/swahili_drafts.yml'))['drafts']
     draft_verse = drafts[f"{verse_offset}-{variance}"]
-    swahili_revision = pd.read_pickle('./fixtures/swahili_revision.pkl')
+    swahili_revision = pd.read_pickle('/root/fixtures/swahili_revision.pkl')
     verse = swahili_revision.iloc[verse_offset].text
     return verse, draft_verse
 
@@ -207,7 +202,7 @@ def get_swahili_verses(verse_offset, variance):
 def test_swahili_revision(verse_offset, variance, expected, request):
     with stub.run():
         verse, draft_verse = get_swahili_verses.call(verse_offset, variance)
-        results = predict.call(verse, draft_verse, request.node.name, assessment_id)
+        results = predict.call(verse, draft_verse, request.node.name)
         assert results['score'] == expected
 
 

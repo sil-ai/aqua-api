@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from gql.transport.requests import RequestsHTTPTransport
 
+import bible_routes.language_routes as language_routes
 import bible_routes.version_routes as version_routes
 import bible_routes.revision_routes as revision_routes
 import bible_routes.verse_routes as verse_routes
@@ -46,6 +47,7 @@ def client():
     app.configure(mock_app)
 
     #print(mock_app.dependency_overrides.keys())
+    mock_app.dependency_overrides[language_routes.api_key_auth] = skip_auth
     mock_app.dependency_overrides[version_routes.api_key_auth] = skip_auth
     mock_app.dependency_overrides[revision_routes.api_key_auth] = skip_auth
     mock_app.dependency_overrides[verse_routes.api_key_auth] = skip_auth
@@ -120,6 +122,18 @@ def test_list_revisions(client):
     assert test_response.status_code == 200
     assert fail_response.status_code == 400
     assert all_response.status_code == 200
+
+
+def test_get_languages(client): 
+    language_response = client.get("/language")
+
+    assert language_response.status_code == 200
+
+
+def test_get_scripts(client): 
+    script_response = client.get("/script")
+
+    assert script_response.status_code == 200
 
 
 def test_get_chapter(client): 

@@ -6,7 +6,7 @@ import sqlalchemy as db
 
 import bible_loading
 
-revision_id = 13
+revision_id = 1470
 
 def test_text_dataframe(): 
     verses = []

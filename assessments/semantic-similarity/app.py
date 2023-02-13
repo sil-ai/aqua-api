@@ -1,6 +1,6 @@
 import os
 import modal
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 # Manage suffix on modal endpoint if testing.
@@ -16,13 +16,13 @@ stub = modal.Stub("semantic-similarity" + suffix,
                         "pandas==1.4.3",
                         "torch==1.12.0",
                         "transformers==4.21.0",
-                     ).copy(modal.Mount(
-                         local_file='../../fixtures/vref.txt',
-                         remote_dir='/root'
+                     ).copy(modal.Mount.from_local_file(
+                         local_path='../../fixtures/vref.txt',
+                         remote_path='/root/vref.txt'
                          )
-                     ).copy(modal.Mount(
-                         local_file='merge_revision.py',
-                         remote_dir='/root'
+                     ).copy(modal.Mount.from_local_file(
+                         local_path='merge_revision.py',
+                         remote_path='/root/merge_revision.py'
                          )
                 )
 )
@@ -31,7 +31,7 @@ stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
 
 
 class Assessment(BaseModel):
-    assessment: int
+    assessment: Optional[int]
     revision: int
     reference: int
     type: Literal["semantic-similarity"]
