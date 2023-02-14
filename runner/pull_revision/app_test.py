@@ -22,7 +22,7 @@ stub = modal.Stub(
         local_file="./fixtures/matt_dup.pkl",
         remote_dir="/root"
         )
-    )
+    ),
 )
 
 stub.run_pull_rev = modal.Function.from_name("pull_revision_test", "pull_revision")
@@ -108,12 +108,62 @@ def test_empty_revision():
     with stub.run():
         create_empty_revision.call(11)
 
-#test for valid database connection
-def test_conn(engine, session, aqua_connection_string):
+def get_fake_conn_string(original_string):
+    import random
+    from string import ascii_letters
+
+    done = False
+    #??? Maybe rework?
+    while not done:
+        idx_list = random.sample([i for i,__ in enumerate(original_string)],3)
+        lst = list(original_string)
+        for idx in idx_list:
+            lst[idx]=random.choice(ascii_letters)
+        fake_string = ''.join(lst)
+        if fake_string != original_string:
+            done=True
+            return fake_string
+
+@pytest.fixture(scope='session')
+def fake_num():
+    return 3
+
+@pytest.fixture(scope='session')
+def aqua_connection_string():
+    import os
+    return os.environ['AQUA_DB']
+
+@pytest.fixture(scope='session')
+def fake_strings(fake_num, aqua_connection_string):
+    return [get_fake_conn_string(aqua_connection_string) for __ in range(fake_num)]
+
+@pytest.fixture(scope='session')
+def fake1(fake_strings):
+    return fake_strings[0]
+
+@pytest.fixture(scope='session')
+def fake2(fake_strings):
+    return fake_strings[1]
+
+@pytest.fixture(scope='session')
+def fake3(fake_strings):
+    return fake_strings[2]
+
+@stub.function(secret=modal.Secret.from_name("aqua-db"))
+def conn():
+    import os
+    from db_connect import get_session
+    aqua_connection_string = os.environ['AQUA_DB']
+    engine, session = next(get_session())
     #connection is up
     assert session.is_active
     #connection matches aqua_connection_string
     assert str(engine.url) == aqua_connection_string
+
+#test for valid database connection
+def test_conn():
+    with stub.run():
+        conn.call()
 
 @stub.function
 def bad_connection(bad_connection_string, aqua_connection_string):
