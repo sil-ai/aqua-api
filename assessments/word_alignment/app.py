@@ -37,7 +37,7 @@ stub = modal.aio.AioStub(
     )
     .copy(
         mount=modal.Mount(
-            local_file=Path("data/models/encoder_weights.txt"), remote_dir=Path("/root")
+            local_file=Path("data/models/encoder_weights_whole_bible.txt"), remote_dir=Path("/root")
         )
     ),
 )
@@ -241,6 +241,7 @@ async def assess(assessment_config: Assessment, return_all_results: bool=False):
         for key, value in item.items():
             step_results[key] = value
 
+    print("Running total scores")
     total_results = run_total_scores(
         condensed_df,
         step_results["alignment_scores"],
@@ -260,6 +261,9 @@ async def assess(assessment_config: Assessment, return_all_results: bool=False):
         total_results["top_source_scores"],
     )
 
+    if return_all_results:
+        return total_results["all_results"]
+        
     results = []
     for _, row in df.iterrows():
         results.append(
@@ -271,7 +275,6 @@ async def assess(assessment_config: Assessment, return_all_results: bool=False):
             }
         )
 
-    if return_all_results:
-        return total_results["all_results"]
+    
 
     return results
