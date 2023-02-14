@@ -34,6 +34,9 @@ class RecordNotFoundError(Exception):
     def __init__(self, message):
         self.message = message
 
+class DuplicateVersesError(Exception):
+    def __init__(self, message):
+        self.message = message
 
 class PullRevision:
     def __init__(self, revision_id: int):
@@ -56,13 +59,12 @@ class PullRevision:
     def is_duplicated(refs):
         return len(refs) != len(set(refs))
 
-    def pull_revision(self):
+    def get_verses(self):
         import pandas as pd
-        from sqlalchemy.ext.declarative import declarative_base
+        from sqlalchemy.orm import declarative_base
         from sqlalchemy import Column, Integer, String
 
         Base = declarative_base()
-
         class VerseText(Base):
             __tablename__ = "verseText"
             #TODO: check what the original field lengths are
@@ -76,12 +78,15 @@ class PullRevision:
 
         __, session = next(get_session())
         logging.info("Loading verses from Revision %s...", self.revision_id)
-        revision_verses = pd.read_sql(
+        return pd.read_sql(
             session.query(VerseText)
             .filter(VerseText.bibleRevision == self.revision_id)
             .statement,
             session.bind,
         )
+
+    def pull_revision(self):
+        revision_verses = self.get_verses()
         if not revision_verses.empty:
             # checks that the version doesn't have duplicated verse references
             if not self.is_duplicated(revision_verses.verseReference):
@@ -89,6 +94,9 @@ class PullRevision:
                 self.revision_text = revision_verses.set_index("id", drop=True)
             else:
                 logging.info("Duplicated verses in Revision %s", self.revision_id)
+                raise DuplicateVersesError(
+                    f"Revision {self.revision_id} has duplicate verses"
+                )
         else:
             logging.info("No verses for Revision %s", self.revision_id)
             raise RecordNotFoundError(
