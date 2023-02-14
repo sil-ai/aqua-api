@@ -124,31 +124,6 @@ def get_fake_conn_string(original_string):
             done=True
             return fake_string
 
-@pytest.fixture(scope='session')
-def fake_num():
-    return 3
-
-@pytest.fixture(scope='session')
-def aqua_connection_string():
-    import os
-    return os.environ['AQUA_DB']
-
-@pytest.fixture(scope='session')
-def fake_strings(fake_num, aqua_connection_string):
-    return [get_fake_conn_string(aqua_connection_string) for __ in range(fake_num)]
-
-@pytest.fixture(scope='session')
-def fake1(fake_strings):
-    return fake_strings[0]
-
-@pytest.fixture(scope='session')
-def fake2(fake_strings):
-    return fake_strings[1]
-
-@pytest.fixture(scope='session')
-def fake3(fake_strings):
-    return fake_strings[2]
-
 @stub.function(secret=modal.Secret.from_name("aqua-db"))
 def conn():
     import os
@@ -186,6 +161,30 @@ def bad_connection(bad_connection_string):
         print(f'{bad_connection_string} gives Error \n {err}')
         #passes
 
+@stub.function(secret=modal.Secret.from_name('aqua-db'))
+def get_fake_strings():
+    import os
+
+    FAKE_NUM=3
+    aqua_connection_string = os.environ['AQUA_DB']
+    return [get_fake_conn_string(aqua_connection_string) for __ in range(FAKE_NUM)]
+
+@pytest.fixture(scope="session")
+def fake_strings():
+    with stub.run():
+        return get_fake_strings.call()
+
+@pytest.fixture(scope="session")
+def fake1(fake_strings):
+    return fake_strings[0]
+
+@pytest.fixture(scope="session")
+def fake2(fake_strings):
+    return fake_strings[1]
+
+@pytest.fixture(scope="session")
+def fake3(fake_strings):
+    return fake_strings[2]
 
 #test for n invalid database connections
 @pytest.mark.parametrize("bad_connection_string",["fake1","fake2", "fake3"], ids=range(1,4))
