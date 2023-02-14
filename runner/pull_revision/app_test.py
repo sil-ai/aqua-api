@@ -165,11 +165,13 @@ def test_conn():
     with stub.run():
         conn.call()
 
-@stub.function
-def bad_connection(bad_connection_string, aqua_connection_string):
+@stub.function(secret=modal.Secret.from_name('aqua-db'))
+def bad_connection(bad_connection_string):
+    import os
     from sqlalchemy import create_engine
     from sqlalchemy.exc import NoSuchModuleError, OperationalError, ArgumentError, ProgrammingError
 
+    aqua_connection_string = os.environ['AQUA_DB']
     assert bad_connection_string!= aqua_connection_string
     try:
         engine = create_engine(bad_connection_string)
@@ -187,7 +189,7 @@ def bad_connection(bad_connection_string, aqua_connection_string):
 
 #test for n invalid database connections
 @pytest.mark.parametrize("bad_connection_string",["fake1","fake2", "fake3"], ids=range(1,4))
-def test_bad_connection_string(bad_connection_string, aqua_connection_string, request):
+def test_bad_connection_string(bad_connection_string, request):
     bad_connection_string = request.getfixturevalue(bad_connection_string)
     with stub.run():
-        bad_connection.call(bad_connection_string, aqua_connection_string)
+        bad_connection.call(bad_connection_string)
