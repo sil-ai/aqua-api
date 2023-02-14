@@ -1,6 +1,5 @@
 import modal
 import pytest
-import os
 from sqlalchemy import create_engine
 from sqlalchemy.exc import NoSuchModuleError, OperationalError, ArgumentError, ProgrammingError
 
