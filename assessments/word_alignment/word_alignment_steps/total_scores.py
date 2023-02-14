@@ -2,7 +2,7 @@ from typing import Tuple
 
 import pandas as pd
 
-
+from word_alignment_steps.prepare_data import normalize_word
 
 def faster_df_apply(df, func):
     """
@@ -24,7 +24,8 @@ def run_total_scores(
                 translation_scores_df: pd.DataFrame,
                 match_scores_df: pd.DataFrame,
                 embedding_scores_df: pd.DataFrame,
-                ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+                return_all_results: bool = False,
+                ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Combines the scores from the four steps.
     Inputs:
@@ -52,12 +53,16 @@ def run_total_scores(
 
     all_results.loc[:, 'avg_aligned'] = all_results.apply(lambda row: row['alignment_count'] / row['co-occurrence_count'], axis = 1).astype('float16')
     all_results.loc[:, 'translation_score'] = all_results.loc[:, 'translation_score'].apply(lambda x: 0 if x < 0.00001 else x).astype('float16')
-
-    all_results = all_results.merge(match_scores_df, how='left', on=['source', 'target'])
+    all_results.loc[:, 'source_norm'] = all_results['source'].apply(normalize_word)
+    all_results.loc[:, 'target_norm'] = all_results['target'].apply(normalize_word)
+    match_scores_df = match_scores_df.rename(columns={'source': 'source_norm', 'target': 'target_norm'})
+    all_results = all_results.merge(match_scores_df, how='left', on=['source_norm', 'target_norm'])
 
     all_results = all_results.merge(embedding_scores_df, how='left', on=['source', 'target'])
 
-    all_results.loc[:, 'total_score'] = faster_df_apply(all_results,lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['match_score'] + row['embedding_score']) / 5)
+    # Embedding scores currently only work for New Testament
+    all_results.loc[23213:, 'total_score'] = faster_df_apply(all_results.loc[23213:],lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['match_score'] + row['embedding_score']) / 5)
+    all_results.loc[:23213, 'total_score'] = faster_df_apply(all_results.loc[:23213],lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['match_score'] / 4))
     
     total_scores_df = all_results[['vref', 'source', 'target', 'total_score']]
     top_source_scores_df = total_scores_df.fillna(0)
@@ -66,4 +71,8 @@ def run_total_scores(
     verse_scores_df = top_source_scores_df.groupby('vref', as_index=False, sort=False).mean()
     verse_scores_df = verse_scores_df.fillna(0)
 
-    return total_scores_df, top_source_scores_df, verse_scores_df
+    all_results = all_results if return_all_results else pd.DataFrame()  # It's a big dataframe, so only return it if requested.
+
+    # return total_scores_df, top_source_scores_df, verse_scores_df
+    return total_scores_df, top_source_scores_df, verse_scores_df, all_results
+
