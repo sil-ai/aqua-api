@@ -7,7 +7,7 @@ import os
 import pickle
 from typing import Literal, Optional
 
-# import word_alignment_steps.prepare_data as prepare_data
+import word_alignment_steps.prepare_data as prepare_data
 
 
 index_cache_volume = modal.SharedVolume().persist("index_cache")
@@ -31,13 +31,13 @@ stub = modal.aio.AioStub(
         "requests_toolbelt==0.9.1",
     )
     .copy(
-        mount=modal.Mount.from_local_file(
-            local_path=Path("../../fixtures/vref.txt"), remote_path=Path("/root")
+        mount=modal.Mount(
+            local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root")
         )
     )
     .copy(
-        mount=modal.Mount.from_local_file(
-            local_path=Path("data/models/encoder_weights.txt"), remote_path=Path("/root")
+        mount=modal.Mount(
+            local_file=Path("data/models/encoder_weights.txt"), remote_dir=Path("/root")
         )
     ),
 )
@@ -118,14 +118,9 @@ def create_condensed_df(src_tokenized_df, trg_tokenized_df):
     return condensed_df
 
 
-@stub.function(timeout=3600,
-    mounts=[
-        *modal.create_package_mounts(["word_alignment_steps.alignment_scores"]),
-        modal.Mount.from_local_dir(local_path="./", remote_path="/"),
-]
-)
+@stub.function(timeout=3600)
 async def run_alignment_scores(condensed_df):
-    # from word_alignment_steps import alignment_scores
+    from word_alignment_steps import alignment_scores
 
     (
         alignment_scores_df,
@@ -137,26 +132,17 @@ async def run_alignment_scores(condensed_df):
     }
 
 
-@stub.function(timeout=3600,
-    mounts=[
-    *modal.create_package_mounts(["word_alignment_steps.translation_scores"]),
-    modal.Mount.from_local_dir(local_path="./", remote_path="/"),
-]
-    )
+@stub.function(timeout=3600)
 async def run_translation_scores(condensed_df):
-    # from word_alignment_steps import translation_scores
+    from word_alignment_steps import translation_scores
 
     translation_scores_df = translation_scores.run_translation_scores(condensed_df)
     return {"translation_scores": translation_scores_df}
 
 
-@stub.function(timeout=3600,
-mounts=[
-    *modal.create_package_mounts(["word_alignment_steps.match_scores"]),
-    modal.Mount.from_local_dir(local_path="./", remote_path="/"),
-])
+@stub.function(timeout=3600)
 async def run_match_scores(condensed_df, src_index_cache, target_index_cache):
-    # from word_alignment_steps import match_scores
+    from word_alignment_steps import match_scores
 
     match_scores_df = match_scores.run_match_scores(
         condensed_df, src_index_cache, target_index_cache
@@ -164,13 +150,9 @@ async def run_match_scores(condensed_df, src_index_cache, target_index_cache):
     return {"match_scores": match_scores_df}
 
 
-@stub.function(timeout=3600,
-mounts=[
-    *modal.create_package_mounts(["word_alignment_steps.embeddings"]),
-    modal.Mount.from_local_dir(local_path="./", remote_path="/"),
-])
+@stub.function(timeout=3600)
 async def run_embedding_scores(condensed_df, src_index_cache, target_index_cache):
-    # from word_alignment_steps import embeddings
+    from word_alignment_steps import embeddings
 
     embedding_scores_df = embeddings.run_embeddings(
         condensed_df, src_index_cache, target_index_cache
@@ -188,14 +170,13 @@ def run_total_scores(
     embedding_scores_df,
     return_all_results: bool = False,
 ):
-    # from word_alignment_steps import total_scores
-    import total_scores
+    from word_alignment_steps import total_scores
 
     (
         total_scores_df,
         top_source_scores_df,
         verse_scores_df,
-        all_results_df
+        all_results
     ) = total_scores.run_total_scores(
         condensed_df,
         alignment_scores_df,
@@ -209,16 +190,12 @@ def run_total_scores(
         "total_scores": total_scores_df,
         "top_source_scores": top_source_scores_df,
         "verse_scores": verse_scores_df,
-        "all_results": all_results_df,
+        "all_results": all_results,
     }
 
 
-@stub.function(timeout=7200,
-mounts=[
-    *modal.create_package_mounts(["word_alignment_steps.total_scores"]),
-    modal.Mount.from_local_dir(local_path="./", remote_path="/"),
-])
-async def assess(assessment_config: Assessment, return_all_results: bool = False):
+@stub.function(timeout=7200)
+async def assess(assessment_config: Assessment, return_all_results: bool=False):
     tokenized_dfs = {}
     index_caches = {}
     src_revision_id = assessment_config.reference
@@ -271,7 +248,7 @@ async def assess(assessment_config: Assessment, return_all_results: bool = False
         step_results["translation_scores"],
         step_results["match_scores"],
         step_results["embedding_scores"],
-        return_all_results=return_all_results,  # To debug, set to True and return total_results["all_results"]
+        return_all_results=return_all_results,
     )
 
     df = total_results["verse_scores"]
@@ -287,6 +264,7 @@ async def assess(assessment_config: Assessment, return_all_results: bool = False
     for _, row in df.iterrows():
         results.append(
             {
+                # "assessment_id": assessment_config.assessment,
                 "vref": row["vref"],
                 "score": row["total_score"],
                 "flag": False,
