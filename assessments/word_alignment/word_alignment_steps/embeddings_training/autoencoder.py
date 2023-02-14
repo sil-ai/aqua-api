@@ -1,5 +1,4 @@
-import pandas as pd
-import numpy as np
+import sys
 from pathlib import Path
 import random
 from typing import Optional, Dict, List, Generator, Tuple
@@ -8,14 +7,16 @@ import argparse
 import pickle
 import json
 
-import clearml
-import sys
-sys.path.append('../../')
-from word_alignment_steps import prepare_data
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import numpy as np
+import pandas as pd
+import clearml
+
+sys.path.append('../../')
+from word_alignment_steps import prepare_data  # noqa
+
 
 pd.set_option('display.max_rows', 500)
 
