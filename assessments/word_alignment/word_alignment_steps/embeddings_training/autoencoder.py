@@ -1,9 +1,8 @@
 import pandas as pd
 import numpy as np
-from tqdm import tqdm
 from pathlib import Path
 import random
-from typing import Iterable, Optional, Dict, List, Generator, Tuple
+from typing import Optional, Dict, List, Generator, Tuple
 import time
 import argparse
 import pickle
@@ -131,7 +130,7 @@ def train_model(
     Returns the final version of the model, as well as a list of the epoch training losses.
     """
     clearml.Task.add_requirements("./requirements.txt")
-    task = clearml.Task.init(
+    clearml.Task.init(
       project_name='Word-alignment-autoencoder',    # project name of at least 3 characters
       task_name='autoencoder-train-' + str(int(time.time())), # task name of at least 3 characters
       task_type="training",
@@ -152,6 +151,18 @@ def train_model(
 
 
 def create_index_cache(tokenized_df, refresh: bool = False):
+    """
+    Create an index cache from a tokenized DataFrame.
+
+    Args:
+        tokenized_df (pandas.DataFrame): A DataFrame where each row represents a source
+        and target word in a verse
+        refresh (bool, optional): If True, force a refresh of the cache. Defaults to False.
+
+    Returns:
+        dict: A dictionary that maps each word in the tokenized DataFrame to a set of
+            verse indices where the word appears.
+    """
     from word_alignment_steps import create_cache
 
     index_cache = create_cache.create_index_cache(tokenized_df)
@@ -160,6 +171,25 @@ def create_index_cache(tokenized_df, refresh: bool = False):
 
 
 def get_index_cache(source: Path, cache_dir: Path, refresh: bool = False):
+    """
+    Get or create an index cache from a text file.
+
+    Args:
+        source (pathlib.Path): The path to the text file.
+        cache_dir (pathlib.Path): The path to the directory where the index cache is / will be stored.
+        refresh (bool, optional): If True, force a refresh of the cache. Defaults to False.
+
+    Returns:
+        dict: A dictionary that maps each word in the text file to a set of verse numbers where the
+            word appears.
+
+    Raises:
+        FileNotFoundError: If the text file cannot be found.
+
+    Notes:
+        The index cache is stored in a JSON file in the specified cache directory.
+    """
+    
     with open(source) as f:
         # Read text file
         src_data = f.readlines()
@@ -188,6 +218,21 @@ def get_index_cache(source: Path, cache_dir: Path, refresh: bool = False):
 
 
 def get_tokenized_df(src_data: List[str]) -> pd.DataFrame:
+    """
+    Tokenize a list of verses (strings) and return a pandas DataFrame with the tokenized data.
+
+    Args:
+        src_data (List[str]): A list of verse strings to be tokenized.
+
+    Returns:
+        pandas.DataFrame: A DataFrame containing the tokenized data.
+
+    Notes:
+        This function uses the `prepare_data.create_tokens` function from the `prepare_data` module
+        to tokenize the input strings. The resulting DataFrame has one row for each line of the
+        input strings, and two columns: 'vref' (the verse reference) and 'src_tokenized' (a string
+        of the tokenized words from that verse).
+    """
     vref_filepath = Path("../vref.txt")
     df = pickle.loads(prepare_data.create_tokens(src_data, vref_filepath))
     return df
@@ -198,12 +243,12 @@ def main(args):
     outpath.mkdir(parents=True, exist_ok=True)
     training_language_paths = {language.stem: language for language in args.train_langs}
     val_language_paths = {language.stem: language for language in args.val_langs}
-    # word_dict = create_words({**training_language_paths, **val_language_paths}, index_cache_paths, outpath, refresh_cache=args.refresh_cache)
+    
     word_dict = {}
     for lang, lang_path in {**training_language_paths, **val_language_paths}.items():
         index_cache = get_index_cache(lang_path, args.cache_dir, refresh=args.refresh_cache)
         word_dict[lang] = prepare_data.get_words_from_cache(index_cache)
-        # word_dict[lang] = get_data.create_words(lang_path, args.cache_dir / f'{lang}-index-cache.json', outpath, refresh_cache=args.refresh_cache)
+    
     model, outputs = train_model(
                                 word_dict, 
                                 training_language_paths.keys(),
