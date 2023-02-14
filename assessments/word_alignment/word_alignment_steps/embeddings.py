@@ -30,9 +30,10 @@ def run_embeddings(
 
     df: a DataFrame containing the source and target words, as well as their embedding scores
     """
+    print("Getting embeddings...")
     word_dict_src = prepare_data.get_words_from_cache(source_index_cache)
     word_dict_trg = prepare_data.get_words_from_cache(target_index_cache)
-    weights_path = Path('/root/encoder_weights.txt') 
+    weights_path = Path('/root/encoder_weights_whole_bible.txt') 
     weights = np.loadtxt(weights_path)
     for word in word_dict_src.values():
         word.get_encoding(weights)
