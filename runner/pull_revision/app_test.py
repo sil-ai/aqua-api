@@ -1,7 +1,5 @@
 import modal
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.exc import NoSuchModuleError, OperationalError, ArgumentError, ProgrammingError
 
 from app import RecordNotFoundError, DuplicateVersesError
 
@@ -11,8 +9,9 @@ stub = modal.Stub(
         "pandas==1.4.3",
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
-        "pytest",
-        "mock"
+        "pytest==7.2.1",
+        "mock==5.0.1",
+        "psycopg2-binary==2.9.5"
     ).copy(
     mount=modal.Mount(
         local_file="../../fixtures/vref.txt",
@@ -116,10 +115,11 @@ def test_conn(engine, session, aqua_connection_string):
     #connection matches aqua_connection_string
     assert str(engine.url) == aqua_connection_string
 
-#test for n invalid database connections
-@pytest.mark.parametrize("bad_connection_string",["fake1","fake2", "fake3"], ids=range(1,4))
-def test_bad_connection_string(bad_connection_string, aqua_connection_string, request):
-    bad_connection_string = request.getfixturevalue(bad_connection_string)
+@stub.function
+def bad_connection(bad_connection_string, aqua_connection_string):
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import NoSuchModuleError, OperationalError, ArgumentError, ProgrammingError
+
     assert bad_connection_string!= aqua_connection_string
     try:
         engine = create_engine(bad_connection_string)
@@ -133,3 +133,11 @@ def test_bad_connection_string(bad_connection_string, aqua_connection_string, re
         #if it gets here it raised a known sqlalchemy exception
         print(f'{bad_connection_string} gives Error \n {err}')
         #passes
+
+
+#test for n invalid database connections
+@pytest.mark.parametrize("bad_connection_string",["fake1","fake2", "fake3"], ids=range(1,4))
+def test_bad_connection_string(bad_connection_string, aqua_connection_string, request):
+    bad_connection_string = request.getfixturevalue(bad_connection_string)
+    with stub.run():
+        bad_connection.call(bad_connection_string, aqua_connection_string)
