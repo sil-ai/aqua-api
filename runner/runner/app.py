@@ -105,8 +105,6 @@ class RunAssessment:
 
     def push_results(self):
         print('Pushing results to the database')
-        for result in self.results:
-            result['assessment_id'] = self.config.assessment
         if self.config.type == AssessmentType.missing_words.value:
             response, ids = modal.container_app.run_push_missing_words.call(self.results)
         else:
