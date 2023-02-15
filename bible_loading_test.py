@@ -3,10 +3,39 @@ import os
 import pandas as pd
 import numpy as np
 import sqlalchemy as db
+from gql import Client, gql
+from gql.transport.requests import RequestsHTTPTransport
+from datetime import date
 
 import bible_loading
+import queries
 
-revision_id = 1470
+
+headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
+transport = RequestsHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
+        )
+
+version_query = queries.add_version_query(
+        "loading_test", "eng", "Latn", "BLTEST", 
+        "null", "null", "null", "false"
+        )
+
+revision_date = '"' + str(date.today()) + '"'
+revision_query = queries.insert_bible_revision(
+        "BLTEST", revision_date, "false"
+        )
+
+with Client(transport=transport,
+        fetch_schema_from_transport=True) as test_client:
+
+    version_upload = gql(version_query)
+    test_client.execute(version_upload)
+
+    revision_upload = gql(revision_query)
+    revision_response = test_client.execute(revision_upload)
+    revision_id = revision_response["insert_bibleRevision"]["returning"][0]["id"]
+
 
 def test_text_dataframe(): 
     verses = []
@@ -85,6 +114,34 @@ def test_upload_bible():
                 verses.append(line.replace("\n", ""))
                 bibleRevision.append(revision_id)
 
+    headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
+    transport = RequestsHTTPTransport(
+            url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
+            )
+
+    version_query = queries.add_version_query(
+            "loading_test", "eng", "Latn", "BLTEST", 
+            "null", "null", "null", "false"
+            )
+
+    revision_date = '"' + str(date.today()) + '"'
+    revision_query = queries.insert_bible_revision(
+            "BLTEST", revision_date, "false"
+            )
+
+    with Client(transport=transport,
+            fetch_schema_from_transport=True) as test_client:
+
+        version_upload = gql(version_query)
+    test_client.execute(version_upload)
+
+    revision_upload = gql(revision_query)
+    revision_response = test_client.execute(revision_upload)
+    revision_id = revision_response["insert_bibleRevision"]["returning"][0]["id"]
     bible_upload = bible_loading.upload_bible(verses, bibleRevision)
 
     assert bible_upload is True
+
+
+delete_version = queries.delete_bible_version("BLTEST")
+
