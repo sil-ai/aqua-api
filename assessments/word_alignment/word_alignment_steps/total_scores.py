@@ -50,6 +50,10 @@ def run_total_scores(
     alignment_scores_df = alignment_scores_df.merge(avg_alignment_scores_df, how = 'left', on=['source', 'target']).fillna(0)
     print("Merging alignment scores")
     all_results = condensed_df.merge(alignment_scores_df, how='left', on=['vref', 'source', 'target']).fillna(0)
+    
+    # Remove duplicates
+    all_results = all_results.groupby(['vref', 'source', 'target'], sort=False, as_index=False).mean()
+
     print("Merging translation scores")
     all_results = all_results.merge(translation_scores_df, how='left', on=['source', 'target'])
 
@@ -61,12 +65,13 @@ def run_total_scores(
     match_scores_df = match_scores_df.rename(columns={'source': 'source_norm', 'target': 'target_norm'})
     print("Merging match scores")
     all_results = all_results.merge(match_scores_df, how='left', on=['source_norm', 'target_norm'])
+    # Drop the normalized columns
+    all_results = all_results.drop(['source_norm', 'target_norm'], axis=1)
     print("Merging embedding scores")
     all_results = all_results.merge(embedding_scores_df, how='left', on=['source', 'target'])
 
     print("Calculating total scores")
-    all_results = all_results.groupby(['vref', 'source', 'target'], sort=False, as_index=False).mean()
-    all_results.loc[:, 'total_score'] = faster_df_apply(all_results,lambda row: (row['avg_aligned'] + row['translation_score'] + row['alignment_score'] + row['match_score'] + row['embedding_score']) / 5)
+    all_results.loc[:, 'total_score'] = all_results[['avg_aligned', 'translation_score', 'alignment_score', 'match_score', 'embedding_score']].mean(axis=1)
     
     total_scores_df = all_results[['vref', 'source', 'target', 'total_score']]
     top_source_scores_df = total_scores_df.fillna(0)
