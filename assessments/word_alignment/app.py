@@ -268,7 +268,6 @@ async def assess(assessment_config: Assessment, return_all_results: bool=False):
     for _, row in df.iterrows():
         results.append(
             {
-                # "assessment_id": assessment_config.assessment,
                 "vref": row["vref"],
                 "score": row["total_score"],
                 "flag": False,
