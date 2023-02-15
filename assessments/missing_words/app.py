@@ -163,7 +163,7 @@ async def run_word_alignment(revision: int, reference: int) -> dict:
     print(f'{top_source_scores_dict=}')
     return top_source_scores_dict
 
-@stub.function
+@stub.function(timeout=3600)
 def identify_low_scores(
             revision: int, 
             top_source_scores, 
@@ -223,7 +223,7 @@ def identify_low_scores(
     secret=modal.Secret.from_name("aqua-api"),
     timeout=7200,
 )
-async def assess(assessment_config: Assessment):
+async def assess(assessment_config: Assessment, refresh_refs: bool=False):
     """
     Assess the words from the reference text that are missing in the revision.
 
@@ -256,14 +256,20 @@ async def assess(assessment_config: Assessment):
         list(revision.values())[0] for revision in baseline_revisions
     ]
 
-    #Run these revisions asynchronously
-    results = await asyncio.gather(*[get_top_source_scores.call(revision, reference) for revision in [revision, *baseline_revision_ids]])
-
     all_top_source_scores = {}
-    for result in results:
-        all_top_source_scores = {**all_top_source_scores, **result}
 
-    assessments_to_run = [revision for revision, df in all_top_source_scores.items() if df is None]
+    if refresh_refs:
+        assessments_to_run = [revision, *baseline_revision_ids]
+        print(assessments_to_run)
+
+    else: 
+        #   Get previous word alignments asynchronously
+        results = await asyncio.gather(*[get_top_source_scores.call(revision, reference) for revision in [revision, *baseline_revision_ids]])
+
+        for result in results:
+            all_top_source_scores = {**all_top_source_scores, **result}
+
+        assessments_to_run = [revision for revision, df in all_top_source_scores.items() if df is None]
     print(assessments_to_run)
     results = await asyncio.gather(*[run_word_alignment.call(revision, reference) for revision in assessments_to_run])
 
