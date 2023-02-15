@@ -74,7 +74,8 @@ async def list_revisions(version_abbreviation: Optional[str]=None):
                 revision_data = {
                         "id": revision["id"],
                         "date": revision["date"],
-                        "versionName": revision["bibleVersionByBibleversion"]["name"]
+                        "versionName": revision["bibleVersionByBibleversion"]["name"],
+                        "name": revision["name"],
                         }
 
                 revisions_data.append(revision_data)
@@ -86,6 +87,7 @@ async def list_revisions(version_abbreviation: Optional[str]=None):
 async def upload_bible(
         version_abbreviation: str,
         published: bool = False,
+        name: Optional[str] = None,
         file: UploadFile = File(...)
         ):
 
@@ -98,9 +100,10 @@ async def upload_bible(
 
     version_fixed = result["bibleVersion"][0]["id"]
 
+    name = '"' + name + '"' if name else "null"
     revision_date = '"' + str(date.today()) + '"'
     revision = queries.insert_bible_revision(
-        version_fixed, revision_date, str(published).lower()
+        version_fixed, name, revision_date, str(published).lower()
         )
 
     # Convert into bytes and save as a temporary file.
