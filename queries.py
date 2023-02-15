@@ -167,10 +167,10 @@ def list_all_revisions_query():
                     bibleRevision {
                       id
                       date
+                      name
                       bibleVersionByBibleversion {
                         name
                       }
-                      name
                     }
                   }
                   """
@@ -190,10 +190,10 @@ def list_revisions_query(bibleVersion):
                     }}) {{
                       id
                       date
+                      name
                       bibleVersionByBibleversion {{
                         name
                       }}
-                      name
                     }}
                   }}
                   """.format(bibleVersion)

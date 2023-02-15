@@ -75,7 +75,7 @@ async def list_revisions(version_abbreviation: Optional[str]=None):
                         "id": revision["id"],
                         "date": revision["date"],
                         "versionName": revision["bibleVersionByBibleversion"]["name"],
-                        "name": revision['name'],
+                        "name": revision["name"],
                         }
 
                 revisions_data.append(revision_data)
