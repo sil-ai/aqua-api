@@ -129,18 +129,18 @@ def delete_verses_mutation(bibleRevision):
     return delete_verses
 
 
-def insert_bible_revision(version, date, published):
+def insert_bible_revision(version, name, date, published):
     bible_revise = """
                 mutation {{
                   insert_bibleRevision(objects: {{
-                    bibleVersion: {}, date: {}, published: {}
+                    bibleVersion: {}, name: {}, date: {}, published: {}
                     }}) {{
                     returning {{
                       id
                     }}
                   }}
                 }}
-                """.format(version, date, published)
+                """.format(version, name, date, published)
         
     return bible_revise
 
@@ -170,6 +170,7 @@ def list_all_revisions_query():
                       bibleVersionByBibleversion {
                         name
                       }
+                      name
                     }
                   }
                   """
@@ -192,6 +193,7 @@ def list_revisions_query(bibleVersion):
                       bibleVersionByBibleversion {{
                         name
                       }}
+                      name
                     }}
                   }}
                   """.format(bibleVersion)
