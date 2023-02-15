@@ -131,15 +131,15 @@ def test_assess_draft(base_url, header, assessment_storage):
         print(results[:20])
         assert len(results) == 3
         
-        assert results[0]['score'] == pytest.approx(0.626, 0.001)
-        assert results[1]['score'] == pytest.approx(0.711, 0.001)
-        assert results[2]['score'] == pytest.approx(0.746, 0.001)
+        assert results[0]['score'] == pytest.approx(0.629, 0.001)
+        assert results[1]['score'] == pytest.approx(0.720, 0.001)
+        assert results[2]['score'] == pytest.approx(0.758, 0.001)
 
         assessment_storage.revision = revision
         assessment_storage.reference = reference
 
 
-stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_results")
+stub.get_word_alignment_results = modal.Function.from_name("save-results-test", "get_results")
 
 
 @stub.function
@@ -147,12 +147,12 @@ def check_word_alignment_results(assessment_config: Assessment):
     top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference)
     assert "source" in top_source_scores_df.columns
     assert "total_score" in top_source_scores_df.columns
-    assert top_source_scores_df.loc[0, 'total_score'] == pytest.approx(0.674, 0.001)
-    assert top_source_scores_df.loc[5, 'total_score'] == pytest.approx(0.778, 0.001)
-    assert top_source_scores_df.loc[10, 'total_score'] == pytest.approx(0.652, 0.001)
+    assert top_source_scores_df.loc[0, 'total_score'] == pytest.approx(0.6736, 0.001)
+    assert top_source_scores_df.loc[5, 'total_score'] == pytest.approx(0.789, 0.001)
+    assert top_source_scores_df.loc[10, 'total_score'] == pytest.approx(0.6524, 0.001)
 
 
-def test_check_word_alignment_results(base_url, header, assessment_storage):
+def test_check_word_alignment_results(assessment_storage):
     with stub.run():
         # Use the two revisions of the version_abbreviation version as revision and reference
         revision = assessment_storage.revision
@@ -188,5 +188,5 @@ if __name__ == "__main__":
     test_add_revision(base_url, header, Path("../../fixtures/test_bible.txt"))
     test_add_revision(base_url, header, Path("../../fixtures/uploadtest.txt"))
     test_assess_draft(base_url, header, assessment_storage)
-    test_check_word_alignment_results(base_url, header, assessment_storage)
+    test_check_word_alignment_results(assessment_storage)
     test_delete_version(base_url, header)

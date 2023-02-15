@@ -37,7 +37,7 @@ stub = modal.aio.AioStub(
     )
     .copy(
         mount=modal.Mount(
-            local_file=Path("data/models/encoder_weights.txt"), remote_dir=Path("/root")
+            local_file=Path("data/models/encoder_weights_whole_bible.txt"), remote_dir=Path("/root")
         )
     ),
 )
@@ -168,6 +168,7 @@ def run_total_scores(
     translation_scores_df,
     match_scores_df,
     embedding_scores_df,
+    return_all_results: bool = False,
 ):
     from word_alignment_steps import total_scores
 
@@ -175,6 +176,7 @@ def run_total_scores(
         total_scores_df,
         top_source_scores_df,
         verse_scores_df,
+        all_results
     ) = total_scores.run_total_scores(
         condensed_df,
         alignment_scores_df,
@@ -182,16 +184,18 @@ def run_total_scores(
         translation_scores_df,
         match_scores_df,
         embedding_scores_df,
+        return_all_results=return_all_results,
     )
     return {
         "total_scores": total_scores_df,
         "top_source_scores": top_source_scores_df,
         "verse_scores": verse_scores_df,
+        "all_results": all_results,
     }
 
 
 @stub.function(timeout=7200)
-async def assess(assessment_config: Assessment):
+async def assess(assessment_config: Assessment, return_all_results: bool=False):
     tokenized_dfs = {}
     index_caches = {}
     src_revision_id = assessment_config.reference
@@ -237,6 +241,7 @@ async def assess(assessment_config: Assessment):
         for key, value in item.items():
             step_results[key] = value
 
+    print("Running total scores")
     total_results = run_total_scores(
         condensed_df,
         step_results["alignment_scores"],
@@ -244,6 +249,7 @@ async def assess(assessment_config: Assessment):
         step_results["translation_scores"],
         step_results["match_scores"],
         step_results["embedding_scores"],
+        return_all_results=return_all_results,
     )
 
     df = total_results["verse_scores"]
@@ -255,15 +261,19 @@ async def assess(assessment_config: Assessment):
         total_results["top_source_scores"],
     )
 
+    if return_all_results:
+        return total_results["all_results"]
+        
     results = []
     for _, row in df.iterrows():
         results.append(
             {
-                "assessment_id": assessment_config.assessment,
                 "vref": row["vref"],
                 "score": row["total_score"],
                 "flag": False,
             }
         )
+
+    
 
     return results

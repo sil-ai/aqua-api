@@ -60,10 +60,10 @@ def test_add_revision(base_url, header, filepath: Path):
 @stub.function(timeout=3600)
 def get_missing_words(assessment_config: Assessment):
     missing_words = modal.container_app.run_missing_words.call(assessment_config)
-    assert missing_words[0]['score'] == pytest.approx(0.050, 0.01)
-    assert missing_words[1]['score'] == pytest.approx(0.089, 0.01)
-    assert missing_words[2]['score'] == pytest.approx(0.074, 0.01)
-    assert len(missing_words) == 1477
+    assert missing_words[0]['score'] == pytest.approx(0.090, 0.01)
+    assert missing_words[1]['score'] == pytest.approx(0.056, 0.01)
+    assert missing_words[2]['score'] == pytest.approx(0.097, 0.01)
+    assert len(missing_words) == 683
 
 def test_get_missing_words(base_url, header):
     with stub.run():
