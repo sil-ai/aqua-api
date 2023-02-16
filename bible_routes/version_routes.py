@@ -136,7 +136,7 @@ async def delete_version(abbreviation: str):
         revision_query = gql(fetch_revisions)
         revision_result = client.execute(revision_query)
 
-        if version_abbreviation in version_list:
+        if abbreviation in version_list:
             revision_query = gql(fetch_revisions)
             revision_result = client.execute(revision_query)
 
