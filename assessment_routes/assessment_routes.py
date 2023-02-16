@@ -1,5 +1,6 @@
 import os
 from datetime import datetime
+import base64
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -101,7 +102,17 @@ async def add_assessment(a: Assessment):
 
     # Call runner to run assessment
     a.assessment = new_assessment["id"]
-    response = requests.post(runner_url, json=a.dict())
+    AQUA_DB = os.getenv("AQUA_DB")
+    AQUA_URL = os.getenv("AQUA_URL")
+    AQUA_API_KEY = os.getenv("AQUA_API_KEY")
+    AQUA_DB_BYTES = AQUA_DB.encode('utf-8')
+    AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES)
+    params = {
+        'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
+        'AQUA_URL': AQUA_URL,
+        'AQUA_API_KEY': AQUA_API_KEY,
+        }
+    response = requests.post(runner_url, params=params, json=a.dict())
     if response.status_code != 200:
         # TODO: Is 500 the right status code here?
         return fastapi.Response(content=str(response), status_code=500)
