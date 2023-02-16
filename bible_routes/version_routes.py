@@ -119,8 +119,8 @@ async def add_version(v: Version):
 
 
 @router.delete("/version", dependencies=[Depends(api_key_auth)])
-async def delete_version(version_abbreviation: str):
-    bibleVersion = '"' + version_abbreviation + '"'
+async def delete_version(abbreviation: str):
+    bibleVersion = '"' + abbreviation + '"'
     fetch_versions = queries.list_versions_query()
     fetch_revisions = queries.list_revisions_query(bibleVersion)
     delete_version = queries.delete_bible_version(bibleVersion)
