@@ -344,11 +344,11 @@ def test_delete_revision(client):
 
 def test_delete_version(client):
     test_delete_version = {
-            "version_abbreviation": version_abbreviation
+            "abbreviation": version_abbreviation
             }
 
     fail_delete_version = {
-            "version_abbreviation": "THIS_WILL_FAIL"
+            "abbreviation": "THIS_WILL_FAIL"
             }
 
     test_response = client.delete("/version", params=test_delete_version)
