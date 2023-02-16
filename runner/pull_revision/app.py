@@ -56,7 +56,7 @@ class PullRevision:
     def is_duplicated(refs):
         return len(refs) != len(set(refs))
 
-    def pull_revision(self):
+    def pull_revision(self, AQUA_DB: str):
         import pandas as pd
         from sqlalchemy.ext.declarative import declarative_base
         from sqlalchemy import Column, Integer, String
@@ -74,7 +74,7 @@ class PullRevision:
             #transfers across all reference strings
             verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
 
-        __, session = next(get_session())
+        __, session = next(get_session(AQUA_DB))
         logging.info("Loading verses from Revision %s...", self.revision_id)
         revision_verses = pd.read_sql(
             session.query(VerseText)
@@ -123,11 +123,10 @@ class PullRevision:
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
 )
-def pull_revision(revision_id: int) -> bytes:
+def pull_revision(revision_id: int, AQUA_DB: str) -> bytes:
     pr = PullRevision(revision_id)
-    pr.pull_revision()
+    pr.pull_revision(AQUA_DB)
     revision_bytes = pr.output_revision()
 
     return revision_bytes

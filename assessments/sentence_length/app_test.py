@@ -3,6 +3,7 @@ import requests
 from pathlib import Path
 import pytest
 import time
+import os
 
 import app
 
@@ -51,7 +52,7 @@ stub = modal.Stub(
         "psycopg2-binary",
         "requests_toolbelt==0.9.1",
     ),
-    secret=modal.Secret.from_name("aqua-api")
+    # secret=modal.Secret.from_name("aqua-pytest")
 )
 
 stub.run_sentence_length = modal.Function.from_name("sentence-length-test", "assess")
@@ -83,9 +84,10 @@ def test_metrics():
         run_test_metrics.call()
 
     
-@stub.function
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
 def run_assess_draft(config):
-    results = modal.container_app.run_sentence_length.call(config)
+    AQUA_DB = os.getenv("AQUA_DB")
+    results = modal.container_app.run_sentence_length.call(config, AQUA_DB, "", "")
     assert len(results) == 41899
     assert results[0]['score'] == pytest.approx(23.12, 0.01)
     assert results[31]['score'] == pytest.approx(33.62, 0.01)

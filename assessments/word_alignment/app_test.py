@@ -4,6 +4,7 @@ from pathlib import Path
 import time
 import pytest
 import pickle
+import os
 
 import word_alignment_steps.prepare_data as prepare_data
 from app import Assessment
@@ -105,9 +106,13 @@ def test_add_revision(base_url, header, filepath: Path):
 
 stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "assess")
 
-@stub.function(timeout=3600)
+@stub.function(
+    timeout=3600,
+    secret=modal.Secret.from_name('aqua-pytest'),
+    )
 def get_results(assessment_config: Assessment):
-    results = modal.container_app.run_word_alignment.call(assessment_config)
+    AQUA_DB = os.getenv("AQUA_DB")
+    results = modal.container_app.run_word_alignment.call(assessment_config, AQUA_DB, "", "")
     return results
 
 
@@ -139,12 +144,14 @@ def test_assess_draft(base_url, header, assessment_storage):
         assessment_storage.reference = reference
 
 
-stub.get_word_alignment_results = modal.Function.from_name("save-results-test", "get_results")
+stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_results")
 
 
-@stub.function
+@stub.function(secret=modal.Secret.from_name("aqua-pytest"))
 def check_word_alignment_results(assessment_config: Assessment):
-    top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference)
+    AQUA_DB = os.getenv("AQUA_DB")
+    database_id = AQUA_DB.split("@")[1].split(".")[0]
+    top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference, database_id)
     assert "source" in top_source_scores_df.columns
     assert "total_score" in top_source_scores_df.columns
     assert top_source_scores_df.loc[0, 'total_score'] == pytest.approx(0.6736, 0.001)

@@ -43,7 +43,6 @@ stub = modal.aio.AioStub(
 )
 
 stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
-stub.run_push_results = modal.Function.from_name("push_results", "push_results")
 stub.run_save_results = modal.Function.from_name("save-results", "save_results")
 
 
@@ -69,11 +68,9 @@ async def create_index_cache(tokenized_df, refresh: bool = False):
 @stub.function(
     shared_volumes={CACHE_DIR: index_cache_volume}, 
     timeout=7200,
-    secret=modal.Secret.from_name("aqua-db"),
     )
-async def get_index_cache(revision_id, refresh: bool = False):
-    tokenized_df = await get_tokenized_df.call(revision_id)
-    AQUA_DB = os.getenv("AQUA_DB")
+async def get_index_cache(revision_id, AQUA_DB, refresh: bool = False):
+    tokenized_df = await get_tokenized_df.call(revision_id, AQUA_DB)
     database_id = AQUA_DB.split("@")[1].split(".")[0]
     index_cache_file = Path(f"{CACHE_DIR}/{database_id}/{revision_id}-index-cache.json")
     (index_cache_file.parent).mkdir(parents=True, exist_ok=True)
@@ -93,14 +90,14 @@ async def get_index_cache(revision_id, refresh: bool = False):
 
 
 @stub.function
-async def get_text(revision_id: int) -> bytes:
-    return modal.container_app.run_pull_rev.call(revision_id)
+async def get_text(revision_id: int, AQUA_DB: str) -> bytes:
+    return modal.container_app.run_pull_rev.call(revision_id, AQUA_DB)
 
 
 @stub.function
-async def get_tokenized_df(revision_id: int):
+async def get_tokenized_df(revision_id: int, AQUA_DB:str):
     vref_filepath = Path("/root/vref.txt")
-    src_data = await get_text.call(revision_id)
+    src_data = await get_text.call(revision_id, AQUA_DB)
     df = pickle.loads(prepare_data.create_tokens(src_data, vref_filepath))
     return df
 
@@ -195,14 +192,14 @@ def run_total_scores(
 
 
 @stub.function(timeout=7200)
-async def assess(assessment_config: Assessment, return_all_results: bool=False):
+async def assess(assessment_config: Assessment, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str, return_all_results: bool=False):
     tokenized_dfs = {}
     index_caches = {}
     src_revision_id = assessment_config.reference
     trg_revision_id = assessment_config.revision
     results = await asyncio.gather(
         *[
-            get_index_cache.call(revision_id, refresh=False)
+            get_index_cache.call(revision_id, AQUA_DB, refresh=False)
             for revision_id in [src_revision_id, trg_revision_id]
         ]
     )
@@ -255,10 +252,13 @@ async def assess(assessment_config: Assessment, return_all_results: bool=False):
     df = total_results["verse_scores"]
 
     print("Saving results to modal shared volume")
+    database_id = AQUA_DB.split("@")[1].split(".")[0]
+
     modal.container_app.run_save_results.call(
         assessment_config.revision,
         assessment_config.reference,
         total_results["top_source_scores"],
+        database_id,
     )
 
     if return_all_results:

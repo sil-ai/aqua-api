@@ -3,6 +3,7 @@ import datetime
 from pydantic import BaseModel
 from enum import Enum
 from typing import Union
+import base64
 
 import modal
 import fastapi
@@ -51,8 +52,12 @@ class Assessment(BaseModel):
 
 
 class RunAssessment:
-    def __init__(self, config: Assessment):
+    def __init__(self, config: Assessment, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str):
         self.config = config
+        self.AQUA_DB = AQUA_DB
+        self.database_id = self.AQUA_DB.split("@")[1].split(".")[0]
+        self.AQUA_URL = AQUA_URL
+        self.AQUA_API_KEY = AQUA_API_KEY
         from sqlalchemy.orm import declarative_base
         from sqlalchemy import Column, Integer, Text, DateTime
         Base = declarative_base()        
@@ -75,7 +80,7 @@ class RunAssessment:
     def yield_session(self):
         from sqlalchemy.orm import Session
         from sqlalchemy import create_engine
-        engine = create_engine(os.environ["AQUA_DB"], pool_size=5, pool_recycle=3600)
+        engine = create_engine(self.AQUA_DB, pool_size=5, pool_recycle=3600)
 
         with Session(engine) as session:
             yield session
@@ -99,8 +104,8 @@ class RunAssessment:
             session.commit()
     
     def run_assessment(self):
-        print(self.config)
-        self.results = modal.container_app[self.config.type].call(self.config)
+        print(f"Starting assessment: {self.config} (database: {self.database_id})")
+        self.results = modal.container_app[self.config.type].call(self.config, self.AQUA_DB, self.AQUA_URL, self.AQUA_API_KEY)
         return {'status': 'finished'}
 
     def push_results(self):
@@ -108,20 +113,18 @@ class RunAssessment:
         for result in self.results:
             result['assessment_id'] = self.config.assessment
         if self.config.type == AssessmentType.missing_words.value:
-            response, ids = modal.container_app.run_push_missing_words.call(self.results)
+            response, ids = modal.container_app.run_push_missing_words.call(self.results, self.AQUA_DB)
         else:
-            response, ids = modal.container_app.run_push_results.call(self.results)
+            response, ids = modal.container_app.run_push_results.call(self.results, self.AQUA_DB)
         print(f"Finished pushing to the database. Response: {response}")
         return {'status': 'finished', 'ids': ids}
 
 
 
-@stub.function(
-secret=modal.Secret.from_name("aqua-db"),
-timeout=7200,
-)
-def run_assessment_runner(config):
-    assessment = RunAssessment(config=config)
+@stub.function(timeout=7200)
+def run_assessment_runner(config, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY:str):
+    assessment = RunAssessment(config=config, AQUA_DB=AQUA_DB, AQUA_URL=AQUA_URL, AQUA_API_KEY=AQUA_API_KEY)
+    print(f"Logging assessment start to database")
     assessment.log_start()
     try:
         response = assessment.run_assessment()
@@ -131,7 +134,7 @@ def run_assessment_runner(config):
         return {'status': 'failed'}
     
     try:
-        response = assessment.push_results()
+        response = assessment.push_results(AQUA_DB)
     except Exception as e:
         print(f"Pushing results failed: {e}")
         assessment.log_end(status='failed (database push)')
@@ -144,14 +147,14 @@ def run_assessment_runner(config):
 
 
 @stub.webhook(method="POST")
-async def assessment_runner(config: Assessment):
-
+async def assessment_runner(config: Assessment, AQUA_DB_ENCODED: bytes, AQUA_URL: str, AQUA_API_KEY:str):
+    AQUA_DB = AQUA_DB_ENCODED.decode('utf-8')
     # Handle the case where the requested assessment type isn't available.
     if config.type not in [a.value for a in AssessmentType]:
         # TODO: We need to record this as a failed assessment in the database.
         return fastapi.Response(content="Assessment type not available.", status_code=500)
     
     # Start the assessment, while continuing on to return a response to the user
-    run_assessment_runner.spawn(config)
+    run_assessment_runner.spawn(config, AQUA_DB, AQUA_URL, AQUA_API_KEY)
     
     return "Assessment runner started in the background, will take approximately 20 minutes to finish."

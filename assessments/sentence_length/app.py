@@ -82,12 +82,13 @@ class Assessment(BaseModel):
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def assess(assessment_config: Assessment):
+def assess(assessment_config: Assessment, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str):
     import pandas as pd
     
     #pull the revision
     rev_num = assessment_config.revision
-    lines = modal.container_app.run_pull_revision.call(rev_num)
+    print(AQUA_DB)
+    lines = modal.container_app.run_pull_revision.call(rev_num, AQUA_DB)
     lines = [line.strip() for line in lines]
 
     assert len(lines) == 41899

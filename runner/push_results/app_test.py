@@ -4,6 +4,7 @@ from pathlib import Path
 
 import modal
 import pytest
+import os
 
 from models import Result, Results
 
@@ -63,16 +64,16 @@ def test_add_revision(base_url, header, filepath: Path):
 
 
 @stub.function
-def push_results(results: Results):
-    return modal.container_app.run_push_results.call(results)
+def push_results(results: Results, AQUA_DB: str):
+    return modal.container_app.run_push_results.call(results, AQUA_DB)
 
 
 @stub.function
-def delete_results(ids: List[int]):
-    return modal.container_app.run_delete_results.call(ids)
+def delete_results(ids: List[int], AQUA_DB: str):
+    return modal.container_app.run_delete_results.call(ids, AQUA_DB)
 
 
-@stub.function(secret=modal.Secret.from_name("aqua-api"))
+@stub.function(secret=modal.Secret.from_name("aqua-pytest"))
 def push_df_rows(base_url, header):
     import pandas as pd
     import requests
@@ -112,13 +113,14 @@ def push_df_rows(base_url, header):
     Results(results=results)
 
     # Push the results to the DB.
-    response, ids = push_results.call(results)
+    AQUA_DB = os.getenv("AQUA_DB")
+    response, ids = push_results.call(results, AQUA_DB)
     print(response)
     assert response == 200
     print(ids)
     assert len(set(ids)) == num_rows
 
-    response, _ = delete_results.call(ids)
+    response, _ = delete_results.call(ids, AQUA_DB)
     assert response == 200
 
 
