@@ -61,7 +61,6 @@ def save_results(revision: int, reference: int, top_source_scores_df, database_i
 
 @stub.function(
     shared_volumes={RESULTS_DIR: word_alignment_results_volume},
-    # secrets=[modal.Secret.from_name("aqua-db"), modal.Secret.from_name("aqua-api")],
 )
 def get_results(revision: int, reference: int, database_id: str):
     """
