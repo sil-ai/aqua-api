@@ -1,6 +1,7 @@
 import modal
 import pytest
 from pathlib import Path
+import os
 
 from app import Assessment
 
@@ -34,8 +35,8 @@ stub.assess = modal.Function.from_name("semantic-similarity-test", "assess")
 
 
 @stub.function
-def get_assessment(config, offset: int=-1):
-    return modal.container_app.assess.call(config, offset)
+def get_assessment(config, AQUA_DB: str, offset: int=-1):
+    return modal.container_app.assess.call(config, AQUA_DB, offset)
 
 version_abbreviation = 'SS-DEL'
 version_name = 'semantic similarity delete'
@@ -72,13 +73,14 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
 
-@stub.function
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
 def assessment_object(draft_id, ref_id, expected):
+    AQUA_DB = os.getenv("AQUA_DB")
     config = Assessment(
                             revision=draft_id,
                             reference=ref_id,
                             type="semantic-similarity")
-    results = get_assessment.call(config)
+    results = get_assessment.call(config, AQUA_DB)
     #test for the right type of results
     assert type(results) == list
     #test for the expected length of results

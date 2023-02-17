@@ -23,8 +23,8 @@ stub = modal.Stub(
 
 
 class PushResults:
-    def __init__(self):
-        self.engine, self.session = next(get_session())
+    def __init__(self, AQUA_DB: str):
+        self.engine, self.session = next(get_session(AQUA_DB))
 
     def __del__(self):
         self.session.close()
@@ -199,39 +199,36 @@ class PushResults:
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
 )
-def push_results(results: List):
+def push_results(results: List, AQUA_DB: str):
     results_obj = []
     for result in results:
         result_obj = Result(**result)
         results_obj.append(result_obj)
     results_obj = Results(results=results_obj)
-    pr = PushResults()
+    pr = PushResults(AQUA_DB)
     response, ids = pr.insert_results(results_obj)
     return response, ids
 
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
 )
-def push_missing_words(missing_words: List):
+def push_missing_words(missing_words: List, AQUA_DB: str):
     missing_words_obj = []
     for missing_word in missing_words:
         missing_word_obj = MissingWord(**missing_word)
         missing_words_obj.append(missing_word_obj)
     missing_words_obj = MissingWords(missing_words=missing_words_obj)
-    pr = PushResults()
+    pr = PushResults(AQUA_DB)
     response, ids = pr.insert_missing_words(missing_words_obj)
     return response, ids
 
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
 )
-def delete_results(ids: List[int]):
-    pr = PushResults()
+def delete_results(ids: List[int], AQUA_DB: str):
+    pr = PushResults(AQUA_DB)
     pr.delete(ids)
     return 200, "OK"

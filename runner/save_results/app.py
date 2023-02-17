@@ -31,9 +31,8 @@ RESULTS_DIR = Path("/results")
 
 @stub.function(
     shared_volumes={RESULTS_DIR: word_alignment_results_volume},
-    secret=modal.Secret.from_name("aqua-db"),
 )
-def save_results(revision: int, reference: int, top_source_scores_df):
+def save_results(revision: int, reference: int, top_source_scores_df, database_id: str):
     """
     Save the word alignment results to the results directory in the modal shared volume.
 
@@ -53,8 +52,6 @@ def save_results(revision: int, reference: int, top_source_scores_df):
     """
     # Create the results directory if it doesn't exist
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
     results_dir = RESULTS_DIR / f"{database_id}/{reference}-{revision}"
     results_dir.mkdir(parents=True, exist_ok=True)
     top_source_scores_df.to_csv(results_dir / "top_source_scores.csv", index=False)
@@ -63,9 +60,8 @@ def save_results(revision: int, reference: int, top_source_scores_df):
 
 @stub.function(
     shared_volumes={RESULTS_DIR: word_alignment_results_volume},
-    secrets=[modal.Secret.from_name("aqua-db"), modal.Secret.from_name("aqua-api")],
 )
-def get_results(revision: int, reference: int):
+def get_results(revision: int, reference: int, database_id: str):
     """
     Get top_source_scores from word alignment between revision and reference.
 
@@ -86,8 +82,6 @@ def get_results(revision: int, reference: int):
     """
     import pandas as pd
 
-    AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
     top_source_scores_file = (
         RESULTS_DIR / f"{database_id}/{reference}-{revision}" / "top_source_scores.csv"
     )
@@ -101,9 +95,8 @@ def get_results(revision: int, reference: int):
 
 @stub.function(
     shared_volumes={RESULTS_DIR: word_alignment_results_volume},
-    secrets=[modal.Secret.from_name("aqua-db"), modal.Secret.from_name("aqua-api")],
 )
-def delete_results(revision: int, reference: int):
+def delete_results(revision: int, reference: int, database_id: str):
     """
     Delete top_source_scores from word alignment between revision and reference.
 
@@ -117,8 +110,6 @@ def delete_results(revision: int, reference: int):
     Returns:
     None
     """
-    AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
     top_source_scores_file = (
         RESULTS_DIR / f"{database_id}/{reference}-{revision}" / "top_source_scores.csv"
     )

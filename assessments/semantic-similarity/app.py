@@ -98,8 +98,8 @@ class SemanticSimilarity:
 
 
 @stub.function
-def get_text(rev_id: int):
-    return modal.container_app.run_pull_rev.call(rev_id)
+def get_text(rev_id: int, AQUA_DB: str):
+    return modal.container_app.run_pull_rev.call(rev_id, AQUA_DB)
 
 
 @stub.function
@@ -114,9 +114,9 @@ def merge(revision_id, revision_verses, reference_id, reference_verses):
         cpu=4,
         shared_volumes={CACHE_PATH: volume},
 )
-def assess(assessment: Assessment, offset=-1):
-    revision = get_text.call(assessment.revision)
-    reference = get_text.call(assessment.reference)
+def assess(assessment: Assessment, AQUA_DB: str, offset=-1):
+    revision = get_text.call(assessment.revision, AQUA_DB)
+    reference = get_text.call(assessment.reference, AQUA_DB)
     df = merge.call(assessment.revision,
                     revision,
                     assessment.reference,
