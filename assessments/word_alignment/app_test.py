@@ -112,7 +112,8 @@ stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "asses
     )
 def get_results(assessment_config: Assessment):
     AQUA_DB = os.getenv("AQUA_DB")
-    results = modal.container_app.run_word_alignment.call(assessment_config, AQUA_DB, "", "")
+    print(AQUA_DB)
+    results = modal.container_app.run_word_alignment.call(assessment_config, AQUA_DB)
     return results
 
 
@@ -150,7 +151,7 @@ stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_
 @stub.function(secret=modal.Secret.from_name("aqua-pytest"))
 def check_word_alignment_results(assessment_config: Assessment):
     AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference, database_id)
     assert "source" in top_source_scores_df.columns
     assert "total_score" in top_source_scores_df.columns

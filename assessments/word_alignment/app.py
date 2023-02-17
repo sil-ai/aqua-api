@@ -71,7 +71,7 @@ async def create_index_cache(tokenized_df, refresh: bool = False):
     )
 async def get_index_cache(revision_id, AQUA_DB, refresh: bool = False):
     tokenized_df = await get_tokenized_df.call(revision_id, AQUA_DB)
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     index_cache_file = Path(f"{CACHE_DIR}/{database_id}/{revision_id}-index-cache.json")
     (index_cache_file.parent).mkdir(parents=True, exist_ok=True)
     if index_cache_file.exists() and not refresh:
@@ -192,7 +192,9 @@ def run_total_scores(
 
 
 @stub.function(timeout=7200)
-async def assess(assessment_config: Assessment, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str, return_all_results: bool=False):
+async def assess(assessment_config: Assessment, AQUA_DB: str, return_all_results: bool=False):
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
+    print(f"Starting assessment for {database_id}, revision {assessment_config.revision}, reference {assessment_config.reference}")
     tokenized_dfs = {}
     index_caches = {}
     src_revision_id = assessment_config.reference
@@ -252,7 +254,6 @@ async def assess(assessment_config: Assessment, AQUA_DB: str, AQUA_URL: str, AQU
     df = total_results["verse_scores"]
 
     print("Saving results to modal shared volume")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
 
     modal.container_app.run_save_results.call(
         assessment_config.revision,
