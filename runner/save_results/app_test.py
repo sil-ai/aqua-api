@@ -1,5 +1,6 @@
 import modal
 import time
+import os
 
 stub = modal.Stub(
     "run-save-results-test",
@@ -31,7 +32,7 @@ def run_save_results():
     'B': [3, 4]
     })
     AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     modal.container_app.save_results_test.call(314159, 271828, df, database_id)
 
 def test_run_save_results():
@@ -43,7 +44,7 @@ def run_get_results():
     #Get the results from the results directory
     import pandas as pd
     AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     top_source_scores_df = modal.container_app.get_results_test.call(314159, 271828, database_id)
     print(top_source_scores_df)
     assert isinstance(top_source_scores_df, pd.DataFrame)
@@ -59,7 +60,7 @@ def test_run_get_results():
 def run_delete_results():
     #Delete the results from the results directory
     AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     modal.container_app.delete_results_test.call(314159, 271828, database_id)
     time.sleep(5)
     response = modal.container_app.get_results_test.call(314159, 271828, database_id)
