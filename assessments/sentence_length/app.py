@@ -87,7 +87,6 @@ def assess(assessment_config: Assessment, AQUA_DB: str):
     
     #pull the revision
     rev_num = assessment_config.revision
-    print(AQUA_DB)
     lines = modal.container_app.run_pull_revision.call(rev_num, AQUA_DB)
     lines = [line.strip() for line in lines]
 
