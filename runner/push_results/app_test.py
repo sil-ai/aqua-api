@@ -73,24 +73,36 @@ def delete_results(ids: List[int], AQUA_DB: str):
     return modal.container_app.run_delete_results.call(ids, AQUA_DB)
 
 
-@stub.function(secret=modal.Secret.from_name("aqua-pytest"))
-def push_df_rows(base_url, header):
+@stub.function(secrets=[modal.Secret.from_name("aqua-pytest"), modal.Secret.from_name("aqua-api")])
+def push_df_rows():
     import pandas as pd
     import requests
+    import os
 
+    AQUA_DB = os.getenv("AQUA_DB")
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
+    print(database_id)
+    AQUA_URL = os.getenv(f"AQUA_URL_{database_id.replace('-', '_')}")
+    AQUA_API_KEY = os.getenv(f"AQUA_API_KEY_{database_id.replace('-', '_')}")
+    print(AQUA_URL)
+    print(AQUA_API_KEY)
+    
     df = pd.read_csv("/root/verse_scores.csv")
     num_rows = 10
     results = []
 
     # Create an assessment
-    url = base_url + "/revision"
+    url = AQUA_URL + "/revision"
+    key =  "Bearer" + " " + AQUA_API_KEY
+    header = {"Authorization": key}
     response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
-
+    print(response)
     reference = response.json()[0]['id']
     revision = response.json()[1]['id']
     
+    url = AQUA_URL + "/assessment"
     response = requests.post(
-        f"{base_url}/assessment",
+        url,
         json={
             "revision": revision,
             "reference": reference,
@@ -98,7 +110,7 @@ def push_df_rows(base_url, header):
         },
         headers=header,
     )
-
+    print(response)
     assessment_id = response.json()['data']['id']
 
     for _, row in df.iloc[:num_rows, :].iterrows():
@@ -124,9 +136,9 @@ def push_df_rows(base_url, header):
     assert response == 200
 
 
-def test_push_df_rows(base_url, header):
+def test_push_df_rows():
     with stub.run():
-        push_df_rows.call(base_url, header)
+        push_df_rows.call()
 
 
 def test_push_wrong_data_type():
