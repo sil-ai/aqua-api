@@ -4,7 +4,6 @@ from pathlib import Path
 import time
 import pytest
 import pickle
-import os
 
 import word_alignment_steps.prepare_data as prepare_data
 from app import Assessment
@@ -111,6 +110,7 @@ stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "asses
     secret=modal.Secret.from_name('aqua-pytest'),
     )
 def get_results(assessment_config: Assessment):
+    import os
     AQUA_DB = os.getenv("AQUA_DB")
     print(AQUA_DB)
     results = modal.container_app.run_word_alignment.call(assessment_config, AQUA_DB)
@@ -150,6 +150,7 @@ stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_
 
 @stub.function(secret=modal.Secret.from_name("aqua-pytest"))
 def check_word_alignment_results(assessment_config: Assessment):
+    import os
     AQUA_DB = os.getenv("AQUA_DB")
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference, database_id)

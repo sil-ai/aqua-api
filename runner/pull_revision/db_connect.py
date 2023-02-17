@@ -1,6 +1,3 @@
-import os
-
-
 def get_session(AQUA_DB: str):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import Session

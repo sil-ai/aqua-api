@@ -1,5 +1,4 @@
 from pathlib import Path
-import os
 
 import pytest
 import modal
@@ -60,6 +59,7 @@ def test_add_revision(base_url, header, filepath: Path):
 
 @stub.function(timeout=3600, secret=modal.Secret.from_name("aqua-pytest"))
 def get_missing_words(assessment_config: Assessment):
+    import os
     AQUA_DB = os.getenv("AQUA_DB")
     missing_words = modal.container_app.run_missing_words.call(assessment_config, AQUA_DB, via_api=False, refresh_refs=True)
     assert missing_words[0]['score'] == pytest.approx(0.090, 0.01)

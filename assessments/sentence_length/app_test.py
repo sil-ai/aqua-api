@@ -3,7 +3,6 @@ import requests
 from pathlib import Path
 import pytest
 import time
-import os
 
 import app
 
@@ -86,6 +85,7 @@ def test_metrics():
     
 @stub.function(secret=modal.Secret.from_name('aqua-pytest'))
 def run_assess_draft(config):
+    import os
     AQUA_DB = os.getenv("AQUA_DB")
     results = modal.container_app.run_sentence_length.call(config, AQUA_DB)
     assert len(results) == 41899

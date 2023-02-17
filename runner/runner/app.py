@@ -126,7 +126,7 @@ class RunAssessment:
 @stub.function(timeout=7200)
 def run_assessment_runner(config, AQUA_DB):
     assessment = RunAssessment(config=config, AQUA_DB=AQUA_DB)
-    print(f"Logging assessment start to database")
+    print("Logging assessment start to database")
     assessment.log_start()
     try:
         response = assessment.run_assessment()
