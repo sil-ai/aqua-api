@@ -4,7 +4,6 @@ from pathlib import Path
 
 import modal
 import pytest
-import os
 
 from models import Result, Results
 
