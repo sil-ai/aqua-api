@@ -92,7 +92,6 @@ def push_df_rows():
     key =  "Bearer" + " " + AQUA_API_KEY
     header = {"Authorization": key}
     response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
-    print(response)
     reference = response.json()[0]['id']
     revision = response.json()[1]['id']
     
@@ -106,7 +105,6 @@ def push_df_rows():
         },
         headers=header,
     )
-    print(response)
     assessment_id = response.json()['data']['id']
 
     for _, row in df.iloc[:num_rows, :].iterrows():
@@ -123,9 +121,8 @@ def push_df_rows():
     # Push the results to the DB.
     AQUA_DB = os.getenv("AQUA_DB")
     response, ids = push_results.call(results, AQUA_DB)
-    print(response)
+    
     assert response == 200
-    print(ids)
     assert len(set(ids)) == num_rows
 
     response, _ = delete_results.call(ids, AQUA_DB)
