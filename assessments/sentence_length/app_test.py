@@ -87,7 +87,7 @@ def test_metrics():
 @stub.function(secret=modal.Secret.from_name('aqua-pytest'))
 def run_assess_draft(config):
     AQUA_DB = os.getenv("AQUA_DB")
-    results = modal.container_app.run_sentence_length.call(config, AQUA_DB, "", "")
+    results = modal.container_app.run_sentence_length.call(config, AQUA_DB)
     assert len(results) == 41899
     assert results[0]['score'] == pytest.approx(23.12, 0.01)
     assert results[31]['score'] == pytest.approx(33.62, 0.01)

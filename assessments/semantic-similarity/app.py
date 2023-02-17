@@ -114,7 +114,7 @@ def merge(revision_id, revision_verses, reference_id, reference_verses):
         cpu=4,
         shared_volumes={CACHE_PATH: volume},
 )
-def assess(assessment: Assessment, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str offset=-1):
+def assess(assessment: Assessment, AQUA_DB: str, offset=-1):
     revision = get_text.call(assessment.revision, AQUA_DB)
     reference = get_text.call(assessment.reference, AQUA_DB)
     df = merge.call(assessment.revision,

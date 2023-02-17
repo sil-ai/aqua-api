@@ -36,7 +36,7 @@ stub.assess = modal.Function.from_name("semantic-similarity-test", "assess")
 
 @stub.function
 def get_assessment(config, AQUA_DB: str, offset: int=-1):
-    return modal.container_app.assess.call(config, AQUA_DB, "", "", offset)
+    return modal.container_app.assess.call(config, AQUA_DB, offset)
 
 version_abbreviation = 'SS-DEL'
 version_name = 'semantic similarity delete'

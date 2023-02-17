@@ -82,7 +82,7 @@ class Assessment(BaseModel):
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def assess(assessment_config: Assessment, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str):
+def assess(assessment_config: Assessment, AQUA_DB: str):
     import pandas as pd
     
     #pull the revision
