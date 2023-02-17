@@ -149,7 +149,9 @@ def run_assessment_runner(config, AQUA_DB):
 
 
 @stub.webhook(method="POST")
-async def assessment_runner(config: Assessment, AQUA_DB_ENCODED: bytes):
+async def assessment_runner(config: Assessment, AQUA_DB_ENCODED: Optional[bytes]=None):
+    if AQUA_DB_ENCODED is None:
+        return fastapi.Response(content="AQUA_DB_ENCODED is not set. This may be an empty test", status_code=200)
     AQUA_DB = base64.b64decode(AQUA_DB_ENCODED).decode('utf-8')
     # Handle the case where the requested assessment type isn't available.
     if config.type not in [a.value for a in AssessmentType]:
