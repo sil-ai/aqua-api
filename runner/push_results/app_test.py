@@ -80,11 +80,8 @@ def push_df_rows():
 
     AQUA_DB = os.getenv("AQUA_DB")
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
-    print(database_id)
     AQUA_URL = os.getenv(f"AQUA_URL_{database_id.replace('-', '_')}")
     AQUA_API_KEY = os.getenv(f"AQUA_API_KEY_{database_id.replace('-', '_')}")
-    print(AQUA_URL)
-    print(AQUA_API_KEY)
     
     df = pd.read_csv("/root/verse_scores.csv")
     num_rows = 10
