@@ -199,7 +199,6 @@ class PushResults:
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
 )
 def push_results(results: List, AQUA_DB: str):
     results_obj = []
@@ -214,7 +213,6 @@ def push_results(results: List, AQUA_DB: str):
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
 )
 def push_missing_words(missing_words: List, AQUA_DB: str):
     missing_words_obj = []
@@ -229,7 +227,6 @@ def push_missing_words(missing_words: List, AQUA_DB: str):
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
 )
 def delete_results(ids: List[int], AQUA_DB: str):
     pr = PushResults(AQUA_DB)
