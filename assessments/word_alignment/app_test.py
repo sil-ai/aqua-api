@@ -112,7 +112,6 @@ stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "asses
 def get_results(assessment_config: Assessment):
     import os
     AQUA_DB = os.getenv("AQUA_DB")
-    print(AQUA_DB)
     results = modal.container_app.run_word_alignment.call(assessment_config, AQUA_DB)
     return results
 
