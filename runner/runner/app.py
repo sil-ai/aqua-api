@@ -2,7 +2,7 @@ import os
 import datetime
 from pydantic import BaseModel
 from enum import Enum
-from typing import Union
+from typing import Union, Optional
 import base64
 
 import modal
@@ -42,7 +42,7 @@ for a in AssessmentType:
 
 
 class Assessment(BaseModel):
-    assessment: int
+    assessment: Optional[int] = None
     revision: int
     reference: Union[int, None] = None  # Can be an int or 'null'
     type: AssessmentType
@@ -52,12 +52,10 @@ class Assessment(BaseModel):
 
 
 class RunAssessment:
-    def __init__(self, config: Assessment, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str):
+    def __init__(self, config: Assessment, AQUA_DB: str):
         self.config = config
         self.AQUA_DB = AQUA_DB
-        self.database_id = self.AQUA_DB.split("@")[1].split(".")[0]
-        self.AQUA_URL = AQUA_URL
-        self.AQUA_API_KEY = AQUA_API_KEY
+        self.database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
         from sqlalchemy.orm import declarative_base
         from sqlalchemy import Column, Integer, Text, DateTime
         Base = declarative_base()        
@@ -105,10 +103,14 @@ class RunAssessment:
     
     def run_assessment(self):
         print(f"Starting assessment: {self.config} (database: {self.database_id})")
-        self.results = modal.container_app[self.config.type].call(self.config, self.AQUA_DB, self.AQUA_URL, self.AQUA_API_KEY)
+        self.results = modal.container_app[self.config.type].call(self.config, self.AQUA_DB)
         return {'status': 'finished'}
 
     def push_results(self):
+        if self.config.assessment is None:
+            print("Not pushing results to the database.")
+            # This is probably a test, and there is no assessment ID to push the results to.
+            return {'status': 'finished', 'ids': []}
         print('Pushing results to the database')
         for result in self.results:
             result['assessment_id'] = self.config.assessment
@@ -122,8 +124,8 @@ class RunAssessment:
 
 
 @stub.function(timeout=7200)
-def run_assessment_runner(config, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY:str):
-    assessment = RunAssessment(config=config, AQUA_DB=AQUA_DB, AQUA_URL=AQUA_URL, AQUA_API_KEY=AQUA_API_KEY)
+def run_assessment_runner(config, AQUA_DB):
+    assessment = RunAssessment(config=config, AQUA_DB=AQUA_DB)
     print(f"Logging assessment start to database")
     assessment.log_start()
     try:
@@ -134,7 +136,7 @@ def run_assessment_runner(config, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY:str)
         return {'status': 'failed'}
     
     try:
-        response = assessment.push_results(AQUA_DB)
+        response = assessment.push_results()
     except Exception as e:
         print(f"Pushing results failed: {e}")
         assessment.log_end(status='failed (database push)')
@@ -147,14 +149,14 @@ def run_assessment_runner(config, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY:str)
 
 
 @stub.webhook(method="POST")
-async def assessment_runner(config: Assessment, AQUA_DB_ENCODED: bytes, AQUA_URL: str, AQUA_API_KEY:str):
-    AQUA_DB = AQUA_DB_ENCODED.decode('utf-8')
+async def assessment_runner(config: Assessment, AQUA_DB_ENCODED: bytes):
+    AQUA_DB = base64.b64decode(AQUA_DB_ENCODED).decode('utf-8')
     # Handle the case where the requested assessment type isn't available.
     if config.type not in [a.value for a in AssessmentType]:
         # TODO: We need to record this as a failed assessment in the database.
         return fastapi.Response(content="Assessment type not available.", status_code=500)
     
     # Start the assessment, while continuing on to return a response to the user
-    run_assessment_runner.spawn(config, AQUA_DB, AQUA_URL, AQUA_API_KEY)
+    run_assessment_runner.spawn(config, AQUA_DB)
     
     return "Assessment runner started in the background, will take approximately 20 minutes to finish."
