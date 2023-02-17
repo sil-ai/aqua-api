@@ -51,7 +51,6 @@ stub = modal.Stub(
         "psycopg2-binary",
         "requests_toolbelt==0.9.1",
     ),
-    # secret=modal.Secret.from_name("aqua-pytest")
 )
 
 stub.run_sentence_length = modal.Function.from_name("sentence-length-test", "assess")
