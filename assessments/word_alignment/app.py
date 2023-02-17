@@ -86,6 +86,7 @@ async def get_index_cache(revision_id, AQUA_DB, refresh: bool = False):
         index_cache = await create_index_cache(tokenized_df, refresh=refresh)
         with open(index_cache_file, "w") as f:
             json.dump(index_cache, f, indent=4)
+    
     return revision_id, index_cache, tokenized_df
 
 
