@@ -61,9 +61,7 @@ def test_add_revision(base_url, header, filepath: Path):
 @stub.function(timeout=3600, secret=modal.Secret.from_name("aqua-pytest"))
 def get_missing_words(assessment_config: Assessment):
     AQUA_DB = os.getenv("AQUA_DB")
-    AQUA_URL = os.getenv("AQUA_URL")
-    AQUA_API_KEY = os.getenv("AQUA_API_KEY")
-    missing_words = modal.container_app.run_missing_words.call(assessment_config, AQUA_DB, AQUA_URL, AQUA_API_KEY, refresh_refs=True)
+    missing_words = modal.container_app.run_missing_words.call(assessment_config, AQUA_DB, via_api=False, refresh_refs=True)
     assert missing_words[0]['score'] == pytest.approx(0.090, 0.01)
     assert missing_words[1]['score'] == pytest.approx(0.056, 0.01)
     assert missing_words[2]['score'] == pytest.approx(0.097, 0.01)
