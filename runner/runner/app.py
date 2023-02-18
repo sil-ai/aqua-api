@@ -128,12 +128,16 @@ def run_assessment_runner(config, AQUA_DB):
     assessment = RunAssessment(config=config, AQUA_DB=AQUA_DB)
     print("Logging assessment start to database")
     assessment.log_start()
-    try:
-        response = assessment.run_assessment()
-    except Exception as e:
-        print(f"Assessment failed: {e}")
-        assessment.log_end(status='failed')
-        return {'status': 'failed'}
+    attempt = 0
+    while attempt < 3:
+        try:
+            response = assessment.run_assessment()
+        except Exception as e:
+            print(f"Assessment failed: {e}")
+            assessment.log_end(status='failed')
+            attempt += 1
+            continue
+        break
     
     try:
         response = assessment.push_results()
@@ -151,13 +155,14 @@ def run_assessment_runner(config, AQUA_DB):
 @stub.webhook(method="POST")
 async def assessment_runner(config: Assessment, AQUA_DB_ENCODED: Optional[bytes]=None):
     if AQUA_DB_ENCODED is None:
+        print("No AQUA_DB_ENCODED set. This may be an empty test.")
         return fastapi.Response(content="AQUA_DB_ENCODED is not set. This may be an empty test", status_code=200)
     AQUA_DB = base64.b64decode(AQUA_DB_ENCODED).decode('utf-8')
     # Handle the case where the requested assessment type isn't available.
     if config.type not in [a.value for a in AssessmentType]:
         # TODO: We need to record this as a failed assessment in the database.
         return fastapi.Response(content="Assessment type not available.", status_code=500)
-    
+    print(AQUA_DB)
     # Start the assessment, while continuing on to return a response to the user
     run_assessment_runner.spawn(config, AQUA_DB)
     
