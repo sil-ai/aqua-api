@@ -133,7 +133,7 @@ def run_assessment_runner(config, AQUA_DB):
         try:
             response = assessment.run_assessment()
         except Exception as e:
-            print(f"Assessment failed: {e}")
+            print(f"Assessment failed (attempt {attempt}): {e}")
             assessment.log_end(status='failed')
             attempt += 1
             continue
