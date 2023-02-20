@@ -41,7 +41,7 @@ new_branch_call = requests.post(
         )
 
 new_branch_endpoint = new_branch_call.json()["endpoints"][0]["host"]
-new_db_conn = db_empty_string + new_branch_endpoint + "/aqua"
+new_db_conn = db_empty_string + "@" + new_branch_endpoint + "/aqua"
 
 db_con = {
     "type": "pg_add_source",
@@ -59,6 +59,7 @@ db_con = {
             }
           }
         }
+
 
 db_con_response = requests.post(
         db_con_url, 
