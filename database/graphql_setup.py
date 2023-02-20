@@ -66,3 +66,5 @@ db_con_response = requests.post(
         json=db_con, 
         headers=hasura_headers
         )
+
+print(new_db_conn)
