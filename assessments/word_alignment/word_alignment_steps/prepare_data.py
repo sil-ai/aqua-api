@@ -99,6 +99,7 @@ def condense_df(df_pkl: bytes) -> bytes:
     df['next_src'] = df['src'].shift(-1)
     df['next_trg'] = df['trg'].shift(-1)
     df['range_next'] = (df['next_src'] == '< range >') | (df['next_trg'] == '< range >')
+    df = df.reset_index()
     for index, row in df[:1:-1].iterrows():
         if row['range_next']:
             df.loc[index, 'indices'] += ' ' + df.loc[index+1, 'indices']
@@ -108,6 +109,7 @@ def condense_df(df_pkl: bytes) -> bytes:
                 df.loc[index, 'trg'] += ' ' + df.loc[index+1, 'trg'].replace('< range >', '')
     df = df[(df['src'] != '< range >') & (df['trg'] != '< range >')]
     df = df.drop(['next_src', 'next_trg', 'range_next'], axis=1)
+    df = df.set_index('index')
     df_pkl = pickle.dumps(df)
     return df_pkl
 
