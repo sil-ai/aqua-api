@@ -34,7 +34,7 @@ with Client(transport=transport,
 
     revision_date = '"' + str(date.today()) + '"'
     revision_query = queries.insert_bible_revision(
-            version_id, revision_date, "false"
+            version_id, "null", revision_date, "false"
             )
         
     revision_upload = gql(revision_query)
