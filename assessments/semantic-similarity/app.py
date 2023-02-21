@@ -78,8 +78,8 @@ class SemanticSimilarity:
         
         returns sentences plus a score
         """
-        sent1_input = self.semsim_tokenizer(sent1, return_tensors="pt", padding=True)
-        sent2_input = self.semsim_tokenizer(sent2, return_tensors="pt", padding=True)
+        sent1_input = self.semsim_tokenizer(sent1, return_tensors="pt", padding=True, truncation=True)
+        sent2_input = self.semsim_tokenizer(sent2, return_tensors="pt", padding=True, truncation=True)
         with torch.no_grad():
             sent1_output = self.semsim_model(**sent1_input)
             sent2_output = self.semsim_model(**sent2_input)
