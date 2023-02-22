@@ -1,5 +1,6 @@
 import fastapi
 
+import bible_routes.language_routes as language_routes
 import bible_routes.version_routes as version_routes
 import bible_routes.revision_routes as revision_routes
 import bible_routes.verse_routes as verse_routes
@@ -15,6 +16,7 @@ def configure(app):
 
 
 def configure_routing(app):
+    app.include_router(language_routes.router)
     app.include_router(revision_routes.router)
     app.include_router(version_routes.router)
     app.include_router(verse_routes.router)

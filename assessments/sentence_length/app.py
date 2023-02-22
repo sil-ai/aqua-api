@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import string
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, Optional
 
 import modal
 
@@ -74,7 +74,7 @@ def get_lix_score(text):
 
 
 class Assessment(BaseModel):
-    assessment: int
+    assessment: Optional[int] = None
     revision: int
     type: Literal["sentence-length"]
 
@@ -82,12 +82,12 @@ class Assessment(BaseModel):
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def assess(assessment_config: Assessment, push_to_db: bool=True):
+def assess(assessment_config: Assessment, AQUA_DB: str):
     import pandas as pd
     
     #pull the revision
     rev_num = assessment_config.revision
-    lines = modal.container_app.run_pull_revision.call(rev_num)
+    lines = modal.container_app.run_pull_revision.call(rev_num, AQUA_DB)
     lines = [line.strip() for line in lines]
 
     assert len(lines) == 41899
@@ -130,10 +130,5 @@ def assess(assessment_config: Assessment, push_to_db: bool=True):
                         'vref': row['vref'], 'score': row['lix_score'], 
                         'flag': False})
 
-    if not push_to_db:
-        return {'status': 'finished (not pushed to database)', 'ids': []}
+    return results
 
-    print('Pushing results to the database')
-    response, ids = modal.container_app.run_push_results.call(results)
-
-    return {'status': 'finished', 'ids': ids}

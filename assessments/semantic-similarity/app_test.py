@@ -1,10 +1,9 @@
 import modal
 import pytest
 from pathlib import Path
+import os
 
 from app import Assessment
-
-assessment_id = 999999
 
 volume = modal.SharedVolume().persist("pytorch-model-vol")
 CACHE_PATH = "/root/model_cache"
@@ -20,14 +19,14 @@ stub = modal.Stub(
     "transformers==4.21.0",
     "SQLAlchemy==1.4.46"
     ).copy(
-         modal.Mount(
-            local_file="./fixtures/swahili_revision.pkl",
-            remote_dir="/root/fixtures/"
+         modal.Mount.from_local_file(
+            local_path="./fixtures/swahili_revision.pkl",
+            remote_path="/root/fixtures/swahili_revision.pkl"
         )
     ).copy(
-         modal.Mount(
-            local_file="./fixtures/swahili_drafts.yml",
-            remote_dir="/root/fixtures/"
+         modal.Mount.from_local_file(
+            local_path="./fixtures/swahili_drafts.yml",
+            remote_path="/root/fixtures/swahili_drafts.yml"
         )
     )
 )
@@ -36,8 +35,8 @@ stub.assess = modal.Function.from_name("semantic-similarity-test", "assess")
 
 
 @stub.function
-def get_assessment(config, offset: int=-1):
-    return modal.container_app.assess.call(config, offset)
+def get_assessment(config, AQUA_DB: str, offset: int=-1):
+    return modal.container_app.assess.call(config, AQUA_DB, offset)
 
 version_abbreviation = 'SS-DEL'
 version_name = 'semantic similarity delete'
@@ -74,14 +73,14 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
 
-@stub.function
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
 def assessment_object(draft_id, ref_id, expected):
+    AQUA_DB = os.getenv("AQUA_DB")
     config = Assessment(
-                            assessment=assessment_id,
                             revision=draft_id,
                             reference=ref_id,
                             type="semantic-similarity")
-    results = get_assessment.call(config)
+    results = get_assessment.call(config, AQUA_DB)
     #test for the right type of results
     assert type(results) == list
     #test for the expected length of results
@@ -147,7 +146,7 @@ def prediction_tester(expected, score):
 @pytest.mark.parametrize('idx,expected',[(0,1),(1,0)],ids=['LUK 1:1','LUK 1:2'])
 #test sem_sim predictions
 def test_predictions(idx, expected, request, valuestorage):
-    print(request.node.name)
+    
     with stub.run():
         try:
             score = valuestorage.results[idx]['score']
@@ -158,8 +157,7 @@ def test_predictions(idx, expected, request, valuestorage):
 
 #!!! Assumes that predict is the same as app.py
 @stub.function(shared_volumes={CACHE_PATH: volume})
-def predict(sent1: str, sent2: str, ref: str,
-            assessment_id: int, precision: int=2):
+def predict(sent1: str, sent2: str, ref: str, precision: int=2):
     import torch
     from app import SemanticSimilarity, similarity
 
@@ -174,11 +172,8 @@ def predict(sent1: str, sent2: str, ref: str,
     sent2_embedding = sent2_output.pooler_output
 
     sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
-    #prints the ref to see how we are doing
-    print(ref)
     sim_score = round(float(sim_matrix[0][0]),precision)
     return {
-        'assessment_id': assessment_id,
         'vref': ref,
         'score': sim_score,
     }
@@ -188,9 +183,9 @@ def predict(sent1: str, sent2: str, ref: str,
 def get_swahili_verses(verse_offset, variance):
     import pandas as pd
     import yaml
-    drafts = yaml.safe_load(open('./fixtures/swahili_drafts.yml'))['drafts']
+    drafts = yaml.safe_load(open('/root/fixtures/swahili_drafts.yml'))['drafts']
     draft_verse = drafts[f"{verse_offset}-{variance}"]
-    swahili_revision = pd.read_pickle('./fixtures/swahili_revision.pkl')
+    swahili_revision = pd.read_pickle('/root/fixtures/swahili_revision.pkl')
     verse = swahili_revision.iloc[verse_offset].text
     return verse, draft_verse
 
@@ -208,9 +203,8 @@ def get_swahili_verses(verse_offset, variance):
                         )
 def test_swahili_revision(verse_offset, variance, expected, request):
     with stub.run():
-        print(request.node.name)
         verse, draft_verse = get_swahili_verses.call(verse_offset, variance)
-        results = predict.call(verse, draft_verse, request.node.name, assessment_id)
+        results = predict.call(verse, draft_verse, request.node.name)
         assert results['score'] == expected
 
 

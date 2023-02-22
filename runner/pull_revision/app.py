@@ -77,11 +77,11 @@ class PullRevision:
             #transfers across all reference strings
             verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
 
+<<<<<<< HEAD
         __, session = next(get_session(self.AQUA_DB))
+=======
+        __, session = next(get_session(AQUA_DB))
         logging.info("Loading verses from Revision %s...", self.revision_id)
-        return pd.read_sql(
-            session.query(VerseText)
-            .filter(VerseText.bibleRevision == self.revision_id)
             .statement,
             session.bind,
         )

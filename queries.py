@@ -129,18 +129,18 @@ def delete_verses_mutation(bibleRevision):
     return delete_verses
 
 
-def insert_bible_revision(version, date, published):
+def insert_bible_revision(version, name, date, published):
     bible_revise = """
                 mutation {{
                   insert_bibleRevision(objects: {{
-                    bibleVersion: {}, date: {}, published: {}
+                    bibleVersion: {}, name: {}, date: {}, published: {}
                     }}) {{
                     returning {{
                       id
                     }}
                   }}
                 }}
-                """.format(version, date, published)
+                """.format(version, name, date, published)
         
     return bible_revise
 
@@ -167,6 +167,7 @@ def list_all_revisions_query():
                     bibleRevision {
                       id
                       date
+                      name
                       bibleVersionByBibleversion {
                         name
                       }
@@ -189,6 +190,7 @@ def list_revisions_query(bibleVersion):
                     }}) {{
                       id
                       date
+                      name
                       bibleVersionByBibleversion {{
                         name
                       }}
@@ -446,6 +448,7 @@ def get_missing_words_query(assessment_id):
                     note
                     vref
                     source
+                    target
                     assessmentByAssessment {{
                       reference
                       type
@@ -455,3 +458,29 @@ def get_missing_words_query(assessment_id):
                 """.format(assessment_id)
 
     return get_results
+
+
+def get_scripts_query():
+    iso_scripts = """
+        query list_scripts {
+          isoScript {
+            iso15924
+            name
+          }
+        }
+        """
+
+    return iso_scripts
+
+
+def get_languages_query():
+    iso_languages = """
+        query list_languages {
+          isoLanguage {
+            iso639
+            name
+          }
+        }
+        """
+    
+    return iso_languages

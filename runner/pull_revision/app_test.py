@@ -1,6 +1,7 @@
 import os
 import modal
 import pytest
+import os
 
 from app import RecordNotFoundError, DuplicateVersesError
 

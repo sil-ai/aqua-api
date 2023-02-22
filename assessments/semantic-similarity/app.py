@@ -1,6 +1,6 @@
 import os
 import modal
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 # Manage suffix on modal endpoint if testing.
@@ -16,13 +16,13 @@ stub = modal.Stub("semantic-similarity" + suffix,
                         "pandas==1.4.3",
                         "torch==1.12.0",
                         "transformers==4.21.0",
-                     ).copy(modal.Mount(
-                         local_file='../../fixtures/vref.txt',
-                         remote_dir='/root'
+                     ).copy(modal.Mount.from_local_file(
+                         local_path='../../fixtures/vref.txt',
+                         remote_path='/root/vref.txt'
                          )
-                     ).copy(modal.Mount(
-                         local_file='merge_revision.py',
-                         remote_dir='/root'
+                     ).copy(modal.Mount.from_local_file(
+                         local_path='merge_revision.py',
+                         remote_path='/root/merge_revision.py'
                          )
                 )
 )
@@ -31,7 +31,7 @@ stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
 
 
 class Assessment(BaseModel):
-    assessment: int
+    assessment: Optional[int]
     revision: int
     reference: int
     type: Literal["semantic-similarity"]
@@ -49,9 +49,20 @@ def similarity(embeddings_1, embeddings_2):
 class SemanticSimilarity:
     def __init__(self, cache_path=CACHE_PATH):
         from transformers import BertTokenizerFast, BertModel
-        self.semsim_model = BertModel.from_pretrained('setu4993/LaBSE', cache_dir=cache_path).eval()
+        try:
+            self.semsim_model = BertModel.from_pretrained('setu4993/LaBSE', cache_dir=cache_path).eval()
+        except OSError as e:
+            print(e)
+            print('Downloading model instead of using cache...')
+            self.semsim_model = BertModel.from_pretrained('setu4993/LaBSE', cache_dir=cache_path, force_download=True).eval()
         print('Semantic model initialized...')
-        self.semsim_tokenizer = BertTokenizerFast.from_pretrained('setu4993/LaBSE', cache_dir=cache_path)
+
+        try:
+            self.semsim_tokenizer = BertTokenizerFast.from_pretrained('setu4993/LaBSE', cache_dir=cache_path)
+        except OSError as e:
+            print(e)
+            print('Downloading tokenizer instead of using cache...')
+            self.semsim_tokenizer = BertTokenizerFast.from_pretrained('setu4993/LaBSE', cache_dir=cache_path, force_download=True)
         print('Tokenizer initialized...')
 
     @stub.function(cpu=4)
@@ -67,8 +78,8 @@ class SemanticSimilarity:
         
         returns sentences plus a score
         """
-        sent1_input = self.semsim_tokenizer(sent1, return_tensors="pt", padding=True)
-        sent2_input = self.semsim_tokenizer(sent2, return_tensors="pt", padding=True)
+        sent1_input = self.semsim_tokenizer(sent1, return_tensors="pt", padding=True, truncation=True)
+        sent2_input = self.semsim_tokenizer(sent2, return_tensors="pt", padding=True, truncation=True)
         with torch.no_grad():
             sent1_output = self.semsim_model(**sent1_input)
             sent2_output = self.semsim_model(**sent2_input)
@@ -77,10 +88,8 @@ class SemanticSimilarity:
         sent2_embedding = sent2_output.pooler_output
 
         sim_matrix = similarity(sent1_embedding, sent2_embedding)*5
-        #prints the ref to see how we are doing
-        print(ref)
         sim_score = round(float(sim_matrix[0][0]),precision)
-        print(f'{ref} has a score of {sim_score}')
+        
         return {
             'assessment_id': assessment_id,
             'vref': ref,
@@ -89,8 +98,8 @@ class SemanticSimilarity:
 
 
 @stub.function
-def get_text(rev_id: int):
-    return modal.container_app.run_pull_rev.call(rev_id)
+def get_text(rev_id: int, AQUA_DB: str):
+    return modal.container_app.run_pull_rev.call(rev_id, AQUA_DB)
 
 
 @stub.function
@@ -105,9 +114,9 @@ def merge(revision_id, revision_verses, reference_id, reference_verses):
         cpu=4,
         shared_volumes={CACHE_PATH: volume},
 )
-def assess(assessment: Assessment, offset=-1):
-    revision = get_text.call(assessment.revision)
-    reference = get_text.call(assessment.reference)
+def assess(assessment: Assessment, AQUA_DB: str, offset=-1):
+    revision = get_text.call(assessment.revision, AQUA_DB)
+    reference = get_text.call(assessment.reference, AQUA_DB)
     df = merge.call(assessment.revision,
                     revision,
                     assessment.reference,
@@ -120,4 +129,6 @@ def assess(assessment: Assessment, offset=-1):
     refs = df.index.to_list()[:offset]
     assessment_id = [assessment.assessment]*len(refs)
     results = list(sem_sim.predict.map(sents1,sents2,refs, assessment_id))
+    print(results[:20])
+
     return results

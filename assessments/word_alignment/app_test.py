@@ -103,78 +103,71 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
 
-def test_runner(base_url, header):
-    webhook_url = "https://sil-ai--runner-assessment-runner.modal.run"
-    api_url = base_url + "/revision"
-    response = requests.get(api_url, headers=header, params={'version_abbreviation': version_abbreviation})
-
-    revision_id = response.json()[0]['id']
-    reference_id = response.json()[1]['id']
-    
-    config = Assessment(
-        assessment = 999999,    #This will silently fail when pushing to the database, since it doesn't exist
-        type = "word-alignment",
-        revision = revision_id,
-        reference = reference_id,
-    )
-    
-    response = requests.post(webhook_url, json=config.dict())
-    assert response.status_code == 200
-
-
 stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "assess")
 
-@stub.function(timeout=3600)
-def get_results(assessment_config: Assessment, push_to_db: bool=True):
-    response = modal.container_app.run_word_alignment.call(assessment_config, push_to_db=push_to_db)
-    return response
+@stub.function(
+    timeout=3600,
+    secret=modal.Secret.from_name('aqua-pytest'),
+    )
+def get_results(assessment_config: Assessment):
+    import os
+    AQUA_DB = os.getenv("AQUA_DB")
+    results = modal.container_app.run_word_alignment.call(assessment_config, AQUA_DB)
+    return results
 
 
-def test_assess_draft(base_url, header):
+def test_assess_draft(base_url, header, assessment_storage):
     with stub.run():
         # Use the two revisions of the version_abbreviation version as revision and reference
-        url = base_url + "/revision"
-        response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
+        api_url = base_url + "/revision"
+        response = requests.get(api_url, headers=header, params={'version_abbreviation': version_abbreviation})
 
-        revision_id = response.json()[0]['id']
-        reference_id = response.json()[1]['id']
-        
+        revision = response.json()[0]['id']
+        reference = response.json()[1]['id']
+
         config = Assessment(
-                assessment=999999, 
-                revision=revision_id, 
-                reference=reference_id, 
+                revision=revision, 
+                reference=reference, 
                 type='word-alignment'
                 )
-        push_to_db = False
+        
         #Run word alignment from reference to revision, but don't push it to the database
-        response = get_results.call(assessment_config=config, push_to_db=push_to_db)
+        results = get_results.call(assessment_config=config)
+        print(results[:20])
+        assert len(results) == 3
+        
+        assert results[0]['score'] == pytest.approx(0.629, 0.001)
+        assert results[1]['score'] == pytest.approx(0.720, 0.001)
+        assert results[2]['score'] == pytest.approx(0.758, 0.001)
 
-        assert response['status'] == 'finished' if push_to_db else 'finished (not pushed to database)'
-
+        assessment_storage.revision = revision
+        assessment_storage.reference = reference
 
 
 stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_results")
 
-@stub.function
+
+@stub.function(secret=modal.Secret.from_name("aqua-pytest"))
 def check_word_alignment_results(assessment_config: Assessment):
-    top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference)
-    assert top_source_scores_df.shape[0] > 10
+    import os
+    AQUA_DB = os.getenv("AQUA_DB")
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
+    top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference, database_id)
     assert "source" in top_source_scores_df.columns
+    assert "total_score" in top_source_scores_df.columns
+    assert top_source_scores_df.loc[0, 'total_score'] == pytest.approx(0.6736, 0.001)
+    assert top_source_scores_df.loc[5, 'total_score'] == pytest.approx(0.789, 0.001)
+    assert top_source_scores_df.loc[10, 'total_score'] == pytest.approx(0.6524, 0.001)
 
 
-def test_check_word_alignment_results(base_url, header):
+def test_check_word_alignment_results(assessment_storage):
     with stub.run():
         # Use the two revisions of the version_abbreviation version as revision and reference
-        url = base_url + "/revision"
-        response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
-
-        revision_id = response.json()[0]['id']
-        reference_id = response.json()[1]['id']
-        
+        revision = assessment_storage.revision
+        reference = assessment_storage.reference
         config = Assessment(
-                assessment=999999, 
-                revision=revision_id, 
-                reference=reference_id, 
+                revision=revision, 
+                reference=reference, 
                 type='word-alignment'
                 )
 
@@ -190,3 +183,18 @@ def test_delete_version(base_url, header):
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
     assert test_response.status_code == 200
+
+
+if __name__ == "__main__":
+    import os
+    from conftest import AssessmentStorage
+    key =  "Bearer" + " " + str(os.getenv("TEST_KEY"))
+    header = {"Authorization": key}
+    base_url = os.getenv("AQUA_URL")
+    assessment_storage = AssessmentStorage()
+    test_add_version(base_url, header)
+    test_add_revision(base_url, header, Path("../../fixtures/test_bible.txt"))
+    test_add_revision(base_url, header, Path("../../fixtures/uploadtest.txt"))
+    test_assess_draft(base_url, header, assessment_storage)
+    test_check_word_alignment_results(assessment_storage)
+    test_delete_version(base_url, header)

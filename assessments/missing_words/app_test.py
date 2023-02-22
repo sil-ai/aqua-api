@@ -22,12 +22,6 @@ stub = modal.Stub(
 
 stub.run_missing_words = modal.Function.from_name("missing-words-test", "assess")
 
-@stub.function(timeout=3600)
-def get_missing_words(assessment_config: Assessment, push_to_db: bool=True):
-    response = modal.container_app.run_missing_words.call(assessment_config, push_to_db=push_to_db)
-    return response
-
-
 version_abbreviation = 'MW-DEL'
 version_name = 'missing words delete'
 
@@ -63,6 +57,16 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
 
+@stub.function(timeout=3600, secret=modal.Secret.from_name("aqua-pytest"))
+def get_missing_words(assessment_config: Assessment):
+    import os
+    AQUA_DB = os.getenv("AQUA_DB")
+    missing_words = modal.container_app.run_missing_words.call(assessment_config, AQUA_DB, via_api=False, refresh_refs=True)
+    assert missing_words[0]['score'] == pytest.approx(0.090, 0.01)
+    assert missing_words[1]['score'] == pytest.approx(0.056, 0.01)
+    assert missing_words[2]['score'] == pytest.approx(0.097, 0.01)
+    assert len(missing_words) == 683
+
 def test_get_missing_words(base_url, header):
     with stub.run():
         # Use the two revisions of the version_abbreviation version as revision and reference
@@ -72,19 +76,14 @@ def test_get_missing_words(base_url, header):
 
         reference = response.json()[0]['id']
         revision = response.json()[1]['id']
-
         
         config = Assessment(
-                assessment=999999, 
                 revision=revision, 
                 reference=reference, 
                 type='missing-words'
                 )
 
-        #Run word alignment from reference to revision, but don't push it to the database
-        push_to_db = False
-        response = get_missing_words.call(assessment_config=config, push_to_db=push_to_db)
-        assert response['status'] == 'finished' if push_to_db else 'finished (not pushed to database)'
+        get_missing_words.call(assessment_config=config)
 
 
 
@@ -96,3 +95,16 @@ def test_delete_version(base_url, header):
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
     assert test_response.status_code == 200
+
+
+if __name__ == "__main__":
+    import os
+    key =  "Bearer" + " " + str(os.getenv("TEST_KEY"))
+    header = {"Authorization": key}
+    base_url = os.getenv("AQUA_URL")
+
+    test_add_version(base_url, header)
+    test_add_revision(base_url, header, Path("../../fixtures/greek_lemma_luke.txt"))
+    test_add_revision(base_url, header, Path("../../fixtures/ngq-ngq.txt"))
+    test_get_missing_words(base_url, header)
+    test_delete_version(base_url, header)

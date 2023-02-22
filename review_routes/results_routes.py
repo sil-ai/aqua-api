@@ -71,6 +71,7 @@ async def get_result(assessment_id: int):
                             "results": {
                                 "vref": result["vref"],
                                 "source": result["source"],
+                                "target": result["target"],
                                 "score": result["score"],
                                 "flag": result["flag"],
                                 "note": result["note"]

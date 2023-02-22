@@ -39,20 +39,6 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
 
-def test_runner(base_url, header):
-    webhook_url = "https://sil-ai--runner-test-assessment-runner.modal.run"
-    api_url = base_url + "/revision"
-    response = requests.get(api_url, params={'version_abbreviation': version_abbreviation}, headers=header)
-    revision_id = response.json()[0]['id']
-    config = {
-        "assessment": 999999,    #This will silently fail when pushing to the database, since it doesn't exist
-        "revision": revision_id,
-        "type": "sentence-length"
-    }
-    response = requests.post(webhook_url, json=config)
-    assert response.status_code == 200
-
-
 #The following functions need a stub to provide extra packages
 stub = modal.Stub(
     name="run_sentence_length_test",
@@ -65,7 +51,6 @@ stub = modal.Stub(
         "psycopg2-binary",
         "requests_toolbelt==0.9.1",
     ),
-    secret=modal.Secret.from_name("aqua-api")
 )
 
 stub.run_sentence_length = modal.Function.from_name("sentence-length-test", "assess")
@@ -97,20 +82,24 @@ def test_metrics():
         run_test_metrics.call()
 
     
-@stub.function
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
 def run_assess_draft(config):
-    response = modal.container_app.run_sentence_length.call(config, push_to_db=False)
-    assert response['status'] == 'finished (not pushed to database)'
+    import os
+    AQUA_DB = os.getenv("AQUA_DB")
+    results = modal.container_app.run_sentence_length.call(config, AQUA_DB)
+    assert len(results) == 41899
+    assert results[0]['score'] == pytest.approx(23.12, 0.01)
+    assert results[31]['score'] == pytest.approx(33.62, 0.01)
+    assert results[56]['score'] == pytest.approx(37.44, 0.01)
 
 
 def test_assess_draft(base_url, header):
     url = base_url + "/revision"
     response = requests.get(url, params={'version_abbreviation': version_abbreviation}, headers=header)
-    revision_id = response.json()[0]['id']
+    revision = response.json()[0]['id']
     from app import Assessment
     config = Assessment(
-        revision = revision_id,
-        assessment = 999999,
+        revision = revision,
         type = 'sentence-length',
     )
     with stub.run():
@@ -125,3 +114,15 @@ def test_delete_version(base_url, header):
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
     assert test_response.status_code == 200
+
+
+if __name__ == "__main__":
+    import os
+    key =  "Bearer" + " " + str(os.getenv("TEST_KEY"))
+    header = {"Authorization": key}
+    base_url = os.getenv("AQUA_URL")
+
+    test_add_version(base_url, header)
+    test_add_revision(base_url, header, Path('fixtures/swh-ONEN.txt'))
+    test_assess_draft(base_url, header)
+    test_delete_version(base_url, header)

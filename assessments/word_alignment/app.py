@@ -5,7 +5,7 @@ from pathlib import Path
 import json
 import os
 import pickle
-from typing import Literal
+from typing import Literal, Optional
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -37,13 +37,12 @@ stub = modal.aio.AioStub(
     )
     .copy(
         mount=modal.Mount(
-            local_file=Path("data/models/encoder_weights.txt"), remote_dir=Path("/root")
+            local_file=Path("data/models/encoder_weights_whole_bible.txt"), remote_dir=Path("/root")
         )
     ),
 )
 
 stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
-stub.run_push_results = modal.Function.from_name("push_results", "push_results")
 stub.run_save_results = modal.Function.from_name("save-results", "save_results")
 
 
@@ -52,7 +51,7 @@ CACHE_DIR = Path("/cache")
 
 # The information corresponding to the given assessment.
 class Assessment(BaseModel):
-    assessment: int
+    assessment: Optional[int] = None
     revision: int
     reference: int
     type: Literal["word-alignment"]
@@ -69,12 +68,10 @@ async def create_index_cache(tokenized_df, refresh: bool = False):
 @stub.function(
     shared_volumes={CACHE_DIR: index_cache_volume}, 
     timeout=7200,
-    secret=modal.Secret.from_name("aqua-db"),
     )
-async def get_index_cache(revision_id, refresh: bool = False):
-    tokenized_df = await get_tokenized_df.call(revision_id)
-    AQUA_DB = os.getenv("AQUA_DB")
-    database_id = AQUA_DB.split("@")[1].split(".")[0]
+async def get_index_cache(revision_id, AQUA_DB, refresh: bool = False):
+    tokenized_df = await get_tokenized_df.call(revision_id, AQUA_DB)
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     index_cache_file = Path(f"{CACHE_DIR}/{database_id}/{revision_id}-index-cache.json")
     (index_cache_file.parent).mkdir(parents=True, exist_ok=True)
     if index_cache_file.exists() and not refresh:
@@ -89,18 +86,19 @@ async def get_index_cache(revision_id, refresh: bool = False):
         index_cache = await create_index_cache(tokenized_df, refresh=refresh)
         with open(index_cache_file, "w") as f:
             json.dump(index_cache, f, indent=4)
+    
     return revision_id, index_cache, tokenized_df
 
 
 @stub.function
-async def get_text(revision_id: int) -> bytes:
-    return modal.container_app.run_pull_rev.call(revision_id)
+async def get_text(revision_id: int, AQUA_DB: str) -> bytes:
+    return modal.container_app.run_pull_rev.call(revision_id, AQUA_DB)
 
 
 @stub.function
-async def get_tokenized_df(revision_id: int):
+async def get_tokenized_df(revision_id: int, AQUA_DB:str):
     vref_filepath = Path("/root/vref.txt")
-    src_data = await get_text.call(revision_id)
+    src_data = await get_text.call(revision_id, AQUA_DB)
     df = pickle.loads(prepare_data.create_tokens(src_data, vref_filepath))
     return df
 
@@ -168,6 +166,7 @@ def run_total_scores(
     translation_scores_df,
     match_scores_df,
     embedding_scores_df,
+    return_all_results: bool = False,
 ):
     from word_alignment_steps import total_scores
 
@@ -175,6 +174,7 @@ def run_total_scores(
         total_scores_df,
         top_source_scores_df,
         verse_scores_df,
+        all_results
     ) = total_scores.run_total_scores(
         condensed_df,
         alignment_scores_df,
@@ -182,23 +182,27 @@ def run_total_scores(
         translation_scores_df,
         match_scores_df,
         embedding_scores_df,
+        return_all_results=return_all_results,
     )
     return {
         "total_scores": total_scores_df,
         "top_source_scores": top_source_scores_df,
         "verse_scores": verse_scores_df,
+        "all_results": all_results,
     }
 
 
 @stub.function(timeout=7200)
-async def assess(assessment_config: Assessment, push_to_db: bool = True):
+async def assess(assessment_config: Assessment, AQUA_DB: str, return_all_results: bool=False):
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
+    print(f"Starting assessment for {database_id}, revision {assessment_config.revision}, reference {assessment_config.reference}")
     tokenized_dfs = {}
     index_caches = {}
     src_revision_id = assessment_config.reference
     trg_revision_id = assessment_config.revision
     results = await asyncio.gather(
         *[
-            get_index_cache.call(revision_id, refresh=False)
+            get_index_cache.call(revision_id, AQUA_DB, refresh=False)
             for revision_id in [src_revision_id, trg_revision_id]
         ]
     )
@@ -237,6 +241,7 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
         for key, value in item.items():
             step_results[key] = value
 
+    print("Running total scores")
     total_results = run_total_scores(
         condensed_df,
         step_results["alignment_scores"],
@@ -244,36 +249,33 @@ async def assess(assessment_config: Assessment, push_to_db: bool = True):
         step_results["translation_scores"],
         step_results["match_scores"],
         step_results["embedding_scores"],
+        return_all_results=return_all_results,
     )
 
-    print("Pushing results to the database")
     df = total_results["verse_scores"]
 
-
+    print("Saving results to modal shared volume")
 
     modal.container_app.run_save_results.call(
         assessment_config.revision,
         assessment_config.reference,
         total_results["top_source_scores"],
+        database_id,
     )
 
-
-    if not push_to_db:
-        return {"status": "finished (not pushed to database)", "ids": []}
-
+    if return_all_results:
+        return total_results["all_results"]
+        
     results = []
     for _, row in df.iterrows():
         results.append(
             {
-                "assessment_id": assessment_config.assessment,
                 "vref": row["vref"],
                 "score": row["total_score"],
                 "flag": False,
             }
         )
 
-    response, ids = modal.container_app.run_push_results.call(results)
+    
 
-    # Save the top source scores to the results directory for comparison, e.g. for missing words
-
-    return {"status": "finished", "ids": ids}
+    return results

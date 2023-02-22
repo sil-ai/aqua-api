@@ -14,6 +14,6 @@ class Assessment(BaseModel):
     type: Literal["dummy"]
 
 @stub.function(timeout=sleep_time + 300)
-def assess(assessment_config: Assessment):
+def assess(assessment_config: Assessment, AQUA_DB: str):
     time.sleep(sleep_time)
     return {'status': 'finished', 'ids': []}

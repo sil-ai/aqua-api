@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from gql.transport.requests import RequestsHTTPTransport
 
+import bible_routes.language_routes as language_routes
 import bible_routes.version_routes as version_routes
 import bible_routes.revision_routes as revision_routes
 import bible_routes.verse_routes as verse_routes
@@ -46,6 +47,7 @@ def client():
     app.configure(mock_app)
 
     #print(mock_app.dependency_overrides.keys())
+    mock_app.dependency_overrides[language_routes.api_key_auth] = skip_auth
     mock_app.dependency_overrides[version_routes.api_key_auth] = skip_auth
     mock_app.dependency_overrides[revision_routes.api_key_auth] = skip_auth
     mock_app.dependency_overrides[verse_routes.api_key_auth] = skip_auth
@@ -94,12 +96,23 @@ def test_list_versions(client):
 def test_upload_bible(client):
     test_abv_revision = {
             "version_abbreviation": version_abbreviation,
-            "published": False
+            "published": False,
+            }
+    test_abv_revision_with_name = {
+            "version_abbreviation": version_abbreviation,
+            "published": False,
+            "name": "App test upload",
             }
  
     test_upload_file = Path("fixtures/uploadtest.txt")
     file = {"file": test_upload_file.open("rb")}
+    file_2 = {"file": test_upload_file.open("rb")}
+
     response_abv = client.post("/revision", params=test_abv_revision, files=file)
+
+    assert response_abv.status_code == 200
+
+    response_abv = client.post("/revision", params=test_abv_revision_with_name, files=file_2)
 
     assert response_abv.status_code == 200
 
@@ -122,13 +135,26 @@ def test_list_revisions(client):
     assert all_response.status_code == 200
 
 
+def test_get_languages(client): 
+    language_response = client.get("/language")
+
+    assert language_response.status_code == 200
+
+
+def test_get_scripts(client): 
+    script_response = client.get("/script")
+
+    assert script_response.status_code == 200
+
+
 def test_get_chapter(client): 
     version_abv = {
             "version_abbreviation": version_abbreviation
             }
 
     version_response = client.get("/revision", params=version_abv)
-    version_fixed = ast.literal_eval(version_response.text)
+    version_response_text = version_response.text.replace("null", "None")
+    version_fixed = ast.literal_eval(version_response_text)
 
     for version_data in version_fixed:
         if version_data["versionName"] == version_name:
@@ -151,7 +177,8 @@ def test_get_verse(client):
             }
 
     version_response = client.get("/revision", params=version_abv)
-    version_fixed = ast.literal_eval(version_response.text)
+    version_response_text = version_response.text.replace("null", "None")
+    version_fixed = ast.literal_eval(version_response_text)
 
     for version_data in version_fixed:
         if version_data["versionName"] == version_name:
@@ -176,7 +203,8 @@ def test_assessment(client):
            }
 
     version_response = client.get("/revision", params=test_version_abv)
-    version_fixed = ast.literal_eval(version_response.text)
+    version_response_text = version_response.text.replace("null", "None")
+    version_fixed = ast.literal_eval(version_response_text)
 
     for version_data in version_fixed:
         if version_data["versionName"] == version_name:
@@ -232,7 +260,8 @@ def test_result(client):
            }
 
     revision_response = client.get("/revision", params=test_version_abv)
-    revision_fixed = ast.literal_eval(revision_response.text)
+    revision_response_text = revision_response.text.replace("null", "None")
+    revision_fixed = ast.literal_eval(revision_response_text)
 
     for revision_data in revision_fixed:
         if revision_data["versionName"] == version_name:
@@ -258,7 +287,6 @@ def test_result(client):
 
     test_response = client.get("/result", params=test_config)
     fail_response = client.get("/result", params=fail_config)
-
     assert test_response.status_code == 200
     assert fail_response.status_code == 400
 
@@ -270,7 +298,8 @@ def test_missing_words(client):
            }
 
     revision_response = client.get("/revision", params=test_version_abv)
-    revision_fixed = ast.literal_eval(revision_response.text)
+    revision_response_text = revision_response.text.replace("null", "None")
+    revision_fixed = ast.literal_eval(revision_response_text)
 
     for revision_data in revision_fixed:
         if revision_data["versionName"] == version_name:
@@ -307,7 +336,8 @@ def test_delete_revision(client):
            }
 
     version_response = client.get("/revision", params=test_version_abv)
-    version_fixed = ast.literal_eval(version_response.text)
+    version_response_text = version_response.text.replace("null", "None")
+    version_fixed = ast.literal_eval(version_response_text)
 
     for version_data in version_fixed:
         if version_data["versionName"] == version_name:
