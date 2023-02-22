@@ -112,16 +112,13 @@ def get_fake_conn_string(original_string):
     import random
     from string import ascii_letters
 
-    done = False
-    #??? Maybe rework?
-    while not done:
+    while True:
         idx_list = random.sample([i for i,__ in enumerate(original_string)],3)
         lst = list(original_string)
         for idx in idx_list:
             lst[idx]=random.choice(ascii_letters)
         fake_string = ''.join(lst)
         if fake_string != original_string:
-            done=True
             return fake_string
 
 @stub.function(secret=modal.Secret.from_name("aqua-db"))
