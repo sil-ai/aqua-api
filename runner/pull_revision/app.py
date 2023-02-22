@@ -39,11 +39,12 @@ class DuplicateVersesError(Exception):
         self.message = message
 
 class PullRevision:
-    def __init__(self, revision_id: int):
+    def __init__(self, revision_id: int, AQUA_DB: str):
         import pandas as pd
         self.revision_id = revision_id
         self.revision_text = pd.DataFrame()
         self.vref = self.prepare_vref()
+        self.AQUA_DB = AQUA_DB
 
     @staticmethod
     def prepare_vref():
@@ -76,7 +77,7 @@ class PullRevision:
             #transfers across all reference strings
             verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
 
-        __, session = next(get_session())
+        __, session = next(get_session(self.AQUA_DB))
         logging.info("Loading verses from Revision %s...", self.revision_id)
         return pd.read_sql(
             session.query(VerseText)
@@ -131,10 +132,9 @@ class PullRevision:
 
 @stub.function(
     timeout=600,
-    secret=modal.Secret.from_name("aqua-db"),
 )
-def pull_revision(revision_id: int) -> bytes:
-    pr = PullRevision(revision_id)
+def pull_revision(revision_id: int, AQUA_DB: str) -> bytes:
+    pr = PullRevision(revision_id, AQUA_DB)
     pr.pull_revision()
     revision_bytes = pr.output_revision()
 
