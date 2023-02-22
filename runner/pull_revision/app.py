@@ -79,9 +79,13 @@ class PullRevision:
 
         __, session = next(get_session(self.AQUA_DB))
         logging.info("Loading verses from Revision %s...", self.revision_id)
+        revision_verses = pd.read_sql(
+            session.query(VerseText)
+            .filter(VerseText.bibleRevision == self.revision_id)
             .statement,
             session.bind,
         )
+        return revision_verses
 
     def pull_revision(self):
         revision_verses = self.get_verses()
