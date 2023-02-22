@@ -44,7 +44,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
 
 
 @router.get("/assessment", dependencies=[Depends(api_key_auth)])
-async def get_assessment():
+async def get_assessments():
     list_assessments = queries.list_assessments_query()
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:

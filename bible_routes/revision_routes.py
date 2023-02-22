@@ -1,11 +1,12 @@
 import os
 from datetime import date
-from typing import Optional
+from typing import Optional, List
 from tempfile import NamedTemporaryFile
 
 import fastapi
 from fastapi import Depends, HTTPException, status, File, UploadFile
 from fastapi.security import OAuth2PasswordBearer
+from fastapi.responses import JSONResponse
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 import numpy as np
@@ -13,6 +14,7 @@ import numpy as np
 import queries
 import bible_loading
 from key_fetch import get_secret
+from models import Revision
 
 
 router = fastapi.APIRouter()
@@ -42,11 +44,21 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     return True
 
 
-@router.get("/revision", dependencies=[Depends(api_key_auth)])
-async def list_revisions(version_abbreviation: Optional[str]=None):
-    if version_abbreviation:
-        bibleVersion = '"' + version_abbreviation + '"'
-        list_revision = queries.list_revisions_query(bibleVersion)
+@router.get("/revision", dependencies=[Depends(api_key_auth)], response_model=List[Revision])
+async def list_revisions(version_id: Optional[str]=None):
+    """
+    Returns a list of revisions. 
+    
+    If version_abbreviation is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.
+
+    Parameters
+    ----------
+    version_abbreviation : Optional[str]
+
+
+    """
+    if version_id:
+        list_revision = queries.list_revisions_query(version_id)
     else:
         list_revision = queries.list_all_revisions_query()
 
@@ -58,12 +70,12 @@ async def list_revisions(version_abbreviation: Optional[str]=None):
 
         version_list = []
         for version in version_result["bibleVersion"]:
-            version_list.append(version["abbreviation"])
+            version_list.append(version["id"])
 
-        if version_abbreviation is not None and version_abbreviation not in version_list:
+        if version_id is not None and version_id not in version_list:
             raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Version abbreviation is invalid"
+                    detail="Version id is invalid"
                     )
         else:
             revision_query = gql(list_revision)
@@ -71,12 +83,13 @@ async def list_revisions(version_abbreviation: Optional[str]=None):
 
             revisions_data = []
             for revision in revision_result["bibleRevision"]:
-                revision_data = {
-                        "id": revision["id"],
-                        "date": revision["date"],
-                        "versionName": revision["bibleVersionByBibleversion"]["name"],
-                        "name": revision["name"],
-                        }
+                revision_data = Revision(
+                        id=revision["id"],
+                        date=revision["date"],
+                        version_id=revision["bibleVersionByBibleversion"]["id"],
+                        name=revision["name"],
+                        published=revision["published"]
+                )
 
                 revisions_data.append(revision_data)
 
@@ -85,25 +98,16 @@ async def list_revisions(version_abbreviation: Optional[str]=None):
 
 @router.post("/revision", dependencies=[Depends(api_key_auth)])
 async def upload_bible(
-        version_abbreviation: str,
+        version_id: int,
         published: bool = False,
         name: Optional[str] = None,
         file: UploadFile = File(...)
         ):
 
-    abbreviation = '"' + version_abbreviation + '"'
-    fetch_version = queries.fetch_bible_version(abbreviation)
-
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        query = gql(fetch_version)
-        result = client.execute(query)
-
-    version_fixed = result["bibleVersion"][0]["id"]
-
     name = '"' + name + '"' if name else "null"
     revision_date = '"' + str(date.today()) + '"'
     revision = queries.insert_bible_revision(
-        version_fixed, name, revision_date, str(published).lower()
+        version_id, name, revision_date, str(published).lower()
         )
 
     # Convert into bytes and save as a temporary file.
@@ -119,7 +123,13 @@ async def upload_bible(
         mutation = gql(revision)
 
         revision = client.execute(mutation)
-        revision_id = revision["insert_bibleRevision"]["returning"][0]["id"]
+        revision = Revision(
+                id=revision["insert_bibleRevision"]["returning"][0]["id"],
+                date=revision["insert_bibleRevision"]["returning"][0]["date"],
+                versionAbbreviation=revision["insert_bibleRevision"]["returning"][0]["bibleVersionByBibleversion"]["id"],
+                name=revision["insert_bibleRevision"]["returning"][0]["name"],
+                published=revision["insert_bibleRevision"]["returning"][0]["published"]
+        )
 
     # Parse the input Bible revision data.
     verses = []
@@ -129,10 +139,10 @@ async def upload_bible(
         for line in bible_data:
             if line == "\n" or line == "" or line == " ":
                 verses.append(np.nan)
-                bibleRevision.append(revision_id)
+                bibleRevision.append(revision.id)
             else:
                 verses.append(line.replace("\n", ""))
-                bibleRevision.append(revision_id)
+                bibleRevision.append(revision.id)
 
     # Push the revision to the database.
     bible_loading.upload_bible(verses, bibleRevision)
@@ -141,17 +151,14 @@ async def upload_bible(
     temp_file.close()
     await file.close()
 
-    return {
-            "message": f"Successfully uploaded {file.filename}",
-            "Revision ID": revision_id
-            }
+    return revision
 
 
 @router.delete("/revision", dependencies=[Depends(api_key_auth)])
-async def delete_revision(revision: int):
+async def delete_revision(id: int):
     fetch_revisions = queries.check_revisions_query()
-    delete_revision = queries.delete_revision_mutation(revision)
-    delete_verses_mutation = queries.delete_verses_mutation(revision)
+    delete_revision = queries.delete_revision_mutation(id)
+    delete_verses_mutation = queries.delete_verses_mutation(id)
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
         revision_data = gql(fetch_revisions)
@@ -161,7 +168,7 @@ async def delete_revision(revision: int):
         for revisions in revision_result["bibleRevision"]:
             revisions_list.append(revisions["id"])
 
-        if revision in revisions_list:
+        if id in revisions_list:
             verse_mutation = gql(delete_verses_mutation)
             client.execute(verse_mutation)
 

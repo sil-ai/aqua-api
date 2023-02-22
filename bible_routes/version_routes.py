@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -37,7 +38,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     return True
 
 
-@router.get("/version", dependencies=[Depends(api_key_auth)])
+@router.get("/version", dependencies=[Depends(api_key_auth)], response_model=List[Version])
 async def list_version():
     list_versions = queries.list_versions_query()
 
@@ -47,26 +48,29 @@ async def list_version():
 
         version_data = []
         for version in result["bibleVersion"]: 
-            ind_data = {
-                "id": version["id"], 
-                "name": version["name"], 
-                "abbreviation": version["abbreviation"],
-                "language": version["isoLanguageByIsolanguage"]["iso639"], 
-                "script": version["isoScriptByIsoscript"]["iso15924"], 
-                "rights": version["rights"]
-            }
+            data = Version(
+                        id=version["id"], 
+                        name=version["name"], 
+                        abbreviation=version["abbreviation"], 
+                        isoLanguage=version["isoLanguageByIsolanguage"]["iso639"], 
+                        isoScript=version["isoScriptByIsoscript"]["iso15924"], 
+                        rights=version["rights"],
+                        forwardTranslation=version["forwardTranslation"],
+                        backTranslation=version["backTranslation"],
+                        machineTranslation=version["machineTranslation"]
+                        )
 
-            version_data.append(ind_data)
+            version_data.append(data)
 
     return version_data
 
 
-@router.post("/version", dependencies=[Depends(api_key_auth)])
+@router.post("/version", dependencies=[Depends(api_key_auth)], response_model=Version)
 async def add_version(v: Version):
 
     name_fixed = '"' + v.name +  '"'
-    isoLang_fixed = '"' + v.isoLanguage + '"'
-    isoScpt_fixed = '"' + v.isoScript + '"'
+    isoLang_fixed = '"' + v.language + '"'
+    isoScpt_fixed = '"' + v.script + '"'
     abbv_fixed = '"' + v.abbreviation + '"'
 
     if v.rights is None:
@@ -107,13 +111,17 @@ async def add_version(v: Version):
 
         revision = client.execute(mutation)
 
-    new_version = {
-        "id": revision["insert_bibleVersion"]["returning"][0]["id"],
-        "name": revision["insert_bibleVersion"]["returning"][0]["name"],
-        "abbreviation": revision["insert_bibleVersion"]["returning"][0]["abbreviation"],
-        "language": revision["insert_bibleVersion"]["returning"][0]["isoLanguageByIsolanguage"]["name"],
-        "rights": revision["insert_bibleVersion"]["returning"][0]["rights"]
-    }
+    new_version = Version(
+        id=revision["insert_bibleVersion"]["returning"][0]["id"],
+        name=revision["insert_bibleVersion"]["returning"][0]["name"],
+        abbreviation=revision["insert_bibleVersion"]["returning"][0]["abbreviation"],
+        isoLanguage=revision["insert_bibleVersion"]["returning"][0]["isoLanguageByIsolanguage"]["name"],
+        isoScript=revision["insert_bibleVersion"]["returning"][0]["isoScriptByIsoscript"]["name"],
+        rights=revision["insert_bibleVersion"]["returning"][0]["rights"],
+        forwardTranslation=revision["insert_bibleVersion"]["returning"][0]["forwardTranslation"],
+        backTranslation=revision["insert_bibleVersion"]["returning"][0]["backTranslation"],
+        machineTranslation=revision["insert_bibleVersion"]["returning"][0]["machineTranslation"]
+    )
 
     return new_version
 

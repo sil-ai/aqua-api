@@ -12,6 +12,9 @@ def list_versions_query():
                       iso15924
                     }
                     rights
+                    forwardTranslation
+                    backTranslation
+                    machineTranslation
                   }
                 }
                 """
@@ -137,6 +140,12 @@ def insert_bible_revision(version, name, date, published):
                     }}) {{
                     returning {{
                       id
+                      name
+                      date
+                      published
+                      bibleVersionByBibleversion {{
+                        id
+                      }}
                     }}
                   }}
                 }}
@@ -167,9 +176,11 @@ def list_all_revisions_query():
                     bibleRevision {
                       id
                       date
+                      version
                       name
+                      published
                       bibleVersionByBibleversion {
-                        name
+                        id
                       }
                     }
                   }
@@ -178,12 +189,12 @@ def list_all_revisions_query():
     return list_revisions
 
 
-def list_revisions_query(bibleVersion):
+def list_revisions_query(version_id):
     list_revisions = """
                   query {{
                     bibleRevision(where: {{
                       bibleVersionByBibleversion: {{
-                        abbreviation: {{
+                        id: {{
                           _eq: {}
                         }}
                       }}
@@ -191,12 +202,13 @@ def list_revisions_query(bibleVersion):
                       id
                       date
                       name
+                      published
                       bibleVersionByBibleversion {{
-                        name
+                        id
                       }}
                     }}
                   }}
-                  """.format(bibleVersion)
+                  """.format(version_id)
 
     return list_revisions
 
@@ -220,10 +232,7 @@ def get_chapter_query(revision, chapterReference):
                     text
                     verseReference
                     bibleRevisionByBiblerevision {{
-                      date
-                      bibleVersionByBibleversion {{
-                        name
-                      }}
+                        id
                     }}
                   }}
                 }}
@@ -247,10 +256,7 @@ def get_verses_query(revision, verseReference):
                   text
                   verseReference
                   bibleRevisionByBiblerevision {{
-                    date
-                    bibleVersionByBibleversion {{
-                      name
-                    }}
+                    id
                   }}
                 }}
               }}
@@ -279,10 +285,7 @@ def get_book_query(revision, bookReference):
                 text
                 verseReference
                 bibleRevisionByBiblerevision {{
-                  date
-                  bibleVersionByBibleversion {{
-                    name
-                  }}
+                  id
                 }}
                 }}
               }}
@@ -303,10 +306,7 @@ def get_text_query(revision):
                 text
                 verseReference
                 bibleRevisionByBiblerevision {{
-                  date
-                  bibleVersionByBibleversion {{
-                    name
-                  }}
+                  id
                 }}
               }}
             }}
