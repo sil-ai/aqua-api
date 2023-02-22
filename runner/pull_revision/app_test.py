@@ -1,7 +1,6 @@
 import os
 import modal
 import pytest
-import os
 
 from app import RecordNotFoundError, DuplicateVersesError
 
@@ -87,7 +86,7 @@ def create_dup_verses(revision_id, db_string):
         pr = PullRevision(revision_id, db_string)
         pr.pull_revision()
 
-#test duplicated versesos.environ['AQUA_DB']
+#test duplicated verses
 def test_duplicated_verses(db_string, revision_id=10):
    with stub.run():
         create_dup_verses.call(revision_id, db_string)
@@ -128,9 +127,7 @@ def get_fake_conn_string(original_string):
 
 @stub.function
 def conn(aqua_connection_string):
-    #import os
     from db_connect import get_session
-    #aqua_connection_string = os.environ['AQUA_DB']
     engine, session = next(get_session(aqua_connection_string))
     #connection is up
     assert session.is_active
@@ -144,7 +141,6 @@ def test_conn(db_string: str):
 
 @stub.function
 def bad_connection(bad_connection_string, aqua_connection_string):
-    import os
     from sqlalchemy import create_engine
     from sqlalchemy.exc import NoSuchModuleError, OperationalError, ArgumentError, ProgrammingError
 
