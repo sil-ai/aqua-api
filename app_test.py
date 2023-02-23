@@ -247,14 +247,13 @@ def test_assessment(client):
 
     # Post good config
     response = client.post("/assessment", json=good_config.dict())
-    print(f'{response.json()=}')
     assert response.status_code == 200
-    id = response.json()['data']['id']
+    id = response.json()['id']
 
     # Verify good config id is now in assessments
     response = client.get("/assessment")
     assert response.status_code == 200
-    assert id in [assessment['id'] for assessment in response.json()['assessments']]
+    assert id in [assessment['id'] for assessment in response.json()]
 
     # Remove good config from assessments
     response = client.delete("/assessment", params={'assessment_id': id})
@@ -263,7 +262,7 @@ def test_assessment(client):
     # Verify good config is no longer in assessments
     response = client.get("/assessment")
     assert response.status_code == 200
-    assert id not in [assessment['id'] for assessment in response.json()['assessments']]
+    assert id not in [assessment['id'] for assessment in response.json()]
 
 
 def test_result(client):
@@ -289,7 +288,7 @@ def test_result(client):
 
     response = client.post("/assessment", json=good_config)
     assert response.status_code == 200
-    assessment_id = response.json()['data']['id']
+    assessment_id = response.json()['id']
     
     test_config = {
             "assessment_id": assessment_id
@@ -328,7 +327,7 @@ def test_missing_words(client):
 
     response = client.post("/assessment", json=good_config)
     assert response.status_code == 200
-    assessment_id = response.json()['data']['id']
+    assessment_id = response.json()['id']
     
     test_config = {
             "assessment_id": assessment_id

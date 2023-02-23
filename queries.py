@@ -72,11 +72,11 @@ def check_version_query():
     return check_version
 
 
-def delete_bible_version(version_abbv):
+def delete_bible_version(id):
     delete_version = """
                      mutation {{
                        delete_bibleVersion(where: {{
-                         abbreviation: {{
+                         id: {{
                            _eq: {}
                          }}
                        }}) {{
@@ -86,7 +86,7 @@ def delete_bible_version(version_abbv):
                          }}
                        }}
                      }}
-                     """.format(version_abbv)
+                     """.format(id)
 
     return delete_version
 

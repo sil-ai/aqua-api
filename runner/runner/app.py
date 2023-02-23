@@ -24,7 +24,6 @@ secret=modal.Secret.from_name("aqua-db"),
 )
 
 
-# Available assessment types.
 class AssessmentType(Enum):
     dummy = 'dummy'
     word_alignment = 'word-alignment'
@@ -33,22 +32,23 @@ class AssessmentType(Enum):
     semantic_similarity = 'semantic-similarity'
 
 
+class Assessment(BaseModel):
+    id: Optional[int] = None
+    revision_id: int
+    reference_id: Optional[int] = None
+    type: AssessmentType
+    status: Optional[str] = None
+    requested_time: Optional[datetime.datetime] = None
+    start_time: Optional[datetime.datetime] = None
+    end_time: Optional[datetime.datetime] = None
+
+
 stub.run_push_results = modal.Function.from_name("push_results", "push_results")
 stub.run_push_missing_words = modal.Function.from_name("push_results", "push_missing_words")
 
 for a in AssessmentType:
     app_name = a.value
     stub[app_name] = modal.Function.from_name(app_name, "assess")
-
-
-class Assessment(BaseModel):
-    assessment: Optional[int] = None
-    revision: int
-    reference: Union[int, None] = None  # Can be an int or 'null'
-    type: AssessmentType
-
-    class Config:  
-        use_enum_values = True
 
 
 class RunAssessment:
@@ -86,7 +86,7 @@ class RunAssessment:
     def log_start(self):
         with next(self.yield_session()) as session:
             session.query(self.Assessment).filter(
-                self.Assessment.id == self.config.assessment
+                self.Assessment.id == self.config.id
                 ).update(
                     {"status": "running", "start_time": datetime.datetime.utcnow()}
                 )

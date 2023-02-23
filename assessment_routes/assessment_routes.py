@@ -24,7 +24,6 @@ transport = RequestsHTTPTransport(
         )
 
 # Runner URL 
-runner_url = "https://sil-ai--runner-assessment-runner.modal.run/"
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -71,7 +70,7 @@ async def get_assessments():
 
 
 @router.post("/assessment", dependencies=[Depends(api_key_auth)], response_model=Assessment)
-async def add_assessment(a: Assessment):
+async def add_assessment(a: Assessment, test: bool = False):
     reference_id = a.reference_id
     if not reference_id:
         reference_id = 'null'
@@ -102,6 +101,8 @@ async def add_assessment(a: Assessment):
                 )
 
     # Call runner to run assessment
+    runner_url = "https://sil-ai-test-runner-assessment-runner.modal.run/" if test else "https://sil-ai--runner-assessment-runner.modal.run/"
+
     a.id = new_assessment.id
     AQUA_DB = os.getenv("AQUA_DB")
     AQUA_DB_BYTES = AQUA_DB.encode('utf-8')
@@ -110,6 +111,7 @@ async def add_assessment(a: Assessment):
         'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
         }
     response = requests.post(runner_url, params=params, json=a.dict())
+    print(response.content)
     if response.status_code != 200:
         # TODO: Is 500 the right status code here?
         return fastapi.Response(content=str(response), status_code=500)
