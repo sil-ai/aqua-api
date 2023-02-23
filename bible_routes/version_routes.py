@@ -52,7 +52,7 @@ async def list_version():
                         id=version["id"], 
                         name=version["name"], 
                         abbreviation=version["abbreviation"], 
-                        isoLanguage=version["isoLanguageByIsolanguage"]["iso639"], 
+                        isoLanguage=version["isoLanguageByIsolanguage"]["iso693"], 
                         isoScript=version["isoScriptByIsoscript"]["iso15924"], 
                         rights=version["rights"],
                         forwardTranslation=version["forwardTranslation"],
@@ -69,8 +69,8 @@ async def list_version():
 async def add_version(v: Version):
 
     name_fixed = '"' + v.name +  '"'
-    isoLang_fixed = '"' + v.language + '"'
-    isoScpt_fixed = '"' + v.script + '"'
+    isoLang_fixed = '"' + v.isoLanguage + '"'
+    isoScpt_fixed = '"' + v.isoScript + '"'
     abbv_fixed = '"' + v.abbreviation + '"'
 
     if v.rights is None:

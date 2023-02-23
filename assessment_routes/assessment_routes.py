@@ -1,6 +1,7 @@
 import os
 from datetime import datetime
 import base64
+from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -43,7 +44,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     return True
 
 
-@router.get("/assessment", dependencies=[Depends(api_key_auth)])
+@router.get("/assessment", dependencies=[Depends(api_key_auth)], response_model=List[Assessment])
 async def get_assessments():
     list_assessments = queries.list_assessments_query()
 
@@ -51,37 +52,37 @@ async def get_assessments():
         query = gql(list_assessments)
         result = client.execute(query)
 
-        version_data = []
+        assessment_data = []
         for assessment in result["assessment"]:
-            ind_data = {
-                    "id": assessment["id"],
-                    "revision": assessment["revision"],
-                    "reference": assessment["reference"],
-                    "type": assessment["type"],
-                    "requested_time": assessment["requested_time"],
-                    "start_time": assessment["start_time"],
-                    "end_time": assessment["end_time"],
-                    "status": assessment["status"],
-                }
+            data = Assessment(
+                    id=assessment["id"],
+                    revision_id=assessment["revision"],
+                    reference_id=assessment["reference"],
+                    type=assessment["type"],
+                    status=assessment["status"],
+                    requested_time=assessment["requested_time"],
+                    start_time=assessment["start_time"],
+                    end_time=assessment["end_time"],
+                    )
 
-            version_data.append(ind_data)
+            assessment_data.append(data)
 
-    return {'status_code': 200, 'assessments': version_data}
+    return assessment_data
 
 
-@router.post("/assessment", dependencies=[Depends(api_key_auth)])
+@router.post("/assessment", dependencies=[Depends(api_key_auth)], response_model=Assessment)
 async def add_assessment(a: Assessment):
-    reference = a.reference
-    if not reference:
-        reference = 'null'
+    reference_id = a.reference_id
+    if not reference_id:
+        reference_id = 'null'
     assessment_type_fixed = '"' + str(a.type) +  '"'
     requested_time = '"' + datetime.now().isoformat() + '"'
     assessment_status = '"' + 'queued' + '"'
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
         new_assessment = queries.add_assessment_query(
-                a.revision,
-                reference,
+                a.revision_id,
+                reference_id,
                 assessment_type_fixed,
                 requested_time,
                 assessment_status,
@@ -91,17 +92,17 @@ async def add_assessment(a: Assessment):
 
         assessment = client.execute(mutation)
 
-    new_assessment = {
-            "id": assessment["insert_assessment"]["returning"][0]["id"],
-            "revision": assessment["insert_assessment"]["returning"][0]["revision"],
-            "reference": assessment["insert_assessment"]["returning"][0]["reference"],
-            "type": assessment["insert_assessment"]["returning"][0]["type"],
-            "requested_time": assessment["insert_assessment"]["returning"][0]["requested_time"],
-            "status": assessment["insert_assessment"]["returning"][0]["status"],
-    }
+    new_assessment = Assessment(
+            id=assessment["insert_assessment"]["returning"][0]["id"],
+            revision_id=assessment["insert_assessment"]["returning"][0]["revision"],
+            reference_id=assessment["insert_assessment"]["returning"][0]["reference"],
+            type=assessment["insert_assessment"]["returning"][0]["type"],
+            requested_time=assessment["insert_assessment"]["returning"][0]["requested_time"],
+            status=assessment["insert_assessment"]["returning"][0]["status"],
+                )
 
     # Call runner to run assessment
-    a.assessment = new_assessment["id"]
+    a.id = new_assessment.id
     AQUA_DB = os.getenv("AQUA_DB")
     AQUA_DB_BYTES = AQUA_DB.encode('utf-8')
     AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES)
@@ -113,11 +114,7 @@ async def add_assessment(a: Assessment):
         # TODO: Is 500 the right status code here?
         return fastapi.Response(content=str(response), status_code=500)
 
-    return {
-            'status_code': 200,
-            'message': f'OK. Assessment id {new_assessment["id"]} added to the database and assessment started',
-            'data': new_assessment,
-    }
+    return new_assessment
 
 
 @router.delete("/assessment", dependencies=[Depends(api_key_auth)])

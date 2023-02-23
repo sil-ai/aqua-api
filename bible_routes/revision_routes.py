@@ -45,7 +45,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
 
 
 @router.get("/revision", dependencies=[Depends(api_key_auth)], response_model=List[Revision])
-async def list_revisions(version_id: Optional[str]=None):
+async def list_revisions(version_id: Optional[int]=None):
     """
     Returns a list of revisions. 
     
@@ -126,7 +126,7 @@ async def upload_bible(
         revision = Revision(
                 id=revision["insert_bibleRevision"]["returning"][0]["id"],
                 date=revision["insert_bibleRevision"]["returning"][0]["date"],
-                versionAbbreviation=revision["insert_bibleRevision"]["returning"][0]["bibleVersionByBibleversion"]["id"],
+                version_id=revision["insert_bibleRevision"]["returning"][0]["bibleVersionByBibleversion"]["id"],
                 name=revision["insert_bibleRevision"]["returning"][0]["name"],
                 published=revision["insert_bibleRevision"]["returning"][0]["published"]
         )

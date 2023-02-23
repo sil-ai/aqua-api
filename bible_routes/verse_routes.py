@@ -39,13 +39,13 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
 
 
 @router.get("/chapter", dependencies=[Depends(api_key_auth)], response_model=list[VerseText])
-async def get_chapter(revision_id: int, book: str, verse: int):
+async def get_chapter(revision_id: int, book: str, chapter: int):
     """
     Gets a list of verse texts for a revision for a given chapter.
 
     (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
     """
-    chapterReference = '"' + book + " " + str(verse) + '"'
+    chapterReference = '"' + book + " " + str(chapter) + '"'
     get_chapters = queries.get_chapter_query(revision_id, chapterReference)
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:

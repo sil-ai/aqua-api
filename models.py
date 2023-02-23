@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from enum import Enum
 from typing import Union, Optional
-from datetime import date
+import datetime
 
 
 class Version(BaseModel):
@@ -18,8 +18,8 @@ class Version(BaseModel):
 
 class Revision(BaseModel):
     id: Optional[int] = None
-    date: date
     version_id: int
+    date: Optional[datetime.date] = None
     name: Optional[str] = None
     published: bool = False
 
@@ -40,17 +40,52 @@ class AssessmentType(Enum):
 
 
 class Assessment(BaseModel):
-    assessment: Union[int, None] = None
-    revision: int
-    reference: Union[int, None] = None  # Can be an int or 'null'
+    id: Optional[int] = None
+    revision_id: int
+    reference_id: Optional[int] = None
     type: AssessmentType
+    status: Optional[str] = None
+    requested_time: Optional[datetime.datetime] = None
+    start_time: Optional[datetime.datetime] = None
+    end_time: Optional[datetime.datetime] = None
 
     class Config:  
         use_enum_values = True
 
 
+# Results model to record in the DB.
+class Result(BaseModel):
+    id: Optional[int] = None
+    assessment_id: int
+    vref: str
+    source: Optional[str] = None
+    target: Optional[str] = None
+    score: float
+    flag: bool = False
+    note: Optional[str] = None
+
+# # Results model to record in the DB.
+# class MissingWord(BaseModel):
+#     assessment_id: int
+#     vref: str
+#     source: str
+#     target: str
+#     score: float
+#     flag: bool = False
+#     note: Optional[str] = None
+
+
+# # Results is a list of results to push to the DB
+# class Results(BaseModel):
+#     results: List[Result]
+
+# # Results is a list of missing words to push to the DB
+# class MissingWords(BaseModel):
+#     missing_words: List[MissingWord]
+
+
 class Language(BaseModel):
-    iso639: str
+    iso693: str
     name: str
 
 

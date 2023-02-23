@@ -6,7 +6,7 @@ def list_versions_query():
                     name
                     abbreviation
                     isoLanguageByIsolanguage {
-                      iso639
+                      iso693
                     }
                     isoScriptByIsoscript {
                       iso15924
@@ -41,7 +41,13 @@ def add_version_query(name, isoLanguage, isoScript,
                         isoLanguageByIsolanguage {{
                           name
                         }}
+                        isoScriptByIsoscript {{
+                            name
+                        }}
                         rights
+                        forwardTranslation
+                        backTranslation
+                        machineTranslation
                       }}
                     }}
                   }}
@@ -176,7 +182,6 @@ def list_all_revisions_query():
                     bibleRevision {
                       id
                       date
-                      version
                       name
                       published
                       bibleVersionByBibleversion {
@@ -421,43 +426,44 @@ def get_results_query(assessment_id):
                     flag
                     note
                     vref
-                    assessmentByAssessment {{
-                      reference
-                      type
-                    }}
-                  }}
-                }}
-                """.format(assessment_id)
-
-    return get_results
-
-
-def get_missing_words_query(assessment_id):
-    get_results = """
-                query {{
-                  assessmentMissingWords(
-                    where: {{
-                      assessment: {{
-                        _eq: {}
-                      }}
-                    }}
-                  ) {{
-                    id
-                    score
-                    flag
-                    note
-                    vref
                     source
                     target
                     assessmentByAssessment {{
-                      reference
-                      type
+                      id
                     }}
                   }}
                 }}
                 """.format(assessment_id)
 
     return get_results
+
+
+# def get_missing_words_query(assessment_id):
+#     get_results = """
+#                 query {{
+#                   assessmentMissingWords(
+#                     where: {{
+#                       assessment: {{
+#                         _eq: {}
+#                       }}
+#                     }}
+#                   ) {{
+#                     id
+#                     score
+#                     flag
+#                     note
+#                     vref
+#                     source
+#                     target
+#                     assessmentByAssessment {{
+#                       reference
+#                       type
+#                     }}
+#                   }}
+#                 }}
+#                 """.format(assessment_id)
+
+#     return get_results
 
 
 def get_scripts_query():
@@ -477,7 +483,7 @@ def get_languages_query():
     iso_languages = """
         query list_languages {
           isoLanguage {
-            iso639
+            iso693
             name
           }
         }
