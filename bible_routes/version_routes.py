@@ -127,11 +127,10 @@ async def add_version(v: Version):
 
 
 @router.delete("/version", dependencies=[Depends(api_key_auth)])
-async def delete_version(version_abbreviation: str):
-    bibleVersion = '"' + version_abbreviation + '"'
+async def delete_version(id: int):
     fetch_versions = queries.list_versions_query()
-    fetch_revisions = queries.list_revisions_query(bibleVersion)
-    delete_version = queries.delete_bible_version(bibleVersion)
+    fetch_revisions = queries.list_revisions_query(id)
+    delete_version = queries.delete_bible_version(id)
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
         version_query = gql(fetch_versions)
@@ -139,12 +138,12 @@ async def delete_version(version_abbreviation: str):
 
         version_list = []
         for version in version_result["bibleVersion"]:
-            version_list.append(version["abbreviation"])
+            version_list.append(version["id"])
 
         revision_query = gql(fetch_revisions)
         revision_result = client.execute(revision_query)
 
-        if version_abbreviation in version_list:
+        if id in version_list:
             revision_query = gql(fetch_revisions)
             revision_result = client.execute(revision_query)
 

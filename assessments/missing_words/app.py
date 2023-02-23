@@ -35,9 +35,9 @@ stub.get_results = modal.Function.from_name(
 
 # The information corresponding to the given assessment.
 class Assessment(BaseModel):
-    assessment: Optional[int] = None
-    revision: int
-    reference: int
+    id: Optional[int] = None
+    revision_id: int
+    reference_id: int
     type: Literal["missing-words"]
 
 
@@ -136,7 +136,7 @@ async def run_word_alignment(revision: int, reference: int, AQUA_DB: str, AQUA_U
         url = AQUA_URL + "/assessment"
         print(url)
         header = {"Authorization": "Bearer " + AQUA_API_KEY}
-        requests.post(url, json=assessment_config, headers=header)
+        requests.post(url, json=assessment_config, params={'test': True}, headers=header)
         
         # Keep checking the database until it is finished
         while True:
@@ -257,8 +257,8 @@ async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool
             for the missing words in the assessmentMissingWords table of the database.
     """
 
-    reference = assessment_config.reference
-    revision = assessment_config.revision
+    reference_id = assessment_config.reference_id
+    revision_id = assessment_config.revision_id
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     AQUA_URL = os.getenv(f"AQUA_URL_{database_id.replace('-', '_')}")
     AQUA_API_KEY = os.getenv(f"AQUA_API_KEY_{database_id.replace('-', '_')}")
@@ -279,27 +279,27 @@ async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool
     all_top_source_scores = {}
 
     if refresh_refs:
-        assessments_to_run = [revision, *baseline_revision_ids]
+        assessments_to_run = [revision_id, *baseline_revision_ids]
         print(assessments_to_run)
 
     else: 
         #   Get previous word alignments asynchronously
-        results = await asyncio.gather(*[get_top_source_scores.call(revision, reference, database_id) for revision in [revision, *baseline_revision_ids]])
+        results = await asyncio.gather(*[get_top_source_scores.call(revision, reference_id, database_id) for revision in [revision_id, *baseline_revision_ids]])
 
         for result in results:
             all_top_source_scores = {**all_top_source_scores, **result}
 
         assessments_to_run = [revision for revision, df in all_top_source_scores.items() if df is None]
     print(assessments_to_run)
-    results = await asyncio.gather(*[run_word_alignment.call(revision, reference, AQUA_DB, AQUA_URL, AQUA_API_KEY, via_api=via_api) for revision in assessments_to_run])
+    results = await asyncio.gather(*[run_word_alignment.call(revision, reference_id, AQUA_DB, AQUA_URL, AQUA_API_KEY, via_api=via_api) for revision in assessments_to_run])
 
     for result in results:
         all_top_source_scores.update(result)
 
     print(all_top_source_scores)
-    revision_top_source_scores_df = all_top_source_scores.pop(revision)
+    revision_top_source_scores_df = all_top_source_scores.pop(revision_id)
     
-    low_scores = await identify_low_scores.call(revision, revision_top_source_scores_df, all_top_source_scores)
+    low_scores = await identify_low_scores.call(revision_id, revision_top_source_scores_df, all_top_source_scores)
     
     missing_words = []
     low_scores = low_scores.fillna({col: '' for col in low_scores.columns if col[-6:] == '_match'})  # Necessary for blank verses, or NaN gives json database error

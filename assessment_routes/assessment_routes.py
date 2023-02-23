@@ -53,6 +53,7 @@ async def get_assessments():
 
         assessment_data = []
         for assessment in result["assessment"]:
+            print(assessment["type"])
             data = Assessment(
                     id=assessment["id"],
                     revision_id=assessment["revision"],
@@ -71,6 +72,7 @@ async def get_assessments():
 
 @router.post("/assessment", dependencies=[Depends(api_key_auth)], response_model=Assessment)
 async def add_assessment(a: Assessment, test: bool = False):
+    
     reference_id = a.reference_id
     if not reference_id:
         reference_id = 'null'
@@ -88,7 +90,6 @@ async def add_assessment(a: Assessment, test: bool = False):
         )
         
         mutation = gql(new_assessment)
-
         assessment = client.execute(mutation)
 
     new_assessment = Assessment(
@@ -99,9 +100,9 @@ async def add_assessment(a: Assessment, test: bool = False):
             requested_time=assessment["insert_assessment"]["returning"][0]["requested_time"],
             status=assessment["insert_assessment"]["returning"][0]["status"],
                 )
-
+    
     # Call runner to run assessment
-    runner_url = "https://sil-ai-test-runner-assessment-runner.modal.run/" if test else "https://sil-ai--runner-assessment-runner.modal.run/"
+    runner_url = "https://sil-ai--runner-test-assessment-runner.modal.run/" if test else "https://sil-ai--runner-assessment-runner.modal.run/"
 
     a.id = new_assessment.id
     AQUA_DB = os.getenv("AQUA_DB")
@@ -109,13 +110,13 @@ async def add_assessment(a: Assessment, test: bool = False):
     AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES)
     params = {
         'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
+        'test': test,
         }
     response = requests.post(runner_url, params=params, json=a.dict())
-    print(response.content)
     if response.status_code != 200:
-        # TODO: Is 500 the right status code here?
-        return fastapi.Response(content=str(response), status_code=500)
-
+        print("Runner failed to run assessment")
+        return response
+    
     return new_assessment
 
 
@@ -124,7 +125,6 @@ async def delete_assessment(assessment_id: int):
     fetch_assessments = queries.check_assessments_query()
     delete_assessment = queries.delete_assessment_mutation(assessment_id)
     delete_assessment_results_mutation = queries.delete_assessment_results_mutation(assessment_id)
-
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
         assessment_data = gql(fetch_assessments)
         assessment_result = client.execute(assessment_data)
@@ -132,7 +132,6 @@ async def delete_assessment(assessment_id: int):
         assessments_list = []
         for assessment in assessment_result["assessment"]:
             assessments_list.append(assessment["id"])
-
         if assessment_id in assessments_list:
             assessment_results_mutation = gql(delete_assessment_results_mutation)
             client.execute(assessment_results_mutation)
@@ -147,9 +146,9 @@ async def delete_assessment(assessment_id: int):
                 )
 
         else:
+            print("Assessment is invalid, this assessment id does not exist.")
             raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Assessment is invalid, this assessment id does not exist."
             )
-
     return delete_response

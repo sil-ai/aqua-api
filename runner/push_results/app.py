@@ -3,16 +3,16 @@ from typing import List
 import modal
 
 from db_connect import get_session
-from models import Result, Results, MissingWord, MissingWords
+from models import Result
 
 # Manage suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "_test"
+    suffix = "-test"
 
 
 stub = modal.Stub(
-    name="push_results" + suffix,
+    name="push-results" + suffix,
     image=modal.Image.debian_slim().pip_install(
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
@@ -29,7 +29,7 @@ class PushResults:
     def __del__(self):
         self.session.close()
 
-    def insert_results(self, results: Results):
+    def insert_results(self, results: List[Result]):
         from sqlalchemy.exc import IntegrityError
 
         self.results = results

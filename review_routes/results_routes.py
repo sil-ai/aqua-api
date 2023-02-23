@@ -63,7 +63,7 @@ async def get_result(assessment_id: int):
 
             result_list = []
 
-            for result in result_data["assessmentResults"]:
+            for result in result_data["assessmentResult"]:
                 results = Result(
                         id=result["id"],
                         assessment_id=result["assessmentByAssessment"]["id"],
@@ -106,4 +106,4 @@ async def get_result(assessment_id: int):
                     detail="Revision Id invalid, this revision does not exist"
                     )
 
-    return result_response
+    return result_list

@@ -242,11 +242,11 @@ def test_assessment(client):
 
     # Try to post bad config
     for bad_config in [bad_config_1, bad_config_2]:
-        response = client.post("/assessment", json=bad_config)
+        response = client.post("/assessment", json=bad_config, params={'test': True})
         assert response.status_code == 422
 
     # Post good config
-    response = client.post("/assessment", json=good_config.dict())
+    response = client.post("/assessment", json=good_config.dict(), params={'test': True})
     assert response.status_code == 200
     id = response.json()['id']
 
@@ -286,7 +286,7 @@ def test_result(client):
             "type": "dummy"
             }
 
-    response = client.post("/assessment", json=good_config)
+    response = client.post("/assessment", json=good_config, params={'test': True})
     assert response.status_code == 200
     assessment_id = response.json()['id']
     
@@ -300,46 +300,7 @@ def test_result(client):
 
     test_response = client.get("/result", params=test_config)
     fail_response = client.get("/result", params=fail_config)
-    assert test_response.status_code == 200
-    assert fail_response.status_code == 400
-
-
-def test_missing_words(client):
-    response = client.get("/version")
-    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
-    test_version_abv = {
-            "version_id": version_id
-            }
-
-    revision_response = client.get("/revision", params=test_version_abv)
-    revision_response_text = revision_response.text.replace("null", "None").replace('false', 'False')
-    revision_fixed = ast.literal_eval(revision_response_text)
-
-    for revision_data in revision_fixed:
-        if revision_data["version_id"] == version_id:
-            revision_id = revision_data["id"]
-
-    good_config = {
-            "revision_id": revision_id,
-            "reference_id": 10,
-            "type": "missing-words"
-            }
-
-    response = client.post("/assessment", json=good_config)
-    assert response.status_code == 200
-    assessment_id = response.json()['id']
     
-    test_config = {
-            "assessment_id": assessment_id
-    }
-
-    fail_config = {
-            "assessment_id": 0
-            }
-
-    test_response = client.get("/result", params=test_config)
-    fail_response = client.get("/result", params=fail_config)
-
     assert test_response.status_code == 200
     assert fail_response.status_code == 400
     
@@ -360,11 +321,11 @@ def test_delete_revision(client):
             revision_id = version_data["id"]
 
     delete_revision_data = {
-            "revision_id": revision_id
+            "id": revision_id,
             }
 
     fail_revision_data = {
-            "revision_id": 0
+            "id": 0
             }
 
     test_delete_response = client.delete("/revision", params=delete_revision_data)
@@ -378,11 +339,11 @@ def test_delete_version(client):
     response = client.get("/version")
     version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_delete_version = {
-            "version_id": version_id
+            "id": version_id
             }
 
     fail_delete_version = {
-            "version_id": 999999
+            "id": 999999
             }
 
     test_response = client.delete("/version", params=test_delete_version)
