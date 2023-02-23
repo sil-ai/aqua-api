@@ -51,7 +51,7 @@ async def list_version():
                 "id": version["id"], 
                 "name": version["name"], 
                 "abbreviation": version["abbreviation"],
-                "language": version["isoLanguageByIsolanguage"]["iso639"], 
+                "language": version["isoLanguageByIsolanguage"]["iso693"], 
                 "script": version["isoScriptByIsoscript"]["iso15924"], 
                 "rights": version["rights"]
             }
