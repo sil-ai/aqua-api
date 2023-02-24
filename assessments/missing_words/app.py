@@ -30,14 +30,12 @@ stub = modal.aio.AioStub(
 
 stub.get_results = modal.Function.from_name("save-results" + suffix, "get_results")
 
-
 # The information corresponding to the given assessment.
 class Assessment(BaseModel):
     id: Optional[int] = None
     revision_id: int
     reference_id: int
     type: Union[Literal["missing-words"], Literal["word-alignment"]]
-
 
 def get_versions(AQUA_URL: str, AQUA_API_KEY: str) -> List[dict]:
     """
@@ -175,9 +173,9 @@ async def run_word_alignment(revision_id: int, reference_id: int, AQUA_DB: str, 
         AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES)
         params = {
             'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
-            'test': True,
+            'test': test,
             }
-        response = requests.post(runner_url, params={**params, **assessment_config.dict()})
+        response = requests.post(runner_url, params=params, json=assessment_config.dict())
         while True:
             top_source_scores_dict = await get_top_source_scores.call(revision_id, reference_id, database_id)
             if top_source_scores_dict[revision_id] is not None:
