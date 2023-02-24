@@ -106,7 +106,7 @@ async def get_top_source_scores(revision: int, reference: int, database_id: str)
 
 
 @stub.function(timeout=7200)
-async def run_word_alignment(revision: int, reference: int, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str, via_api: bool=True) -> dict:
+async def run_word_alignment(revision_id: int, reference_id: int, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str, via_api: bool=True, test:bool=False) -> dict:
     """
     Requests a word alignment assessment for a given revision and reference from the
     AQuA API. Keeps checking the database every 20 seconds until the assessment is finished.
@@ -121,41 +121,41 @@ async def run_word_alignment(revision: int, reference: int, AQUA_DB: str, AQUA_U
     Dict[str, pd.DataFrame]: A dictionary with the revision id as key and a DataFrame of top source scores as value.
     """
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
-    print(f"Starting word alignment for database {database_id}, revision {revision}, reference {reference}")
+    print(f"Starting word alignment for database {database_id}, revision {revision_id}, reference {reference_id}")
 
-    assessment_config = Assessment(
-        id=1,
-        reference_id=reference,
-        revision_id=revision,
-        type="word-alignment",
-    )
+    
     if via_api:
         print("Posting to AQuA API to run word alignment assessment...")
+        assessment_config = Assessment(
+        reference_id=reference_id,
+        revision_id=revision_id,
+        type="word-alignment",
+        )
         url = AQUA_URL + "/assessment"
         print(url)
         header = {"Authorization": "Bearer " + AQUA_API_KEY}
-        requests.post(url, json=assessment_config, params={'test': True}, headers=header)
+        requests.post(url, params={**assessment_config.dict(), 'test': test}, headers=header)
         
         # Keep checking the database until it is finished
         while True:
             response = requests.get(url, headers=header)
-            assessments = response.json()["assessments"]
+            assessments = response.json()
 
             assessment_list = [
                 assessment
                 for assessment in assessments
-                if assessment["revision"] == revision
-                and assessment["reference"] == reference
+                if assessment["revision_id"] == revision_id
+                and assessment["reference_id"] == reference_id
                 and assessment["type"] == "word-alignment"
                 and assessment["status"] == "finished"
             ]
             if len(assessment_list) > 0:
-                print(f"Word alignment for revision {revision}, reference {reference}, finished")
+                print(f"Word alignment for revision {revision_id}, reference {reference_id}, finished")
                 time.sleep(20)  # Give time for the scores to be written to the shared volume
                 break
             time.sleep(20)  # Wait and check again in 20 seconds
 
-        top_source_scores_dict = await get_top_source_scores.call(revision, reference, database_id)
+        top_source_scores_dict = await get_top_source_scores.call(revision_id, reference_id, database_id)
         print(f'{top_source_scores_dict=}')
         return top_source_scores_dict
     
@@ -164,6 +164,12 @@ async def run_word_alignment(revision: int, reference: int, AQUA_DB: str, AQUA_U
         # for testing purposes, particularly when we change the API, and the deployed
         # API is not compatible with the current version of the modal.
         print("Running word alignment assessment without posting to AQuA API...")
+        assessment_config = Assessment(
+        id=1,
+        reference_id=reference_id,
+        revision_id=revision_id,
+        type="word-alignment",
+        )
         runner_url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
         AQUA_DB_BYTES = AQUA_DB.encode('utf-8')
         AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES)
@@ -171,10 +177,10 @@ async def run_word_alignment(revision: int, reference: int, AQUA_DB: str, AQUA_U
             'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
             'test': True,
             }
-        response = requests.post(runner_url, params=params, json=assessment_config.dict())
+        response = requests.post(runner_url, params={**params, **assessment_config.dict()})
         while True:
-            top_source_scores_dict = await get_top_source_scores.call(revision, reference, database_id)
-            if top_source_scores_dict[revision] is not None:
+            top_source_scores_dict = await get_top_source_scores.call(revision_id, reference_id, database_id)
+            if top_source_scores_dict[revision_id] is not None:
                 print(f'{top_source_scores_dict=}')
                 return top_source_scores_dict
             time.sleep(20)  # Wait and check again in 20 seconds
@@ -240,7 +246,7 @@ def identify_low_scores(
     timeout=7200,
     secret=modal.Secret.from_name("aqua-api"),
     )
-async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool=False, via_api: bool=True):
+async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool=False, via_api: bool=True, test: bool=False):
     """
     Assess the words from the reference text that are missing in the revision.
 
@@ -255,7 +261,6 @@ async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool
         dict: A dictionary containing the status of the operation and a list of ids
             for the missing words in the assessmentMissingWords table of the database.
     """
-
     reference_id = assessment_config.reference_id
     revision_id = assessment_config.revision_id
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
@@ -290,7 +295,7 @@ async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool
 
         assessments_to_run = [revision for revision, df in all_top_source_scores.items() if df is None]
     print(assessments_to_run)
-    results = await asyncio.gather(*[run_word_alignment.call(revision, reference_id, AQUA_DB, AQUA_URL, AQUA_API_KEY, via_api=via_api) for revision in assessments_to_run])
+    results = await asyncio.gather(*[run_word_alignment.call(revision, reference_id, AQUA_DB, AQUA_URL, AQUA_API_KEY, via_api=via_api, test=test) for revision in assessments_to_run])
 
     for result in results:
         all_top_source_scores.update(result)
