@@ -164,7 +164,7 @@ async def run_word_alignment(revision: int, reference: int, AQUA_DB: str, AQUA_U
         # for testing purposes, particularly when we change the API, and the deployed
         # API is not compatible with the current version of the modal.
         print("Running word alignment assessment without posting to AQuA API...")
-        runner_url = "https://sil-ai--runner-assessment-runner.modal.run/"
+        runner_url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
         AQUA_DB_BYTES = AQUA_DB.encode('utf-8')
         AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES)
         params = {
