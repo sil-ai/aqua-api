@@ -160,7 +160,7 @@ def insert_bible_revision(version, name, date, published):
     return bible_revise
 
 
-def fetch_bible_version(abbreviation):
+def fetch_bible_version_by_abbreviation(abbreviation):
     version_id = """
                 query {{
                   bibleVersion(where: {{

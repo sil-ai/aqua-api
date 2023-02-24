@@ -27,7 +27,7 @@ with Client(transport=transport,
     version_upload = gql(version_query)
     test_client.execute(version_upload)
 
-    fetch_version_query = queries.fetch_bible_version('"BLTEST"')
+    fetch_version_query = queries.fetch_bible_version_by_abbreviation('"BLTEST"')
     fetch_version = gql(fetch_version_query)
     fetch_response = test_client.execute(fetch_version)
     version_id = fetch_response["bibleVersion"][0]["id"]
@@ -124,8 +124,11 @@ def test_upload_bible():
         fetch_schema_from_transport=True) as delete_client:
         
         bible_upload = bible_loading.upload_bible(verses, bibleRevision)
-
-        delete_version_mutation = queries.delete_bible_version('"BLTEST"')
+        fetch_version_query = queries.fetch_bible_version_by_abbreviation('"BLTEST"')
+        fetch_version = gql(fetch_version_query)
+        fetch_response = test_client.execute(fetch_version)
+        version_id = fetch_response["bibleVersion"][0]["id"]
+        delete_version_mutation = queries.delete_bible_version(version_id)
         delete_version = gql(delete_version_mutation)
         delete_response = delete_client.execute(delete_version)
         delete_check = delete_response["delete_bibleVersion"]["returning"][0]["name"]
