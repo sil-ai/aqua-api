@@ -1,8 +1,5 @@
-import requests
 import pytest
 from pathlib import Path
-
-from app import Assessment
 
 version_abbreviation = 'RN-DEL'
 version_name = 'runner runner delete'

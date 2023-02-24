@@ -2,7 +2,7 @@ import os
 import datetime
 from pydantic import BaseModel
 from enum import Enum
-from typing import Union, Optional
+from typing import Optional
 import base64
 
 import modal

@@ -4,9 +4,8 @@ from typing import Optional, List
 from tempfile import NamedTemporaryFile
 
 import fastapi
-from fastapi import Depends, HTTPException, status, File, UploadFile, Form
+from fastapi import Depends, HTTPException, status, File, UploadFile
 from fastapi.security import OAuth2PasswordBearer
-from fastapi.responses import JSONResponse
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 import numpy as np

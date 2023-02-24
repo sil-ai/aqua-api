@@ -223,14 +223,14 @@ def test_assessment(client):
     print(f'{revision_id=}')
      
     with pytest.raises(ValidationError):
-        bad_config_1 = AssessmentIn(
+        AssessmentIn(
                 revision_id="eleven",
                 reference_id=10,
                 type="dummy"
         )
 
     with pytest.raises(ValidationError):
-        bad_config_2 = AssessmentIn(
+        AssessmentIn(
                 revision_id=11,
                 reference_id=10,
                 type="non-existent assessment"
