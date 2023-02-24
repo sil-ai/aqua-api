@@ -123,11 +123,12 @@ async def run_word_alignment(revision: int, reference: int, AQUA_DB: str, AQUA_U
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     print(f"Starting word alignment for database {database_id}, revision {revision}, reference {reference}")
 
-    assessment_config = {
-        "reference": reference,
-        "revision": revision,
-        "type": "word-alignment",
-    }
+    assessment_config = Assessment(
+        id=1,
+        reference_id=reference,
+        revision_id=revision,
+        type="word-alignment",
+    )
     if via_api:
         print("Posting to AQuA API to run word alignment assessment...")
         url = AQUA_URL + "/assessment"
@@ -168,8 +169,9 @@ async def run_word_alignment(revision: int, reference: int, AQUA_DB: str, AQUA_U
         AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES)
         params = {
             'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
+            'test': True,
             }
-        response = requests.post(runner_url, params=params, json=assessment_config)
+        response = requests.post(runner_url, params=params, json=assessment_config.dict())
         while True:
             top_source_scores_dict = await get_top_source_scores.call(revision, reference, database_id)
             if top_source_scores_dict[revision] is not None:
