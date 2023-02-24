@@ -77,12 +77,13 @@ async def get_result(assessment_id: int):
             result_list = []
 
             for result in result_data["assessmentResult"]:
+                print(type(result["target"]))
                 results = Result(
                         id=result["id"],
                         assessment_id=result["assessmentByAssessment"]["id"],
                         vref=result["vref"],
                         source=result["source"] if result["source"] != 'null' else None,
-                        target=result["target"] if result["target"] != 'null' else None,
+                        target=str(result["target"]) if result["target"] != 'null' else None,
                         score=result["score"],
                         flag=result["flag"],
                         note=result["note"]

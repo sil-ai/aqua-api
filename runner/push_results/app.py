@@ -1,6 +1,7 @@
 import os
-from typing import List
+from typing import List, Optional
 import modal
+from pydantic import BaseModel
 
 from db_connect import get_session
 from models import Result
@@ -36,7 +37,7 @@ class PushResults:
         self.create_bulk_results()
 
         try:
-            ids = self.bulk_insert_results(self.assessment_results)
+            ids = self.bulk_insert_results()
             self.session.commit()
             return 200, ids
         
@@ -47,7 +48,7 @@ class PushResults:
     def create_bulk_results(self):
         from sqlalchemy.orm import declarative_base
         Base = declarative_base()
-        from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey, DateTime
+        from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey, DateTime, JSON
 
         class AssessmentResult(Base):
             __tablename__ = "assessmentResult"
@@ -56,6 +57,8 @@ class PushResults:
             vref = Column(
                 Text, ForeignKey("verseReference.fullVerseId")
             )  # vref format 'Gen 1:1'
+            source = Column(Text)
+            target = Column(Text)
             score = Column(Float)
             flag = Column(Boolean, default=False)
             note = Column(Text)
@@ -106,15 +109,18 @@ class PushResults:
             ar = AssessmentResult(
                 assessment=result.assessment_id,
                 vref=result.vref,
+                source=result.source,
+                target=result.target,
                 score=result.score,
-                flag=False,
+                flag=result.flag,
+                note=result.note,
             )
             self.assessment_results.append(ar)
 
-    def bulk_insert_results(self, results):
-        self.session.bulk_save_objects(results, return_defaults=True)
+    def bulk_insert_results(self):
+        self.session.bulk_save_objects(self.assessment_results, return_defaults=True)
         self.session.flush()
-        ids = [ar.id for ar in results]
+        ids = [ar.id for ar in self.assessment_results]
 
         return ids
 
@@ -152,12 +158,23 @@ class PushResults:
     timeout=600,
 )
 def push_results(results: List, AQUA_DB: str):
-    results_obj = []
+    class Result(BaseModel):
+        id: Optional[int] = None
+        assessment_id: int
+        vref: str
+        source: Optional[str] = None
+        target: Optional[str] = None
+        score: float
+        flag: bool = False
+        note: Optional[str] = None
+    
+    results_list = []
     for result in results:
         result_obj = Result(**result)
-        results_obj.append(result_obj)
+        results_list.append(result_obj)
     pr = PushResults(AQUA_DB)
-    response, ids = pr.insert_results(results_obj)
+    print(results_list[:20])
+    response, ids = pr.insert_results(results_list)
     return response, ids
 
 
