@@ -13,10 +13,15 @@ import word_alignment_steps.prepare_data as prepare_data
 index_cache_volume = modal.SharedVolume().persist("index_cache")
 
 
-# Manage suffix on modal endpoint if testing.
+# Manage deployment suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
     suffix = "-test"
+
+else:
+    suffix = os.getenv("MODAL_SUFFIX", "")
+
+suffix = f"-{suffix}" if len(suffix) > 0 else ""
 
 stub = modal.aio.AioStub(
     "word-alignment" + suffix,

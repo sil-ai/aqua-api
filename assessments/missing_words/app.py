@@ -10,10 +10,16 @@ import base64
 
 word_alignment_results_volume = modal.SharedVolume().persist("word_alignment_results")
 
-# Manage suffix on modal endpoint if testing.
+# Manage deployment suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
     suffix = "-test"
+
+else:
+    suffix = os.getenv("MODAL_SUFFIX", "")
+
+suffix = f"-{suffix}" if len(suffix) > 0 else ""
+
 
 stub = modal.aio.AioStub(
     "missing-words" + suffix,
@@ -104,7 +110,7 @@ async def get_top_source_scores(revision: int, reference: int, database_id: str)
 
 
 @stub.function(timeout=7200)
-async def run_word_alignment(revision_id: int, reference_id: int, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str, via_api: bool=True, test:bool=False) -> dict:
+async def run_word_alignment(revision_id: int, reference_id: int, AQUA_DB: str, AQUA_URL: str, AQUA_API_KEY: str, via_api: bool=True, modal_suffix:str='') -> dict:
     """
     Requests a word alignment assessment for a given revision and reference from the
     AQuA API. Keeps checking the database every 20 seconds until the assessment is finished.
@@ -132,7 +138,7 @@ async def run_word_alignment(revision_id: int, reference_id: int, AQUA_DB: str, 
         url = AQUA_URL + "/assessment"
         print(url)
         header = {"Authorization": "Bearer " + AQUA_API_KEY}
-        requests.post(url, params={**assessment_config.dict(), 'test': test}, headers=header)
+        requests.post(url, params={**assessment_config.dict(), 'modal_suffix': modal_suffix}, headers=header)
         
         # Keep checking the database until it is finished
         while True:
@@ -168,12 +174,13 @@ async def run_word_alignment(revision_id: int, reference_id: int, AQUA_DB: str, 
         revision_id=revision_id,
         type="word-alignment",
         )
-        runner_url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
+        suffix = f'-{modal_suffix}' if len(modal_suffix) > 0 else ''
+        runner_url = f"https://sil-ai--runner{suffix}-assessment-runner.modal.run/"
         AQUA_DB_BYTES = AQUA_DB.encode('utf-8')
         AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES)
         params = {
             'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
-            'test': test,
+            'modal_suffix': modal_suffix,
             }
         response = requests.post(runner_url, params=params, json=assessment_config.dict())
         while True:
@@ -244,7 +251,7 @@ def identify_low_scores(
     timeout=7200,
     secret=modal.Secret.from_name("aqua-api"),
     )
-async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool=False, via_api: bool=True, test: bool=False):
+async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool=False, via_api: bool=True, modal_suffix: str=''):
     """
     Assess the words from the reference text that are missing in the revision.
 
@@ -293,7 +300,7 @@ async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool
 
         assessments_to_run = [revision for revision, df in all_top_source_scores.items() if df is None]
     print(assessments_to_run)
-    results = await asyncio.gather(*[run_word_alignment.call(revision, reference_id, AQUA_DB, AQUA_URL, AQUA_API_KEY, via_api=via_api, test=test) for revision in assessments_to_run])
+    results = await asyncio.gather(*[run_word_alignment.call(revision, reference_id, AQUA_DB, AQUA_URL, AQUA_API_KEY, via_api=via_api, modal_suffix=modal_suffix) for revision in assessments_to_run])
 
     for result in results:
         all_top_source_scores.update(result)

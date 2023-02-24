@@ -21,9 +21,16 @@ echo ""
 echo ""
 echo "Deploying Test Modal app: $app"
 echo "-----------------------"
-    cd $app
-    MODAL_TEST=TRUE modal deploy app.py || exit 1
-    cd $currentdir
+
+suffices=("" "0.1.2" "test")  # This needs to match the list in runner/runner.app.py
+
+cd $app
+for suffix in "${suffices[@]}"
+do
+MODAL_SUFFIX="$suffix" modal deploy app.py || exit 1
+done
+
+cd $currentdir
 done
 done
 for dir in assessments runner

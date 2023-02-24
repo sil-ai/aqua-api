@@ -74,7 +74,7 @@ async def get_assessments():
 
 
 @router.post("/assessment", dependencies=[Depends(api_key_auth)], response_model=AssessmentOut)
-async def add_assessment(a: AssessmentIn=Depends(), test: bool = False):
+async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
     """
     Requests an assessment to be run on a revision and (where required) a reference revision.
 
@@ -86,8 +86,10 @@ async def add_assessment(a: AssessmentIn=Depends(), test: bool = False):
 
     For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
 
-    Parameter `test` is used for testing purposes only, and causes the assessment to be run on the test versions of the assessment apps. It is not intended for use by users as it may cause some unpredictable results.
+    Parameter `modal_suffix` is used to tell modal which set of assessment apps to use. It should not normally be set by users.
     """
+    modal_suffix = '-' + modal_suffix if len(modal_suffix) > 0 else ''
+
     if a.type in ["missing-words", "sentence-length", "word-alignment", "word_alignment"] and a.reference_id is None:
         raise HTTPException(
                 status_code=400,
@@ -122,14 +124,14 @@ async def add_assessment(a: AssessmentIn=Depends(), test: bool = False):
                 )
     
     # Call runner to run assessment
-    runner_url = "https://sil-ai--runner-test-assessment-runner.modal.run/" if test else "https://sil-ai--runner-assessment-runner.modal.run/"
+    runner_url = f"https://sil-ai--runner{modal_suffix}-assessment-runner.modal.run/"
 
     AQUA_DB = os.getenv("AQUA_DB")
     AQUA_DB_BYTES = AQUA_DB.encode('utf-8')
     AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES)
     params = {
         'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
-        'test': test,
+        'modal_suffix': modal_suffix,
         }
     response = requests.post(runner_url, params=params, json=new_assessment.dict(exclude={"requested_time": True, "start_time": True, "end_time": True, "status": True}))
     if response.status_code != 200:

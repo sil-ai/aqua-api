@@ -61,7 +61,7 @@ def test_add_revision(base_url, header, filepath: Path):
 def get_missing_words(assessment_config: Assessment):
     import os
     AQUA_DB = os.getenv("AQUA_DB")
-    missing_words = modal.container_app.run_missing_words.call(assessment_config, AQUA_DB, via_api=False, refresh_refs=True, test=True)
+    missing_words = modal.container_app.run_missing_words.call(assessment_config, AQUA_DB, via_api=False, refresh_refs=True, modal_suffix='test')
     assert missing_words[0]['score'] == pytest.approx(0.090, 0.01)
     assert missing_words[1]['score'] == pytest.approx(0.056, 0.01)
     assert missing_words[2]['score'] == pytest.approx(0.097, 0.01)

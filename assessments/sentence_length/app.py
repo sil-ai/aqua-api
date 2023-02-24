@@ -7,10 +7,15 @@ from typing import Literal, Optional
 import modal
 
 
-# Manage suffix on modal endpoint if testing.
-suffix = ''
-if os.environ.get('MODAL_TEST') == 'TRUE':
-    suffix = '-test'
+# Manage deployment suffix on modal endpoint if testing.
+suffix = ""
+if os.environ.get("MODAL_TEST") == "TRUE":
+    suffix = "-test"
+
+else:
+    suffix = os.getenv("MODAL_SUFFIX", "")
+
+suffix = f"-{suffix}" if len(suffix) > 0 else ""
 
 stub = modal.Stub(
     "sentence-length" + suffix,

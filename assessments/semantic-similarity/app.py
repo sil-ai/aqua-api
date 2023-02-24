@@ -3,10 +3,15 @@ import modal
 from typing import Literal, Optional
 from pydantic import BaseModel
 
-# Manage suffix on modal endpoint if testing.
-suffix = ''
-if os.environ.get('MODAL_TEST') == 'TRUE': 
-    suffix = '-test'
+# Manage deployment suffix on modal endpoint if testing.
+suffix = ""
+if os.environ.get("MODAL_TEST") == "TRUE":
+    suffix = "-test"
+
+else:
+    suffix = os.getenv("MODAL_SUFFIX", "")
+
+suffix = f"-{suffix}" if len(suffix) > 0 else ""
 
 volume = modal.SharedVolume().persist("pytorch-model-vol")
 CACHE_PATH = "/root/model_cache"
