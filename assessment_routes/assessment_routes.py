@@ -160,7 +160,7 @@ async def delete_assessment(assessment_id: int):
 
             assessment_mutation = gql(delete_assessment)
             assessment_result = client.execute(assessment_mutation)
-
+            print(assessment_result)
             delete_response = ("Assessment " +
                 str(
                     assessment_result["delete_assessment"]["returning"][0]["id"]
