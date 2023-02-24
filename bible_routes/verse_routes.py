@@ -95,7 +95,7 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
     return verse_data
 
 
-@router.get("/book", dependencies=[Depends(api_key_auth)], response_model=list[VerseText])
+@router.get("/book", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
 async def get_book(revision: int, verse: str):
     """
     Gets a list of verse texts for a revision for a given book.
@@ -123,7 +123,7 @@ async def get_book(revision: int, verse: str):
     return books_data
 
 
-@router.get("/text", dependencies=[Depends(api_key_auth)], response_model=list[VerseText])
+@router.get("/text", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
 async def get_text(revision: int):
     """
     Gets a list of verse texts for a revision for a whole revision.
