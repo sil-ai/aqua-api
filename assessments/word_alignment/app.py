@@ -5,7 +5,7 @@ from pathlib import Path
 import json
 import os
 import pickle
-from typing import Literal, Optional
+from typing import Literal
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -50,10 +50,9 @@ CACHE_DIR = Path("/cache")
 
 
 # The information corresponding to the given assessment.
-class Assessment(BaseModel):
-    assessment: Optional[int] = None
-    revision: int
-    reference: int
+class AssessmentIn(BaseModel):
+    revision_id: int
+    reference_id: int
     type: Literal["word-alignment"]
 
 
@@ -193,13 +192,13 @@ def run_total_scores(
 
 
 @stub.function(timeout=7200)
-async def assess(assessment_config: Assessment, AQUA_DB: str, return_all_results: bool=False):
+async def assess(assessment_config: AssessmentIn, AQUA_DB: str, return_all_results: bool=False):
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
-    print(f"Starting assessment for {database_id}, revision {assessment_config.revision}, reference {assessment_config.reference}")
+    print(f"Starting assessment for {database_id}, revision {assessment_config.revision_id}, reference {assessment_config.reference_id}")
     tokenized_dfs = {}
     index_caches = {}
-    src_revision_id = assessment_config.reference
-    trg_revision_id = assessment_config.revision
+    src_revision_id = assessment_config.reference_id
+    trg_revision_id = assessment_config.revision_id
     results = await asyncio.gather(
         *[
             get_index_cache.call(revision_id, AQUA_DB, refresh=False)
@@ -257,8 +256,8 @@ async def assess(assessment_config: Assessment, AQUA_DB: str, return_all_results
     print("Saving results to modal shared volume")
 
     modal.container_app.run_save_results.call(
-        assessment_config.revision,
-        assessment_config.reference,
+        assessment_config.revision_id,
+        assessment_config.reference_id,
         total_results["top_source_scores"],
         database_id,
     )

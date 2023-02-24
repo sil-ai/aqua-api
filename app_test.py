@@ -8,6 +8,7 @@ import fastapi
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from gql.transport.requests import RequestsHTTPTransport
+from pydantic.error_wrappers import ValidationError
 
 import bible_routes.language_routes as language_routes
 import bible_routes.version_routes as version_routes
@@ -15,7 +16,7 @@ import bible_routes.revision_routes as revision_routes
 import bible_routes.verse_routes as verse_routes
 import assessment_routes.assessment_routes as assessments_routes
 import review_routes.results_routes as results_routes
-from models import Version, Revision, Assessment
+from models import VersionIn, RevisionIn, AssessmentIn
 
 
 version_name = 'App delete test'
@@ -70,15 +71,15 @@ def test_read_main(client):
 
 
 def test_add_version(client):
-    test_version = Version(
+    test_version = VersionIn(
             name=version_name, 
             isoLanguage="eng", 
             isoScript="Latn",
             abbreviation=version_abbreviation,
         )
 
-    test_response = client.post("/version", json=test_version.dict())
-    fail_response = client.post("/version", json=test_version.dict())  # Push the same version a second time, which should give 400
+    test_response = client.post("/version", params=test_version.dict())
+    fail_response = client.post("/version", params=test_version.dict())  # Push the same version a second time, which should give 400
 
     if test_response.status_code == 400 and test_response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
@@ -100,22 +101,21 @@ def test_upload_bible(client):
     response = client.get("/version")
     version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
 
-    test_abv_revision = Revision(version_id=version_id).dict()
-    test_abv_revision_with_name = Revision(
+    test_abv_revision = RevisionIn(version_id=version_id)
+    test_abv_revision_with_name = RevisionIn(
             version_id=version_id,
             published=False,
             name="App test upload",
-                ).dict()
+                )
  
     test_upload_file = Path("fixtures/uploadtest.txt")
     file = {"file": test_upload_file.open("rb")}
     file_2 = {"file": test_upload_file.open("rb")}
 
-    response_abv = client.post("/revision", params=test_abv_revision, files=file)
-
+    response_abv = client.post("/revision", params=test_abv_revision.dict(), files=file)
     assert response_abv.status_code == 200
 
-    response_abv = client.post("/revision", params=test_abv_revision_with_name, files=file_2)
+    response_abv = client.post("/revision", params=test_abv_revision_with_name.dict(), files=file_2)
 
     assert response_abv.status_code == 200
 
@@ -222,31 +222,39 @@ def test_assessment(client):
         if version_data["version_id"] == version_id:
             revision_id = version_data["id"]
     print(f'{revision_id=}')
-    bad_config_1 = {
-            "revision_id": "eleven",
-            "reference_id": 10,
-            "type": "dummy"
-            }
+     
+    with pytest.raises(ValidationError):
+        bad_config_1 = AssessmentIn(
+                revision_id="eleven",
+                reference_id=10,
+                type="dummy"
+        )
 
-    bad_config_2 = {
-            "revision_id": 11,
-            "reference_id": 10,
-            "type": "non-existent assessment"
-            }
+    with pytest.raises(ValidationError):
+        bad_config_2 = AssessmentIn(
+                revision_id=11,
+                reference_id=10,
+                type="non-existent assessment"
+        )
+    
+    bad_config_3 = AssessmentIn(
+            revision_id=revision_id,
+            type="word-alignment"
+    )                                   # This should require a reference_id
 
-    good_config = Assessment(
+    good_config = AssessmentIn(
             revision_id=revision_id,
             reference_id=10,
             type="dummy"
     )
 
     # Try to post bad config
-    for bad_config in [bad_config_1, bad_config_2]:
-        response = client.post("/assessment", json=bad_config, params={'test': True})
-        assert response.status_code == 422
+    response = client.post("/assessment", params={**bad_config_3.dict(), 'test': True})
+    assert response.status_code == 400
 
     # Post good config
-    response = client.post("/assessment", json=good_config.dict(), params={'test': True})
+    response = client.post("/assessment", params={**good_config.dict(), 'test': True})
+    print(response.text)
     assert response.status_code == 200
     id = response.json()['id']
 
@@ -280,13 +288,13 @@ def test_result(client):
         if revision_data["version_id"] == version_id:
             revision_id = revision_data["id"]
 
-    good_config = {
-            "revision_id": revision_id,
-            "reference_id": 10,
-            "type": "dummy"
-            }
+    good_config = AssessmentIn(
+            revision_id=revision_id,
+            reference_id=10,
+            type="dummy",
+    )
 
-    response = client.post("/assessment", json=good_config, params={'test': True})
+    response = client.post("/assessment", params={**good_config.dict(), 'test': True})
     assert response.status_code == 200
     assessment_id = response.json()['id']
     

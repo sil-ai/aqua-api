@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 import modal
 
-from app import Assessment
+from app import AssessmentIn
 
 
 stub = modal.Stub(
@@ -58,7 +58,7 @@ def test_add_revision(base_url, header, filepath: Path):
 
 
 @stub.function(timeout=3600, secret=modal.Secret.from_name("aqua-pytest"))
-def get_missing_words(assessment_config: Assessment):
+def get_missing_words(assessment_config: AssessmentIn):
     import os
     AQUA_DB = os.getenv("AQUA_DB")
     missing_words = modal.container_app.run_missing_words.call(assessment_config, AQUA_DB, via_api=False, refresh_refs=True)
@@ -74,12 +74,12 @@ def test_get_missing_words(base_url, header):
         url = base_url + "/revision"
         response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
 
-        reference = response.json()[0]['id']
-        revision = response.json()[1]['id']
+        reference_id = response.json()[0]['id']
+        revision_id = response.json()[1]['id']
         
-        config = Assessment(
-                revision=revision, 
-                reference=reference, 
+        config = AssessmentIn(
+                revision_id=revision_id, 
+                reference_id=reference_id, 
                 type='missing-words'
                 )
 

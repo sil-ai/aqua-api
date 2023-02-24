@@ -4,8 +4,7 @@ from typing import Union, Optional
 import datetime
 
 
-class Version(BaseModel):
-    id: Optional[int] = None
+class VersionIn(BaseModel):
     name: str
     isoLanguage: str
     isoScript: str
@@ -16,12 +15,30 @@ class Version(BaseModel):
     machineTranslation: bool = False
 
 
-class Revision(BaseModel):
-    id: Optional[int] = None
+class VersionOut(BaseModel):
+    id: int
+    name: str
+    isoLanguage: str
+    isoScript: str
+    abbreviation: str
+    rights: Union[str, None] = None
+    forwardTranslation: Union[int, None] = None
+    backTranslation: Union[int, None] = None
+    machineTranslation: bool = False
+
+
+class RevisionIn(BaseModel):
+    version_id: int
+    name: Optional[str] = None
+    published: Optional[bool] = False
+
+
+class RevisionOut(BaseModel):
+    id: int
     version_id: int
     date: Optional[datetime.date] = None
     name: Optional[str] = None
-    published: bool = False
+    published: Optional[bool] = False
 
 
 class VerseText(BaseModel):
@@ -39,8 +56,17 @@ class AssessmentType(Enum):
     semantic_similarity = 'semantic-similarity'
 
 
-class Assessment(BaseModel):
-    id: Optional[int] = None
+class AssessmentIn(BaseModel):
+    revision_id: int
+    reference_id: Optional[int] = None
+    type: AssessmentType
+    
+    class Config: 
+        use_enum_values = True
+
+
+class AssessmentOut(BaseModel):
+    id: int
     revision_id: int
     reference_id: Optional[int] = None
     type: AssessmentType
@@ -48,8 +74,8 @@ class Assessment(BaseModel):
     requested_time: Optional[datetime.datetime] = None
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
-
-    class Config:  
+    
+    class Config: 
         use_enum_values = True
 
 

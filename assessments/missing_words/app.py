@@ -2,7 +2,7 @@ from pydantic import BaseModel
 import modal.aio
 import asyncio
 import os
-from typing import Literal, List, Dict, Optional
+from typing import Literal, List, Dict
 import requests
 import time
 import json
@@ -28,14 +28,11 @@ stub = modal.aio.AioStub(
     )
 )
 
-stub.get_results = modal.Function.from_name(
-    "save-results", "get_results"
-)
+stub.get_results = modal.Function.from_name("save-results" + suffix, "get_results")
 
 
 # The information corresponding to the given assessment.
-class Assessment(BaseModel):
-    id: Optional[int] = None
+class AssessmentIn(BaseModel):
     revision_id: int
     reference_id: int
     type: Literal["missing-words"]
@@ -59,7 +56,6 @@ def get_versions(AQUA_URL: str, AQUA_API_KEY: str) -> List[dict]:
     return versions
 
 
-# @stub.function
 async def get_revision_id(version_abbreviation: str, AQUA_URL: str, AQUA_API_KEY: str) -> Dict[str, int]:
     """
     Get the revision id for the most recently uploaded revision for a given version abbreviation.
@@ -241,7 +237,7 @@ def identify_low_scores(
     timeout=7200,
     secret=modal.Secret.from_name("aqua-api"),
     )
-async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool=False, via_api: bool=True):
+async def assess(assessment_config: AssessmentIn, AQUA_DB: str, refresh_refs: bool=False, via_api: bool=True):
     """
     Assess the words from the reference text that are missing in the revision.
 
@@ -309,7 +305,7 @@ async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool
         reference_matches = {col[:-6]: row[col] for col in row.index if col[-6:] == '_match'}
         reference_matches_json = json.dumps(reference_matches, ensure_ascii=False)
         
-        missing_words.append({'assessment_id': assessment_config.assessment, 
+        missing_words.append({'assessment_id': assessment_config.id, 
                         'vref': row['vref'], 'source': row['source'], 'target': reference_matches_json, 'score': row['total_score'], 
                         'flag': row['flag']})
 

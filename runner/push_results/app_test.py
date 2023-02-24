@@ -73,7 +73,7 @@ def delete_results(ids: List[int], AQUA_DB: str):
 
 
 @stub.function(secrets=[modal.Secret.from_name("aqua-pytest"), modal.Secret.from_name("aqua-api")])
-def push_df_rows():
+def push_df_results():
     import pandas as pd
     import requests
     import os
@@ -131,7 +131,7 @@ def push_df_rows():
 
 def test_push_df_rows():
     with stub.run():
-        push_df_rows.call()
+        push_df_results.call()
 
 
 def test_push_wrong_data_type():

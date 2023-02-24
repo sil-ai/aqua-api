@@ -12,7 +12,7 @@ import fastapi
 # Manage suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "_test"
+    suffix = "-test"
 
 
 stub = modal.Stub(name="runner" + suffix, image=modal.Image.debian_slim().pip_install(
@@ -42,13 +42,17 @@ class Assessment(BaseModel):
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
 
+    class Config:  
+        use_enum_values = True
 
-stub.run_push_results = modal.Function.from_name("push_results", "push_results")
-stub.run_push_missing_words = modal.Function.from_name("push_results", "push_missing_words")
+
+stub.run_push_results = modal.Function.from_name("push-results" + suffix, "push_results")
+# stub.run_push_missing_words = modal.Function.from_name("push-results" + suffix, "push_missing_words")
 
 for a in AssessmentType:
     app_name = a.value
     stub[app_name] = modal.Function.from_name(app_name, "assess")
+    stub[f'{app_name}-test'] = modal.Function.from_name(f'{app_name}-test', "assess")
 
 
 class RunAssessment:
@@ -95,41 +99,42 @@ class RunAssessment:
     def log_end(self, status='finished'):
         with next(self.yield_session()) as session:
             session.query(self.Assessment).filter(
-                self.Assessment.id == self.config.assessment
+                self.Assessment.id == self.config.id
             ).update(
                 {"status": status, "end_time": datetime.datetime.utcnow()}
             )
             session.commit()
     
-    def run_assessment(self):
+    def run_assessment(self, test: bool=False):
         print(f"Starting assessment: {self.config} (database: {self.database_id})")
-        self.results = modal.container_app[self.config.type].call(self.config, self.AQUA_DB)
+        app_name = f'{self.config.type}-test' if test else self.config.type
+        self.results = modal.container_app[app_name].call(self.config, self.AQUA_DB)
         return {'status': 'finished'}
 
     def push_results(self):
-        if self.config.assessment is None:
+        if self.config.id is None:
             print("Not pushing results to the database.")
             # This is probably a test, and there is no assessment ID to push the results to.
             return {'status': 'finished', 'ids': []}
         print('Pushing results to the database')
         for result in self.results:
-            result['assessment_id'] = self.config.assessment
-        if self.config.type == AssessmentType.missing_words.value:
-            response, ids = modal.container_app.run_push_missing_words.call(self.results, self.AQUA_DB)
-        else:
-            response, ids = modal.container_app.run_push_results.call(self.results, self.AQUA_DB)
+            result['assessment_id'] = self.config.id
+        # if self.config.type == AssessmentType.missing_words.value:
+        #     response, ids = modal.container_app.run_push_missing_words.call(self.results, self.AQUA_DB)
+        # else:
+        response, ids = modal.container_app.run_push_results.call(self.results, self.AQUA_DB)
         print(f"Finished pushing to the database. Response: {response}")
         return {'status': 'finished', 'ids': ids}
 
 
 
 @stub.function(timeout=7200)
-def run_assessment_runner(config, AQUA_DB):
+def run_assessment_runner(config, AQUA_DB, test: bool=False):
     assessment = RunAssessment(config=config, AQUA_DB=AQUA_DB)
     print("Logging assessment start to database")
     assessment.log_start()
     try:
-        response = assessment.run_assessment()
+        response = assessment.run_assessment(test=test)
     except Exception as e:
         print(f"Assessment failed: {e}")
         assessment.log_end(status='failed')
@@ -149,16 +154,20 @@ def run_assessment_runner(config, AQUA_DB):
 
 
 @stub.webhook(method="POST")
-async def assessment_runner(config: Assessment, AQUA_DB_ENCODED: Optional[bytes]=None):
+async def assessment_runner(config: Assessment, AQUA_DB_ENCODED: Optional[bytes]=None, test: bool=False):
+    print(f"Received assessment request: {config}")
+    print(f"Type AQUA_DB_ENCODED: {type(AQUA_DB_ENCODED)}")
     if AQUA_DB_ENCODED is None:
+        print("AQUA_DB_ENCODED is not set. This may be an empty test")
         return fastapi.Response(content="AQUA_DB_ENCODED is not set. This may be an empty test", status_code=200)
     AQUA_DB = base64.b64decode(AQUA_DB_ENCODED).decode('utf-8')
+
     # Handle the case where the requested assessment type isn't available.
     if config.type not in [a.value for a in AssessmentType]:
-        # TODO: We need to record this as a failed assessment in the database.
+        print(f"Assessment type not available: {config.type}")
         return fastapi.Response(content="Assessment type not available.", status_code=500)
     
     # Start the assessment, while continuing on to return a response to the user
-    run_assessment_runner.spawn(config, AQUA_DB)
+    run_assessment_runner.spawn(config, AQUA_DB, test=test)
     
     return "Assessment runner started in the background, will take approximately 20 minutes to finish."

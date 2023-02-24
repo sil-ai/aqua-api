@@ -41,6 +41,19 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
 
 @router.get("/result", dependencies=[Depends(api_key_auth)], response_model=List[Result])
 async def get_result(assessment_id: int):
+    """
+    Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
+
+    Notes
+    -----
+    Source and target are only returned for missing-words assessments. Source is single words from the source text. Target is
+    a json array of words that match this source in the "baseline reference" texts. These may be used to show how the source
+    word has been translated in a few other major languages.
+
+    Flag is a boolean value that is currently only implemented in missing-words assessments. It is used to indicate that the
+    missing word appears in the baseline reference texts, and so there is a higher likelihood that it is a word that should
+    be included in the text being assessed.
+    """
     list_assessments = queries.list_assessments_query()
         
     fetch_results = queries.get_results_query(assessment_id)

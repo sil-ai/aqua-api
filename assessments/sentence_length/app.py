@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import string
 from pydantic import BaseModel
-from typing import Literal, Optional
+from typing import Literal
 
 import modal
 
@@ -24,8 +24,8 @@ stub = modal.Stub(
     .copy(mount=modal.Mount(local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root"))),
 )
 
-stub.run_pull_revision = modal.Function.from_name("pull_revision", "pull_revision")
-stub.run_push_results = modal.Function.from_name("push_results_test", "push_results")
+stub.run_pull_revision = modal.Function.from_name("pull-revision" + suffix, "pull_revision")
+stub.run_push_results = modal.Function.from_name("push-results" + suffix, "push_results")
 
 
 def get_vrefs():
@@ -73,20 +73,19 @@ def get_lix_score(text):
     return lix
 
 
-class Assessment(BaseModel):
-    assessment: Optional[int] = None
-    revision: int
+class AssessmentIn(BaseModel):
+    revision_id: int
     type: Literal["sentence-length"]
 
 
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def assess(assessment_config: Assessment, AQUA_DB: str):
+def assess(assessment_config: AssessmentIn, AQUA_DB: str):
     import pandas as pd
     
     #pull the revision
-    rev_num = assessment_config.revision
+    rev_num = assessment_config.revision_id
     lines = modal.container_app.run_pull_revision.call(rev_num, AQUA_DB)
     lines = [line.strip() for line in lines]
 
@@ -126,7 +125,7 @@ def assess(assessment_config: Assessment, AQUA_DB: str):
     #add to results
     results = []
     for index, row in df.iterrows():
-        results.append({'assessment_id': assessment_config.assessment, 
+        results.append({'assessment_id': assessment_config.id, 
                         'vref': row['vref'], 'score': row['lix_score'], 
                         'flag': False})
 

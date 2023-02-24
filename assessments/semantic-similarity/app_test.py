@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 import os
 
-from app import Assessment
+from app import AssessmentIn
 
 volume = modal.SharedVolume().persist("pytorch-model-vol")
 CACHE_PATH = "/root/model_cache"
@@ -76,9 +76,9 @@ def test_add_revision(base_url, header, filepath: Path):
 @stub.function(secret=modal.Secret.from_name('aqua-pytest'))
 def assessment_object(draft_id, ref_id, expected):
     AQUA_DB = os.getenv("AQUA_DB")
-    config = Assessment(
-                            revision=draft_id,
-                            reference=ref_id,
+    config = AssessmentIn(
+                            revision_id=draft_id,
+                            reference_id=ref_id,
                             type="semantic-similarity")
     results = get_assessment.call(config, AQUA_DB)
     #test for the right type of results

@@ -12,7 +12,7 @@ import requests
 
 import queries
 from key_fetch import get_secret
-from models import Assessment
+from models import AssessmentIn, AssessmentOut
 
 router = fastapi.APIRouter()
 
@@ -43,8 +43,11 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     return True
 
 
-@router.get("/assessment", dependencies=[Depends(api_key_auth)], response_model=List[Assessment])
+@router.get("/assessment", dependencies=[Depends(api_key_auth)], response_model=List[AssessmentOut])
 async def get_assessments():
+    """
+    Returns a list of all assessments.
+    """
     list_assessments = queries.list_assessments_query()
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
@@ -54,7 +57,7 @@ async def get_assessments():
         assessment_data = []
         for assessment in result["assessment"]:
             print(assessment["type"])
-            data = Assessment(
+            data = AssessmentOut(
                     id=assessment["id"],
                     revision_id=assessment["revision"],
                     reference_id=assessment["reference"],
@@ -70,9 +73,26 @@ async def get_assessments():
     return assessment_data
 
 
-@router.post("/assessment", dependencies=[Depends(api_key_auth)], response_model=Assessment)
-async def add_assessment(a: Assessment, test: bool = False):
-    
+@router.post("/assessment", dependencies=[Depends(api_key_auth)], response_model=AssessmentOut)
+async def add_assessment(a: AssessmentIn=Depends(), test: bool = False):
+    """
+    Requests an assessment to be run on a revision and (where required) a reference revision.
+
+    Currently supported assessment types are:
+    - missing-words (requires reference)
+    - semantic-similarity (requires reference)
+    - sentence-length
+    - word-alignment (requires reference)
+
+    For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
+
+    Parameter `test` is used for testing purposes only, and causes the assessment to be run on the test versions of the assessment apps. It is not intended for use by users as it may cause some unpredictable results.
+    """
+    if a.type in ["missing-words", "sentence-length", "word-alignment", "word_alignment"] and a.reference_id is None:
+        raise HTTPException(
+                status_code=400,
+                detail=f"Assessment type {a.type} requires a reference_id which is an id of a revision."
+        )
     reference_id = a.reference_id
     if not reference_id:
         reference_id = 'null'
@@ -92,7 +112,7 @@ async def add_assessment(a: Assessment, test: bool = False):
         mutation = gql(new_assessment)
         assessment = client.execute(mutation)
 
-    new_assessment = Assessment(
+    new_assessment = AssessmentOut(
             id=assessment["insert_assessment"]["returning"][0]["id"],
             revision_id=assessment["insert_assessment"]["returning"][0]["revision"],
             reference_id=assessment["insert_assessment"]["returning"][0]["reference"],
@@ -104,7 +124,6 @@ async def add_assessment(a: Assessment, test: bool = False):
     # Call runner to run assessment
     runner_url = "https://sil-ai--runner-test-assessment-runner.modal.run/" if test else "https://sil-ai--runner-assessment-runner.modal.run/"
 
-    a.id = new_assessment.id
     AQUA_DB = os.getenv("AQUA_DB")
     AQUA_DB_BYTES = AQUA_DB.encode('utf-8')
     AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES)
@@ -112,7 +131,7 @@ async def add_assessment(a: Assessment, test: bool = False):
         'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
         'test': test,
         }
-    response = requests.post(runner_url, params=params, json=a.dict())
+    response = requests.post(runner_url, params=params, json=new_assessment.dict(exclude={"requested_time": True, "start_time": True, "end_time": True, "status": True}))
     if response.status_code != 200:
         print("Runner failed to run assessment")
         return response
@@ -122,6 +141,9 @@ async def add_assessment(a: Assessment, test: bool = False):
 
 @router.delete("/assessment", dependencies=[Depends(api_key_auth)])
 async def delete_assessment(assessment_id: int):
+    """
+    Deletes an assessment and its results.
+    """
     fetch_assessments = queries.check_assessments_query()
     delete_assessment = queries.delete_assessment_mutation(assessment_id)
     delete_assessment_results_mutation = queries.delete_assessment_results_mutation(assessment_id)

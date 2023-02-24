@@ -58,6 +58,10 @@ async def list_languages():
 
 @router.get("/script", dependencies=[Depends(api_key_auth)], response_model=List[Script])
 async def list_scripts():
+    """
+    Get a list of ISO 15924 script codes and their English names. Any version added to the database
+    must have a script code that is in this list.
+    """
     list_script = queries.get_scripts_query()
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
