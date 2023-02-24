@@ -9,7 +9,7 @@ from gql.transport.requests import RequestsHTTPTransport
 
 import queries
 from key_fetch import get_secret
-from models import VersionIn
+from models import VersionIn, VersionOut
 
 router = fastapi.APIRouter()
 
@@ -38,7 +38,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     return True
 
 
-@router.get("/version", dependencies=[Depends(api_key_auth)], response_model=List[VersionIn])
+@router.get("/version", dependencies=[Depends(api_key_auth)], response_model=List[VersionOut])
 async def list_version():
     """
     Get a list of all versions.
@@ -51,7 +51,7 @@ async def list_version():
 
         version_data = []
         for version in result["bibleVersion"]: 
-            data = VersionIn(
+            data = VersionOut(
                         id=version["id"], 
                         name=version["name"], 
                         abbreviation=version["abbreviation"], 
@@ -68,7 +68,7 @@ async def list_version():
     return version_data
 
 
-@router.post("/version", dependencies=[Depends(api_key_auth)], response_model=VersionIn)
+@router.post("/version", dependencies=[Depends(api_key_auth)], response_model=VersionOut)
 async def add_version(v: VersionIn = Depends()):
     """
     Create a new version. 
@@ -121,7 +121,7 @@ async def add_version(v: VersionIn = Depends()):
 
         revision = client.execute(mutation)
 
-    new_version = VersionIn(
+    new_version = VersionOut(
         id=revision["insert_bibleVersion"]["returning"][0]["id"],
         name=revision["insert_bibleVersion"]["returning"][0]["name"],
         abbreviation=revision["insert_bibleVersion"]["returning"][0]["abbreviation"],
