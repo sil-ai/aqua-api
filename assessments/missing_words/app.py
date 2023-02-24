@@ -13,7 +13,7 @@ word_alignment_results_volume = modal.SharedVolume().persist("word_alignment_res
 # Manage deployment suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "-test"
+    suffix = "test"
 
 else:
     suffix = os.getenv("MODAL_SUFFIX", "")

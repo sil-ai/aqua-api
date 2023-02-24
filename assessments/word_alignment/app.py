@@ -16,7 +16,7 @@ index_cache_volume = modal.SharedVolume().persist("index_cache")
 # Manage deployment suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "-test"
+    suffix = "test"
 
 else:
     suffix = os.getenv("MODAL_SUFFIX", "")

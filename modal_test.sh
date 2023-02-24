@@ -22,13 +22,8 @@ echo ""
 echo "Deploying Test Modal app: $app"
 echo "-----------------------"
 
-suffices=("" "0.1.2" "test")  # This needs to match the list in runner/runner.app.py
-
 cd $app
-for suffix in "${suffices[@]}"
-do
-MODAL_SUFFIX="$suffix" modal deploy app.py || exit 1
-done
+MODAL_SUFFIX="" modal deploy app.py || exit 1   # You can add your suffix here
 
 cd $currentdir
 done

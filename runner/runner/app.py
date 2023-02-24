@@ -62,8 +62,8 @@ class Assessment(BaseModel):
 # stub.run_push_missing_words = modal.Function.from_name("push-results" + suffix, "push_missing_words")
 
 for suffix in suffices:
+    suffix = f"-{suffix}" if len(suffix) > 0 else ""
     for a in AssessmentType:
-        suffix = f"-{suffix}" if len(suffix) > 0 else ""
         app_name = a.value
         stub[f'{app_name}{suffix}'] = modal.Function.from_name(f'{app_name}{suffix}', "assess")
     stub[f'run-push-results{suffix}'] = modal.Function.from_name("push-results" + suffix, "push_results")

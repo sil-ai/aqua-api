@@ -6,7 +6,7 @@ from pydantic import BaseModel
 # Manage deployment suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "-test"
+    suffix = "test"
 
 else:
     suffix = os.getenv("MODAL_SUFFIX", "")
