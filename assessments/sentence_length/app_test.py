@@ -97,8 +97,9 @@ def test_assess_draft(base_url, header):
     url = base_url + "/revision"
     response = requests.get(url, params={'version_abbreviation': version_abbreviation}, headers=header)
     revision_id = response.json()[0]['id']
-    from app import AssessmentIn
-    config = AssessmentIn(
+    from app import Assessment
+    config = Assessment(
+        id=1,
         revision_id = revision_id,
         type = 'sentence-length',
     )

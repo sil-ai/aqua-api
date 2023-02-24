@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import string
 from pydantic import BaseModel
-from typing import Literal
+from typing import Literal, Optional
 
 import modal
 
@@ -73,7 +73,8 @@ def get_lix_score(text):
     return lix
 
 
-class AssessmentIn(BaseModel):
+class Assessment(BaseModel):
+    id: Optional[int] = None
     revision_id: int
     type: Literal["sentence-length"]
 
@@ -81,7 +82,7 @@ class AssessmentIn(BaseModel):
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def assess(assessment_config: AssessmentIn, AQUA_DB: str):
+def assess(assessment_config: Assessment, AQUA_DB: str):
     import pandas as pd
     
     #pull the revision

@@ -1,6 +1,6 @@
 import os
 import modal
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 # Manage suffix on modal endpoint if testing.
@@ -30,7 +30,8 @@ stub = modal.Stub("semantic-similarity" + suffix,
 stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
 
 
-class AssessmentIn(BaseModel):
+class Assessment(BaseModel):
+    id: Optional[int] = None
     revision_id: int
     reference_id: int
     type: Literal["semantic-similarity"]
@@ -113,7 +114,7 @@ def merge(revision_id, revision_verses, reference_id, reference_verses):
         cpu=4,
         shared_volumes={CACHE_PATH: volume},
 )
-def assess(assessment: AssessmentIn, AQUA_DB: str, offset=-1):
+def assess(assessment: Assessment, AQUA_DB: str, offset=-1):
     revision = get_text.call(assessment.revision_id, AQUA_DB)
     reference = get_text.call(assessment.reference_id, AQUA_DB)
     df = merge.call(assessment.revision_id,

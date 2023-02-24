@@ -6,7 +6,7 @@ import pytest
 import pickle
 
 import word_alignment_steps.prepare_data as prepare_data
-from app import AssessmentIn
+from app import Assessment
 
 version_abbreviation = 'WA-DEL'
 version_name = 'word alignment delete'
@@ -109,7 +109,7 @@ stub.run_word_alignment = modal.Function.from_name("word-alignment-test", "asses
     timeout=3600,
     secret=modal.Secret.from_name('aqua-pytest'),
     )
-def get_results(assessment_config: AssessmentIn):
+def get_results(assessment_config: Assessment):
     import os
     AQUA_DB = os.getenv("AQUA_DB")
     results = modal.container_app.run_word_alignment.call(assessment_config, AQUA_DB)
@@ -125,7 +125,8 @@ def test_assess_draft(base_url, header, assessment_storage):
         revision_id = response.json()[0]['id']
         reference_id = response.json()[1]['id']
 
-        config = AssessmentIn(
+        config = Assessment(
+                id=1,
                 revision_id=revision_id, 
                 reference_id=reference_id, 
                 type='word-alignment'
@@ -148,7 +149,7 @@ stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_
 
 
 @stub.function(secret=modal.Secret.from_name("aqua-pytest"))
-def check_word_alignment_results(assessment_config: AssessmentIn):
+def check_word_alignment_results(assessment_config: Assessment):
     import os
     AQUA_DB = os.getenv("AQUA_DB")
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
@@ -165,7 +166,8 @@ def test_check_word_alignment_results(assessment_storage):
         # Use the two revisions of the version_abbreviation version as revision and reference
         revision_id = assessment_storage.revision
         reference_id = assessment_storage.reference
-        config = AssessmentIn(
+        config = Assessment(
+                id=1,
                 revision_id=revision_id, 
                 reference_id=reference_id, 
                 type='word-alignment'

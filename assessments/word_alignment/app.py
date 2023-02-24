@@ -5,7 +5,7 @@ from pathlib import Path
 import json
 import os
 import pickle
-from typing import Literal
+from typing import Literal, Optional
 
 import word_alignment_steps.prepare_data as prepare_data
 
@@ -50,7 +50,8 @@ CACHE_DIR = Path("/cache")
 
 
 # The information corresponding to the given assessment.
-class AssessmentIn(BaseModel):
+class Assessment(BaseModel):
+    id: Optional[int] = None
     revision_id: int
     reference_id: int
     type: Literal["word-alignment"]
@@ -192,7 +193,7 @@ def run_total_scores(
 
 
 @stub.function(timeout=7200)
-async def assess(assessment_config: AssessmentIn, AQUA_DB: str, return_all_results: bool=False):
+async def assess(assessment_config: Assessment, AQUA_DB: str, return_all_results: bool=False):
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     print(f"Starting assessment for {database_id}, revision {assessment_config.revision_id}, reference {assessment_config.reference_id}")
     tokenized_dfs = {}

@@ -2,7 +2,7 @@ from pydantic import BaseModel
 import modal.aio
 import asyncio
 import os
-from typing import Literal, List, Dict
+from typing import Literal, List, Dict, Optional
 import requests
 import time
 import json
@@ -32,7 +32,8 @@ stub.get_results = modal.Function.from_name("save-results" + suffix, "get_result
 
 
 # The information corresponding to the given assessment.
-class AssessmentIn(BaseModel):
+class Assessment(BaseModel):
+    id: Optional[int] = None
     revision_id: int
     reference_id: int
     type: Literal["missing-words"]
@@ -237,7 +238,7 @@ def identify_low_scores(
     timeout=7200,
     secret=modal.Secret.from_name("aqua-api"),
     )
-async def assess(assessment_config: AssessmentIn, AQUA_DB: str, refresh_refs: bool=False, via_api: bool=True):
+async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool=False, via_api: bool=True):
     """
     Assess the words from the reference text that are missing in the revision.
 
