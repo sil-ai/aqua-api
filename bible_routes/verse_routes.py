@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -38,7 +39,7 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     return True
 
 
-@router.get("/chapter", dependencies=[Depends(api_key_auth)], response_model=list[VerseText])
+@router.get("/chapter", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
 async def get_chapter(revision_id: int, book: str, chapter: int):
     """
     Gets a list of verse texts for a revision for a given chapter.
