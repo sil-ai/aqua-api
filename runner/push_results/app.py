@@ -102,7 +102,7 @@ class PushResults:
             number = Column(Integer)
 
         self.assessment_results = []
-        for result in self.results.results:
+        for result in self.results:
             ar = AssessmentResult(
                 assessment=result.assessment_id,
                 vref=result.vref,
