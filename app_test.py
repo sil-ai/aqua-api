@@ -162,7 +162,6 @@ def test_get_chapter(client):
 
     revision_response = client.get("/revision", params=version_abv)
     revision_response_text = revision_response.text.replace("null", "None").replace('false', 'False')
-    print(f'{revision_response_text=}')
     revision_fixed = ast.literal_eval(revision_response_text)
 
     for revision_data in revision_fixed:

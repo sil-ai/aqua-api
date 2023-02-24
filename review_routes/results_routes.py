@@ -90,29 +90,6 @@ async def get_result(assessment_id: int):
                 
                 result_list.append(results)
 
-            # else:
-            #     result_query = gql(fetch_results)
-            #     result_data = client.execute(result_query)
-
-            #     result_response = {
-            #             "assessment_id": assessment_id, 
-            #             "assessments": []
-            #             }
-            #     for result in result_data["assessmentResult"]:
-            #         results = {
-            #                 "id": result["id"],
-            #                 "type": result["assessmentByAssessment"]["type"],
-            #                 "reference": result["assessmentByAssessment"]["reference"],
-            #                 "results": {
-            #                     "vref": result["vref"],
-            #                     "score": result["score"],
-            #                     "flag": result["flag"],
-            #                     "note": result["note"]
-            #                     }
-            #                 }
-                    
-            #         result_response["assessments"].append(results)
-
         else:
             raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
