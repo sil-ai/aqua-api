@@ -2,7 +2,7 @@ from pydantic import BaseModel
 import modal.aio
 import asyncio
 import os
-from typing import Literal, List, Dict, Optional
+from typing import Literal, List, Dict, Optional, Union
 import requests
 import time
 import json
@@ -36,7 +36,7 @@ class Assessment(BaseModel):
     id: Optional[int] = None
     revision_id: int
     reference_id: int
-    type: Literal["missing-words"]
+    type: Union[Literal["missing-words"], Literal["word-alignment"]]
 
 
 def get_versions(AQUA_URL: str, AQUA_API_KEY: str) -> List[dict]:
