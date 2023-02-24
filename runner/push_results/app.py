@@ -48,7 +48,7 @@ class PushResults:
     def create_bulk_results(self):
         from sqlalchemy.orm import declarative_base
         Base = declarative_base()
-        from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey, DateTime, JSON
+        from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey, DateTime
 
         class AssessmentResult(Base):
             __tablename__ = "assessmentResult"
