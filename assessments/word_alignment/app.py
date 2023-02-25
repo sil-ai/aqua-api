@@ -13,10 +13,15 @@ import word_alignment_steps.prepare_data as prepare_data
 index_cache_volume = modal.SharedVolume().persist("index_cache")
 
 
-# Manage suffix on modal endpoint if testing.
+# Manage deployment suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "-test"
+    suffix = "test"
+
+else:
+    suffix = os.getenv("MODAL_SUFFIX", "")
+
+suffix = f"-{suffix}" if len(suffix) > 0 else ""
 
 stub = modal.aio.AioStub(
     "word-alignment" + suffix,
@@ -51,9 +56,9 @@ CACHE_DIR = Path("/cache")
 
 # The information corresponding to the given assessment.
 class Assessment(BaseModel):
-    assessment: Optional[int] = None
-    revision: int
-    reference: int
+    id: Optional[int] = None
+    revision_id: int
+    reference_id: int
     type: Literal["word-alignment"]
 
 
@@ -195,11 +200,11 @@ def run_total_scores(
 @stub.function(timeout=7200)
 async def assess(assessment_config: Assessment, AQUA_DB: str, return_all_results: bool=False):
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
-    print(f"Starting assessment for {database_id}, revision {assessment_config.revision}, reference {assessment_config.reference}")
+    print(f"Starting assessment for {database_id}, revision {assessment_config.revision_id}, reference {assessment_config.reference_id}")
     tokenized_dfs = {}
     index_caches = {}
-    src_revision_id = assessment_config.reference
-    trg_revision_id = assessment_config.revision
+    src_revision_id = assessment_config.reference_id
+    trg_revision_id = assessment_config.revision_id
     results = await asyncio.gather(
         *[
             get_index_cache.call(revision_id, AQUA_DB, refresh=False)
@@ -257,8 +262,8 @@ async def assess(assessment_config: Assessment, AQUA_DB: str, return_all_results
     print("Saving results to modal shared volume")
 
     modal.container_app.run_save_results.call(
-        assessment_config.revision,
-        assessment_config.reference,
+        assessment_config.revision_id,
+        assessment_config.reference_id,
         total_results["top_source_scores"],
         database_id,
     )

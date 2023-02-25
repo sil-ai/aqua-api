@@ -1,12 +1,15 @@
 import time
 from pydantic import BaseModel
 from typing import Literal
+import os
 
 import modal
 
 sleep_time = 1200
-
-stub = modal.Stub(name="dummy", image=modal.Image.debian_slim())
+suffix = ""
+if os.environ.get("MODAL_TEST") == "TRUE":
+    suffix = "-test"
+stub = modal.Stub(name="dummy" + suffix, image=modal.Image.debian_slim())
 
 class Assessment(BaseModel):
     assessment: int

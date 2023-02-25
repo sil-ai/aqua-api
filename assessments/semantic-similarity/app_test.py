@@ -77,8 +77,9 @@ def test_add_revision(base_url, header, filepath: Path):
 def assessment_object(draft_id, ref_id, expected):
     AQUA_DB = os.getenv("AQUA_DB")
     config = Assessment(
-                            revision=draft_id,
-                            reference=ref_id,
+                            id=1,
+                            revision_id=draft_id,
+                            reference_id=ref_id,
                             type="semantic-similarity")
     results = get_assessment.call(config, AQUA_DB)
     #test for the right type of results

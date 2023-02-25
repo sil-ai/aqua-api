@@ -61,7 +61,7 @@ def test_add_revision(base_url, header, filepath: Path):
 def get_missing_words(assessment_config: Assessment):
     import os
     AQUA_DB = os.getenv("AQUA_DB")
-    missing_words = modal.container_app.run_missing_words.call(assessment_config, AQUA_DB, via_api=False, refresh_refs=True)
+    missing_words = modal.container_app.run_missing_words.call(assessment_config, AQUA_DB, via_api=False, refresh_refs=True, modal_suffix='test')
     assert missing_words[0]['score'] == pytest.approx(0.090, 0.01)
     assert missing_words[1]['score'] == pytest.approx(0.056, 0.01)
     assert missing_words[2]['score'] == pytest.approx(0.097, 0.01)
@@ -74,12 +74,13 @@ def test_get_missing_words(base_url, header):
         url = base_url + "/revision"
         response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
 
-        reference = response.json()[0]['id']
-        revision = response.json()[1]['id']
+        reference_id = response.json()[0]['id']
+        revision_id = response.json()[1]['id']
         
         config = Assessment(
-                revision=revision, 
-                reference=reference, 
+                id=1,
+                revision_id=revision_id, 
+                reference_id=reference_id, 
                 type='missing-words'
                 )
 

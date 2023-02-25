@@ -1,4 +1,3 @@
-import requests
 import pytest
 from pathlib import Path
 
@@ -37,40 +36,20 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
 
-def test_add_assessment(base_url, header, assessment_storage):
+def test_runner(base_url, header):
     import requests
     url = base_url + "/revision"
     response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
 
-    reference = response.json()[0]['id']
-    revision = response.json()[1]['id']
-
-    test_assessment = {
-            "type": "dummy",
-            "reference": reference,
-            "revision": revision,
-            }
-
-    url = base_url + "/assessment"
-    response = requests.post(url, json=test_assessment, headers=header)
-    assert response.status_code == 200
-
-    print(response.json())
-    assessment_storage.assessment = response.json()['data']['id']
-    assessment_storage.reference = reference
-    assessment_storage.revision = revision
-
-
-def test_runner(assessment_storage):
-    url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
-
+    reference_id = response.json()[0]['id']
+    revision_id = response.json()[1]['id']
+    
     config = {
-        "assessment": assessment_storage.assessment,
         "type":"dummy",
-        "reference": assessment_storage.reference,
-        "revision": assessment_storage.revision,
+        "reference_id": reference_id,
+        "revision_id": revision_id,
     }
-
+    url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
     response = requests.post(url, json=config)
 
     assert response.status_code == 200

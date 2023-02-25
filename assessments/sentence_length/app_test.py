@@ -41,7 +41,7 @@ def test_add_revision(base_url, header, filepath: Path):
 
 #The following functions need a stub to provide extra packages
 stub = modal.Stub(
-    name="run_sentence_length_test",
+    name="run-sentence-length-test",
     image=modal.Image.debian_slim().pip_install(
         'pydantic',
         'pytest',
@@ -96,10 +96,11 @@ def run_assess_draft(config):
 def test_assess_draft(base_url, header):
     url = base_url + "/revision"
     response = requests.get(url, params={'version_abbreviation': version_abbreviation}, headers=header)
-    revision = response.json()[0]['id']
+    revision_id = response.json()[0]['id']
     from app import Assessment
     config = Assessment(
-        revision = revision,
+        id=1,
+        revision_id = revision_id,
         type = 'sentence-length',
     )
     with stub.run():

@@ -122,12 +122,13 @@ def test_assess_draft(base_url, header, assessment_storage):
         api_url = base_url + "/revision"
         response = requests.get(api_url, headers=header, params={'version_abbreviation': version_abbreviation})
 
-        revision = response.json()[0]['id']
-        reference = response.json()[1]['id']
+        revision_id = response.json()[0]['id']
+        reference_id = response.json()[1]['id']
 
         config = Assessment(
-                revision=revision, 
-                reference=reference, 
+                id=1,
+                revision_id=revision_id, 
+                reference_id=reference_id, 
                 type='word-alignment'
                 )
         
@@ -140,8 +141,8 @@ def test_assess_draft(base_url, header, assessment_storage):
         assert results[1]['score'] == pytest.approx(0.720, 0.001)
         assert results[2]['score'] == pytest.approx(0.758, 0.001)
 
-        assessment_storage.revision = revision
-        assessment_storage.reference = reference
+        assessment_storage.revision = revision_id
+        assessment_storage.reference = reference_id
 
 
 stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_results")
@@ -152,7 +153,7 @@ def check_word_alignment_results(assessment_config: Assessment):
     import os
     AQUA_DB = os.getenv("AQUA_DB")
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
-    top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference, database_id)
+    top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision_id, assessment_config.reference_id, database_id)
     assert "source" in top_source_scores_df.columns
     assert "total_score" in top_source_scores_df.columns
     assert top_source_scores_df.loc[0, 'total_score'] == pytest.approx(0.6736, 0.001)
@@ -163,11 +164,12 @@ def check_word_alignment_results(assessment_config: Assessment):
 def test_check_word_alignment_results(assessment_storage):
     with stub.run():
         # Use the two revisions of the version_abbreviation version as revision and reference
-        revision = assessment_storage.revision
-        reference = assessment_storage.reference
+        revision_id = assessment_storage.revision
+        reference_id = assessment_storage.reference
         config = Assessment(
-                revision=revision, 
-                reference=reference, 
+                id=1,
+                revision_id=revision_id, 
+                reference_id=reference_id, 
                 type='word-alignment'
                 )
 
