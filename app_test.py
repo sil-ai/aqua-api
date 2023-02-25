@@ -248,11 +248,11 @@ def test_assessment(client):
     )
 
     # Try to post bad config
-    response = client.post("/assessment", params={**bad_config_3.dict(), 'test': True})
+    response = client.post("/assessment", params={**bad_config_3.dict(), 'modal_suffix': 'test'})
     assert response.status_code == 400
 
     # Post good config
-    response = client.post("/assessment", params={**good_config.dict(), 'test': True})
+    response = client.post("/assessment", params={**good_config.dict(), 'modal_suffix': 'test'})
     print(response.text)
     assert response.status_code == 200
     id = response.json()['id']
@@ -293,7 +293,7 @@ def test_result(client):
             type="dummy",
     )
 
-    response = client.post("/assessment", params={**good_config.dict(), 'test': True})
+    response = client.post("/assessment", params={**good_config.dict(), 'modal_suffix': 'test'})
     assert response.status_code == 200
     assessment_id = response.json()['id']
     
