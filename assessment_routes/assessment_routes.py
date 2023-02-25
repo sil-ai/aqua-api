@@ -88,6 +88,9 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
 
     Parameter `modal_suffix` is used to tell modal which set of assessment apps to use. It should not normally be set by users.
     """
+    if modal_suffix == '':
+        modal_suffix = os.getenv('MODAL_SUFFIX', '')   # Give the option of setting the suffix in the environment
+    
     modal_suffix = '-' + modal_suffix if len(modal_suffix) > 0 else ''
 
     if a.type in ["missing-words", "sentence-length", "word-alignment", "word_alignment"] and a.reference_id is None:
