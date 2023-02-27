@@ -93,7 +93,7 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
     
     modal_suffix = '-' + modal_suffix if len(modal_suffix) > 0 else ''
 
-    if a.type in ["missing-words", "semantic-similiarity", "word-alignment"] and a.reference_id is None:
+    if a.type in ["missing-words", "semantic-similarity", "word-alignment"] and a.reference_id is None:
         raise HTTPException(
                 status_code=400,
                 detail=f"Assessment type {a.type} requires a reference_id which is an id of a revision."
