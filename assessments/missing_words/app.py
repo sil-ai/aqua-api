@@ -61,7 +61,7 @@ def get_versions(AQUA_URL: str, AQUA_API_KEY: str) -> List[dict]:
     return versions
 
 
-async def get_revision_id(version_abbreviation: str, AQUA_URL: str, AQUA_API_KEY: str) -> Dict[str, int]:
+async def get_revision_id(version_id: int, AQUA_URL: str, AQUA_API_KEY: str) -> Dict[str, int]:
     """
     Get the revision id for the most recently uploaded revision for a given version abbreviation.
     
@@ -79,15 +79,15 @@ async def get_revision_id(version_abbreviation: str, AQUA_URL: str, AQUA_API_KEY
     url = AQUA_URL + "/revision"
     header = {"Authorization": "Bearer" + " " + AQUA_API_KEY}
     response = requests.get(
-        url, params={"version_abbreviation": version_abbreviation}, headers=header
+        url, params={"version_id": version_id}, headers=header
     )
     print(response.json())
     if len(response.json()) == 0:
         raise ValueError(
-            f"Could not find revision for version {version_abbreviation}."
+            f"Could not find revision for version {version_id}."
         )
-    revision = response.json()[-1]["id"]  # Choose the most recent revision
-    return {version_abbreviation: revision}
+    revision_id = response.json()[-1]["id"]  # Choose the most recent revision
+    return {version_id: revision_id}
 
 
 
@@ -279,7 +279,7 @@ async def assess(assessment_config: Assessment, AQUA_DB: str, refresh_refs: bool
     print(f'{baseline_versions=}')
 
     baseline_revisions = await asyncio.gather(
-        *[get_revision_id(version['abbreviation'], AQUA_URL, AQUA_API_KEY) for version in baseline_versions]
+        *[get_revision_id(version['id'], AQUA_URL, AQUA_API_KEY) for version in baseline_versions]
     )
     baseline_revision_ids = [
         list(revision.values())[0] for revision in baseline_revisions

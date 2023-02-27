@@ -50,7 +50,7 @@ def test_add_version(base_url, header):
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    response = requests.post(url, json=test_version, headers=header)
+    response = requests.post(url, params=test_version, headers=header)
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
     else:
@@ -61,8 +61,11 @@ def test_add_version(base_url, header):
 @pytest.mark.parametrize("filepath", [Path("../../fixtures/greek_lemma_luke.txt"), Path("../../fixtures/ngq-ngq.txt")])
 def test_add_revision(base_url, header, filepath: Path):
     import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_abv_revision = {
-            "version_abbreviation": version_abbreviation,
+            "version_id": version_id,
             "published": False
             }
  
@@ -93,8 +96,11 @@ def assessment_object(draft_id, ref_id, expected):
 def test_assessment_object(base_url, header, valuestorage):
     with stub.run():
         import requests
+        url = base_url + "/version"
+        response = requests.get(url, headers=header)
+        version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
         url = base_url + "/revision"
-        response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
+        response = requests.get(url, headers=header, params={'version_id': version_id})
         reference = response.json()[0]['id']
         revision = response.json()[1]['id']
         expected = 1142     # Length of verses in common between the two fixture revisions (basically the book of Luke)
@@ -211,8 +217,11 @@ def test_swahili_revision(verse_offset, variance, expected, request):
 
 def test_delete_version(base_url, header):
     import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_delete_version = {
-            "version_abbreviation": version_abbreviation
+            "id": version_id
             }
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
