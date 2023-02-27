@@ -13,7 +13,7 @@ def test_add_version(base_url, header):
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    response = requests.post(url, json=test_version, headers=header)
+    response = requests.post(url, params=test_version, headers=header)
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
     else:
@@ -24,8 +24,11 @@ def test_add_version(base_url, header):
 @pytest.mark.parametrize("filepath", [Path("../../fixtures/greek_lemma_luke.txt"), Path("../../fixtures/ngq-ngq.txt")])
 def test_add_revision(base_url, header, filepath: Path):
     import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_abv_revision = {
-            "version_abbreviation": version_abbreviation,
+            "version_id": version_id,
             "published": False
             }
  
@@ -38,8 +41,11 @@ def test_add_revision(base_url, header, filepath: Path):
 
 def test_runner(base_url, header):
     import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     url = base_url + "/revision"
-    response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
+    response = requests.get(url, headers=header, params={'version_id': version_id})
 
     reference_id = response.json()[0]['id']
     revision_id = response.json()[1]['id']
@@ -57,8 +63,11 @@ def test_runner(base_url, header):
 
 def test_delete_version(base_url, header):
     import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_delete_version = {
-            "version_abbreviation": version_abbreviation
+            "id": version_id
             }
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)

@@ -22,10 +22,8 @@ stub = modal.Stub(
         )
     ),
 )
-stub.run_push_results = modal.Function.from_name("push_results_test", "push_results")
-stub.run_delete_results = modal.Function.from_name(
-    "push_results_test", "delete_results"
-)
+stub.run_push_results = modal.Function.from_name("push-results-test", "push_results")
+stub.run_delete_results = modal.Function.from_name("push-results-test", "delete_results")
 
 version_abbreviation = 'PSR-DEL'
 version_name = 'push results delete'
@@ -38,7 +36,7 @@ def test_add_version(base_url, header):
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    response = requests.post(url, json=test_version, headers=header)
+    response = requests.post(url, params=test_version, headers=header)
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
     else:
@@ -49,8 +47,11 @@ def test_add_version(base_url, header):
 @pytest.mark.parametrize("filepath", [Path("../../fixtures/greek_lemma_luke.txt"), Path("../../fixtures/ngq-ngq.txt")])
 def test_add_revision(base_url, header, filepath: Path):
     import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_abv_revision = {
-            "version_abbreviation": version_abbreviation,
+            "version_id": version_id,
             "published": False
             }
  
@@ -82,30 +83,37 @@ def push_df_results():
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     AQUA_URL = os.getenv(f"AQUA_URL_{database_id.replace('-', '_')}")
     AQUA_API_KEY = os.getenv(f"AQUA_API_KEY_{database_id.replace('-', '_')}")
+    key =  "Bearer" + " " + AQUA_API_KEY
+    header = {"Authorization": key}
     
+    #get version
+    import requests
+    url = AQUA_URL + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
+    
+    #get revision
+    url = AQUA_URL + "/revision"
+    response = requests.get(url, headers=header, params={'version_id': version_id})
+    revision_id = response.json()[0]['id']
+    reference_id = response.json()[1]['id']
+
     df = pd.read_csv("/root/verse_scores.csv")
     num_rows = 10
     results = []
 
     # Create an assessment
-    url = AQUA_URL + "/revision"
-    key =  "Bearer" + " " + AQUA_API_KEY
-    header = {"Authorization": key}
-    response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
-    reference = response.json()[0]['id']
-    revision = response.json()[1]['id']
-    
     url = AQUA_URL + "/assessment"
     response = requests.post(
         url,
-        json={
-            "revision": revision,
-            "reference": reference,
+        params={
+            "revision_id": revision_id,
+            "reference_id": reference_id,
             "type": "dummy"
         },
         headers=header,
     )
-    assessment_id = response.json()['data']['id']
+    assessment_id = response.json()['id']
 
     for _, row in df.iloc[:num_rows, :].iterrows():
         result = {
@@ -145,8 +153,11 @@ def test_push_wrong_data_type():
 
 def test_delete_version(base_url, header):
     import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_delete_version = {
-            "version_abbreviation": version_abbreviation
+            "id": version_id
             }
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
