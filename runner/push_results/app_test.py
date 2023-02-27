@@ -87,7 +87,6 @@ def push_df_results():
     header = {"Authorization": key}
     
     #get version
-    import requests
     url = AQUA_URL + "/version"
     response = requests.get(url, headers=header)
     version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
