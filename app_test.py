@@ -253,7 +253,6 @@ def test_assessment(client):
 
     # Post good config
     response = client.post("/assessment", params={**good_config.dict(), 'modal_suffix': 'test'})
-    print(response.text)
     assert response.status_code == 200
     id = response.json()['id']
 
@@ -358,4 +357,3 @@ def test_delete_version(client):
 
     assert test_response.status_code == 200
     assert fail_response.status_code == 400
-
