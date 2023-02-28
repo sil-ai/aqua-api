@@ -91,7 +91,6 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
     if modal_suffix == '':
         modal_suffix = os.getenv('MODAL_SUFFIX', '')   # Give the option of setting the suffix in the environment
     
-    modal_suffix = '-' + modal_suffix if len(modal_suffix) > 0 else ''
 
     if a.type in ["missing-words", "semantic-similarity", "word-alignment"] and a.reference_id is None:
         raise HTTPException(
@@ -127,7 +126,10 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
                 )
     
     # Call runner to run assessment
-    runner_url = f"https://sil-ai--runner{modal_suffix}-assessment-runner.modal.run/"
+
+    dash_modal_suffix = '-' + modal_suffix if len(modal_suffix) > 0 else ''
+
+    runner_url = f"https://sil-ai--runner{dash_modal_suffix}-assessment-runner.modal.run/"
 
     AQUA_DB = os.getenv("AQUA_DB")
     AQUA_DB_BYTES = AQUA_DB.encode('utf-8')
