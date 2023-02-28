@@ -83,8 +83,7 @@ def push_df_results():
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
     AQUA_URL = os.getenv(f"AQUA_URL_{database_id.replace('-', '_')}")
     AQUA_API_KEY = os.getenv(f"AQUA_API_KEY_{database_id.replace('-', '_')}")
-    key =  "Bearer" + " " + AQUA_API_KEY
-    header = {"Authorization": key}
+    header = {"api_key": AQUA_API_KEY}
     
     #get version
     url = AQUA_URL + "/version"

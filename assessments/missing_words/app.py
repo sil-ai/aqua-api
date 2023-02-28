@@ -77,7 +77,7 @@ async def get_revision_id(version_id: int, AQUA_URL: str, AQUA_API_KEY: str) -> 
     import requests
 
     url = AQUA_URL + "/revision"
-    header = {"Authorization": "Bearer" + " " + AQUA_API_KEY}
+    header = {"api_key": str(os.getenv("TEST_KEY"))}
     response = requests.get(
         url, params={"version_id": version_id}, headers=header
     )

@@ -7,5 +7,4 @@ def base_url():
 
 @pytest.fixture
 def header():
-    key =  "Bearer" + " " + str(os.getenv("TEST_KEY"))
-    return {"Authorization": key}
+    return {"api_key": str(os.getenv("TEST_KEY"))}

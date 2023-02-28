@@ -131,8 +131,7 @@ def test_delete_version(base_url, header):
 
 if __name__ == "__main__":
     import os
-    key =  "Bearer" + " " + str(os.getenv("TEST_KEY"))
-    header = {"Authorization": key}
+    header = {"api_key": str(os.getenv("TEST_KEY"))}
     base_url = os.getenv("AQUA_URL")
 
     test_add_version(base_url, header)
