@@ -1,6 +1,7 @@
 import modal
 import pytest
 from pathlib import Path
+import os
 
 from app import Assessment
 
@@ -34,8 +35,8 @@ stub.assess = modal.Function.from_name("semantic-similarity-test", "assess")
 
 
 @stub.function
-def get_assessment(config, offset: int=-1):
-    return modal.container_app.assess.call(config, offset)
+def get_assessment(config, AQUA_DB: str, offset: int=-1):
+    return modal.container_app.assess.call(config, AQUA_DB, offset)
 
 version_abbreviation = 'SS-DEL'
 version_name = 'semantic similarity delete'
@@ -49,7 +50,7 @@ def test_add_version(base_url, header):
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    response = requests.post(url, json=test_version, headers=header)
+    response = requests.post(url, params=test_version, headers=header)
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
     else:
@@ -60,8 +61,11 @@ def test_add_version(base_url, header):
 @pytest.mark.parametrize("filepath", [Path("../../fixtures/greek_lemma_luke.txt"), Path("../../fixtures/ngq-ngq.txt")])
 def test_add_revision(base_url, header, filepath: Path):
     import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_abv_revision = {
-            "version_abbreviation": version_abbreviation,
+            "version_id": version_id,
             "published": False
             }
  
@@ -72,13 +76,15 @@ def test_add_revision(base_url, header, filepath: Path):
     assert response_abv.status_code == 200
 
 
-@stub.function
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
 def assessment_object(draft_id, ref_id, expected):
+    AQUA_DB = os.getenv("AQUA_DB")
     config = Assessment(
-                            revision=draft_id,
-                            reference=ref_id,
+                            id=1,
+                            revision_id=draft_id,
+                            reference_id=ref_id,
                             type="semantic-similarity")
-    results = get_assessment.call(config)
+    results = get_assessment.call(config, AQUA_DB)
     #test for the right type of results
     assert type(results) == list
     #test for the expected length of results
@@ -90,8 +96,11 @@ def assessment_object(draft_id, ref_id, expected):
 def test_assessment_object(base_url, header, valuestorage):
     with stub.run():
         import requests
+        url = base_url + "/version"
+        response = requests.get(url, headers=header)
+        version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
         url = base_url + "/revision"
-        response = requests.get(url, headers=header, params={'version_abbreviation': version_abbreviation})
+        response = requests.get(url, headers=header, params={'version_id': version_id})
         reference = response.json()[0]['id']
         revision = response.json()[1]['id']
         expected = 1142     # Length of verses in common between the two fixture revisions (basically the book of Luke)
@@ -208,8 +217,11 @@ def test_swahili_revision(verse_offset, variance, expected, request):
 
 def test_delete_version(base_url, header):
     import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_delete_version = {
-            "version_abbreviation": version_abbreviation
+            "id": version_id
             }
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)

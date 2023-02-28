@@ -1,11 +1,12 @@
 import modal
 import pytest
+import os
 
 from app import RecordNotFoundError
 
 
 stub = modal.Stub(
-    name="pull_revision_test",
+    name="run-pull-revision-test",
     image=modal.Image.debian_slim().pip_install(
         "pandas==1.4.3",
         "requests_toolbelt==0.9.1",
@@ -15,12 +16,13 @@ stub = modal.Stub(
 )
 
 
-stub.run_pull_rev = modal.Function.from_name("pull_revision_test", "pull_revision")
+stub.run_pull_rev = modal.Function.from_name("pull-revision-test", "pull_revision")
 
 
-@stub.function
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
 def get_text(revision_id: int) -> bytes:
-    return modal.container_app.run_pull_rev.call(revision_id)
+    AQUA_DB = os.getenv("AQUA_DB")
+    return modal.container_app.run_pull_rev.call(revision_id, AQUA_DB)
 
 
 @pytest.mark.parametrize(

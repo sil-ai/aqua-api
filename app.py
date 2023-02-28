@@ -1,4 +1,5 @@
 import fastapi
+from fastapi.openapi.utils import get_openapi
 
 import bible_routes.language_routes as language_routes
 import bible_routes.version_routes as version_routes
@@ -9,6 +10,31 @@ import review_routes.results_routes as results_routes
 
 
 app = fastapi.FastAPI()
+
+def my_schema():
+    DOCS_TITLE = "AQuA API"
+    DOCS_VERSION = "0.2.0"
+    openapi_schema = get_openapi(
+       title=DOCS_TITLE,
+       version=DOCS_VERSION,
+       routes=app.routes,
+   )
+    openapi_schema["info"] = {
+       "title" : DOCS_TITLE,
+       "version" : DOCS_VERSION,
+       "description" : "Augmented Quality Assessment API",
+       "contact": {
+           "name": "Get Help with this API",
+           "url": "http://ai.sil.org",
+           "email": "mark_woodwardsil.org"
+       },
+       "license": {
+           "name": "MIT License",
+           "url": "https://opensource.org/license/mit/"
+       },
+   }
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
 
 
 def configure(app):
@@ -25,6 +51,9 @@ def configure_routing(app):
 
     @app.get("/")
     async def read_root():
+
+        """
+        Test docs"""
         return {"Hello": "World"}
 
 
@@ -34,3 +63,4 @@ if __name__ == "__main__":
     uvicorn.run(app, port=8000, host="0.0.0.0")
 else:
     configure(app)
+    my_schema()

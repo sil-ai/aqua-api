@@ -6,12 +6,15 @@ def list_versions_query():
                     name
                     abbreviation
                     isoLanguageByIsolanguage {
-                      iso639
+                      iso693
                     }
                     isoScriptByIsoscript {
                       iso15924
                     }
                     rights
+                    forwardTranslation
+                    backTranslation
+                    machineTranslation
                   }
                 }
                 """
@@ -38,7 +41,13 @@ def add_version_query(name, isoLanguage, isoScript,
                         isoLanguageByIsolanguage {{
                           name
                         }}
+                        isoScriptByIsoscript {{
+                            name
+                        }}
                         rights
+                        forwardTranslation
+                        backTranslation
+                        machineTranslation
                       }}
                     }}
                   }}
@@ -63,11 +72,11 @@ def check_version_query():
     return check_version
 
 
-def delete_bible_version(version_abbv):
+def delete_bible_version(id):
     delete_version = """
                      mutation {{
                        delete_bibleVersion(where: {{
-                         abbreviation: {{
+                         id: {{
                            _eq: {}
                          }}
                        }}) {{
@@ -77,7 +86,7 @@ def delete_bible_version(version_abbv):
                          }}
                        }}
                      }}
-                     """.format(version_abbv)
+                     """.format(id)
 
     return delete_version
 
@@ -129,23 +138,29 @@ def delete_verses_mutation(bibleRevision):
     return delete_verses
 
 
-def insert_bible_revision(version, date, published):
+def insert_bible_revision(version, name, date, published):
     bible_revise = """
                 mutation {{
                   insert_bibleRevision(objects: {{
-                    bibleVersion: {}, date: {}, published: {}
+                    bibleVersion: {}, name: {}, date: {}, published: {}
                     }}) {{
                     returning {{
                       id
+                      name
+                      date
+                      published
+                      bibleVersionByBibleversion {{
+                        id
+                      }}
                     }}
                   }}
                 }}
-                """.format(version, date, published)
+                """.format(version, name, date, published)
         
     return bible_revise
 
 
-def fetch_bible_version(abbreviation):
+def fetch_bible_version_by_abbreviation(abbreviation):
     version_id = """
                 query {{
                   bibleVersion(where: {{
@@ -167,8 +182,10 @@ def list_all_revisions_query():
                     bibleRevision {
                       id
                       date
+                      name
+                      published
                       bibleVersionByBibleversion {
-                        name
+                        id
                       }
                     }
                   }
@@ -177,24 +194,26 @@ def list_all_revisions_query():
     return list_revisions
 
 
-def list_revisions_query(bibleVersion):
+def list_revisions_query(version_id):
     list_revisions = """
                   query {{
                     bibleRevision(where: {{
                       bibleVersionByBibleversion: {{
-                        abbreviation: {{
+                        id: {{
                           _eq: {}
                         }}
                       }}
                     }}) {{
                       id
                       date
+                      name
+                      published
                       bibleVersionByBibleversion {{
-                        name
+                        id
                       }}
                     }}
                   }}
-                  """.format(bibleVersion)
+                  """.format(version_id)
 
     return list_revisions
 
@@ -218,10 +237,7 @@ def get_chapter_query(revision, chapterReference):
                     text
                     verseReference
                     bibleRevisionByBiblerevision {{
-                      date
-                      bibleVersionByBibleversion {{
-                        name
-                      }}
+                        id
                     }}
                   }}
                 }}
@@ -245,10 +261,7 @@ def get_verses_query(revision, verseReference):
                   text
                   verseReference
                   bibleRevisionByBiblerevision {{
-                    date
-                    bibleVersionByBibleversion {{
-                      name
-                    }}
+                    id
                   }}
                 }}
               }}
@@ -277,10 +290,7 @@ def get_book_query(revision, bookReference):
                 text
                 verseReference
                 bibleRevisionByBiblerevision {{
-                  date
-                  bibleVersionByBibleversion {{
-                    name
-                  }}
+                  id
                 }}
                 }}
               }}
@@ -301,10 +311,7 @@ def get_text_query(revision):
                 text
                 verseReference
                 bibleRevisionByBiblerevision {{
-                  date
-                  bibleVersionByBibleversion {{
-                    name
-                  }}
+                  id
                 }}
               }}
             }}
@@ -419,43 +426,44 @@ def get_results_query(assessment_id):
                     flag
                     note
                     vref
-                    assessmentByAssessment {{
-                      reference
-                      type
-                    }}
-                  }}
-                }}
-                """.format(assessment_id)
-
-    return get_results
-
-
-def get_missing_words_query(assessment_id):
-    get_results = """
-                query {{
-                  assessmentMissingWords(
-                    where: {{
-                      assessment: {{
-                        _eq: {}
-                      }}
-                    }}
-                  ) {{
-                    id
-                    score
-                    flag
-                    note
-                    vref
                     source
                     target
                     assessmentByAssessment {{
-                      reference
-                      type
+                      id
                     }}
                   }}
                 }}
                 """.format(assessment_id)
 
     return get_results
+
+
+# def get_missing_words_query(assessment_id):
+#     get_results = """
+#                 query {{
+#                   assessmentMissingWords(
+#                     where: {{
+#                       assessment: {{
+#                         _eq: {}
+#                       }}
+#                     }}
+#                   ) {{
+#                     id
+#                     score
+#                     flag
+#                     note
+#                     vref
+#                     source
+#                     target
+#                     assessmentByAssessment {{
+#                       reference
+#                       type
+#                     }}
+#                   }}
+#                 }}
+#                 """.format(assessment_id)
+
+#     return get_results
 
 
 def get_scripts_query():
@@ -475,7 +483,7 @@ def get_languages_query():
     iso_languages = """
         query list_languages {
           isoLanguage {
-            iso639
+            iso693
             name
           }
         }

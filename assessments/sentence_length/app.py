@@ -7,10 +7,15 @@ from typing import Literal, Optional
 import modal
 
 
-# Manage suffix on modal endpoint if testing.
-suffix = ''
-if os.environ.get('MODAL_TEST') == 'TRUE':
-    suffix = '-test'
+# Manage deployment suffix on modal endpoint if testing.
+suffix = ""
+if os.environ.get("MODAL_TEST") == "TRUE":
+    suffix = "test"
+
+else:
+    suffix = os.getenv("MODAL_SUFFIX", "")
+
+suffix = f"-{suffix}" if len(suffix) > 0 else ""
 
 stub = modal.Stub(
     "sentence-length" + suffix,
@@ -24,8 +29,8 @@ stub = modal.Stub(
     .copy(mount=modal.Mount(local_file=Path("../../fixtures/vref.txt"), remote_dir=Path("/root"))),
 )
 
-stub.run_pull_revision = modal.Function.from_name("pull_revision", "pull_revision")
-stub.run_push_results = modal.Function.from_name("push_results_test", "push_results")
+stub.run_pull_revision = modal.Function.from_name("pull-revision" + suffix, "pull_revision")
+stub.run_push_results = modal.Function.from_name("push-results" + suffix, "push_results")
 
 
 def get_vrefs():
@@ -74,20 +79,20 @@ def get_lix_score(text):
 
 
 class Assessment(BaseModel):
-    assessment: Optional[int] = None
-    revision: int
+    id: Optional[int] = None
+    revision_id: int
     type: Literal["sentence-length"]
 
 
 #run the assessment
 #for now, use the Lix formula
 @stub.function
-def assess(assessment_config: Assessment):
+def assess(assessment_config: Assessment, AQUA_DB: str):
     import pandas as pd
     
     #pull the revision
-    rev_num = assessment_config.revision
-    lines = modal.container_app.run_pull_revision.call(rev_num)
+    rev_num = assessment_config.revision_id
+    lines = modal.container_app.run_pull_revision.call(rev_num, AQUA_DB)
     lines = [line.strip() for line in lines]
 
     assert len(lines) == 41899
@@ -126,7 +131,7 @@ def assess(assessment_config: Assessment):
     #add to results
     results = []
     for index, row in df.iterrows():
-        results.append({'assessment_id': assessment_config.assessment, 
+        results.append({'assessment_id': assessment_config.id, 
                         'vref': row['vref'], 'score': row['lix_score'], 
                         'flag': False})
 

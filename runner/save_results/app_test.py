@@ -1,5 +1,6 @@
 import modal
 import time
+import os
 
 stub = modal.Stub(
     "run-save-results-test",
@@ -22,7 +23,7 @@ stub.delete_results_test = modal.Function.from_name("save-results-test", "delete
 
 
 
-@stub.function(timeout=60)
+@stub.function(timeout=60, secret=modal.Secret.from_name("aqua-pytest"))
 def run_save_results():
     #Create an empty dataframe and save it to the results directory
     import pandas as pd
@@ -30,17 +31,21 @@ def run_save_results():
     'A': [1, 2],
     'B': [3, 4]
     })
-    modal.container_app.save_results_test.call(314159, 271828, df)
+    AQUA_DB = os.getenv("AQUA_DB")
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
+    modal.container_app.save_results_test.call(314159, 271828, df, database_id)
 
 def test_run_save_results():
     with stub.run():
         run_save_results.call()
 
-@stub.function
+@stub.function(secret=modal.Secret.from_name("aqua-pytest"))
 def run_get_results():
     #Get the results from the results directory
     import pandas as pd
-    top_source_scores_df = modal.container_app.get_results_test.call(314159, 271828)
+    AQUA_DB = os.getenv("AQUA_DB")
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
+    top_source_scores_df = modal.container_app.get_results_test.call(314159, 271828, database_id)
     print(top_source_scores_df)
     assert isinstance(top_source_scores_df, pd.DataFrame)
     assert top_source_scores_df.shape == (2, 2)
@@ -51,12 +56,14 @@ def test_run_get_results():
         run_get_results.call()
 
 
-@stub.function
+@stub.function(secret=modal.Secret.from_name("aqua-pytest"))
 def run_delete_results():
     #Delete the results from the results directory
-    modal.container_app.delete_results_test.call(314159, 271828)
+    AQUA_DB = os.getenv("AQUA_DB")
+    database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
+    modal.container_app.delete_results_test.call(314159, 271828, database_id)
     time.sleep(5)
-    response = modal.container_app.get_results_test.call(314159, 271828)
+    response = modal.container_app.get_results_test.call(314159, 271828, database_id)
     assert response is None
 
 
