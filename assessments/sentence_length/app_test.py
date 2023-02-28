@@ -16,7 +16,7 @@ def test_add_version(base_url, header):
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    response = requests.post(url, json=test_version, headers=header)
+    response = requests.post(url, params=test_version, headers=header)
 
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
@@ -27,8 +27,12 @@ def test_add_version(base_url, header):
 # Add one or more revisions to the database for this test
 @pytest.mark.parametrize("filepath", [Path('fixtures/swh-ONEN.txt')])
 def test_add_revision(base_url, header, filepath: Path):
+    import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_abv_revision = {
-            "version_abbreviation": version_abbreviation,
+            "version_id": version_id,
             "published": False
             }
  
@@ -41,7 +45,7 @@ def test_add_revision(base_url, header, filepath: Path):
 
 #The following functions need a stub to provide extra packages
 stub = modal.Stub(
-    name="run_sentence_length_test",
+    name="run-sentence-length-test",
     image=modal.Image.debian_slim().pip_install(
         'pydantic',
         'pytest',
@@ -94,12 +98,17 @@ def run_assess_draft(config):
 
 
 def test_assess_draft(base_url, header):
+    import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     url = base_url + "/revision"
-    response = requests.get(url, params={'version_abbreviation': version_abbreviation}, headers=header)
-    revision = response.json()[0]['id']
+    response = requests.get(url, params={'version_id': version_id}, headers=header)
+    revision_id = response.json()[0]['id']
     from app import Assessment
     config = Assessment(
-        revision = revision,
+        id=1,
+        revision_id = revision_id,
         type = 'sentence-length',
     )
     with stub.run():
@@ -108,8 +117,12 @@ def test_assess_draft(base_url, header):
 
 def test_delete_version(base_url, header):
     time.sleep(2)  # Allow the assessments above to finish pulling from the database before deleting!
+    import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_delete_version = {
-            "version_abbreviation": version_abbreviation
+            "id": version_id
             }
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)

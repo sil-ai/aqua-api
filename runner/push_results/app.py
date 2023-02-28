@@ -1,18 +1,19 @@
 import os
-from typing import List
+from typing import List, Optional
 import modal
+from pydantic import BaseModel
 
 from db_connect import get_session
-from models import Result, Results, MissingWord, MissingWords
+from models import Result
 
 # Manage suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "_test"
+    suffix = "-test"
 
 
 stub = modal.Stub(
-    name="push_results" + suffix,
+    name="push-results" + suffix,
     image=modal.Image.debian_slim().pip_install(
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
@@ -29,29 +30,14 @@ class PushResults:
     def __del__(self):
         self.session.close()
 
-    def insert_results(self, results: Results):
+    def insert_results(self, results: List[Result]):
         from sqlalchemy.exc import IntegrityError
 
         self.results = results
         self.create_bulk_results()
 
         try:
-            ids = self.bulk_insert_results(self.assessment_results)
-            self.session.commit()
-            return 200, ids
-        
-        except (IntegrityError, AssertionError) as err:
-            self.session.rollback()
-            return 500, err
-    
-    def insert_missing_words(self, missing_words: MissingWords):
-        from sqlalchemy.exc import IntegrityError
-
-        self.missing_words = missing_words
-        self.create_bulk_missing_words()
-
-        try:
-            ids = self.bulk_insert_results(self.assessment_missing_words)
+            ids = self.bulk_insert_results()
             self.session.commit()
             return 200, ids
         
@@ -71,6 +57,8 @@ class PushResults:
             vref = Column(
                 Text, ForeignKey("verseReference.fullVerseId")
             )  # vref format 'Gen 1:1'
+            source = Column(Text)
+            target = Column(Text)
             score = Column(Float)
             flag = Column(Boolean, default=False)
             note = Column(Text)
@@ -117,53 +105,22 @@ class PushResults:
             number = Column(Integer)
 
         self.assessment_results = []
-        for result in self.results.results:
+        for result in self.results:
             ar = AssessmentResult(
                 assessment=result.assessment_id,
                 vref=result.vref,
+                source=result.source,
+                target=result.target,
                 score=result.score,
-                flag=False,
+                flag=result.flag,
+                note=result.note,
             )
             self.assessment_results.append(ar)
-    
-    def create_bulk_missing_words(self):
-        from sqlalchemy.orm import declarative_base
-        Base = declarative_base()
-        from sqlalchemy import Column, Integer, Text, Boolean, Float
 
-        class MissingWord(Base):
-            __tablename__ = "assessmentMissingWords"
-            id = Column(Integer, primary_key=True)  # autoincrements by default
-            assessment = Column(Integer, nullable=False)
-            vref = Column(Text)
-            source = Column(Text)
-            target = Column(Text)
-            score = Column(Float)
-            flag = Column(Boolean, default=False)
-            note = Column(Text)
-
-            def __repr__(self):
-                return (
-                    f"Assessment Result({self.id}) -> {self.assessment}/{self.vref}\n"
-                    f"score={self.score} flag={self.flag}, note={self.note}"
-                )
-
-        self.assessment_missing_words = []
-        for missing_word in self.missing_words.missing_words:
-            mw = MissingWord(
-                assessment=missing_word.assessment_id,
-                vref=missing_word.vref,
-                source=missing_word.source,
-                target=missing_word.target,
-                score=missing_word.score,
-                flag=missing_word.flag,
-            )
-            self.assessment_missing_words.append(mw)
-
-    def bulk_insert_results(self, results):
-        self.session.bulk_save_objects(results, return_defaults=True)
+    def bulk_insert_results(self):
+        self.session.bulk_save_objects(self.assessment_results, return_defaults=True)
         self.session.flush()
-        ids = [ar.id for ar in results]
+        ids = [ar.id for ar in self.assessment_results]
 
         return ids
 
@@ -201,28 +158,25 @@ class PushResults:
     timeout=600,
 )
 def push_results(results: List, AQUA_DB: str):
-    results_obj = []
+    class Result(BaseModel):
+        id: Optional[int] = None
+        assessment_id: int
+        vref: str
+        source: Optional[str] = None
+        target: Optional[str] = None
+        score: float
+        flag: bool = False
+        note: Optional[str] = None
+    
+    results_list = []
     for result in results:
         result_obj = Result(**result)
-        results_obj.append(result_obj)
-    results_obj = Results(results=results_obj)
+        results_list.append(result_obj)
     pr = PushResults(AQUA_DB)
-    response, ids = pr.insert_results(results_obj)
+    print(results_list[:20])
+    response, ids = pr.insert_results(results_list)
     return response, ids
 
-
-@stub.function(
-    timeout=600,
-)
-def push_missing_words(missing_words: List, AQUA_DB: str):
-    missing_words_obj = []
-    for missing_word in missing_words:
-        missing_word_obj = MissingWord(**missing_word)
-        missing_words_obj.append(missing_word_obj)
-    missing_words_obj = MissingWords(missing_words=missing_words_obj)
-    pr = PushResults(AQUA_DB)
-    response, ids = pr.insert_missing_words(missing_words_obj)
-    return response, ids
 
 
 @stub.function(

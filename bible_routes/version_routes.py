@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -8,7 +9,7 @@ from gql.transport.requests import RequestsHTTPTransport
 
 import queries
 from key_fetch import get_secret
-from models import Version
+from models import VersionIn, VersionOut
 
 router = fastapi.APIRouter()
 
@@ -37,8 +38,11 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     return True
 
 
-@router.get("/version", dependencies=[Depends(api_key_auth)])
+@router.get("/version", dependencies=[Depends(api_key_auth)], response_model=List[VersionOut])
 async def list_version():
+    """
+    Get a list of all versions.
+    """
     list_versions = queries.list_versions_query()
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
@@ -47,22 +51,32 @@ async def list_version():
 
         version_data = []
         for version in result["bibleVersion"]: 
-            ind_data = {
-                "id": version["id"], 
-                "name": version["name"], 
-                "abbreviation": version["abbreviation"],
-                "language": version["isoLanguageByIsolanguage"]["iso639"], 
-                "script": version["isoScriptByIsoscript"]["iso15924"], 
-                "rights": version["rights"]
-            }
+            data = VersionOut(
+                        id=version["id"], 
+                        name=version["name"], 
+                        abbreviation=version["abbreviation"], 
+                        isoLanguage=version["isoLanguageByIsolanguage"]["iso693"], 
+                        isoScript=version["isoScriptByIsoscript"]["iso15924"], 
+                        rights=version["rights"],
+                        forwardTranslation=version["forwardTranslation"],
+                        backTranslation=version["backTranslation"],
+                        machineTranslation=version["machineTranslation"]
+                        )
 
-            version_data.append(ind_data)
+            version_data.append(data)
 
     return version_data
 
 
-@router.post("/version", dependencies=[Depends(api_key_auth)])
-async def add_version(v: Version):
+@router.post("/version", dependencies=[Depends(api_key_auth)], response_model=VersionOut)
+async def add_version(v: VersionIn = Depends()):
+    """
+    Create a new version. 
+
+    `isoLanguage` and `isoScript` must be valid ISO 693 and ISO 15924 codes, which can be found by GET /language and GET /script.
+
+    `forwardTranslation` and `backTranslation` are optional integers, corresponding to the version_id of the version that is the forward and back translation used by this version.
+    """
 
     name_fixed = '"' + v.name +  '"'
     isoLang_fixed = '"' + v.isoLanguage + '"'
@@ -107,23 +121,29 @@ async def add_version(v: Version):
 
         revision = client.execute(mutation)
 
-    new_version = {
-        "id": revision["insert_bibleVersion"]["returning"][0]["id"],
-        "name": revision["insert_bibleVersion"]["returning"][0]["name"],
-        "abbreviation": revision["insert_bibleVersion"]["returning"][0]["abbreviation"],
-        "language": revision["insert_bibleVersion"]["returning"][0]["isoLanguageByIsolanguage"]["name"],
-        "rights": revision["insert_bibleVersion"]["returning"][0]["rights"]
-    }
+    new_version = VersionOut(
+        id=revision["insert_bibleVersion"]["returning"][0]["id"],
+        name=revision["insert_bibleVersion"]["returning"][0]["name"],
+        abbreviation=revision["insert_bibleVersion"]["returning"][0]["abbreviation"],
+        isoLanguage=revision["insert_bibleVersion"]["returning"][0]["isoLanguageByIsolanguage"]["name"],
+        isoScript=revision["insert_bibleVersion"]["returning"][0]["isoScriptByIsoscript"]["name"],
+        rights=revision["insert_bibleVersion"]["returning"][0]["rights"],
+        forwardTranslation=revision["insert_bibleVersion"]["returning"][0]["forwardTranslation"],
+        backTranslation=revision["insert_bibleVersion"]["returning"][0]["backTranslation"],
+        machineTranslation=revision["insert_bibleVersion"]["returning"][0]["machineTranslation"]
+    )
 
     return new_version
 
 
 @router.delete("/version", dependencies=[Depends(api_key_auth)])
-async def delete_version(version_abbreviation: str):
-    bibleVersion = '"' + version_abbreviation + '"'
+async def delete_version(id: int):
+    """
+    Delete a version and all associated revisions, text and assessments.
+    """
     fetch_versions = queries.list_versions_query()
-    fetch_revisions = queries.list_revisions_query(bibleVersion)
-    delete_version = queries.delete_bible_version(bibleVersion)
+    fetch_revisions = queries.list_revisions_query(id)
+    delete_version = queries.delete_bible_version(id)
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
         version_query = gql(fetch_versions)
@@ -131,12 +151,12 @@ async def delete_version(version_abbreviation: str):
 
         version_list = []
         for version in version_result["bibleVersion"]:
-            version_list.append(version["abbreviation"])
+            version_list.append(version["id"])
 
         revision_query = gql(fetch_revisions)
         revision_result = client.execute(revision_query)
 
-        if version_abbreviation in version_list:
+        if id in version_list:
             revision_query = gql(fetch_revisions)
             revision_result = client.execute(revision_query)
 
