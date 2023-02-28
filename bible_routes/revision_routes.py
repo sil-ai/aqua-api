@@ -123,6 +123,7 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
                 id=returned_revision["insert_bibleRevision"]["returning"][0]["id"],
                 date=returned_revision["insert_bibleRevision"]["returning"][0]["date"],
                 version_id=returned_revision["insert_bibleRevision"]["returning"][0]["bibleVersionByBibleversion"]["id"],
+                version_abbreviation=returned_revision["insert_bibleRevision"]["returning"][0]["bibleVersionByBibleversion"]["abbreviation"],
                 name=returned_revision["insert_bibleRevision"]["returning"][0]["name"],
                 published=returned_revision["insert_bibleRevision"]["returning"][0]["published"]
         )
