@@ -23,8 +23,8 @@ echo "Deploying Test Modal app: $app"
 echo "-----------------------"
 
 cd $app
-MODAL_SUFFIX="test" modal deploy app.py || exit 1   # You can add your suffix here
-
+MODAL_SUFFIX=test modal deploy app.py || exit 1   # You can add your suffix here
+MODAL_TEST=TRUE
 cd $currentdir
 done
 done

@@ -32,7 +32,7 @@ stub = modal.Stub("semantic-similarity" + suffix,
                 )
 )
 
-stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
+stub.run_pull_rev = modal.Function.from_name("pull-revision" + suffix, "pull_revision")
 
 
 class Assessment(BaseModel):
