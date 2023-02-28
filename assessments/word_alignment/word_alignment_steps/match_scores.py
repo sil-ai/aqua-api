@@ -156,6 +156,10 @@ def run_match_scores(
         for k, v in matches.items()
         for x in v
     ]
+    if len(flat_list) == 0:
+        print("No matches found.")
+        return pd.DataFrame(columns=['source', 'target', 'match_score', 'count'])
+
     df = pd.DataFrame(flat_list)
 
     return df

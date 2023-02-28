@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -8,6 +9,7 @@ from gql.transport.requests import RequestsHTTPTransport
  
 import queries
 from key_fetch import get_secret
+from models import VerseText
 
 
 router = fastapi.APIRouter()
@@ -37,60 +39,70 @@ def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     return True
 
 
-@router.get("/chapter", dependencies=[Depends(api_key_auth)])
-async def get_chapter(revision: int, book: str, chapter: int):
+@router.get("/chapter", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
+async def get_chapter(revision_id: int, book: str, chapter: int):
+    """
+    Gets a list of verse texts for a revision for a given chapter.
+
+    (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
+    """
     chapterReference = '"' + book + " " + str(chapter) + '"'
-    get_chapters = queries.get_chapter_query(revision, chapterReference)
+    get_chapters = queries.get_chapter_query(revision_id, chapterReference)
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
         query = gql(get_chapters)
         result = client.execute(query)
 
-    chapters_data = []
-    for chapter in result["verseText"]:
-        chapter_data = {
-            "id": chapter["id"],
-            "text": chapter["text"],
-            "verseReference": chapter["verseReference"],
-            "revisionDate": chapter["bibleRevisionByBiblerevision"]["date"],
-            "versionName": chapter["bibleRevisionByBiblerevision"]["bibleVersionByBibleversion"]["name"]
-            }
+    chapter_data = []
+    for verse in result["verseText"]:
+        verse_data = VerseText(
+            id=verse["id"],
+            text=verse["text"],
+            verseReference=verse["verseReference"],
+            revision_id=verse["bibleRevisionByBiblerevision"]["id"],
+        )
 
-        chapters_data.append(chapter_data)
+        chapter_data.append(verse_data)
 
-    return chapters_data
+    return chapter_data
 
 
-@router.get("/verse", dependencies=[Depends(api_key_auth)])
-async def get_verse(revision: int, book: str, chapter: int, verse: int):
+@router.get("/verse", dependencies=[Depends(api_key_auth)], response_model=VerseText)
+async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
+    """
+    Gets a single verse text for a revision for a given book, chapter and verse.
+
+    (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
+    """
     verseReference = (
             '"' + book + " " + str(chapter) + ":" + str(verse) + '"'
             )   
     
-    get_verses = queries.get_verses_query(revision, verseReference)
+    get_verses = queries.get_verses_query(revision_id, verseReference)
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
         query = gql(get_verses)
         result = client.execute(query)
+        verse = result["verseText"][0]  # There should only be one result
 
-    verses_data = []
-    for verse in result["verseText"]:
-        verse_data = {
-                "id": verse["id"],
-                "text": verse["text"],
-                "verseReference": verse["verseReference"],
-                "revisionDate": verse["bibleRevisionByBiblerevision"]["date"],
-                "versionName": verse["bibleRevisionByBiblerevision"]["bibleVersionByBibleversion"]["name"]
-                }
+    verse_data = VerseText(
+        id=verse["id"],
+        text=verse["text"],
+        verseReference=verse["verseReference"],
+        revision_id=verse["bibleRevisionByBiblerevision"]["id"],
+    )
 
-        verses_data.append(verse_data)
-
-    return verses_data
+    return verse_data
 
 
-@router.get("/book", dependencies=[Depends(api_key_auth)])
-async def get_book(revision: int, book: str):
-    bookReference = '"' + book + '"'
+@router.get("/book", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
+async def get_book(revision: int, verse: str):
+    """
+    Gets a list of verse texts for a revision for a given book.
+
+    (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
+    """
+    bookReference = '"' + verse + '"'
     get_book_data = queries.get_book_query(revision, bookReference)
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
@@ -98,22 +110,26 @@ async def get_book(revision: int, book: str):
         result = client.execute(query)
 
     books_data = []
-    for book in result["verseText"]:
-        book_data = {        
-                "id": book["id"],
-                "text": book["text"],
-                "verseReference": book["verseReference"],
-                "revisionDate": book["bibleRevisionByBiblerevision"]["date"],
-                "versionName": book["bibleRevisionByBiblerevision"]["bibleVersionByBibleversion"]["name"]
-                }
+    for verse in result["verseText"]:
+        verse_data = VerseText(
+                id=verse["id"],
+                text=verse["text"],
+                verseReference=verse["verseReference"],
+                revision_id=verse["bibleRevisionByBiblerevision"]["id"],
+            )
 
-        books_data.append(book_data)
+        books_data.append(verse_data)
 
-        return books_data
+    return books_data
 
 
-@router.get("/text", dependencies=[Depends(api_key_auth)])
+@router.get("/text", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
 async def get_text(revision: int):
+    """
+    Gets a list of verse texts for a revision for a whole revision.
+
+    (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
+    """
     text_query = queries.get_text_query(revision)
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
@@ -121,15 +137,14 @@ async def get_text(revision: int):
         result = client.execute(query)
 
     texts_data = []
-    for text in result["verseText"]:
-        text_data = { 
-                "id": text["id"],
-                "text": text["text"],
-                "verseReference": text["verseReference"],
-                "revisionDate": text["bibleRevisionByBiblerevision"]["date"],
-                "versionName": text["bibleRevisionByBiblerevision"]["bibleVersionByBibleversion"]["name"]
-                }
+    for verse in result["verseText"]:
+        verse_data = VerseText(
+                id=verse["id"],
+                text=verse["text"],
+                verseReference=verse["verseReference"],
+                revision_id=verse["bibleRevisionByBiblerevision"]["id"],
+            )
 
-        texts_data.append(text_data)
+        texts_data.append(verse_data)
 
     return texts_data

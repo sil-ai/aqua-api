@@ -3,10 +3,15 @@ import modal
 from typing import Literal, Optional
 from pydantic import BaseModel
 
-# Manage suffix on modal endpoint if testing.
-suffix = ''
-if os.environ.get('MODAL_TEST') == 'TRUE': 
-    suffix = '-test'
+# Manage deployment suffix on modal endpoint if testing.
+suffix = ""
+if os.environ.get("MODAL_TEST") == "TRUE":
+    suffix = "test"
+
+else:
+    suffix = os.getenv("MODAL_SUFFIX", "")
+
+suffix = f"-{suffix}" if len(suffix) > 0 else ""
 
 volume = modal.SharedVolume().persist("pytorch-model-vol")
 CACHE_PATH = "/root/model_cache"
@@ -27,13 +32,13 @@ stub = modal.Stub("semantic-similarity" + suffix,
                 )
 )
 
-stub.run_pull_rev = modal.Function.from_name("pull_revision", "pull_revision")
+stub.run_pull_rev = modal.Function.from_name("pull-revision" + suffix, "pull_revision")
 
 
 class Assessment(BaseModel):
-    assessment: Optional[int]
-    revision: int
-    reference: int
+    id: Optional[int] = None
+    revision_id: int
+    reference_id: int
     type: Literal["semantic-similarity"]
 
 
@@ -78,8 +83,8 @@ class SemanticSimilarity:
         
         returns sentences plus a score
         """
-        sent1_input = self.semsim_tokenizer(sent1, return_tensors="pt", padding=True)
-        sent2_input = self.semsim_tokenizer(sent2, return_tensors="pt", padding=True)
+        sent1_input = self.semsim_tokenizer(sent1, return_tensors="pt", padding=True, truncation=True)
+        sent2_input = self.semsim_tokenizer(sent2, return_tensors="pt", padding=True, truncation=True)
         with torch.no_grad():
             sent1_output = self.semsim_model(**sent1_input)
             sent2_output = self.semsim_model(**sent2_input)
@@ -115,11 +120,11 @@ def merge(revision_id, revision_verses, reference_id, reference_verses):
         shared_volumes={CACHE_PATH: volume},
 )
 def assess(assessment: Assessment, AQUA_DB: str, offset=-1):
-    revision = get_text.call(assessment.revision, AQUA_DB)
-    reference = get_text.call(assessment.reference, AQUA_DB)
-    df = merge.call(assessment.revision,
+    revision = get_text.call(assessment.revision_id, AQUA_DB)
+    reference = get_text.call(assessment.reference_id, AQUA_DB)
+    df = merge.call(assessment.revision_id,
                     revision,
-                    assessment.reference,
+                    assessment.reference_id,
                     reference)
     sem_sim = SemanticSimilarity(cache_path=CACHE_PATH)
 
@@ -127,7 +132,7 @@ def assess(assessment: Assessment, AQUA_DB: str, offset=-1):
     sents1 = df['revision'].to_list()[:offset]
     sents2 = df['reference'].to_list()[:offset]
     refs = df.index.to_list()[:offset]
-    assessment_id = [assessment.assessment]*len(refs)
+    assessment_id = [assessment.id]*len(refs)
     results = list(sem_sim.predict.map(sents1,sents2,refs, assessment_id))
     print(results[:20])
 

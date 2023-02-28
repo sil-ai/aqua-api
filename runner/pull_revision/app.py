@@ -13,11 +13,11 @@ logging.basicConfig(level=logging.DEBUG)
 # Manage suffix on modal endpoint if testing.
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
-    suffix = "_test"
+    suffix = "-test"
 
 
 stub = modal.Stub(
-    name="pull_revision" + suffix,
+    name="pull-revision" + suffix,
     image=modal.Image.debian_slim()
     .pip_install(
         "numpy==1.24.1",

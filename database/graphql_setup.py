@@ -1,47 +1,47 @@
 import requests
 import os
 
-import psycopg2
 
-
-headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
-new_headers = {"x-hasura-admin-secret": os.getenv("NEW_HASURA_SECRET")}
-db_conn = os.getenv("NEW_DB")
-new_db_conn = os.getenv("NEW_DB")
-
-migrate_url = os.getenv("GRAPHQL_URL")
-if migrate_url[-3::] == "app":
-    sql_fetch_url = migrate_url + "/v1alpha1/pg_dump"
-else:
-    url_split = migrate_url.split("-")
-    url_split[2] = (url_split[2])[0:13]
-    root_url = "-".join(url_split)
-
-    sql_fetch_url = root_url + "/v1alpha1/pg_dump"
-
-
+hasura_headers = {"x-hasura-admin-secret": os.getenv("NEW_HASURA_SECRET")}
+db_string = os.getenv("AQUA_DB")
+neon_api_key = "Bearer " + os.getenv("NEON_API_KEY")
 new_url = os.getenv("NEW_HASURA_URL")
+
+db_empty_string = db_string.split("@")[0]
+
 if new_url[-3::] == "app":
     db_con_url = new_url + "/v1/metadata"
-    sql_url = new_url + "/v2/query"
 else:
     url_split = new_url.split("-")
     url_split[2] = (url_split[2])[0:13]
     root_url = "-".join(url_split)
-    
     db_con_url = root_url + "/v1/metadata"
-    sql_url = root_url + "/v2/query"
 
+neon_api = (
+        "https://console.neon.tech/api/v2/projects/" + 
+        os.getenv("NEON_DB_ID") + 
+        "/branches"
+        )
 
-payload = {
-        "opts": ["-O", "--inserts", "--schema-only"], 
-        "clean_output": True, 
-        "source": os.getenv("DB_NAME")
+neon_headers = {"Authorization": neon_api_key}
+
+neon_payload = {
+        "endpoints": [{
+            "type": "read_write"
+            }],
+        "branch": {
+            "parent_id": os.getenv("NEON_TEMPLATE_BRANCH")
+            }
         }
 
-sql_response = requests.post(sql_fetch_url, json=payload, headers=headers)
+new_branch_call = requests.post(
+        neon_api, 
+        json=neon_payload, 
+        headers=neon_headers
+        )
 
-con = psycopg2.connect(db_conn)
+new_branch_endpoint = new_branch_call.json()["endpoints"][0]["host"]
+new_db_conn = db_empty_string + "@" + new_branch_endpoint + "/aqua"
 
 db_con = {
     "type": "pg_add_source",
@@ -61,14 +61,10 @@ db_con = {
         }
 
 
-sql_query = {
-    "type": "run_sql", 
-    "args": {
-        "source": "default", 
-        "sql": sql_response.text
-        }
-    }
+db_con_response = requests.post(
+        db_con_url, 
+        json=db_con, 
+        headers=hasura_headers
+        )
 
-
-db_con_response = requests.post(db_con_url, json=db_con, headers=new_headers)
-sql_response = requests.post(sql_url, json=sql_query, headers=new_headers)
+print(new_db_conn)

@@ -81,7 +81,7 @@ def test_add_version(base_url, header):
             "isoScript": "Latn", "abbreviation": version_abbreviation
             }
     url = base_url + '/version'
-    response = requests.post(url, json=test_version, headers=header)
+    response = requests.post(url, params=test_version, headers=header)
     if response.status_code == 400 and response.json()['detail'] == "Version abbreviation already in use.":
         print("This version is already in the database")
     else:
@@ -91,8 +91,12 @@ def test_add_version(base_url, header):
 
 @pytest.mark.parametrize("filepath", [Path("../../fixtures/test_bible.txt"), Path("../../fixtures/uploadtest.txt")])
 def test_add_revision(base_url, header, filepath: Path):
+    import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_abv_revision = {
-            "version_abbreviation": version_abbreviation,
+            "version_id": version_id,
             "published": False
             }
  
@@ -119,15 +123,20 @@ def get_results(assessment_config: Assessment):
 def test_assess_draft(base_url, header, assessment_storage):
     with stub.run():
         # Use the two revisions of the version_abbreviation version as revision and reference
+        import requests
+        url = base_url + "/version"
+        response = requests.get(url, headers=header)
+        version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
         api_url = base_url + "/revision"
-        response = requests.get(api_url, headers=header, params={'version_abbreviation': version_abbreviation})
+        response = requests.get(api_url, headers=header, params={'version_id': version_id})
 
-        revision = response.json()[0]['id']
-        reference = response.json()[1]['id']
+        revision_id = response.json()[0]['id']
+        reference_id = response.json()[1]['id']
 
         config = Assessment(
-                revision=revision, 
-                reference=reference, 
+                id=1,
+                revision_id=revision_id, 
+                reference_id=reference_id, 
                 type='word-alignment'
                 )
         
@@ -140,8 +149,8 @@ def test_assess_draft(base_url, header, assessment_storage):
         assert results[1]['score'] == pytest.approx(0.720, 0.001)
         assert results[2]['score'] == pytest.approx(0.758, 0.001)
 
-        assessment_storage.revision = revision
-        assessment_storage.reference = reference
+        assessment_storage.revision = revision_id
+        assessment_storage.reference = reference_id
 
 
 stub.get_word_alignment_results = modal.Function.from_name("save-results", "get_results")
@@ -152,7 +161,7 @@ def check_word_alignment_results(assessment_config: Assessment):
     import os
     AQUA_DB = os.getenv("AQUA_DB")
     database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
-    top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision, assessment_config.reference, database_id)
+    top_source_scores_df = modal.container_app.get_word_alignment_results.call(assessment_config.revision_id, assessment_config.reference_id, database_id)
     assert "source" in top_source_scores_df.columns
     assert "total_score" in top_source_scores_df.columns
     assert top_source_scores_df.loc[0, 'total_score'] == pytest.approx(0.6736, 0.001)
@@ -163,11 +172,12 @@ def check_word_alignment_results(assessment_config: Assessment):
 def test_check_word_alignment_results(assessment_storage):
     with stub.run():
         # Use the two revisions of the version_abbreviation version as revision and reference
-        revision = assessment_storage.revision
-        reference = assessment_storage.reference
+        revision_id = assessment_storage.revision
+        reference_id = assessment_storage.reference
         config = Assessment(
-                revision=revision, 
-                reference=reference, 
+                id=1,
+                revision_id=revision_id, 
+                reference_id=reference_id, 
                 type='word-alignment'
                 )
 
@@ -177,8 +187,12 @@ def test_check_word_alignment_results(assessment_storage):
 
 def test_delete_version(base_url, header):
     time.sleep(2)  # Allow the assessments above to finish pulling from the database before deleting!
+    import requests
+    url = base_url + "/version"
+    response = requests.get(url, headers=header)
+    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
     test_delete_version = {
-            "version_abbreviation": version_abbreviation
+            "id": version_id
             }
     url = base_url + "/version"
     test_response = requests.delete(url, params=test_delete_version, headers=header)
