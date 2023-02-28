@@ -151,6 +151,7 @@ def insert_bible_revision(version, name, date, published):
                       published
                       bibleVersionByBibleversion {{
                         id
+                        abbreviation
                       }}
                     }}
                   }}
