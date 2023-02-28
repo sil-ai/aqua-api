@@ -3,7 +3,7 @@ from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException, status
-from fastapi.security.api_key import APIKeyHeader
+from fastapi.security import OAuth2PasswordBearer
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
  
@@ -27,9 +27,9 @@ api_keys = get_secret(
         os.getenv("AWS_SECRET_KEY")
         )
 
-api_key_header = APIKeyHeader(name="api_key", auto_error=False)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-def api_key_auth(api_key: str = Depends(api_key_header)):
+def api_key_auth(api_key: str = Depends(oauth2_scheme)):
     if api_key not in api_keys:
         raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

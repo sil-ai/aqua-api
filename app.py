@@ -8,6 +8,7 @@ import bible_routes.verse_routes as verse_routes
 import assessment_routes.assessment_routes as assessment_routes
 import review_routes.results_routes as results_routes
 
+
 app = fastapi.FastAPI()
 
 def my_schema():
