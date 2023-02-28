@@ -151,6 +151,7 @@ def insert_bible_revision(version, name, date, published):
                       published
                       bibleVersionByBibleversion {{
                         id
+                        abbreviation
                       }}
                     }}
                   }}
@@ -186,6 +187,7 @@ def list_all_revisions_query():
                       published
                       bibleVersionByBibleversion {
                         id
+                        abbreviation
                       }
                     }
                   }
@@ -210,6 +212,7 @@ def list_revisions_query(version_id):
                       published
                       bibleVersionByBibleversion {{
                         id
+                        abbreviation
                       }}
                     }}
                   }}
