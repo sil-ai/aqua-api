@@ -34,13 +34,17 @@ class RecordNotFoundError(Exception):
     def __init__(self, message):
         self.message = message
 
+class DuplicateVersesError(Exception):
+    def __init__(self, message):
+        self.message = message
 
 class PullRevision:
-    def __init__(self, revision_id: int):
+    def __init__(self, revision_id: int, AQUA_DB: str):
         import pandas as pd
         self.revision_id = revision_id
         self.revision_text = pd.DataFrame()
         self.vref = self.prepare_vref()
+        self.AQUA_DB = AQUA_DB
 
     @staticmethod
     def prepare_vref():
@@ -56,13 +60,12 @@ class PullRevision:
     def is_duplicated(refs):
         return len(refs) != len(set(refs))
 
-    def pull_revision(self, AQUA_DB: str):
+    def get_verses(self):
         import pandas as pd
-        from sqlalchemy.ext.declarative import declarative_base
+        from sqlalchemy.orm import declarative_base
         from sqlalchemy import Column, Integer, String
 
         Base = declarative_base()
-
         class VerseText(Base):
             __tablename__ = "verseText"
             #TODO: check what the original field lengths are
@@ -74,7 +77,7 @@ class PullRevision:
             #transfers across all reference strings
             verseReference = Column(String(15, "utf8_unicode_ci"),nullable=False,index=True)
 
-        __, session = next(get_session(AQUA_DB))
+        __, session = next(get_session(self.AQUA_DB))
         logging.info("Loading verses from Revision %s...", self.revision_id)
         revision_verses = pd.read_sql(
             session.query(VerseText)
@@ -82,6 +85,10 @@ class PullRevision:
             .statement,
             session.bind,
         )
+        return revision_verses
+
+    def pull_revision(self):
+        revision_verses = self.get_verses()
         if not revision_verses.empty:
             # checks that the version doesn't have duplicated verse references
             if not self.is_duplicated(revision_verses.verseReference):
@@ -89,6 +96,9 @@ class PullRevision:
                 self.revision_text = revision_verses.set_index("id", drop=True)
             else:
                 logging.info("Duplicated verses in Revision %s", self.revision_id)
+                raise DuplicateVersesError(
+                    f"Revision {self.revision_id} has duplicate verses"
+                )
         else:
             logging.info("No verses for Revision %s", self.revision_id)
             raise RecordNotFoundError(
@@ -125,8 +135,8 @@ class PullRevision:
     timeout=600,
 )
 def pull_revision(revision_id: int, AQUA_DB: str) -> bytes:
-    pr = PullRevision(revision_id)
-    pr.pull_revision(AQUA_DB)
+    pr = PullRevision(revision_id, AQUA_DB)
+    pr.pull_revision()
     revision_bytes = pr.output_revision()
 
     return revision_bytes

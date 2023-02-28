@@ -1,9 +1,8 @@
+import os
 import modal
 import pytest
-import os
 
-from app import RecordNotFoundError
-
+from app import RecordNotFoundError, DuplicateVersesError
 
 stub = modal.Stub(
     name="run-pull-revision-test",
@@ -11,19 +10,35 @@ stub = modal.Stub(
         "pandas==1.4.3",
         "requests_toolbelt==0.9.1",
         "sqlalchemy==1.4.36",
-        "pytest",
+        "pytest==7.2.1",
+        "mock==5.0.1",
+        "psycopg2-binary==2.9.5"
+    ).copy(
+    mount=modal.Mount(
+        local_file="../../fixtures/vref.txt",
+        remote_dir="/root"
+        )
+    ).copy(
+    mount=modal.Mount(
+        local_file="./fixtures/matt_dup.pkl",
+        remote_dir="/root"
+        )
     ),
 )
 
 
 stub.run_pull_rev = modal.Function.from_name("pull-revision-test", "pull_revision")
 
-
 @stub.function(secret=modal.Secret.from_name('aqua-pytest'))
 def get_text(revision_id: int) -> bytes:
-    AQUA_DB = os.getenv("AQUA_DB")
+    AQUA_DB = os.getenv('AQUA_DB')
     return modal.container_app.run_pull_rev.call(revision_id, AQUA_DB)
 
+#test for missing revision
+def test_missing_revision():
+    with stub.run():
+        with pytest.raises(TypeError):
+            get_text.call()
 
 @pytest.mark.parametrize(
     "revision_id",
@@ -39,8 +54,138 @@ def test_get_text(revision_id):
     assert len(text_bytes) == 41899
     assert max([len(line) for line in text_bytes]) > 10
 
-
-def test_record_not_found():
+@pytest.mark.parametrize(
+    "revision_id",
+    [
+        9999999,
+        0,
+        -3
+    ]
+)
+#test for invalid revision ids
+def test_record_not_found(revision_id):
     with stub.run():
         with pytest.raises(RecordNotFoundError):
-            get_text.call(9999999)
+            get_text.call(revision_id)
+
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
+def create_dup_verses(revision_id):
+    from app import PullRevision
+    import pandas as pd
+    from _pytest.monkeypatch import MonkeyPatch
+
+    monkeypatch = MonkeyPatch()
+
+    def mock_dup_verses(self):
+        return pd.read_pickle("/root/matt_dup.pkl")
+
+    AQUA_DB = os.getenv('AQUA_DB')
+
+    with pytest.raises(DuplicateVersesError):
+        monkeypatch.setattr(PullRevision, 'get_verses', mock_dup_verses)
+        pr = PullRevision(revision_id, AQUA_DB)
+        pr.pull_revision()
+
+#test duplicated verses
+def test_duplicated_verses(revision_id=10):
+   with stub.run():
+        create_dup_verses.call(revision_id)
+
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
+def create_empty_revision(revision_id):
+    from app import PullRevision
+    import pandas as pd
+    from _pytest.monkeypatch import MonkeyPatch
+
+    monkeypatch = MonkeyPatch()
+
+    def mock_get_verses(self):
+        return pd.DataFrame()
+
+    AQUA_DB = os.getenv('AQUA_DB')
+    with pytest.raises(RecordNotFoundError):
+        monkeypatch.setattr(PullRevision,'get_verses', mock_get_verses)
+        pr = PullRevision(revision_id, AQUA_DB)
+        pr.pull_revision()
+
+#test empty verses
+def test_empty_revision():
+    with stub.run():
+        create_empty_revision.call(11)
+
+def get_fake_conn_string(original_string):
+    import random
+    from string import ascii_letters
+
+    while True:
+        idx_list = random.sample([i for i,__ in enumerate(original_string)],3)
+        lst = list(original_string)
+        for idx in idx_list:
+            lst[idx]=random.choice(ascii_letters)
+        fake_string = ''.join(lst)
+        if fake_string != original_string:
+            return fake_string
+
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
+def conn():
+    from db_connect import get_session
+    AQUA_DB = os.getenv('AQUA_DB')
+    engine, session = next(get_session(AQUA_DB))
+    #connection is up
+    assert session.is_active
+    #connection matches aqua_connection_string
+    assert str(engine.url) == AQUA_DB
+
+#test for valid database connection
+def test_conn():
+    with stub.run():
+        conn.call()
+
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
+def bad_connection(bad_connection_string):
+    from sqlalchemy import create_engine
+    from sqlalchemy.exc import NoSuchModuleError, OperationalError, ArgumentError, ProgrammingError
+    aqua_connection_string = os.getenv('AQUA_DB')
+    assert bad_connection_string!= aqua_connection_string
+    try:
+        engine = create_engine(bad_connection_string)
+        engine.connect()
+        raise AssertionError(f'Bad connection string {bad_connection_string} worked')
+    except (ValueError,
+            OperationalError,
+            NoSuchModuleError,
+            ArgumentError,
+            ProgrammingError) as err:
+        #if it gets here it raised a known sqlalchemy exception
+        print(f'{bad_connection_string} gives Error \n {err}')
+        #passes
+
+@stub.function(secret=modal.Secret.from_name('aqua-pytest'))
+def get_fake_strings():
+    aqua_connection_string = os.getenv('AQUA_DB')
+    FAKE_NUM=3
+    return [get_fake_conn_string(aqua_connection_string) for __ in range(FAKE_NUM)]
+
+@pytest.fixture(scope="session")
+def fake_strings():
+    with stub.run():
+        return get_fake_strings.call()
+
+@pytest.fixture(scope="session")
+def fake1(fake_strings):
+    return fake_strings[0]
+
+@pytest.fixture(scope="session")
+def fake2(fake_strings):
+    return fake_strings[1]
+
+@pytest.fixture(scope="session")
+def fake3(fake_strings):
+    return fake_strings[2]
+
+#test for n invalid database connections
+@pytest.mark.parametrize("bad_connection_string",["fake1","fake2", "fake3"], ids=range(1,4))
+def test_bad_connection_string(bad_connection_string, request):
+    bad_connection_string = request.getfixturevalue(bad_connection_string)
+    with stub.run():
+        bad_connection.call(bad_connection_string)
