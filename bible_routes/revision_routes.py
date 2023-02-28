@@ -80,6 +80,7 @@ async def list_revisions(version_id: Optional[int]=None):
                         id=revision["id"],
                         date=revision["date"],
                         version_id=revision["bibleVersionByBibleversion"]["id"],
+                        version_abbreviation=revision["bibleVersionByBibleversion"]["abbreviation"],
                         name=revision["name"],
                         published=revision["published"]
                 )
