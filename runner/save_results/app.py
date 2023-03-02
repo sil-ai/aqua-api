@@ -35,18 +35,15 @@ RESULTS_DIR = Path("/results")
 def save_results(revision: int, reference: int, top_source_scores_df, database_id: str):
     """
     Save the word alignment results to the results directory in the modal shared volume.
-
     This function saves the word alignment top_source_scores contained in the input 
     dataframe to a csv file in the results directory in the modal shared volume. The 
     directory structure is created if it doesn't exist, and the file is saved as 
     'top_source_scores.csv'.
-
     Parameters:
     revision (int): Revision id for the word alignment assessment.
     reference (int): Reference revision id for the word alignment assessment.
     top_source_scores_df (pandas.DataFrame): Dataframe containing the word alignment 
     results with columns 'vref', 'source' and 'score'.
-
     Returns:
     None
     """
@@ -64,20 +61,16 @@ def save_results(revision: int, reference: int, top_source_scores_df, database_i
 def get_results(revision: int, reference: int, database_id: str):
     """
     Get top_source_scores from word alignment between revision and reference.
-
     This function retrieves the word alignment top_source_scores from the modal shared 
     volume, if it exists, otherwise it starts a word alignment assessment and waits for 
     it to finish. The results are then read from the file 'top_source_scores.csv' and 
     returned as a pandas dataframe.
-
     Parameters:
     revision (int): Revision id for the word alignment assessment.
     reference (int): Reference revision id for the word alignment assessment.
-
     Returns:
     pandas.DataFrame: Dataframe containing the word alignment results with columns 
     'vref', 'source' and 'score'.
-
     or None if the dataframe does not exist.
     """
     import pandas as pd
@@ -99,14 +92,11 @@ def get_results(revision: int, reference: int, database_id: str):
 def delete_results(revision: int, reference: int, database_id: str):
     """
     Delete top_source_scores from word alignment between revision and reference.
-
     This function deletes the word alignment top_source_scores from the modal shared 
     volume.
-
     Parameters:
     revision (int): Revision id for the word alignment assessment.
     reference (int): Reference revision id for the word alignment assessment.
-
     Returns:
     None
     """
