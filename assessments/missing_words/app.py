@@ -137,7 +137,7 @@ async def run_word_alignment(revision_id: int, reference_id: int, AQUA_DB: str, 
         )
         url = AQUA_URL + "/assessment"
         print(url)
-        header = {"Authorization": "Bearer " + AQUA_API_KEY}
+        header = {"api_key": AQUA_API_KEY}
         requests.post(url, params={**assessment_config.dict(), 'modal_suffix': modal_suffix}, headers=header)
         
         # Keep checking the database until it is finished
