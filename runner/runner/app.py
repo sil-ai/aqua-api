@@ -185,7 +185,7 @@ async def assessment_runner(config: Assessment, AQUA_DB_ENCODED: Optional[bytes]
     if config.type not in [a.value for a in AssessmentType]:
         print(f"Assessment type not available: {config.type}")
         return fastapi.Response(content="Assessment type not available.", status_code=500)
-    print(AQUA_DB)
+    
     # Start the assessment, while continuing on to return a response to the user
     run_assessment_runner.spawn(config, AQUA_DB, modal_suffix=modal_suffix)
     
