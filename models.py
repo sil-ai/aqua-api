@@ -112,7 +112,7 @@ class Result(BaseModel):
 
 
 class Language(BaseModel):
-    iso693: str
+    iso639: str
     name: str
 
 

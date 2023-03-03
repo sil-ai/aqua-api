@@ -6,7 +6,7 @@ def list_versions_query():
                     name
                     abbreviation
                     isoLanguageByIsolanguage {
-                      iso693
+                      iso639
                     }
                     isoScriptByIsoscript {
                       iso15924
@@ -486,7 +486,7 @@ def get_languages_query():
     iso_languages = """
         query list_languages {
           isoLanguage {
-            iso693
+            iso639
             name
           }
         }
