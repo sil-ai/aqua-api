@@ -51,7 +51,7 @@ async def list_languages():
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
         language_query = gql(list_language)
         language_result = client.execute(language_query)
-    language_list = [Language(iso693=language["iso693"], name=language["name"]) for language in language_result["isoLanguage"]]
+    language_list = [Language(is39=language["iso639"], name=language["name"]) for language in language_result["isoLanguage"]]
     
     return language_list
 

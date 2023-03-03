@@ -55,7 +55,7 @@ async def list_version():
                         id=version["id"], 
                         name=version["name"], 
                         abbreviation=version["abbreviation"], 
-                        isoLanguage=version["isoLanguageByIsolanguage"]["iso693"], 
+                        isoLanguage=version["isoLanguageByIsolanguage"]["iso639"], 
                         isoScript=version["isoScriptByIsoscript"]["iso15924"], 
                         rights=version["rights"],
                         forwardTranslation=version["forwardTranslation"],
@@ -73,7 +73,7 @@ async def add_version(v: VersionIn = Depends()):
     """
     Create a new version. 
 
-    `isoLanguage` and `isoScript` must be valid ISO 693 and ISO 15924 codes, which can be found by GET /language and GET /script.
+    `isoLanguage` and `isoScript` must be valid ISO39 and ISO 15924 codes, which can be found by GET /language and GET /script.
 
     `forwardTranslation` and `backTranslation` are optional integers, corresponding to the version_id of the version that is the forward and back translation used by this version.
     """
