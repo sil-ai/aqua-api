@@ -441,34 +441,6 @@ def get_results_query(assessment_id):
     return get_results
 
 
-# def get_missing_words_query(assessment_id):
-#     get_results = """
-#                 query {{
-#                   assessmentMissingWords(
-#                     where: {{
-#                       assessment: {{
-#                         _eq: {}
-#                       }}
-#                     }}
-#                   ) {{
-#                     id
-#                     score
-#                     flag
-#                     note
-#                     vref
-#                     source
-#                     target
-#                     assessmentByAssessment {{
-#                       reference
-#                       type
-#                     }}
-#                   }}
-#                 }}
-#                 """.format(assessment_id)
-
-#     return get_results
-
-
 def get_scripts_query():
     iso_scripts = """
         query list_scripts {
