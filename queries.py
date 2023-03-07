@@ -441,32 +441,27 @@ def get_results_query(assessment_id):
     return get_results
 
 
-# def get_missing_words_query(assessment_id):
-#     get_results = """
-#                 query {{
-#                   assessmentMissingWords(
-#                     where: {{
-#                       assessment: {{
-#                         _eq: {}
-#                       }}
-#                     }}
-#                   ) {{
-#                     id
-#                     score
-#                     flag
-#                     note
-#                     vref
-#                     source
-#                     target
-#                     assessmentByAssessment {{
-#                       reference
-#                       type
-#                     }}
-#                   }}
-#                 }}
-#                 """.format(assessment_id)
+def get_results_chapter_agg_query(assessment_id):
+    get_results_chapter_agg = """
+                query {{
+                    group_results_chapter(
+                        where: {{assessment_id: {{
+                            _eq: {}
+                            }}
+                            }}
+                            ) {{
+                    score
+                    vref_group
+                    assessment_id
+                    source
+                    target
+                    note
+                    flag
+                    }}
+                }}
+                """.format(assessment_id)
 
-#     return get_results
+    return get_results_chapter_agg
 
 
 def get_scripts_query():
