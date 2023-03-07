@@ -6,7 +6,7 @@ def list_versions_query():
                     name
                     abbreviation
                     isoLanguageByIsolanguage {
-                      iso693
+                      iso639
                     }
                     isoScriptByIsoscript {
                       iso15924
@@ -441,34 +441,6 @@ def get_results_query(assessment_id):
     return get_results
 
 
-# def get_missing_words_query(assessment_id):
-#     get_results = """
-#                 query {{
-#                   assessmentMissingWords(
-#                     where: {{
-#                       assessment: {{
-#                         _eq: {}
-#                       }}
-#                     }}
-#                   ) {{
-#                     id
-#                     score
-#                     flag
-#                     note
-#                     vref
-#                     source
-#                     target
-#                     assessmentByAssessment {{
-#                       reference
-#                       type
-#                     }}
-#                   }}
-#                 }}
-#                 """.format(assessment_id)
-
-#     return get_results
-
-
 def get_scripts_query():
     iso_scripts = """
         query list_scripts {
@@ -486,7 +458,7 @@ def get_languages_query():
     iso_languages = """
         query list_languages {
           isoLanguage {
-            iso693
+            iso639
             name
           }
         }
