@@ -402,7 +402,7 @@ def delete_assessment_results_mutation(assessment):
     delete_assessment_results = """ 
                     mutation {{
                       delete_assessmentResult(where: {{
-                        assessment_id: {{
+                        assessment: {{
                           _eq: {}
                         }}
                       }}) {{
@@ -419,7 +419,7 @@ def get_results_query(assessment_id):
                 query {{
                   assessmentResult(
                     where: {{
-                      assessment_id: {{
+                      assessment: {{
                         _eq: {}
                       }}
                     }}
@@ -431,7 +431,7 @@ def get_results_query(assessment_id):
                     vref
                     source
                     target
-                    assessment_id
+                    assessment
                   }}
                 }}
                 """.format(assessment_id)
@@ -443,14 +443,14 @@ def get_results_chapter_agg_query(assessment_id):
     get_results_chapter_agg = """
                 query {{
                     group_results_chapter(
-                        where: {{assessment_id: {{
+                        where: {{assessment: {{
                             _eq: {}
                             }}
                             }}
                             ) {{
                     score
                     vref_group
-                    assessment_id
+                    assessment
                     source
                     target
                     note

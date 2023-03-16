@@ -87,7 +87,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None):
             for result in result_data[table_name]:
                 results = Result(
                         id=result["id"] if 'id' in result and result['id'] != 'null' else None,
-                        assessment_id=result["assessment_id"],
+                        assessment_id=result["assessment"],
                         vref=result["vref"] if 'vref' in result else result['vref_group'],
                         source=result["source"] if result["source"] != 'null' else None,
                         target=str(result["target"]) if result["target"] != 'null' else None,
