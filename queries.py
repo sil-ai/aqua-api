@@ -402,7 +402,7 @@ def delete_assessment_results_mutation(assessment):
     delete_assessment_results = """ 
                     mutation {{
                       delete_assessmentResult(where: {{
-                        assessment: {{
+                        assessment_id: {{
                           _eq: {}
                         }}
                       }}) {{
@@ -419,7 +419,7 @@ def get_results_query(assessment_id):
                 query {{
                   assessmentResult(
                     where: {{
-                      assessment: {{
+                      assessment_id: {{
                         _eq: {}
                       }}
                     }}
@@ -431,9 +431,7 @@ def get_results_query(assessment_id):
                     vref
                     source
                     target
-                    assessmentByAssessment {{
-                      id
-                    }}
+                    assessment_id
                   }}
                 }}
                 """.format(assessment_id)
