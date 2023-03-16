@@ -83,7 +83,6 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None):
             result_data = client.execute(result_query)
 
             result_list = []
-            print(result_data.keys())
             for result in result_data[table_name]:
                 results = Result(
                         id=result["id"] if 'id' in result and result['id'] != 'null' else None,
