@@ -1,5 +1,6 @@
 import os
-from typing import List
+from typing import List, Optional
+from enum import Enum
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -11,6 +12,10 @@ import queries
 from key_fetch import get_secret
 from models import Result
 
+
+class aggType(Enum):
+    chapter = "chapter"
+    verse = "verse"
 
 router = fastapi.APIRouter()
 
@@ -40,7 +45,7 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
 
 
 @router.get("/result", dependencies=[Depends(api_key_auth)], response_model=List[Result])
-async def get_result(assessment_id: int):
+async def get_result(assessment_id: int, aggregate: Optional[aggType] = None):
     """
     Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
 
@@ -55,9 +60,11 @@ async def get_result(assessment_id: int):
     be included in the text being assessed.
     """
     list_assessments = queries.list_assessments_query()
-        
-    fetch_results = queries.get_results_query(assessment_id)
-    # fetch_missing_words = queries.get_missing_words_query(assessment_id)
+
+    if aggregate == 'chapter':
+        fetch_results = queries.get_results_chapter_query(assessment_id)
+    else:
+        fetch_results = queries.get_results_query(assessment_id)
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
@@ -70,7 +77,6 @@ async def get_result(assessment_id: int):
                 assessment_data[assessment["id"]] = assessment["type"]
 
         if assessment_id in assessment_data:
-            # if assessment_data[assessment_id] == "missing-words":
             result_query = gql(fetch_results)
             result_data = client.execute(result_query)
 
@@ -79,7 +85,7 @@ async def get_result(assessment_id: int):
             for result in result_data["assessmentResult"]:
                 print(type(result["target"]))
                 results = Result(
-                        id=result["id"],
+                        id=result["id"] if result["id"] != 'null' else None,
                         assessment_id=result["assessmentByAssessment"]["id"],
                         vref=result["vref"],
                         source=result["source"] if result["source"] != 'null' else None,
