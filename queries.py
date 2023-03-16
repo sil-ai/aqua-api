@@ -431,7 +431,9 @@ def get_results_query(assessment_id):
                     vref
                     source
                     target
-                    assessment
+                    assessmentByAssessment {{
+                      id
+                    }}
                   }}
                 }}
                 """.format(assessment_id)
