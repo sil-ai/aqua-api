@@ -61,10 +61,12 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None):
     """
     list_assessments = queries.list_assessments_query()
 
-    if aggregate == 'chapter':
-        fetch_results = queries.get_results_chapter_query(assessment_id)
+    if aggregate == aggType['chapter']:
+        fetch_results = queries.get_results_chapter_agg_query(assessment_id)
+        table_name = "group_results_chapter"
     else:
         fetch_results = queries.get_results_query(assessment_id)
+        table_name = "assessmentResult"
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
@@ -81,13 +83,11 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None):
             result_data = client.execute(result_query)
 
             result_list = []
-
-            for result in result_data["assessmentResult"]:
-                print(type(result["target"]))
+            for result in result_data[table_name]:
                 results = Result(
-                        id=result["id"] if result["id"] != 'null' else None,
+                        id=result["id"] if 'id' in result and result['id'] != 'null' else None,
                         assessment_id=result["assessmentByAssessment"]["id"],
-                        vref=result["vref"],
+                        vref=result["vref"] if 'vref' in result else result['vref_group'],
                         source=result["source"] if result["source"] != 'null' else None,
                         target=str(result["target"]) if result["target"] != 'null' else None,
                         score=result["score"],
