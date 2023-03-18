@@ -45,7 +45,7 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
 
 
 @router.get("/result", dependencies=[Depends(api_key_auth)], response_model=List[Result])
-async def get_result(assessment_id: int, aggregate: Optional[aggType] = None):
+async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, include_text: Optional[bool] = False):
     """
     Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
 
@@ -59,11 +59,22 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None):
     missing word appears in the baseline reference texts, and so there is a higher likelihood that it is a word that should
     be included in the text being assessed.
     """
+    if aggregate is not None and include_text:
+        raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results."
+        )
+
     list_assessments = queries.list_assessments_query()
 
     if aggregate == aggType['chapter']:
         fetch_results = queries.get_results_chapter_agg_query(assessment_id)
         table_name = "group_results_chapter"
+    
+    elif include_text:
+        fetch_results = queries.get_results_with_text_query(assessment_id)
+        table_name = "assessment_result_with_text"
+        
     else:
         fetch_results = queries.get_results_query(assessment_id)
         table_name = "assessmentResult"
@@ -92,7 +103,9 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None):
                         target=str(result["target"]) if result["target"] != 'null' else None,
                         score=result["score"],
                         flag=result["flag"],
-                        note=result["note"]
+                        note=result["note"],
+                        revision_text=result["revisionText"] if 'revisionText' in result else None,
+                        reference_text=result["referenceText"] if 'referenceText' in result else None,
                     )
                 
                 result_list.append(results)

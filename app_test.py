@@ -312,13 +312,28 @@ def test_result(client):
             "aggregate": "chapter",
     }
 
+    test_config_include_text = {
+            "assessment_id": assessment_id,
+            "include_text": True,
+    }
+
+    test_config_aggregate_and_include_text = {
+            "assessment_id": assessment_id,
+            "aggregate": "chapter",
+            "include_text": True,
+    }
+
     test_response = client.get("/result", params=test_config)
     fail_response = client.get("/result", params=fail_config)
     test_response_chapter_agg = client.get("/result", params=test_config_chapter_agg)
+    test_response_include_text = client.get("/result", params=test_config_include_text)
+    test_response_aggregate_and_include_text = client.get("/result", params=test_config_aggregate_and_include_text)
     
     assert test_response.status_code == 200
     assert fail_response.status_code == 400
     assert test_response_chapter_agg.status_code == 200
+    assert test_response_include_text.status_code == 200
+    assert test_response_aggregate_and_include_text.status_code == 400
     
 
 def test_delete_revision(client):

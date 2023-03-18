@@ -464,6 +464,31 @@ def get_results_chapter_agg_query(assessment_id):
     return get_results_chapter_agg
 
 
+def get_results_with_text_query(assessment_id):
+    get_results_with_text = """
+                query {{
+                    assessment_result_with_text(
+                        where: {{assessment: {{
+                            _eq: {}
+                            }}
+                            }}
+                            ) {{
+                    score
+                    vref
+                    assessment
+                    source
+                    target
+                    note
+                    flag
+                    revisionText
+                    referenceText
+                    }}
+                }}
+                """.format(assessment_id)
+
+    return get_results_with_text
+
+
 def get_scripts_query():
     iso_scripts = """
         query list_scripts {
