@@ -150,7 +150,7 @@ def test_get_languages(client):
 
 
 def test_get_scripts(client): 
-    script_response = client.get("/script")
+    script_response = client.get("/v1/script")
 
     assert script_response.status_code == 200
 
