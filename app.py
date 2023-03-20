@@ -44,7 +44,7 @@ def configure(app):
 
 
 def configure_routing(app):
-    app.include_router(language_routes_v1.router)
+    app.include_router(language_routes_v1.router, prefix="/")
     #!!!: send a deprecation notice but leave the v1 route for awhile
     #if v2 is introduced but change /latest and / to language_routes_v2.router
     app.include_router(language_routes_v1.router, prefix="/v1")

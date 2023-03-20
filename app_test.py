@@ -144,7 +144,7 @@ def test_list_revisions(client):
 
 
 def test_get_languages(client): 
-    language_response = client.get("/language")
+    language_response = client.get("/v1/language")
 
     assert language_response.status_code == 200
 
