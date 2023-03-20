@@ -1,3 +1,5 @@
+__version__ = 'v1'
+
 import os
 from typing import List
 
@@ -12,7 +14,11 @@ import queries
 from key_fetch import get_secret
 
 
-router = fastapi.APIRouter()
+router = fastapi.APIRouter(
+    prefix="/v1",
+    tags=["language"],
+    responses = {404: {"description": "Not found"}},
+)
 
 # Configure connection to the GraphQL endpoint
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
