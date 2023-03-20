@@ -156,20 +156,21 @@ def test_get_scripts(client):
 def test_get_chapter(client): 
     response = client.get("/version")
     version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
-    version_abv = {
+    test_version_abv = {
             "version_id": version_id
             }
 
-    revision_response = client.get("/revision", params=version_abv)
+    revision_response = client.get("/revision", params=test_version_abv)
     revision_response_text = revision_response.text.replace("null", "None").replace('false', 'False')
     revision_fixed = ast.literal_eval(revision_response_text)
 
-    for revision_data in revision_fixed:
-        if revision_data["version_id"] == version_id:
-            revision_id = revision_data["id"]
+    revision_ids = []
+    for version_data in revision_fixed:
+        if version_data["version_id"] == version_id:
+            revision_ids.append(version_data["id"])
 
     test_chapter = {
-            "revision_id": revision_id,
+            "revision_id": revision_ids[0],
             "book": "GEN",
             "chapter": 1
             }
@@ -182,20 +183,21 @@ def test_get_chapter(client):
 def test_get_verse(client): 
     response = client.get("/version")
     version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
-    version_abv = {
+    test_version_abv = {
             "version_id": version_id
             }
 
-    version_response = client.get("/revision", params=version_abv)
-    version_response_text = version_response.text.replace("null", "None").replace('false', 'False')
-    version_fixed = ast.literal_eval(version_response_text)
+    revision_response = client.get("/revision", params=test_version_abv)
+    revision_response_text = revision_response.text.replace("null", "None").replace('false', 'False')
+    revision_fixed = ast.literal_eval(revision_response_text)
 
-    for version_data in version_fixed:
+    revision_ids = []
+    for version_data in revision_fixed:
         if version_data["version_id"] == version_id:
-            revision_id = version_data["id"]
+            revision_ids.append(version_data["id"])
 
     test_version = {
-            "revision_id": revision_id,
+            "revision_id": revision_ids[0],
             "book": "GEN",
             "chapter": 1,
             "verse": 1
@@ -213,36 +215,36 @@ def test_assessment(client):
             "version_id": version_id
             }
 
-    version_response = client.get("/revision", params=test_version_abv)
-    version_response_text = version_response.text.replace("null", "None").replace('false', 'False')
-    version_fixed = ast.literal_eval(version_response_text)
+    revision_response = client.get("/revision", params=test_version_abv)
+    revision_response_text = revision_response.text.replace("null", "None").replace('false', 'False')
+    revision_fixed = ast.literal_eval(revision_response_text)
 
-    for version_data in version_fixed:
+    revision_ids = []
+    for version_data in revision_fixed:
         if version_data["version_id"] == version_id:
-            revision_id = version_data["id"]
-    print(f'{revision_id=}')
+            revision_ids.append(version_data["id"])
      
     with pytest.raises(ValidationError):
         AssessmentIn(
                 revision_id="eleven",
-                reference_id=10,
+                reference_id=revision_ids[0],
                 type="dummy"
         )
 
     with pytest.raises(ValidationError):
         AssessmentIn(
-                revision_id=11,
-                reference_id=10,
+                revision_id=revision_ids[0],
+                reference_id=revision_ids[1],
                 type="non-existent assessment"
         )
     
     bad_config_3 = AssessmentIn(
-            revision_id=revision_id,
+            revision_id=revision_ids[0],
             type="word-alignment"
     )                                   # This should require a reference_id
 
     good_config = AssessmentIn(
-            revision_id=revision_id,
+            revision_id=revision_ids[0],
             reference_id=10,
             type="dummy"
     )
@@ -282,13 +284,14 @@ def test_result(client):
     revision_response_text = revision_response.text.replace("null", "None").replace('false', 'False')
     revision_fixed = ast.literal_eval(revision_response_text)
 
-    for revision_data in revision_fixed:
-        if revision_data["version_id"] == version_id:
-            revision_id = revision_data["id"]
+    revision_ids = []
+    for version_data in revision_fixed:
+        if version_data["version_id"] == version_id:
+            revision_ids.append(version_data["id"])
 
     good_config = AssessmentIn(
-            revision_id=revision_id,
-            reference_id=10,
+            revision_id=revision_ids[0],
+            reference_id=revision_ids[1],
             type="dummy",
     )
 
@@ -329,12 +332,13 @@ def test_delete_revision(client):
     version_response_text = version_response.text.replace("null", "None").replace('false', 'False')
     version_fixed = ast.literal_eval(version_response_text)
 
+    revision_ids = []
     for version_data in version_fixed:
         if version_data["version_id"] == version_id:
-            revision_id = version_data["id"]
+            revision_ids.append(version_data["id"])
 
     delete_revision_data = {
-            "id": revision_id,
+            "id": revision_ids[0],
             }
 
     fail_revision_data = {
