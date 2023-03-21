@@ -1,12 +1,12 @@
 import os
-from typing import List, Optional
+from typing import List, Dict, Optional
 from enum import Enum
 
 import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
 from gql import Client, gql
-from gql.transport.requests import RequestsHTTPTransport
+from gql.transport.aiohttp import AIOHTTPTransport
 
 import queries
 from key_fetch import get_secret
@@ -21,10 +21,7 @@ router = fastapi.APIRouter()
 
 # Configure connection to the GraphQL endpoint
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
-transport = RequestsHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"), verify=True,
-        retries=3, headers=headers
-        )
+
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -44,8 +41,14 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
     return True
 
 
-@router.get("/result", dependencies=[Depends(api_key_auth)], response_model=List[Result])
-async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, include_text: Optional[bool] = False):
+@router.get("/result", dependencies=[Depends(api_key_auth)], response_model=dict)
+async def get_result(
+    assessment_id: int, 
+    page: Optional[int] = None, 
+    page_size: Optional[int] = None,
+    aggregate: Optional[aggType] = None, 
+    include_text: Optional[bool] = False
+):
     """
     Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
 
@@ -59,61 +62,81 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
     missing word appears in the baseline reference texts, and so there is a higher likelihood that it is a word that should
     be included in the text being assessed.
     """
+    if page is not None and page_size is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If page is set, page_size must also be set."
+        )
+    
     if aggregate is not None and include_text:
         raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results."
         )
+    
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"), 
+        headers=headers
+        )
 
     list_assessments = queries.list_assessments_query()
 
+    if page is not None and page_size is not None:
+            offset = (page - 1) * page_size
+            limit = page_size
+    else:
+        offset = 0
+        limit = None
+
     if aggregate == aggType['chapter']:
-        fetch_results = queries.get_results_chapter_agg_query(assessment_id)
+        fetch_results = queries.get_results_chapter_agg_query(assessment_id, limit=limit, offset=offset)
         table_name = "group_results_chapter"
     
     elif include_text:
-        fetch_results = queries.get_results_with_text_query(assessment_id)
+        fetch_results = queries.get_results_with_text_query(assessment_id, limit=limit, offset=offset)
         table_name = "assessment_result_with_text"
         
     else:
-        fetch_results = queries.get_results_query(assessment_id)
+        fetch_results = queries.get_results_query(assessment_id, limit=limit, offset=offset)
         table_name = "assessmentResult"
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=False) as client:
 
         fetch_assessments = gql(list_assessments)
-        assessment_response = client.execute(fetch_assessments)
+        assessment_response = await client.execute(fetch_assessments)
 
         assessment_data = {}
         for assessment in assessment_response["assessment"]:
             if assessment["id"] not in assessment_data:
                 assessment_data[assessment["id"]] = assessment["type"]
 
-        if assessment_id in assessment_data:
-            result_query = gql(fetch_results)
-            result_data = client.execute(result_query)
-
-            result_list = []
-            for result in result_data[table_name]:
-                results = Result(
-                        id=result["id"] if 'id' in result and result['id'] != 'null' else None,
-                        assessment_id=result["assessmentByAssessment"]["id"] if 'assessmentByAssessment' in result else result['assessment'],
-                        vref=result["vref"] if 'vref' in result else result['vref_group'],
-                        source=result["source"] if result["source"] != 'null' else None,
-                        target=str(result["target"]) if result["target"] != 'null' else None,
-                        score=result["score"],
-                        flag=result["flag"],
-                        note=result["note"],
-                        revision_text=result["revisionText"] if 'revisionText' in result else None,
-                        reference_text=result["referenceText"] if 'referenceText' in result else None,
-                    )
-                
-                result_list.append(results)
-
-        else:
+        if assessment_id not in assessment_data:
             raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Revision Id invalid, this revision does not exist"
-                    )
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment not found."
+            )
 
-    return result_list
+        result_query = gql(fetch_results)
+        
+        result_data = await client.execute(result_query)
+
+        result_list = []
+        for result in result_data[table_name]:
+            results = Result(
+                    id=result["id"] if 'id' in result and result['id'] != 'null' else None,
+                    assessment_id=result["assessmentByAssessment"]["id"] if 'assessmentByAssessment' in result else result['assessment'],
+                    vref=result["vref"] if 'vref' in result else result['vref_group'],
+                    source=result["source"] if result["source"] != 'null' else None,
+                    target=str(result["target"]) if result["target"] != 'null' else None,
+                    score=result["score"],
+                    flag=result["flag"],
+                    note=result["note"],
+                    revision_text=result["revisionText"] if 'revisionText' in result else None,
+                    reference_text=result["referenceText"] if 'referenceText' in result else None,
+                )
+            
+            result_list.append(results)
+
+        total_count = result_data[f'{table_name}_aggregate']['aggregate']['count']
+
+    return {'results': result_list, 'total_count': total_count}
