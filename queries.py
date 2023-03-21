@@ -6,7 +6,7 @@ def list_versions_query():
                     name
                     abbreviation
                     isoLanguageByIsolanguage {
-                      iso693
+                      iso639
                     }
                     isoScriptByIsoscript {
                       iso15924
@@ -441,32 +441,52 @@ def get_results_query(assessment_id):
     return get_results
 
 
-# def get_missing_words_query(assessment_id):
-#     get_results = """
-#                 query {{
-#                   assessmentMissingWords(
-#                     where: {{
-#                       assessment: {{
-#                         _eq: {}
-#                       }}
-#                     }}
-#                   ) {{
-#                     id
-#                     score
-#                     flag
-#                     note
-#                     vref
-#                     source
-#                     target
-#                     assessmentByAssessment {{
-#                       reference
-#                       type
-#                     }}
-#                   }}
-#                 }}
-#                 """.format(assessment_id)
+def get_results_chapter_agg_query(assessment_id):
+    get_results_chapter_agg = """
+                query {{
+                    group_results_chapter(
+                        where: {{assessment: {{
+                            _eq: {}
+                            }}
+                            }}
+                            ) {{
+                    score
+                    vref_group
+                    assessment
+                    source
+                    target
+                    note
+                    flag
+                    }}
+                }}
+                """.format(assessment_id)
 
-#     return get_results
+    return get_results_chapter_agg
+
+
+def get_results_with_text_query(assessment_id):
+    get_results_with_text = """
+                query {{
+                    assessment_result_with_text(
+                        where: {{assessment: {{
+                            _eq: {}
+                            }}
+                            }}
+                            ) {{
+                    score
+                    vref
+                    assessment
+                    source
+                    target
+                    note
+                    flag
+                    revisionText
+                    referenceText
+                    }}
+                }}
+                """.format(assessment_id)
+
+    return get_results_with_text
 
 
 def get_scripts_query():
@@ -486,7 +506,7 @@ def get_languages_query():
     iso_languages = """
         query list_languages {
           isoLanguage {
-            iso693
+            iso639
             name
           }
         }

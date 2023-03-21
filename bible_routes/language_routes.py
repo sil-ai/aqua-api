@@ -3,7 +3,7 @@ from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security.api_key import APIKeyHeader
 from gql import Client, gql
 from gql.transport.requests import RequestsHTTPTransport
 
@@ -27,9 +27,9 @@ api_keys = get_secret(
         os.getenv("AWS_SECRET_KEY")
         )
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+api_key_header = APIKeyHeader(name="api_key", auto_error=False)
 
-def api_key_auth(api_key: str = Depends(oauth2_scheme)):
+def api_key_auth(api_key: str = Depends(api_key_header)):
     if api_key not in api_keys:
         raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -51,7 +51,7 @@ async def list_languages():
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
         language_query = gql(list_language)
         language_result = client.execute(language_query)
-    language_list = [Language(iso693=language["iso693"], name=language["name"]) for language in language_result["isoLanguage"]]
+    language_list = [Language(iso639=language["iso639"], name=language["name"]) for language in language_result["isoLanguage"]]
     
     return language_list
 
