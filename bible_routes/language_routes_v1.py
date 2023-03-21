@@ -52,12 +52,13 @@ async def list_languages():
     Get a list of ISO 639-2 language codes and their English names. Any version added to the database 
     must have a language code that is in this list.
     """
+    
     list_language = queries.get_languages_query()
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
         language_query = gql(list_language)
         language_result = client.execute(language_query)
-    language_list = [Language(iso693=language["iso693"], name=language["name"]) for language in language_result["isoLanguage"]]
+    language_list = [Language(iso639=language["iso639"], name=language["name"]) for language in language_result["isoLanguage"]]
     
     return language_list
 
