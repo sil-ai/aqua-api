@@ -475,8 +475,20 @@ def get_results_chapter_agg_query(assessment_id, limit, offset):
                     note
                     flag
                     }}
+                
+                group_results_chapter_aggregate(
+                    where: {{
+                        assessment: {{
+                            _eq: {}
+                        }}
+                    }}
+                  ) {{
+    aggregate {{
+      count
+    }}
+  }}
                 }}
-                """.format(limit, offset, assessment_id)
+                """.format(limit, offset, assessment_id, assessment_id)
 
     return get_results_chapter_agg
 
@@ -502,8 +514,19 @@ def get_results_with_text_query(assessment_id, limit, offset):
                     revisionText
                     referenceText
                     }}
+                    assessment_result_with_text_aggregate(
+                    where: {{
+                        assessment: {{
+                            _eq: {}
+                        }}
+                    }}
+                  ) {{
+    aggregate {{
+      count
+    }}
+  }}
                 }}
-                """.format(limit, offset, assessment_id)
+                """.format(limit, offset, assessment_id, assessment_id)
 
     return get_results_with_text
 

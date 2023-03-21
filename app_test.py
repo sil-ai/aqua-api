@@ -323,17 +323,25 @@ def test_result(client):
             "include_text": True,
     }
 
+    test_config_pagination = {
+            "assessment_id": assessment_id,
+            "page": 1,
+            "page_size": 100,
+    }
+
     test_response = client.get("/result", params=test_config)
     fail_response = client.get("/result", params=fail_config)
     test_response_chapter_agg = client.get("/result", params=test_config_chapter_agg)
     test_response_include_text = client.get("/result", params=test_config_include_text)
     test_response_aggregate_and_include_text = client.get("/result", params=test_config_aggregate_and_include_text)
+    test_response_pagination = client.get("/result", params=test_config_pagination)
     
     assert test_response.status_code == 200
-    assert fail_response.status_code == 400
+    assert fail_response.status_code == 404
     assert test_response_chapter_agg.status_code == 200
     assert test_response_include_text.status_code == 200
     assert test_response_aggregate_and_include_text.status_code == 400
+    assert test_response_pagination.status_code == 200
     
 
 def test_delete_revision(client):

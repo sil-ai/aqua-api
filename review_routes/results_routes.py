@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Optional, Dict, Union, List
 from enum import Enum
 
 import fastapi
@@ -41,7 +41,7 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
     return True
 
 
-@router.get("/result", dependencies=[Depends(api_key_auth)], response_model=dict)
+@router.get("/result", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[Result], int]])
 async def get_result(
     assessment_id: int, 
     page: Optional[int] = None, 
@@ -86,7 +86,7 @@ async def get_result(
             limit = page_size
     else:
         offset = 0
-        limit = None
+        limit = 'null'
 
     if aggregate == aggType['chapter']:
         fetch_results = queries.get_results_chapter_agg_query(assessment_id, limit=limit, offset=offset)
@@ -136,7 +136,7 @@ async def get_result(
                 )
             
             result_list.append(results)
-
+        
         total_count = result_data[f'{table_name}_aggregate']['aggregate']['count']
 
     return {'results': result_list, 'total_count': total_count}
