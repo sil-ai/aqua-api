@@ -52,6 +52,19 @@ async def get_result(
     """
     Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
 
+    Parameters
+    ----------
+    assessment_id : int
+        The ID of the assessment to get results for.
+    page : int, optional
+        The page of results to return. If set, page_size must also be set.
+    page_size : int, optional
+        The number of results to return per page. If set, page must also be set.
+    aggregate : str, optional
+        If set to "chapter", results will be aggregated by chapter. Otherwise results will be returned at the verse level.
+    include_text : bool, optional
+        If set to True, the revision (and if applicable, reference) text of the verse will be included in the results. This is only available for verse-level results.
+
     Notes
     -----
     Source and target are only returned for missing-words assessments. Source is single words from the source text. Target is
@@ -100,7 +113,7 @@ async def get_result(
         fetch_results = queries.get_results_query(assessment_id, limit=limit, offset=offset)
         table_name = "assessmentResult"
 
-    async with Client(transport=transport, fetch_schema_from_transport=False) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
 
         fetch_assessments = gql(list_assessments)
         assessment_response = await client.execute(fetch_assessments)
