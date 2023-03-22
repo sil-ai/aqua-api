@@ -10,7 +10,7 @@ build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
 test:
-	docker run --shm-size=1g postgres \
+	docker run --shm-size=1g \
 	-e AWS_ACCESS_KEY=${AWS_ACCESS_KEY} \
 	-e AWS_SECRET_KEY=${AWS_SECRET_KEY} \
 	-e GRAPHQL_URL=${GRAPHQL_URL} \
