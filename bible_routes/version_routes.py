@@ -98,19 +98,7 @@ async def add_version(v: VersionIn = Depends()):
     else:
         bT = v.backTranslation
 
-    check_version = queries.check_version_query()
-
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        check_query = gql(check_version)
-        check_data = client.execute(check_query)
-
-        for version in check_data["bibleVersion"]:
-            if version['abbreviation'].lower() == v.abbreviation.lower():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Version abbreviation already in use."
-                )
-
         new_version = queries.add_version_query(
             name_fixed, isoLang_fixed, isoScpt_fixed,
             abbv_fixed, rights_fixed, fT,
