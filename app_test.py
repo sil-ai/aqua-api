@@ -12,12 +12,12 @@ from fastapi.testclient import TestClient
 from gql.transport.requests import RequestsHTTPTransport
 from pydantic.error_wrappers import ValidationError
 
-import bible_routes.language_routes_v1 as language_routes_v1
-import bible_routes.version_routes as version_routes
-import bible_routes.revision_routes as revision_routes
-import bible_routes.verse_routes as verse_routes
-import assessment_routes.assessment_routes as assessments_routes
-import review_routes.results_routes as results_routes
+import bible_routes.v1.language_routes as language_routes_v1
+import bible_routes.v1.version_routes as version_routes
+import bible_routes.v1.revision_routes as revision_routes
+import bible_routes.v1.verse_routes as verse_routes
+import assessment_routes.v1.assessment_routes as assessments_routes
+import review_routes.v1.results_routes as results_routes
 from models import VersionIn, RevisionIn, AssessmentIn
 
 
