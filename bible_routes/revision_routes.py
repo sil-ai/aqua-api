@@ -131,6 +131,7 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     # Parse the input Bible revision data.
     verses = []
     bibleRevision = []
+    has_text = False
 
     with open(temp_file.name, "r") as bible_data:
         for line in bible_data:
@@ -138,8 +139,15 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
                 verses.append(np.nan)
                 bibleRevision.append(revision_query.id)
             else:
+                has_text=True
                 verses.append(line.replace("\n", ""))
                 bibleRevision.append(revision_query.id)
+    
+    if not has_text:
+        raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File has no text."
+        )
 
     # Push the revision to the database.
     bible_loading.upload_bible(verses, bibleRevision)
