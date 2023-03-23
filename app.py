@@ -4,7 +4,7 @@ import fastapi
 from fastapi.openapi.utils import get_openapi
 
 #!!! calling path currently includes v1 folder
-import bible_routes.v1.language_routes as language_routes_v1
+from bible_routes.v1.language_routes import router as language_router_v1
 import bible_routes.v1.version_routes as version_routes
 import bible_routes.v1.revision_routes as revision_routes
 import bible_routes.v1.verse_routes as verse_routes
@@ -45,11 +45,11 @@ def configure(app):
 
 
 def configure_routing(app):
-    app.include_router(language_routes_v1.router)
+    app.include_router(language_router_v1)
     #!!!: send a deprecation notice but leave the v1 route for awhile
     #if v2 is introduced but change /latest and / to /v2/language_routes.router
-    app.include_router(language_routes_v1.router, prefix="/v1")
-    app.include_router(language_routes_v1.router, prefix="/latest")
+    app.include_router(language_router_v1, prefix="/v1")
+    app.include_router(language_router_v1, prefix="/latest")
     app.include_router(revision_routes.router)
     app.include_router(version_routes.router)
     app.include_router(verse_routes.router)
