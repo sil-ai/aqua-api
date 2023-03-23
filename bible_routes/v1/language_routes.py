@@ -15,9 +15,9 @@ from key_fetch import get_secret
 
 
 router = fastapi.APIRouter(
-    prefix="/v1",
+    #prefix="/v1",
     tags=["language"],
-    #responses = {404: {"description": "Not found"}},
+    responses = {404: {"description": "Not found"}},
 )
 
 # Configure connection to the GraphQL endpoint

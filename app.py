@@ -5,11 +5,11 @@ from fastapi.openapi.utils import get_openapi
 
 #!!! calling path currently includes v1 folder
 from bible_routes.v1.language_routes import router as language_router_v1
-import bible_routes.v1.version_routes as version_routes
-import bible_routes.v1.revision_routes as revision_routes
-import bible_routes.v1.verse_routes as verse_routes
-import assessment_routes.assessment_routes as assessment_routes
-import review_routes.results_routes as results_routes
+from bible_routes.v1.version_routes import router as version_router
+from bible_routes.v1.revision_routes import router as revision_router
+from bible_routes.v1.verse_routes import router as verse_router
+from assessment_routes.v1.assessment_routes import router as assessment_router
+from review_routes.v1.results_routes import router as results_router
 
 
 app = fastapi.FastAPI()
@@ -50,11 +50,11 @@ def configure_routing(app):
     #if v2 is introduced but change /latest and / to /v2/language_routes.router
     app.include_router(language_router_v1, prefix="/v1")
     app.include_router(language_router_v1, prefix="/latest")
-    app.include_router(revision_routes.router)
-    app.include_router(version_routes.router)
-    app.include_router(verse_routes.router)
-    app.include_router(assessment_routes.router)
-    app.include_router(results_routes.router)
+    app.include_router(revision_router)
+    app.include_router(version_router)
+    app.include_router(verse_router)
+    app.include_router(assessment_router)
+    app.include_router(results_router)
 
     @app.get("/")
     async def read_root():
