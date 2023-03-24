@@ -414,16 +414,20 @@ def delete_assessment_results_mutation(assessment):
     return delete_assessment_results
 
 
-def get_results_query(assessment_id):
+def get_results_query(assessment_id, limit, offset):
     get_results = """
                 query {{
                   assessmentResult(
+                    limit: {}
+                    offset: {}
                     where: {{
                       assessment: {{
                         _eq: {}
                       }}
                     }}
-                  ) {{
+                  ) 
+                  
+                  {{
                     id
                     score
                     flag
@@ -435,16 +439,29 @@ def get_results_query(assessment_id):
                       id
                     }}
                   }}
+                  assessmentResult_aggregate(
+                    where: {{
+                        assessment: {{
+                            _eq: {}
+                        }}
+                    }}
+                  ) {{
+    aggregate {{
+      count
+    }}
+  }}
                 }}
-                """.format(assessment_id)
+                """.format(limit, offset, assessment_id, assessment_id)
 
     return get_results
 
 
-def get_results_chapter_agg_query(assessment_id):
+def get_results_chapter_agg_query(assessment_id, limit, offset):
     get_results_chapter_agg = """
                 query {{
                     group_results_chapter(
+                        limit: {}
+                        offset: {}
                         where: {{assessment: {{
                             _eq: {}
                             }}
@@ -458,16 +475,30 @@ def get_results_chapter_agg_query(assessment_id):
                     note
                     flag
                     }}
+                
+                group_results_chapter_aggregate(
+                    where: {{
+                        assessment: {{
+                            _eq: {}
+                        }}
+                    }}
+                  ) {{
+    aggregate {{
+      count
+    }}
+  }}
                 }}
-                """.format(assessment_id)
+                """.format(limit, offset, assessment_id, assessment_id)
 
     return get_results_chapter_agg
 
 
-def get_results_with_text_query(assessment_id):
+def get_results_with_text_query(assessment_id, limit, offset):
     get_results_with_text = """
                 query {{
                     assessment_result_with_text(
+                        limit: {}
+                        offset: {}
                         where: {{assessment: {{
                             _eq: {}
                             }}
@@ -483,8 +514,19 @@ def get_results_with_text_query(assessment_id):
                     revisionText
                     referenceText
                     }}
+                    assessment_result_with_text_aggregate(
+                    where: {{
+                        assessment: {{
+                            _eq: {}
+                        }}
+                    }}
+                  ) {{
+    aggregate {{
+      count
+    }}
+  }}
                 }}
-                """.format(assessment_id)
+                """.format(limit, offset, assessment_id, assessment_id)
 
     return get_results_with_text
 
