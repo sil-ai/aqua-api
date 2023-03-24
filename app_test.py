@@ -1,3 +1,5 @@
+__version__ = 'v1'
+
 from pathlib import Path
 import os
 import ast
@@ -10,12 +12,12 @@ from fastapi.testclient import TestClient
 from gql.transport.requests import RequestsHTTPTransport
 from pydantic.error_wrappers import ValidationError
 
-import bible_routes.language_routes as language_routes
-import bible_routes.version_routes as version_routes
-import bible_routes.revision_routes as revision_routes
-import bible_routes.verse_routes as verse_routes
-import assessment_routes.assessment_routes as assessments_routes
-import review_routes.results_routes as results_routes
+import bible_routes.v1.language_routes as language_routes_v1
+import bible_routes.v1.version_routes as version_routes_v1
+import bible_routes.v1.revision_routes as revision_routes_v1
+import bible_routes.v1.verse_routes as verse_routes_v1
+import assessment_routes.v1.assessment_routes as assessments_routes_v1
+import review_routes.v1.results_routes as results_routes_v1
 from models import VersionIn, RevisionIn, AssessmentIn
 
 
@@ -29,10 +31,10 @@ transport = RequestsHTTPTransport(
 
 def test_key_auth():
     with pytest.raises(HTTPException) as err:
-        version_routes.api_key_auth(os.getenv("FAIL_KEY"))
+        version_routes_v1.api_key_auth(os.getenv("FAIL_KEY"))
     assert err.value.status_code == 401
 
-    response = version_routes.api_key_auth(os.getenv("TEST_KEY"))
+    response = version_routes_v1.api_key_auth(os.getenv("TEST_KEY"))
     assert response is True
 
 
@@ -49,12 +51,12 @@ def client():
     app.configure(mock_app)
 
     #print(mock_app.dependency_overrides.keys())
-    mock_app.dependency_overrides[language_routes.api_key_auth] = skip_auth
-    mock_app.dependency_overrides[version_routes.api_key_auth] = skip_auth
-    mock_app.dependency_overrides[revision_routes.api_key_auth] = skip_auth
-    mock_app.dependency_overrides[verse_routes.api_key_auth] = skip_auth
-    mock_app.dependency_overrides[assessments_routes.api_key_auth] = skip_auth
-    mock_app.dependency_overrides[results_routes.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[language_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[version_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[revision_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[verse_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[assessments_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[results_routes_v1.api_key_auth] = skip_auth
 
 
     # Yield the mock/ test client for the FastAPI
@@ -135,13 +137,13 @@ def test_list_revisions(client):
 
 
 def test_get_languages(client): 
-    language_response = client.get("/language")
+    language_response = client.get("/v1/language")
 
     assert language_response.status_code == 200
 
 
 def test_get_scripts(client): 
-    script_response = client.get("/script")
+    script_response = client.get("/v1/script")
 
     assert script_response.status_code == 200
 
@@ -238,7 +240,7 @@ def test_assessment(client):
 
     good_config = AssessmentIn(
             revision_id=revision_ids[0],
-            reference_id=10,
+            reference_id=revision_ids[1],
             type="dummy"
     )
 
