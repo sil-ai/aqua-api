@@ -2,13 +2,13 @@ import os
 from datetime import datetime
 import base64
 from typing import List
+import requests
 
 import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
 from gql import Client, gql
-from gql.transport.requests import RequestsHTTPTransport
-import requests
+from gql.transport.aiohttp import AIOHTTPTransport
 
 import queries
 from key_fetch import get_secret
@@ -16,14 +16,7 @@ from models import AssessmentIn, AssessmentOut
 
 router = fastapi.APIRouter()
 
-# Configure connection to the GraphQL endpoint
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
-transport = RequestsHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"), verify=True,
-        retries=3, headers=headers
-        )
-
-# Runner URL 
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -48,15 +41,19 @@ async def get_assessments():
     """
     Returns a list of all assessments.
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     list_assessments = queries.list_assessments_query()
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         query = gql(list_assessments)
-        result = client.execute(query)
+        result = await client.execute(query)
 
         assessment_data = []
         for assessment in result["assessment"]:
-            print(assessment["type"])
             data = AssessmentOut(
                     id=assessment["id"],
                     revision_id=assessment["revision"],
@@ -88,6 +85,11 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
 
     Parameter `modal_suffix` is used to tell modal which set of assessment apps to use. It should not normally be set by users.
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     if modal_suffix == '':
         modal_suffix = os.getenv('MODAL_SUFFIX', '')   # Give the option of setting the suffix in the environment
     
@@ -104,7 +106,7 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
     requested_time = '"' + datetime.now().isoformat() + '"'
     assessment_status = '"' + 'queued' + '"'
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         new_assessment = queries.add_assessment_query(
                 a.revision_id,
                 reference_id,
@@ -114,7 +116,7 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
         )
         
         mutation = gql(new_assessment)
-        assessment = client.execute(mutation)
+        assessment = await client.execute(mutation)
 
     new_assessment = AssessmentOut(
             id=assessment["insert_assessment"]["returning"][0]["id"],
@@ -151,23 +153,27 @@ async def delete_assessment(assessment_id: int):
     """
     Deletes an assessment and its results.
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     fetch_assessments = queries.check_assessments_query()
     delete_assessment = queries.delete_assessment_mutation(assessment_id)
     delete_assessment_results_mutation = queries.delete_assessment_results_mutation(assessment_id)
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         assessment_data = gql(fetch_assessments)
-        assessment_result = client.execute(assessment_data)
+        assessment_result = await client.execute(assessment_data)
 
         assessments_list = []
         for assessment in assessment_result["assessment"]:
             assessments_list.append(assessment["id"])
         if assessment_id in assessments_list:
             assessment_results_mutation = gql(delete_assessment_results_mutation)
-            client.execute(assessment_results_mutation)
+            await client.execute(assessment_results_mutation)
 
             assessment_mutation = gql(delete_assessment)
-            assessment_result = client.execute(assessment_mutation)
-            print(assessment_result)
+            assessment_result = await client.execute(assessment_mutation)
             delete_response = ("Assessment " +
                 str(
                     assessment_result["delete_assessment"]["returning"][0]["id"]

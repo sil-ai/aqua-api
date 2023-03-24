@@ -1,3 +1,5 @@
+__version__ = 'v1'
+
 import os
 from typing import List, Optional
 from enum import Enum
@@ -112,8 +114,9 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
 
         else:
             raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Revision Id invalid, this revision does not exist"
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Assessment Id invalid, this assessment does not exist"
+
                     )
 
     return result_list

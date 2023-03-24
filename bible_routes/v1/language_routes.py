@@ -1,3 +1,5 @@
+__version__ = 'v1'
+
 import os
 from typing import List
 
@@ -13,6 +15,7 @@ from key_fetch import get_secret
 
 
 router = fastapi.APIRouter()
+
 
 # Configure connection to the GraphQL endpoint
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
@@ -46,6 +49,7 @@ async def list_languages():
     Get a list of ISO 639-2 language codes and their English names. Any version added to the database 
     must have a language code that is in this list.
     """
+    
     list_language = queries.get_languages_query()
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
