@@ -76,7 +76,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
         table_name = "assessment_result_with_text"
         
     else:
-        fetch_results = queries.get_results_query(assessment_id, offset = 0, limit = 'null')
+        fetch_results = queries.get_results_query(assessment_id)
         table_name = "assessmentResult"
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:

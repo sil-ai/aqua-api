@@ -414,7 +414,7 @@ def delete_assessment_results_mutation(assessment):
     return delete_assessment_results
 
 
-def get_results_query(assessment_id, limit, offset):
+def get_results_query(assessment_id, limit='null', offset=0):
     get_results = """
                 query {{
                   assessmentResult(
@@ -456,7 +456,7 @@ def get_results_query(assessment_id, limit, offset):
     return get_results
 
 
-def get_results_chapter_agg_query(assessment_id, limit, offset):
+def get_results_chapter_agg_query(assessment_id, limit='null', offset=0):
     get_results_chapter_agg = """
                 query {{
                     group_results_chapter(
@@ -493,7 +493,7 @@ def get_results_chapter_agg_query(assessment_id, limit, offset):
     return get_results_chapter_agg
 
 
-def get_results_with_text_query(assessment_id, limit, offset):
+def get_results_with_text_query(assessment_id, limit='null', offset=0):
     get_results_with_text = """
                 query {{
                     assessment_result_with_text(
