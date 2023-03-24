@@ -10,12 +10,18 @@ from fastapi.testclient import TestClient
 from gql.transport.requests import RequestsHTTPTransport
 from pydantic.error_wrappers import ValidationError
 
-import bible_routes.language_routes as language_routes
-import bible_routes.version_routes as version_routes
-import bible_routes.revision_routes as revision_routes
-import bible_routes.verse_routes as verse_routes
-import assessment_routes.assessment_routes as assessments_routes
-import review_routes.results_routes as results_routes
+import bible_routes.v2.language_routes as language_routes_v2
+import bible_routes.v1.language_routes as language_routes_v1
+import bible_routes.v1.version_routes as version_routes_v1
+import bible_routes.v2.version_routes as version_routes_v2
+import bible_routes.v1.revision_routes as revision_routes_v1
+import bible_routes.v2.revision_routes as revision_routes_v2
+import bible_routes.v1.verse_routes as verse_routes_v1
+import bible_routes.v2.verse_routes as verse_routes_v2
+import assessment_routes.v1.assessment_routes as assessment_routes_v1
+import assessment_routes.v2.assessment_routes as assessment_routes_v2
+import review_routes.v1.results_routes as results_routes_v1
+import review_routes.v2.results_routes as results_routes_v2
 from models import VersionIn, RevisionIn, AssessmentIn
 
 
@@ -27,12 +33,24 @@ transport = RequestsHTTPTransport(
         url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
         )
 
-def test_key_auth():
+version_prefixes = ['v1', 'v2']
+
+
+def test_key_auth_v1():
     with pytest.raises(HTTPException) as err:
-        version_routes.api_key_auth(os.getenv("FAIL_KEY"))
+        version_routes_v1.api_key_auth(os.getenv("FAIL_KEY"))
     assert err.value.status_code == 401
 
-    response = version_routes.api_key_auth(os.getenv("TEST_KEY"))
+    response = version_routes_v1.api_key_auth(os.getenv("TEST_KEY"))
+    assert response is True
+
+
+def test_key_auth_v2():
+    with pytest.raises(HTTPException) as err:
+        version_routes_v2.api_key_auth(os.getenv("FAIL_KEY"))
+    assert err.value.status_code == 401
+
+    response = version_routes_v2.api_key_auth(os.getenv("TEST_KEY"))
     assert response is True
 
 
@@ -49,12 +67,18 @@ def client():
     app.configure(mock_app)
 
     #print(mock_app.dependency_overrides.keys())
-    mock_app.dependency_overrides[language_routes.api_key_auth] = skip_auth
-    mock_app.dependency_overrides[version_routes.api_key_auth] = skip_auth
-    mock_app.dependency_overrides[revision_routes.api_key_auth] = skip_auth
-    mock_app.dependency_overrides[verse_routes.api_key_auth] = skip_auth
-    mock_app.dependency_overrides[assessments_routes.api_key_auth] = skip_auth
-    mock_app.dependency_overrides[results_routes.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[language_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[version_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[revision_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[verse_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[assessment_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[results_routes_v1.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[language_routes_v2.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[version_routes_v2.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[revision_routes_v2.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[verse_routes_v2.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[assessment_routes_v2.api_key_auth] = skip_auth
+    mock_app.dependency_overrides[results_routes_v2.api_key_auth] = skip_auth
 
 
     # Yield the mock/ test client for the FastAPI
@@ -77,17 +101,18 @@ def test_add_version(client):
             isoScript="Latn",
             abbreviation=version_abbreviation,
         )
-
-    test_response = client.post("/version", params=test_version.dict())
-    assert test_response.status_code == 200
-    assert test_response.json()['name'] == version_name
+    for prefix in version_prefixes:
+        test_response = client.post(f"/{prefix}/version", params=test_version.dict())
+        assert test_response.status_code == 200
+        assert test_response.json()['name'] == version_name
 
 
 # Test for the List Versions endpoint
 def test_list_versions(client):
-    response = client.get("/version")
-
-    assert response.status_code == 200
+    for prefix in version_prefixes:
+        response = client.get(f"/{prefix}/version")
+        assert response.status_code == 200
+        assert len(response.json()) > 0
 
 
 def test_upload_bible(client):
@@ -102,15 +127,18 @@ def test_upload_bible(client):
                 )
  
     test_upload_file = Path("fixtures/uploadtest.txt")
-    file = {"file": test_upload_file.open("rb")}
-    file_2 = {"file": test_upload_file.open("rb")}
+    for prefix in version_prefixes:
+        with open(test_upload_file, "r") as f:
+            file = {"file": f}
+            
+            response_abv = client.post(f"/{prefix}/revision", params=test_abv_revision.dict(), files=file)
+            assert response_abv.status_code == 200
+        
+        with open(test_upload_file, "r") as f:
+            file_2 = {"file": f}
 
-    response_abv = client.post("/revision", params=test_abv_revision.dict(), files=file)
-    assert response_abv.status_code == 200
-
-    response_abv = client.post("/revision", params=test_abv_revision_with_name.dict(), files=file_2)
-
-    assert response_abv.status_code == 200
+            response_abv = client.post(f"/{prefix}/revision", params=test_abv_revision_with_name.dict(), files=file_2)
+            assert response_abv.status_code == 200
 
 
 def test_list_revisions(client):
@@ -124,26 +152,28 @@ def test_list_revisions(client):
     fail_version = {
             "version_id":999999
             }
-
-    test_response = client.get("/revision", params=test_version)
-    fail_response = client.get("/revision", params=fail_version)
-    all_response = client.get("/revision")
+    for prefix in version_prefixes:
+        test_response = client.get(f"/{prefix}/revision", params=test_version)
+        fail_response = client.get(f"/{prefix}/revision", params=fail_version)
+        all_response = client.get(f"/{prefix}/revision")
     
-    assert test_response.status_code == 200
-    assert fail_response.status_code == 400
-    assert all_response.status_code == 200
+        assert test_response.status_code == 200
+        assert fail_response.status_code == 400
+        assert all_response.status_code == 200
 
 
-def test_get_languages(client): 
-    language_response = client.get("/language")
+def test_get_languages(client):
+    for prefix in version_prefixes:
+        language_response = client.get(f"/{prefix}/language")
 
-    assert language_response.status_code == 200
+        assert language_response.status_code == 200
 
 
-def test_get_scripts(client): 
-    script_response = client.get("/script")
+def test_get_scripts(client):
+    for prefix in version_prefixes:
+        script_response = client.get(f"/{prefix}/script")
 
-    assert script_response.status_code == 200
+        assert script_response.status_code == 200
 
 
 def test_get_chapter(client): 
@@ -168,9 +198,10 @@ def test_get_chapter(client):
             "chapter": 1
             }
 
-    response = client.get("/chapter", params=test_chapter)
+    for prefix in version_prefixes:
+        response = client.get(f"/{prefix}/chapter", params=test_chapter)
 
-    assert response.status_code == 200
+        assert response.status_code == 200
 
 
 def test_get_verse(client): 
@@ -196,9 +227,10 @@ def test_get_verse(client):
             "verse": 1
             }
 
-    response = client.get("/verse", params=test_version)
+    for prefix in version_prefixes:
+        response = client.get(f"/{prefix}/verse", params=test_version)
 
-    assert response.status_code == 200
+        assert response.status_code == 200
 
 
 def test_assessment(client):
@@ -242,28 +274,29 @@ def test_assessment(client):
             type="dummy"
     )
 
-    # Try to post bad config
-    response = client.post("/assessment", params={**bad_config_3.dict(), 'modal_suffix': 'test'})
-    assert response.status_code == 400
+    for prefix in version_prefixes:
+        # Try to post bad config
+        response = client.post(f"/{prefix}/assessment", params=bad_config_3.dict())
+        assert response.status_code == 400
 
-    # Post good config
-    response = client.post("/assessment", params={**good_config.dict(), 'modal_suffix': 'test'})
-    assert response.status_code == 200
-    id = response.json()['id']
+        # Post good config
+        response = client.post(f"/{prefix}/assessment", params={**good_config.dict(), 'modal_suffix': 'test'})
+        assert response.status_code == 200
+        id = response.json()['id']
 
-    # Verify good config id is now in assessments
-    response = client.get("/assessment")
-    assert response.status_code == 200
-    assert id in [assessment['id'] for assessment in response.json()]
+        # Verify good config id is now in assessments
+        response = client.get(f"/{prefix}/assessment")
+        assert response.status_code == 200
+        assert id in [assessment['id'] for assessment in response.json()]
 
-    # Remove good config from assessments
-    response = client.delete("/assessment", params={'assessment_id': id})
-    assert response.status_code == 200
+        # Remove good config from assessments
+        response = client.delete(f"/{prefix}/assessment", params={'assessment_id': id})
+        assert response.status_code == 200
 
-    # Verify good config is no longer in assessments
-    response = client.get("/assessment")
-    assert response.status_code == 200
-    assert id not in [assessment['id'] for assessment in response.json()]
+        # Verify good config is no longer in assessments
+        response = client.get(f"/{prefix}/assessment")
+        assert response.status_code == 200
+        assert id not in [assessment['id'] for assessment in response.json()]
 
 
 def test_result(client):
@@ -322,20 +355,24 @@ def test_result(client):
             "page_size": 100,
     }
 
-    test_response = client.get("/result", params=test_config)
-    fail_response = client.get("/result", params=fail_config)
-    test_response_chapter_agg = client.get("/result", params=test_config_chapter_agg)
-    test_response_include_text = client.get("/result", params=test_config_include_text)
-    test_response_aggregate_and_include_text = client.get("/result", params=test_config_aggregate_and_include_text)
-    test_response_pagination = client.get("/result", params=test_config_pagination)
-    
-    assert test_response.status_code == 200
-    assert fail_response.status_code == 404
-    assert test_response_chapter_agg.status_code == 200
-    assert test_response_include_text.status_code == 200
-    assert test_response_aggregate_and_include_text.status_code == 400
-    assert test_response_pagination.status_code == 200
-    
+    for prefix in version_prefixes:
+        test_response = client.get(f"/{prefix}/result", params=test_config)
+        fail_response = client.get(f"/{prefix}/result", params=fail_config)
+        assert test_response.status_code == 200
+        assert fail_response.status_code == 404
+
+        if prefix != 'v1':
+            test_response_chapter_agg = client.get(f"/{prefix}/result", params=test_config_chapter_agg)
+            test_response_include_text = client.get(f"/{prefix}/result", params=test_config_include_text)
+            test_response_aggregate_and_include_text = client.get(f"/{prefix}/result", params=test_config_aggregate_and_include_text)
+            test_response_pagination = client.get(f"/{prefix}/result", params=test_config_pagination)
+            
+            
+            assert test_response_chapter_agg.status_code == 200
+            assert test_response_include_text.status_code == 200
+            assert test_response_aggregate_and_include_text.status_code == 400
+            assert test_response_pagination.status_code == 200
+        
 
 def test_delete_revision(client):
     response = client.get("/version")
@@ -353,34 +390,35 @@ def test_delete_revision(client):
         if version_data["version_id"] == version_id:
             revision_ids.append(version_data["id"])
 
-    delete_revision_data = {
-            "id": revision_ids[0],
+    for prefix in version_prefixes:
+        delete_revision_data = {
+            "id": revision_ids.pop(),
             }
 
-    fail_revision_data = {
+        fail_revision_data = {
             "id": 0
             }
+        test_delete_response = client.delete(f"/{prefix}/revision", params=delete_revision_data)
+        fail_delete_response = client.delete(f"/{prefix}/revision", params=fail_revision_data)
 
-    test_delete_response = client.delete("/revision", params=delete_revision_data)
-    fail_delete_response = client.delete("/revision", params=fail_revision_data)
-
-    assert test_delete_response.status_code == 200
-    assert fail_delete_response.status_code == 400
+        assert test_delete_response.status_code == 200
+        assert fail_delete_response.status_code == 400
 
 
 def test_delete_version(client):
-    response = client.get("/version")
-    version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
-    test_delete_version = {
-            "id": version_id
-            }
+    for prefix in version_prefixes:
+        response = client.get(f"/{prefix}/version")
+        version_id = [version["id"] for version in response.json() if version["abbreviation"] == version_abbreviation][0]
+        test_delete_version = {
+                "id": version_id
+                }
 
-    fail_delete_version = {
-            "id": 999999
-            }
+        fail_delete_version = {
+                "id": 999999
+                }
 
-    test_response = client.delete("/version", params=test_delete_version)
-    fail_response = client.delete("/version", params=fail_delete_version)
+        test_response = client.delete(f"/{prefix}/version", params=test_delete_version)
+        fail_response = client.delete(f"/{prefix}/version", params=fail_delete_version)
 
-    assert test_response.status_code == 200
-    assert fail_response.status_code == 400
+        assert test_response.status_code == 200
+        assert fail_response.status_code == 400
