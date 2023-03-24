@@ -142,7 +142,9 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
         }
     header = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
     
-    response = requests.post(runner_url, params=params, headers=header, json=new_assessment.dict(exclude={"requested_time": True, "start_time": True, "end_time": True, "status": True}))    if response.status_code != 200:
+    response = requests.post(runner_url, params=params, headers=header, json=new_assessment.dict(exclude={"requested_time": True, "start_time": True, "end_time": True, "status": True}))
+    
+    if response.status_code != 200:
         print("Runner failed to run assessment")
         return response
     
