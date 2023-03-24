@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from enum import Enum
-from typing import Union, Optional
+from typing import Union, Optional, List
 import datetime
 
 
@@ -86,7 +86,7 @@ class Result(BaseModel):
     assessment_id: int
     vref: str
     source: Optional[str] = None
-    target: Optional[str] = None
+    target: Optional[List[dict]] = None
     score: float
     flag: bool = False
     note: Optional[str] = None

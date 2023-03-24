@@ -2,6 +2,7 @@ import os
 from typing import Optional, Dict, Union, List
 from enum import Enum
 import ast
+import json
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -141,7 +142,7 @@ async def get_result(
                     assessment_id=result["assessmentByAssessment"]["id"] if 'assessmentByAssessment' in result else result['assessment'],
                     vref=result["vref"] if 'vref' in result else result['vref_group'],
                     source=result["source"] if result["source"] != 'null' else None,
-                    target=[{key: value} for key, value in ast.literal_eval(result["target"]).items()] if result["target"] != 'null' else None,
+                    target=[{key: value} for key, value in ast.literal_eval(str(result["target"])).items()] if result["target"] != 'null' else None,
                     score=result["score"],
                     flag=result["flag"],
                     note=result["note"],
