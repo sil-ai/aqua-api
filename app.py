@@ -18,7 +18,6 @@ from review_routes.v1.results_routes import router as results_router_v1
 from review_routes.v2.results_routes import router as results_router_v2
 
 
-
 app = fastapi.FastAPI()
 
 def my_schema():
@@ -83,6 +82,7 @@ def configure_routing(app):
     app.include_router(results_router_v1, prefix="/v1")
     app.include_router(results_router_v2, prefix="/v2")
     app.include_router(results_router_v2, prefix="/latest")
+
 
     @app.get("/")
     async def read_root():

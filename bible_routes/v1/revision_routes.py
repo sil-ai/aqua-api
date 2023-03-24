@@ -1,3 +1,5 @@
+__version__ = 'v1'
+
 import os
 from datetime import date
 from typing import Optional, List

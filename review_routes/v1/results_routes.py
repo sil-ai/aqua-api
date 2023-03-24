@@ -1,3 +1,5 @@
+__version__ = 'v1'
+
 import os
 from typing import List, Optional
 from enum import Enum
@@ -77,6 +79,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
         
     else:
         fetch_results = queries.get_results_query(assessment_id, offset = 0, limit = 'null')
+
         table_name = "assessmentResult"
 
     with Client(transport=transport, fetch_schema_from_transport=True) as client:
@@ -114,6 +117,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
             raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Assessment Id invalid, this assessment does not exist"
+
                     )
 
     return result_list
