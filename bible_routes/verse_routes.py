@@ -5,7 +5,7 @@ import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
 from gql import Client, gql
-from gql.transport.requests import RequestsHTTPTransport
+from gql.transport.aiohttp import AIOHTTPTransport
  
 import queries
 from key_fetch import get_secret
@@ -16,10 +16,6 @@ router = fastapi.APIRouter()
 
 # Configure connection to the GraphQL endpoint
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
-transport = RequestsHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"), verify=True,
-        retries=3, headers=headers
-        )
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -46,12 +42,17 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
 
     (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     chapterReference = '"' + book + " " + str(chapter) + '"'
     get_chapters = queries.get_chapter_query(revision_id, chapterReference)
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         query = gql(get_chapters)
-        result = client.execute(query)
+        result = await client.execute(query)
 
     chapter_data = []
     for verse in result["verseText"]:
@@ -74,15 +75,20 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
 
     (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     verseReference = (
             '"' + book + " " + str(chapter) + ":" + str(verse) + '"'
             )   
     
     get_verses = queries.get_verses_query(revision_id, verseReference)
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         query = gql(get_verses)
-        result = client.execute(query)
+        result = await client.execute(query)
         verse = result["verseText"][0]  # There should only be one result
 
     verse_data = VerseText(
@@ -102,12 +108,17 @@ async def get_book(revision: int, verse: str):
 
     (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     bookReference = '"' + verse + '"'
     get_book_data = queries.get_book_query(revision, bookReference)
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         query = gql(get_book_data)
-        result = client.execute(query)
+        result = await client.execute(query)
 
     books_data = []
     for verse in result["verseText"]:
@@ -130,11 +141,16 @@ async def get_text(revision: int):
 
     (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     text_query = queries.get_text_query(revision)
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         query = gql(text_query)
-        result = client.execute(query)
+        result = await client.execute(query)
 
     texts_data = []
     for verse in result["verseText"]:

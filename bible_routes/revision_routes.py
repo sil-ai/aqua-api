@@ -7,7 +7,7 @@ import fastapi
 from fastapi import Depends, HTTPException, status, File, UploadFile
 from fastapi.security.api_key import APIKeyHeader
 from gql import Client, gql
-from gql.transport.requests import RequestsHTTPTransport
+from gql.transport.aiohttp import AIOHTTPTransport
 import numpy as np
 
 import queries
@@ -20,10 +20,6 @@ router = fastapi.APIRouter()
 
 # Configure connection to the GraphQL endpoint
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
-transport = RequestsHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"), verify=True, 
-        retries=3, headers=headers
-        )
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -50,6 +46,11 @@ async def list_revisions(version_id: Optional[int]=None):
     
     If version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     if version_id:
         list_revision = queries.list_revisions_query(version_id)
     else:
@@ -57,9 +58,9 @@ async def list_revisions(version_id: Optional[int]=None):
 
     list_versions = queries.list_versions_query()
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         version_query = gql(list_versions)
-        version_result = client.execute(version_query)
+        version_result = await client.execute(version_query)
 
         version_list = []
         for version in version_result["bibleVersion"]:
@@ -72,7 +73,7 @@ async def list_revisions(version_id: Optional[int]=None):
                     )
         else:
             revision_query = gql(list_revision)
-            revision_result = client.execute(revision_query)
+            revision_result = await client.execute(revision_query)
 
             revisions_data = []
             for revision in revision_result["bibleRevision"]:
@@ -97,6 +98,11 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
 
     The file must be a text file with each verse on a new line, in "vref" format. The text file must be 41,899 lines long.
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     name = '"' + revision.name + '"' if revision.name else "null"
     revision_date = '"' + str(date.today()) + '"'
     revision_query = queries.insert_bible_revision(
@@ -113,12 +119,12 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     temp_file.seek(0)
 
     # Create a corresponding revision in the database.
-    with Client(transport=transport,
+    async with Client(transport=transport,
         fetch_schema_from_transport=True) as client:
 
         mutation = gql(revision_query)
 
-        returned_revision = client.execute(mutation)
+        returned_revision = await client.execute(mutation)
         revision_query = RevisionOut(
                 id=returned_revision["insert_bibleRevision"]["returning"][0]["id"],
                 date=returned_revision["insert_bibleRevision"]["returning"][0]["date"],
@@ -156,13 +162,18 @@ async def delete_revision(id: int):
     """
     Deletes a revision from the database. The revision must exist in the database.
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     fetch_revisions = queries.check_revisions_query()
     delete_revision = queries.delete_revision_mutation(id)
     delete_verses_mutation = queries.delete_verses_mutation(id)
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         revision_data = gql(fetch_revisions)
-        revision_result = client.execute(revision_data)
+        revision_result = await client.execute(revision_data)
 
         revisions_list = []
         for revisions in revision_result["bibleRevision"]:
@@ -170,10 +181,10 @@ async def delete_revision(id: int):
 
         if id in revisions_list:
             verse_mutation = gql(delete_verses_mutation)
-            client.execute(verse_mutation)
+            await client.execute(verse_mutation)
 
             revision_mutation = gql(delete_revision)
-            revision_result = client.execute(revision_mutation)
+            revision_result = await client.execute(revision_mutation)
 
             delete_response = ("Revision " +
                 str(

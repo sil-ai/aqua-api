@@ -5,7 +5,7 @@ import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
 from gql import Client, gql
-from gql.transport.requests import RequestsHTTPTransport
+from gql.transport.aiohttp import AIOHTTPTransport
 
 from models import Language, Script
 import queries
@@ -16,10 +16,6 @@ router = fastapi.APIRouter()
 
 # Configure connection to the GraphQL endpoint
 headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
-transport = RequestsHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"), verify=True, 
-        retries=3, headers=headers
-        )
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -46,11 +42,16 @@ async def list_languages():
     Get a list of ISO 639-2 language codes and their English names. Any version added to the database 
     must have a language code that is in this list.
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     list_language = queries.get_languages_query()
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         language_query = gql(list_language)
-        language_result = client.execute(language_query)
+        language_result = await client.execute(language_query)
     language_list = [Language(iso639=language["iso639"], name=language["name"]) for language in language_result["isoLanguage"]]
     
     return language_list
@@ -62,11 +63,16 @@ async def list_scripts():
     Get a list of ISO 15924 script codes and their English names. Any version added to the database
     must have a script code that is in this list.
     """
+    transport = AIOHTTPTransport(
+        url=os.getenv("GRAPHQL_URL"),
+        headers=headers,
+        )
+    
     list_script = queries.get_scripts_query()
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
         script_query = gql(list_script)
-        script_result = client.execute(script_query)
+        script_result = await client.execute(script_query)
     script_list = [Script(iso15924=script["iso15924"], name=script["name"]) for script in script_result["isoScript"]]
 
     return script_list
