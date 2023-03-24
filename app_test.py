@@ -240,7 +240,7 @@ def test_assessment(client):
 
     good_config = AssessmentIn(
             revision_id=revision_ids[0],
-            reference_id=10,
+            reference_id=revision_ids[1],
             type="dummy"
     )
 
