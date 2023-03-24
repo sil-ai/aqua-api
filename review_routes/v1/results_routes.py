@@ -1,3 +1,5 @@
+__version__ = 'v1'
+
 import os
 from typing import List, Optional
 from enum import Enum
