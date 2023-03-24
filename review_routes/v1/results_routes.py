@@ -1,3 +1,5 @@
+__version__ = 'v1'
+
 import os
 from typing import List, Optional
 from enum import Enum
@@ -114,6 +116,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
             raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Assessment Id invalid, this assessment does not exist"
+
                     )
 
     return result_list

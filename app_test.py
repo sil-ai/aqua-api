@@ -1,3 +1,5 @@
+__version__ = 'v1'
+
 from pathlib import Path
 import os
 import ast
@@ -22,6 +24,7 @@ import assessment_routes.v1.assessment_routes as assessment_routes_v1
 import assessment_routes.v2.assessment_routes as assessment_routes_v2
 import review_routes.v1.results_routes as results_routes_v1
 import review_routes.v2.results_routes as results_routes_v2
+
 from models import VersionIn, RevisionIn, AssessmentIn
 
 
@@ -51,6 +54,7 @@ def test_key_auth_v2():
     assert err.value.status_code == 401
 
     response = version_routes_v2.api_key_auth(os.getenv("TEST_KEY"))
+
     assert response is True
 
 
@@ -79,6 +83,7 @@ def client():
     mock_app.dependency_overrides[verse_routes_v2.api_key_auth] = skip_auth
     mock_app.dependency_overrides[assessment_routes_v2.api_key_auth] = skip_auth
     mock_app.dependency_overrides[results_routes_v2.api_key_auth] = skip_auth
+
 
 
     # Yield the mock/ test client for the FastAPI
@@ -166,12 +171,14 @@ def test_get_languages(client):
     for prefix in version_prefixes:
         language_response = client.get(f"/{prefix}/language")
 
+
         assert language_response.status_code == 200
 
 
 def test_get_scripts(client):
     for prefix in version_prefixes:
         script_response = client.get(f"/{prefix}/script")
+
 
         assert script_response.status_code == 200
 
