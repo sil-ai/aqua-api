@@ -287,7 +287,7 @@ def test_assessment(client):
         assert response.status_code == 400
 
         # Post good config
-        response = client.post(f"/{prefix}/assessment", params={**good_config.dict(), 'modal_suffix': 'test'})
+        response = client.post(f"/{prefix}/assessment", params={**good_config.dict()})
         assert response.status_code == 200
         id = response.json()['id']
 
@@ -327,8 +327,12 @@ def test_result(client):
             reference_id=revision_ids[1],
             type="dummy",
     )
-
+    print(revision_ids[0])
+    print(revision_ids[1])
     response = client.post("/assessment", params={**good_config.dict(), 'modal_suffix': 'test'})
+    print(response)
+    print(response.json())
+    print(response.status_code)
     assert response.status_code == 200
     assessment_id = response.json()['id']
     

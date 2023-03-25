@@ -81,7 +81,21 @@ class AssessmentOut(BaseModel):
 
 
 # Results model to record in the DB.
-class Result(BaseModel):
+
+class Result_v1(BaseModel):
+    id: Optional[int] = None
+    assessment_id: int
+    vref: str
+    source: Optional[str] = None
+    target: Optional[str] = None
+    score: float
+    flag: bool = False
+    note: Optional[str] = None
+    revision_text: Optional[str] = None
+    reference_text: Optional[str] = None
+
+
+class Result_v2(BaseModel):
     id: Optional[int] = None
     assessment_id: int
     vref: str

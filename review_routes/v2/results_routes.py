@@ -11,7 +11,7 @@ from gql.transport.aiohttp import AIOHTTPTransport
 
 import queries
 from key_fetch import get_secret
-from models import Result
+from models import Result_v2 as Result
 
 
 class aggType(Enum):
