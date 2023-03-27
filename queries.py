@@ -490,6 +490,8 @@ def get_results_chapter_agg_query(assessment_id, limit='null', offset=0):
                 }}
                 """.format(limit, offset, assessment_id, assessment_id)
     
+    return get_results_chapter_agg
+    
 
 def get_results_book_agg_query(assessment_id, limit='null', offset=0):
     get_results_book_agg = """
