@@ -489,8 +489,79 @@ def get_results_chapter_agg_query(assessment_id, limit='null', offset=0):
   }}
                 }}
                 """.format(limit, offset, assessment_id, assessment_id)
+    
 
-    return get_results_chapter_agg
+def get_results_book_agg_query(assessment_id, limit='null', offset=0):
+    get_results_book_agg = """
+                query {{
+                    group_results_book(
+                        limit: {}
+                        offset: {}
+                        where: {{assessment: {{
+                            _eq: {}
+                            }}
+                            }}
+                            ) {{
+                    score
+                    vref_group
+                    assessment
+                    source
+                    target
+                    note
+                    flag
+                    }}
+                
+                group_results_book_aggregate(
+                    where: {{
+                        assessment: {{
+                            _eq: {}
+                        }}
+                    }}
+                  ) {{
+    aggregate {{
+      count
+    }}
+  }}
+                }}
+                """.format(limit, offset, assessment_id, assessment_id)
+
+    return get_results_book_agg
+
+
+def get_results_text_agg_query(assessment_id, limit='null', offset=0):
+    get_results_text_agg = """
+                query {{
+                    group_results_text(
+                        limit: {}
+                        offset: {}
+                        where: {{assessment: {{
+                            _eq: {}
+                            }}
+                            }}
+                            ) {{
+                    score
+                    assessment
+                    source
+                    target
+                    note
+                    flag
+                    }}
+                
+                group_results_text_aggregate(
+                    where: {{
+                        assessment: {{
+                            _eq: {}
+                        }}
+                    }}
+                  ) {{
+    aggregate {{
+      count
+    }}
+  }}
+                }}
+                """.format(limit, offset, assessment_id, assessment_id)
+
+    return get_results_text_agg
 
 
 def get_results_with_text_query(assessment_id, limit='null', offset=0):

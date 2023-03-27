@@ -84,7 +84,7 @@ class AssessmentOut(BaseModel):
 class Result(BaseModel):
     id: Optional[int] = None
     assessment_id: int
-    vref: str
+    vref: Optional[str] = None
     source: Optional[str] = None
     target: Optional[str] = None
     score: float
