@@ -19,6 +19,7 @@ test:
 	-e TEST_KEY=${TEST_KEY} \
 	-e FAIL_KEY=${FAIL_KEY} \
 	-e KEY_VAULT=${KEY_VAULT} \
+	-e MODAL_WEBHOOK_TOKEN=${MODAL_WEBHOOK_TOKEN} \
 	-p 8000:8000 \
 	${REGISTRY}/${IMAGENAME}:latest pytest
 
