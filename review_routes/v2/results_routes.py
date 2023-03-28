@@ -15,7 +15,8 @@ from models import Result
 
 class aggType(Enum):
     chapter = "chapter"
-    verse = "verse"
+    book = "book"
+    text = "text"
 
 router = fastapi.APIRouter()
 
@@ -105,6 +106,14 @@ async def get_result(
         fetch_results = queries.get_results_chapter_agg_query(assessment_id, limit=limit, offset=offset)
         table_name = "group_results_chapter"
     
+    elif aggregate == aggType['book']:
+        fetch_results = queries.get_results_book_agg_query(assessment_id, limit=limit, offset=offset)
+        table_name = "group_results_book"
+    
+    elif aggregate == aggType['text']:
+        fetch_results = queries.get_results_text_agg_query(assessment_id, limit=limit, offset=offset)
+        table_name = "group_results_text"
+    
     elif include_text:
         fetch_results = queries.get_results_with_text_query(assessment_id, limit=limit, offset=offset)
         table_name = "assessment_result_with_text"
@@ -138,7 +147,7 @@ async def get_result(
             results = Result(
                     id=result["id"] if 'id' in result and result['id'] != 'null' else None,
                     assessment_id=result["assessmentByAssessment"]["id"] if 'assessmentByAssessment' in result else result['assessment'],
-                    vref=result["vref"] if 'vref' in result else result['vref_group'],
+                    vref=result["vref"] if 'vref' in result else result['vref_group'] if 'vref_group' in result else None,
                     source=result["source"] if result["source"] != 'null' else None,
                     target=str(result["target"]) if result["target"] != 'null' else None,
                     score=result["score"],
