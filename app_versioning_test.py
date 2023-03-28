@@ -47,6 +47,17 @@ def get_first_routers():
     first_routers = list(filter(lambda row:'prefix="/v1"' in row, app_code))
     return [re.search(r'include_router\((.*), prefix',item).groups()[0] for item in first_routers]
 
+def get_non_latest():
+    latest_routers = [item[0] for item in get_latest_routers()]
+    latest_versions = [tuple(['_'.join(item.split('_')[:2])] + item.split('_')[-1:]) for item in latest_routers]
+    app_code = get_app_code()
+    all_versioned_routers = list(filter(lambda item: re.search(r'prefix="/v',item), app_code))
+    non_latest = []
+    for router,version in latest_versions:
+        non_latest.append(list(filter(lambda row: re.search(rf'(?=.*{router})(?!.*{version})',row), all_versioned_routers))[0])
+    print(non_latest)
+    return [re.search(r'include_router\((.*), prefix',item).groups()[0] for item in non_latest]
+
 @pytest.mark.parametrize("base_router, latest_router",
                           get_latest_routers(),
                           ids=list(zip(*get_latest_routers()))[0]
@@ -77,6 +88,7 @@ def test_router_paths(imports, first_router):
     route_import_command = f'import {path}'
     #get the route_file
     try:
+        #??? How should I protect against injection attacks here?
         #should exist after the command
         exec(route_import_command)
         route_file = importlib.import_module(path)
@@ -85,5 +97,6 @@ def test_router_paths(imports, first_router):
         raise AssertionError(err)
 
 def test_older_routers():
-    #mock older router paths
-    pass
+    non_latest = get_non_latest()
+    print(non_latest)
+    #TODO: up to here
