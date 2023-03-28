@@ -28,13 +28,11 @@ def get_latest_routers():
     """ all code in app.py as a list and cleaned of blanks """
     app_code = get_app_code()
     latest = list(filter(lambda row:'prefix="/latest"' in row, app_code))
-    base = list(filter(lambda row: re.search(r'^(?!.*prefix.*)\
-                       .*include_router\((.*)\)$',row), app_code))
+    base = list(filter(lambda row: re.search(r'^(?!.*prefix.*).*include_router\((.*)\)$',row), app_code))
     latest_routers = []
     for base_row, latest_row in zip(base,latest):
         base_router_name = re.search(r'include_router\((.*)\)',base_row).groups()[0]
-        latest_router_name = re.search(r'include_router\((.*),\
-                             prefix', latest_row).groups()[0]
+        latest_router_name = re.search(r'include_router\((.*), prefix', latest_row).groups()[0]
         latest_routers.append((base_router_name, latest_router_name))
     return latest_routers
 
