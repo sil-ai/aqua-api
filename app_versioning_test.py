@@ -96,7 +96,12 @@ def test_router_paths(imports, first_router):
     except ModuleNotFoundError as err:
         raise AssertionError(err)
 
-def test_older_routers():
-    non_latest = get_non_latest()
-    print(non_latest)
-    #TODO: up to here
+@pytest.mark.parametrize(
+    "non_latest",
+    get_non_latest(),
+    ids= get_non_latest()
+)
+def test_older_routers(imports, non_latest):
+    this_router_imports = list(filter(lambda item:non_latest in item, imports))
+    api_version = this_router_imports[0].split('.')[1]
+    assert api_version in non_latest
