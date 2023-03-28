@@ -1,4 +1,4 @@
-__version__ = 'v1'
+__version__ = 'v2'
 
 import re
 import importlib
@@ -15,22 +15,7 @@ Tests app versioning for correctness
 
 def get_app_code():
     """ Gets the app code from app.py """
-    app_code = list(filter(lambda row:row,inspect.getsource(app).splitlines()))
-    #add in fake v2 imports
-    imports_code = list(filter(lambda row:'from' in row, app_code))
-    imports_code_v2 = [re.sub('1','2', item) for item in imports_code.copy()]
-    #add in fake v2 routers
-    latest = list(filter(lambda row:'prefix="/latest"' in row, app_code))
-    latest_v2 = [re.sub('1','2',item) for item in latest]
-    base = list(filter(lambda row: re.search(r'^(?!.*prefix.*)\
-                      .*include_router\((.*)\)$',row),app_code))
-    base_v2 = [re.sub('1','2', item) for item in base]
-    version1 = list(filter(lambda row: 'prefix="/v1"' in row, app_code))
-    version2 = [re.sub('1','2',item) for item in version1.copy()]
-    #put together the new app_code
-    app_code = list(set(app_code) - set(latest) - set(base)) + latest_v2\
-               + base_v2 + version2 + imports_code_v2
-    return app_code
+    return list(filter(lambda row:row,inspect.getsource(app).splitlines()))
 
 @pytest.fixture
 def imports():
