@@ -51,6 +51,8 @@ def configure(app):
 
 
 def configure_routing(app):
+    #for now the / endpoint points to v1
+    #TODO: change this when client changes software to match
     app.include_router(language_router_v1)
     #!!!: send a deprecation notice but leave the v1 route for awhile
     #if v2 is introduced but change /latest and / to /v2/language_routes.router
