@@ -1,12 +1,12 @@
 import os
 from typing import Optional, Dict, Union, List
 from enum import Enum
+import re
 
 import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
-from gql import Client, gql
-from gql.transport.aiohttp import AIOHTTPTransport
+import psycopg2
 
 import queries
 from key_fetch import get_secret
@@ -19,10 +19,6 @@ class aggType(Enum):
     text = "text"
 
 router = fastapi.APIRouter()
-
-# Configure connection to the GraphQL endpoint
-headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
-
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -40,6 +36,19 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
         )
 
     return True
+
+
+def postgres_conn():
+    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
+    connection = psycopg2.connect(
+            host=conn_list[3],
+            database=conn_list[4],
+            user=conn_list[1],
+            password=conn_list[2],
+            sslmode="require"
+            )
+
+    return connection
 
 
 @router.get("/result", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[Result], int]])
@@ -88,10 +97,8 @@ async def get_result(
                 detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results."
         )
     
-    transport = AIOHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"), 
-        headers=headers
-        )
+    connection = postgres_conn()
+    cursor = connection.cursor()
 
     list_assessments = queries.list_assessments_query()
 
@@ -122,43 +129,41 @@ async def get_result(
         fetch_results = queries.get_results_query(assessment_id, limit=limit, offset=offset)
         table_name = "assessmentResult"
 
-    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    fetch_assessments = gql(list_assessments)
+    assessment_response = await client.execute(fetch_assessments)
 
-        fetch_assessments = gql(list_assessments)
-        assessment_response = await client.execute(fetch_assessments)
+    assessment_data = {}
+    for assessment in assessment_response["assessment"]:
+        if assessment["id"] not in assessment_data:
+            assessment_data[assessment["id"]] = assessment["type"]
 
-        assessment_data = {}
-        for assessment in assessment_response["assessment"]:
-            if assessment["id"] not in assessment_data:
-                assessment_data[assessment["id"]] = assessment["type"]
-
-        if assessment_id not in assessment_data:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Assessment not found."
+    if assessment_id not in assessment_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found."
             )
 
-        result_query = gql(fetch_results)
+    result_query = gql(fetch_results)
         
-        result_data = await client.execute(result_query)
+    result_data = await client.execute(result_query)
 
-        result_list = []
-        for result in result_data[table_name]:
-            results = Result(
-                    id=result["id"] if 'id' in result and result['id'] != 'null' else None,
-                    assessment_id=result["assessmentByAssessment"]["id"] if 'assessmentByAssessment' in result else result['assessment'],
-                    vref=result["vref"] if 'vref' in result else result['vref_group'] if 'vref_group' in result else None,
-                    source=result["source"] if result["source"] != 'null' else None,
-                    target=str(result["target"]) if result["target"] != 'null' else None,
-                    score=result["score"],
-                    flag=result["flag"],
-                    note=result["note"],
-                    revision_text=result["revisionText"] if 'revisionText' in result else None,
-                    reference_text=result["referenceText"] if 'referenceText' in result else None,
+    result_list = []
+    for result in result_data[table_name]:
+        results = Result(
+                id=result["id"] if 'id' in result and result['id'] != 'null' else None,
+                assessment_id=result["assessmentByAssessment"]["id"] if 'assessmentByAssessment' in result else result['assessment'],
+                vref=result["vref"] if 'vref' in result else result['vref_group'] if 'vref_group' in result else None,
+                source=result["source"] if result["source"] != 'null' else None,
+                target=str(result["target"]) if result["target"] != 'null' else None,
+                score=result["score"],
+                flag=result["flag"],
+                note=result["note"],
+                revision_text=result["revisionText"] if 'revisionText' in result else None,
+                reference_text=result["referenceText"] if 'referenceText' in result else None,
                 )
             
-            result_list.append(results)
+        result_list.append(results)
         
-        total_count = result_data[f'{table_name}_aggregate']['aggregate']['count']
+    total_count = result_data[f'{table_name}_aggregate']['aggregate']['count']
 
     return {'results': result_list, 'total_count': total_count}

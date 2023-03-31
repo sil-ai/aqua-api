@@ -11,7 +11,7 @@ from bible_routes.v2.version_routes import router as version_router_v2
 from bible_routes.v1.revision_routes import router as revision_router_v1
 from bible_routes.v2.revision_routes import router as revision_router_v2
 from bible_routes.v1.verse_routes import router as verse_router_v1
-from bible_routes.v2.verse_routes import router as verse_router_v2
+#from bible_routes.v2.verse_routes import router as verse_router_v2
 from assessment_routes.v1.assessment_routes import router as assessment_router_v1
 from assessment_routes.v2.assessment_routes import router as assessment_router_v2
 from review_routes.v1.results_routes import router as results_router_v1
@@ -68,10 +68,10 @@ def configure_routing(app):
     app.include_router(version_router_v2, prefix="/v2")
     app.include_router(version_router_v2, prefix="/latest")
 
-    app.include_router(verse_router_v1)
-    app.include_router(verse_router_v1, prefix="/v1")
-    app.include_router(verse_router_v2, prefix="/v2")
-    app.include_router(verse_router_v2, prefix="/latest")
+#    app.include_router(verse_router_v1)
+#    app.include_router(verse_router_v1, prefix="/v1")
+#    app.include_router(verse_router_v2, prefix="/v2")
+#    app.include_router(verse_router_v2, prefix="/latest")
 
     app.include_router(assessment_router_v1)
     app.include_router(assessment_router_v1, prefix="/v1")

@@ -16,14 +16,23 @@ def text_dataframe(verses, bibleRevision):
     verse_id = []
     for index, row in vref.iterrows():
         ids = (
-            row["book"] + " " +
-            str(row["chapter"]) + ":" +
-            str(row["verse"])
-            )
+                row["book"] + " " +
+                str(row["chapter"]) + ":" +
+                str(row["verse"])
+                )
+
+        book_id = (row["book"])
+
+        chapter_id = (
+                row["book"] + " " +
+                str(row["chapter"])
 
         verse_id.append(ids)
 
-    vref["verseReference"] = verse_id
+    vref["versereference"] = verse_id
+    vref["bookreference"] = book_id
+    vref["chapterreference"] = chapter_id
+
     verseText = vref.drop(columns=["book", "chapter", "verse"])
 
     return verseText
