@@ -38,5 +38,4 @@ jobs:
         FAIL_KEY: ${{ secrets.FAIL_KEY }}
         KEY_VAULT: ${{ secrets.KEY_VAULT }}
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
-
-
+        MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}

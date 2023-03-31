@@ -327,7 +327,6 @@ def test_result(client):
             reference_id=revision_ids[1],
             type="dummy",
     )
-
     response = client.post("/assessment", params={**good_config.dict(), 'modal_suffix': 'test'})
     assert response.status_code == 200
     assessment_id = response.json()['id']
@@ -343,6 +342,16 @@ def test_result(client):
     test_config_chapter_agg = {
             "assessment_id": assessment_id,
             "aggregate": "chapter",
+    }
+
+    test_config_book_agg = {
+            "assessment_id": assessment_id,
+            "aggregate": "book",
+    }
+
+    test_config_text_agg = {
+            "assessment_id": assessment_id,
+            "aggregate": "text",
     }
 
     test_config_include_text = {
@@ -370,12 +379,16 @@ def test_result(client):
 
         if prefix != 'v1':
             test_response_chapter_agg = client.get(f"/{prefix}/result", params=test_config_chapter_agg)
+            test_response_book_agg = client.get(f"/{prefix}/result", params=test_config_book_agg)
+            test_response_text_agg = client.get(f"/{prefix}/result", params=test_config_text_agg)
             test_response_include_text = client.get(f"/{prefix}/result", params=test_config_include_text)
             test_response_aggregate_and_include_text = client.get(f"/{prefix}/result", params=test_config_aggregate_and_include_text)
             test_response_pagination = client.get(f"/{prefix}/result", params=test_config_pagination)
             
             
             assert test_response_chapter_agg.status_code == 200
+            assert test_response_book_agg.status_code == 200
+            assert test_response_text_agg.status_code == 200
             assert test_response_include_text.status_code == 200
             assert test_response_aggregate_and_include_text.status_code == 400
             assert test_response_pagination.status_code == 200

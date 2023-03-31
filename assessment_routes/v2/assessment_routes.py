@@ -1,3 +1,5 @@
+__version__ = 'v2'
+
 import os
 from datetime import datetime
 import base64
@@ -140,7 +142,9 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
         'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
         'modal_suffix': modal_suffix,
         }
-    response = requests.post(runner_url, params=params, json=new_assessment.dict(exclude={"requested_time": True, "start_time": True, "end_time": True, "status": True}))
+    header = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
+    
+    response = requests.post(runner_url, params=params, headers=header, json=new_assessment.dict(exclude={"requested_time": True, "start_time": True, "end_time": True, "status": True}))
     if response.status_code != 200:
         print("Runner failed to run assessment")
         return response
