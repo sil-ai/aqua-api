@@ -3,6 +3,7 @@ __version__ = 'v2'
 import os
 from typing import Optional, Dict, Union, List
 from enum import Enum
+import ast
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -12,7 +13,7 @@ from gql.transport.aiohttp import AIOHTTPTransport
 
 import queries
 from key_fetch import get_secret
-from models import Result
+from models import Result_v2 as Result
 
 
 class aggType(Enum):
@@ -151,7 +152,7 @@ async def get_result(
                     assessment_id=result["assessmentByAssessment"]["id"] if 'assessmentByAssessment' in result else result['assessment'],
                     vref=result["vref"] if 'vref' in result else result['vref_group'] if 'vref_group' in result else None,
                     source=result["source"] if result["source"] != 'null' else None,
-                    target=str(result["target"]) if result["target"] != 'null' else None,
+                    target=[{key: value} for key, value in ast.literal_eval(str(result["target"])).items()] if result["target"] != 'null' else None,
                     score=result["score"],
                     flag=result["flag"],
                     note=result["note"],

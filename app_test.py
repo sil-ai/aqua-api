@@ -327,7 +327,6 @@ def test_result(client):
             reference_id=revision_ids[1],
             type="dummy",
     )
-
     response = client.post("/assessment", params={**good_config.dict(), 'modal_suffix': 'test'})
     assert response.status_code == 200
     assessment_id = response.json()['id']
