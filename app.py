@@ -1,5 +1,6 @@
 __version__ = 'v1'
 
+import logging
 import fastapi
 from fastapi.openapi.utils import get_openapi
 
@@ -17,6 +18,9 @@ from assessment_routes.v2.assessment_routes import router as assessment_router_v
 from review_routes.v1.results_routes import router as results_router_v1
 from review_routes.v2.results_routes import router as results_router_v2
 
+#set up logging
+logging.config.fileConfig('logging.conf', disable_existing_loggers=False)
+logger = logging.getLogger(__name__)
 
 app = fastapi.FastAPI()
 

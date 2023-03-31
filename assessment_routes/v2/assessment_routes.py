@@ -1,6 +1,7 @@
 __version__ = 'v2'
 
 import os
+import logging
 from datetime import datetime
 import base64
 from typing import List
@@ -15,6 +16,9 @@ from gql.transport.aiohttp import AIOHTTPTransport
 import queries
 from key_fetch import get_secret
 from models import AssessmentIn, AssessmentOut
+
+#set up logging
+logger = logging.getLogger(__name__)
 
 router = fastapi.APIRouter()
 
@@ -146,7 +150,7 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
     
     response = requests.post(runner_url, params=params, headers=header, json=new_assessment.dict(exclude={"requested_time": True, "start_time": True, "end_time": True, "status": True}))
     if response.status_code != 200:
-        print("Runner failed to run assessment")
+        logger.error(f"Runner failed to run assessment with error {response.status_code}")
         return response
     
     return new_assessment
@@ -185,9 +189,10 @@ async def delete_assessment(assessment_id: int):
                 )
 
         else:
-            print("Assessment is invalid, this assessment id does not exist.")
+            error_message ="Assessment is invalid, this assessment id does not exist."
+            logger.error(error_message)
             raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Assessment is invalid, this assessment id does not exist."
+                    detail=error_message
             )
     return delete_response
