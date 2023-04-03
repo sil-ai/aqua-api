@@ -79,9 +79,8 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
 
     list_assessments = queries.list_assessments_query()
 
-    if aggregate == avipggType['chapter']:
-        fetch_results = queries.get_results_chapter_query()
-        fetch_results_agg = queries.get_results_chapter_agg_query()
+    if aggregate == aggType['chapter']:
+        fetch_results = queries.get_results_chapter_query_v1()
         table_name = "group_results_chapter"
         assessment_tag = 2
         vref_tag = 1
@@ -92,8 +91,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
         note_tag = 7
     
     elif include_text:
-        fetch_results = queries.get_results_with_text_query()
-        fetch_results_agg = queries.get_results_with_text_agg_query()
+        fetch_results = queries.get_results_with_text_query_v1()
         table_name = "assessment_result_with_text"
         assessment_tag = 3
         vref_tag = 9
@@ -104,8 +102,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
         note_tag = 7
 
     else:
-        fetch_results = queries.get_results_query()
-        fetch_results_agg = queries.get_results_agg_query()
+        fetch_results = queries.get_results_query_v1()
         table_name = "assessmentResult"
         assessment_tag = 1
         vref_tag = 5
@@ -124,17 +121,15 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
             assessment_data[assessment[0]] = assessment[3]
 
     if assessment_id in assessment_data:
-        cursor.execute(fetch_results, (assessment_id, limit, offset,))
+        cursor.execute(fetch_results, (assessment_id,))
         result_data = cursor.fetchall()
-        cursor.execute(fetch_results_agg, (assessment_id,))
-        result_agg_data = cursor.fetchall()
 
         result_list = []
         for result in result_data:
             results = Result(
                     id=result[0],
                     assessment_id=result[assessment_tag],
-                    vref=result[vref_tag] if vref_tag != None else None,
+                    vref=result[vref_tag] if vref_tag is not None else None,
                     source=result[source_tag],
                     target=[{key: value} for key, value in ast.literal_eval(str(result[target_tag])).items()] if ast.literal_eval(str(result[target_tag])) else None,
                     score=result[score_tag],

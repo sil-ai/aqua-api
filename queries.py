@@ -318,3 +318,30 @@ def get_languages_query():
     iso_languages = 'SELECT * FROM "isoLanguage";'
          
     return iso_languages
+
+#delete when v1 is removed
+def get_results_query_v1():
+    get_results = """
+                SELECT * FROM "assessmentResult"
+                  WHERE assessment=(%s);
+                """
+
+    return get_results
+
+
+def get_results_chapter_query_v1():
+    get_results_chapter = """
+                SELECT * FROM "group_results_chapter"
+                  WHERE assessment=(%s);
+                """
+    
+    return get_results_chapter
+
+
+def get_results_with_text_query_v1():
+    get_results_with_text = """
+                SELECT * FROM "assessment_result_with_text"
+                  WHERE assessment=(%s);
+                """
+
+    return get_results_with_text
