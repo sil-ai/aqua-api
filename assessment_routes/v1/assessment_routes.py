@@ -58,7 +58,6 @@ async def get_assessments():
 
         assessment_data = []
         for assessment in result["assessment"]:
-            print(assessment["type"])
             data = AssessmentOut(
                     id=assessment["id"],
                     revision_id=assessment["revision"],

@@ -1,7 +1,10 @@
+__version__ = 'v2'
+
 import os
 from typing import Optional, Dict, Union, List
 from enum import Enum
 import re
+import ast
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -10,7 +13,7 @@ import psycopg2
 
 import queries
 from key_fetch import get_secret
-from models import Result
+from models import Result_v2 as Result
 
 
 class aggType(Enum):
