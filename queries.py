@@ -114,22 +114,22 @@ def fetch_version_data():
     return fetch_version
 
 
-def get_chapter_query():
+def get_chapter_query(chapterReference):
     get_chapter = """
                 SELECT * FROM "verseText"
                   WHERE biblerevision=(%s)
-                    AND chapterreference=(%s);
-                """
+                    AND chapterreference={};
+                """.format(chapterReference)
 
     return get_chapter
 
 
-def get_verses_query():
+def get_verses_query(verseReference):
     get_verses = """
                 SELECT * FROM "verseText"
                   WHERE biblerevision=(%s)
-                    AND versereference=(%s);
-                """
+                    AND versereference={};
+                """.format(verseReference)
     
     return get_verses
 
@@ -217,14 +217,14 @@ def get_results_query():
 def get_results_agg_query():
     get_results_agg = """
                 SELECT COUNT(id)
-                  FROM assessmentResult
+                  FROM "assessmentResult"
                     WHERE assessment=(%s);
                 """
 
     return get_results_agg
 
 
-def get_results_chapter_query(assessment_id, limit='null', offset=0):
+def get_results_chapter_query():
     get_results_chapter = """
                 SELECT * FROM "group_results_chapter"
                   WHERE assessment=(%s)
@@ -238,14 +238,14 @@ def get_results_chapter_query(assessment_id, limit='null', offset=0):
 def get_results_chapter_agg_query():
     get_results_chapter_agg = """
                 SELECT COUNT(id)
-                  FROM group_results_chapter_aggregate
+                  FROM "group_results_chapter"
                     WHERE assessment=(%s);
                 """
 
     return get_results_chapter_agg
 
 
-def get_results_book_query(assessment_id, limit='null', offset=0):
+def get_results_book_query():
     get_results_book = """
                 SELECT * FROM "group_results_book"
                   WHERE assessment=(%s)
@@ -266,7 +266,7 @@ def get_results_book_agg_query():
     return get_results_book_agg
 
 
-def get_results_text_query(assessment_id, limit='null', offset=0):
+def get_results_text_query():
     get_results_text = """
                 SELECT * FROM "group_results_text"
                    WHERE assessment=(%s)
@@ -280,14 +280,14 @@ def get_results_text_query(assessment_id, limit='null', offset=0):
 def get_results_text_agg_query():
     get_results_text_agg = """
                 SELECT COUNT(id)
-                  FROM group_results_text
+                  FROM "group_results_text"
                     WHERE assessment=(%s);
                 """
 
     return get_results_text_agg
 
 
-def get_results_with_text_query(assessment_id, limit='null', offset=0):
+def get_results_with_text_query():
     get_results_with_text = """
                 SELECT * FROM "assessment_result_with_text"
                   WHERE assessment=(%s)
@@ -301,7 +301,7 @@ def get_results_with_text_query(assessment_id, limit='null', offset=0):
 def get_results_with_text_agg_query():
     get_results_with_text_agg = """
                 SELECT COUNT(id)
-                  FROM assessment_result_with_text
+                  FROM "assessment_result_with_text"
                     WHERE assessment=(%s);
                 """
 

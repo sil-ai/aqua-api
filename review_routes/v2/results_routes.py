@@ -107,7 +107,7 @@ async def get_result(
             limit = page_size
     else:
         offset = 0
-        limit = 'null'
+        limit = None
 
     if aggregate == aggType['chapter']:
         fetch_results = queries.get_results_chapter_query()
@@ -191,6 +191,7 @@ async def get_result(
 
     result_list = []
     for result in result_data:
+        print(result[flag_tag])
         results = Result(
                 id=result[0],
                 assessment_id=result[assessment_tag],
