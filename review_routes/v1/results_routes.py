@@ -136,7 +136,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
                     assessment_id=result[assessment_tag],
                     vref=result[vref_tag] if vref_tag != None else None,
                     source=result[source_tag],
-                    target=[{key: value} for key, value in ast.literal_eval(str(result[target_tag])).items()] if ast.literal_eval(str(result[target_tag])) else None,
+                    target=str(result[target_tag]) if result[target_tag] != 'null' else None,
                     score=result[score_tag],
                     flag=result[flag_tag],
                     note=result[note_tag],
