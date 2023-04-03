@@ -109,10 +109,10 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
         )
     reference_id = a.reference_id
     if not reference_id:
-        reference_id = 'null'
-    assessment_type_fixed = '"' + str(a.type) +  '"'
-    requested_time = '"' + datetime.now().isoformat() + '"'
-    assessment_status = '"' + 'queued' + '"'
+        reference_id = None
+    assessment_type_fixed = str(a.type)
+    requested_time = datetime.now().isoformat()
+    assessment_status = "queued"
 
     new_assessment = queries.add_assessment_query()
         

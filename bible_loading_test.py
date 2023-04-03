@@ -37,7 +37,7 @@ cursor.execute(fetch_version_query, ("BLTEST",))
 fetch_version_data = cursor.fetchone()
 version_id = fetch_version_data[0]
 
-revision_date = '"' + str(date.today()) + '"'
+revision_date = str(date.today())
 revision_query = queries.insert_bible_revision()
         
 revision_upload = cursor.execute(revision_query, (

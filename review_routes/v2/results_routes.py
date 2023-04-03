@@ -110,32 +110,73 @@ async def get_result(
         limit = 'null'
 
     if aggregate == aggType['chapter']:
-        fetch_results = queries.get_results_chapter_agg_query(assessment_id, limit=limit, offset=offset)
-        table_name = "group_results_chapter"
+        fetch_results = queries.get_results_chapter_query()
+        fetch_results_agg = queries.get_results_chapter_agg_query()
+        table_name = "group_results_chapter"        
+        assessment_tag = 2
+        vref_tag = 1
+        source_tag = 4
+        target_tag = 5
+        score_tag = 3
+        flag_tag = 6
+        note_tag = 7
     
     elif aggregate == aggType['book']:
-        fetch_results = queries.get_results_book_agg_query(assessment_id, limit=limit, offset=offset)
+        fetch_results = queries.get_results_book_query()
+        fetch_results_agg = queries.get_results_book_agg_query()
         table_name = "group_results_book"
+        assessment_tag = 2
+        vref_tag = 1
+        source_tag = 4
+        target_tag = 5
+        score_tag = 3
+        flag_tag = 6
+        note_tag = 7
+
     
     elif aggregate == aggType['text']:
-        fetch_results = queries.get_results_text_agg_query(assessment_id, limit=limit, offset=offset)
+        fetch_results = queries.get_results_text_query()
+        fetch_results_agg = queries.get_results_text_agg_query()
         table_name = "group_results_text"
+        assessment_tag = 1
+        vref_tag = None
+        source_tag = 3
+        target_tag = 4
+        score_tag = 2
+        flag_tag = 5
+        note_tag = 6
     
     elif include_text:
-        fetch_results = queries.get_results_with_text_query(assessment_id, limit=limit, offset=offset)
+        fetch_results = queries.get_results_with_text_query()
+        fetch_results_agg = queries.get_results_with_text_agg_query()
         table_name = "assessment_result_with_text"
-        
-    else:
-        fetch_results = queries.get_results_query(assessment_id, limit=limit, offset=offset)
-        table_name = "assessmentResult"
+        assessment_tag = 3
+        vref_tag = 9
+        source_tag = 4
+        target_tag = 5
+        score_tag = 3
+        flag_tag = 6
+        note_tag = 7
 
-    fetch_assessments = gql(list_assessments)
-    assessment_response = await client.execute(fetch_assessments)
+    else:
+        fetch_results = queries.get_results_query()
+        fetch_results_agg = queries.get_results_agg_query()
+        table_name = "assessmentResult"
+        assessment_tag = 2
+        vref_tag = 1
+        source_tag = 4
+        target_tag = 5
+        score_tag = 3
+        flag_tag = 6
+        note_tag = 7
+
+    cursor.execute(list_assessments)
+    assessment_response = cursor.fetchall()
 
     assessment_data = {}
-    for assessment in assessment_response["assessment"]:
-        if assessment["id"] not in assessment_data:
-            assessment_data[assessment["id"]] = assessment["type"]
+    for assessment in assessment_response:
+        if assessment[0] not in assessment_data:
+            assessment_data[assessment[0]] = assessment[3]
 
     if assessment_id not in assessment_data:
         raise HTTPException(
@@ -143,27 +184,28 @@ async def get_result(
             detail="Assessment not found."
             )
 
-    result_query = gql(fetch_results)
-        
-    result_data = await client.execute(result_query)
+    cursor.execute(fetch_results, (assessment_id, limit, offset,))
+    result_data = cursor.fetchall()
+    cursor.execute(fetch_results_agg, (assessment_id,))
+    result_agg_data = cursor.fetchall()
 
     result_list = []
-    for result in result_data[table_name]:
+    for result in result_data:
         results = Result(
-                id=result["id"] if 'id' in result and result['id'] != 'null' else None,
-                assessment_id=result["assessmentByAssessment"]["id"] if 'assessmentByAssessment' in result else result['assessment'],
-                vref=result["vref"] if 'vref' in result else result['vref_group'] if 'vref_group' in result else None,
-                source=result["source"] if result["source"] != 'null' else None,
-                target=str(result["target"]) if result["target"] != 'null' else None,
-                score=result["score"],
-                flag=result["flag"],
-                note=result["note"],
-                revision_text=result["revisionText"] if 'revisionText' in result else None,
-                reference_text=result["referenceText"] if 'referenceText' in result else None,
+                id=result[0],
+                assessment_id=result[assessment_tag],
+                vref=result[vref_tag] if vref_tag != None else None,
+                source=result[source_tag],
+                target=str(result[target_tag]),
+                score=result[score_tag],
+                flag=result[flag_tag],
+                note=result[note_tag],
+                revision_text=result[10] if table_name == "assessment_result_with_text" else None,
+                reference_text=result[11] if table_name == "assessment_result_with_text" in result else None,
                 )
             
         result_list.append(results)
         
-    total_count = result_data[f'{table_name}_aggregate']['aggregate']['count']
+    total_count = result_agg_data[0]
 
     return {'results': result_list, 'total_count': total_count}

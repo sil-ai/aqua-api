@@ -40,7 +40,7 @@ def postgres_conn():
     conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
     connection = psycopg2.connect(
             host=conn_list[3],
-            database=conn_list[4].
+            database=conn_list[4],
             user=conn_list[1],
             password=conn_list[2],
             sslmode="require"
@@ -67,7 +67,7 @@ async def list_revisions(version_id: Optional[int]=None):
 
     version_list = []
     for version in version_result:
-        version_list.append(version["id"])
+        version_list.append(version[0])
 
     if version_id is not None and version_id not in version_list:
         raise HTTPException(
@@ -120,12 +120,7 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     
     name = revision.name if revision.name else "null"
     revision_date = str(date.today())
-    revision_query = queries.insert_bible_revision(
-                        revision.version_id, 
-                        name, 
-                        revision_date, 
-                        str(revision.published).lower(),
-        )
+    revision_query = queries.insert_bible_revision()
 
     # Convert into bytes and save as a temporary file.
     contents = await file.read()
@@ -134,8 +129,12 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     temp_file.seek(0)
 
     # Create a corresponding revision in the database.
-    cursor.execute(revision_query)
-    returned_revision = cursor.fetchone()=
+    cursor.execute(revision_query, (
+        revision_version_id, name,
+        revision_date,
+        revision_published,
+        ))
+    returned_revision = cursor.fetchone()
     cursor.commit()
 
     fetch_version_data = queries.fetch_version_data()

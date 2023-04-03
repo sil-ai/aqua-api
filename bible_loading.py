@@ -26,6 +26,7 @@ def text_dataframe(verses, bibleRevision):
         chapter_id = (
                 row["book"] + " " +
                 str(row["chapter"])
+                )
 
         verse_id.append(ids)
 

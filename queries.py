@@ -91,17 +91,23 @@ def list_revisions_query():
     list_revisions = """
                     SELECT * FROM "bibleRevision"
                       WHERE bibleversion=(%s);
-
-                    SELECT id, abbreviation FROM "bibleVersion"
-                      WHERE id=(%s); 
                     """
 
     return list_revisions
 
 
+def version_data_revisions_query():
+    version_data_revisions = """
+                    SELECT id, abbreviation FROM "bibleVersion"
+                      WHERE id=(%s);
+                    """
+
+    return version_data_revisions
+
+
 def fetch_version_data():
     fetch_version = """
-                    SELECT abbreviation FROM bibleVersion
+                    SELECT abbreviation FROM "bibleVersion"
                       WHERE id=(%s);
                     """
 
@@ -202,153 +208,80 @@ def get_results_query():
                 SELECT * FROM "assessmentResult"
                   WHERE assessment=(%s)
                   LIMIT (%s)
-                  OFFSET (%s)
-
-                query {{
-                  assessmentResult(
-                    limit: {}
-                    offset: {}
-                    where: {{
-                      assessment: {{
-                        _eq: {}
-                      }}
-                    }}
-                  ) 
-                  
-                  {{
-                    id
-                    score
-                    flag
-                    note
-                    vref
-                    source
-                    target
-                    assessmentByAssessment {{
-                      id
-                    }}
-                  }}
-                  assessmentResult_aggregate(
-                    where: {{
-                        assessment: {{
-                            _eq: {}
-                        }}
-                    }}
-                  ) {{
-    aggregate {{
-      count
-    }}
-  }}
-                }}
+                  OFFSET (%s);
                 """
 
     return get_results
 
 
-def get_results_chapter_agg_query(assessment_id, limit='null', offset=0):
-    get_results_chapter_agg = """
-                query {{
-                    group_results_chapter(
-                        limit: {}
-                        offset: {}
-                        where: {{assessment: {{
-                            _eq: {}
-                            }}
-                            }}
-                            ) {{
-                    score
-                    vref_group
-                    assessment
-                    source
-                    target
-                    note
-                    flag
-                    }}
-                
-                group_results_chapter_aggregate(
-                    where: {{
-                        assessment: {{
-                            _eq: {}
-                        }}
-                    }}
-                  ) {{
-    aggregate {{
-      count
-    }}
-  }}
-                }}
+def get_results_agg_query():
+    get_results_agg = """
+                SELECT COUNT(id)
+                  FROM assessmentResult
+                    WHERE assessment=(%s);
+                """
+
+    return get_results_agg
+
+
+def get_results_chapter_query(assessment_id, limit='null', offset=0):
+    get_results_chapter = """
+                SELECT * FROM "group_results_chapter"
+                  WHERE assessment=(%s)
+                  LIMIT (%s)
+                  OFFSET (%s);
                 """
     
-    return get_results_chapter_agg
+    return get_results_chapter
     
 
-def get_results_book_agg_query(assessment_id, limit='null', offset=0):
+def get_results_chapter_agg_query():
+    get_results_chapter_agg = """
+                SELECT COUNT(id)
+                  FROM group_results_chapter_aggregate
+                    WHERE assessment=(%s);
+                """
+
+    return get_results_chapter_agg
+
+
+def get_results_book_query(assessment_id, limit='null', offset=0):
+    get_results_book = """
+                SELECT * FROM "group_results_book"
+                  WHERE assessment=(%s)
+                  LIMIT (%s)
+                  OFFSET (%s);
+                """
+
+    return get_results_book
+
+
+def get_results_book_agg_query():
     get_results_book_agg = """
-                query {{
-                    group_results_book(
-                        limit: {}
-                        offset: {}
-                        where: {{assessment: {{
-                            _eq: {}
-                            }}
-                            }}
-                            ) {{
-                    score
-                    vref_group
-                    assessment
-                    source
-                    target
-                    note
-                    flag
-                    }}
-                
-                group_results_book_aggregate(
-                    where: {{
-                        assessment: {{
-                            _eq: {}
-                        }}
-                    }}
-                  ) {{
-    aggregate {{
-      count
-    }}
-  }}
-                }}
+                SELECT COUNT(id)
+                  FROM "group_results_book"
+                    WHERE assessment=(%s);
                 """
 
     return get_results_book_agg
 
 
-def get_results_text_agg_query(assessment_id, limit='null', offset=0):
+def get_results_text_query(assessment_id, limit='null', offset=0):
+    get_results_text = """
+                SELECT * FROM "group_results_text"
+                   WHERE assessment=(%s)
+                   LIMIT (%s)
+                   OFFSET (%s);
+                """
+
+    return get_results_text
+
+
+def get_results_text_agg_query():
     get_results_text_agg = """
-                query {{
-                    group_results_text(
-                        limit: {}
-                        offset: {}
-                        where: {{assessment: {{
-                            _eq: {}
-                            }}
-                            }}
-                            ) {{
-                    score
-                    assessment
-                    source
-                    target
-                    note
-                    flag
-                    }}
-                
-                group_results_text_aggregate(
-                    where: {{
-                        assessment: {{
-                            _eq: {}
-                        }}
-                    }}
-                  ) {{
-    aggregate {{
-      count
-    }}
-  }}
-                }}
+                SELECT COUNT(id)
+                  FROM group_results_text
+                    WHERE assessment=(%s);
                 """
 
     return get_results_text_agg
@@ -360,13 +293,19 @@ def get_results_with_text_query(assessment_id, limit='null', offset=0):
                   WHERE assessment=(%s)
                   LIMIT (%s)
                   OFFSET (%s);
+                """
 
+    return get_results_with_text
+
+
+def get_results_with_text_agg_query():
+    get_results_with_text_agg = """
                 SELECT COUNT(id)
                   FROM assessment_result_with_text
                     WHERE assessment=(%s);
                 """
 
-    return get_results_with_text
+    return get_results_with_text_agg
 
 
 def get_scripts_query():
