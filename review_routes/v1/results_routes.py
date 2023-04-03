@@ -12,7 +12,7 @@ from gql.transport.requests import RequestsHTTPTransport
 
 import queries
 from key_fetch import get_secret
-from models import Result
+from models import Result_v1 as Result
 
 
 class aggType(Enum):

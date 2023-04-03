@@ -1,7 +1,10 @@
+__version__ = 'v2'
+
 import os
 from typing import Optional, Dict, Union, List
 from enum import Enum
 import re
+import ast
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -10,7 +13,7 @@ import psycopg2
 
 import queries
 from key_fetch import get_secret
-from models import Result
+from models import Result_v2 as Result
 
 
 class aggType(Enum):
@@ -196,12 +199,13 @@ async def get_result(
                 assessment_id=result[assessment_tag],
                 vref=result[vref_tag] if vref_tag != None else None,
                 source=result[source_tag],
-                target=str(result[target_tag]),
+                target=[{key: value} for key, value in ast.literal_eval(str(result[target_tag])).items()] if ast.literal_eval(str(result[target_tag])) else None,
                 score=result[score_tag],
                 flag=result[flag_tag],
                 note=result[note_tag],
                 revision_text=result[10] if table_name == "assessment_result_with_text" else None,
                 reference_text=result[11] if table_name == "assessment_result_with_text" in result else None,
+
                 )
             
         result_list.append(results)
