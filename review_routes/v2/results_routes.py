@@ -209,6 +209,6 @@ async def get_result(
         
         result_list.append(results)
         
-    total_count = result_agg_data[0]
+    total_count = result_agg_data[0][0]
 
     return {'results': result_list, 'total_count': total_count}
