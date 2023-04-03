@@ -91,10 +91,11 @@ async def add_version(v: VersionIn = Depends()):
     `forwardTranslation` and `backTranslation` are optional integers, corresponding to the version_id of the version that is the forward and back translation used by this version.
     """
 
-    new_version = queries.add_version_query()
-        
     connection = postgres_con()
     cursor = connection.cursor()
+
+    new_version = queries.add_version_query()
+        
     cursor.execute(
             new_version, (
                 v.name, v.isoLanguage, v.isoScript,
@@ -130,12 +131,13 @@ async def delete_version(id: int):
     Delete a version and all associated revisions, text and assessments.
     """
     
+    connection = postgres_con()
+    cursor = connection.cursor()
+    
     fetch_versions = queries.list_versions_query()
     fetch_revisions = queries.list_revisions_query()
     delete_version = queries.delete_bible_version()
 
-    connection = postgres_con()
-    cursor = connection.cursor()
     cursor.execute(fetch_versions)
     version_result = cursor.fetchall()
 

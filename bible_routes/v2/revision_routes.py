@@ -72,6 +72,9 @@ async def list_revisions(version_id: Optional[int]=None):
         version_list.append(version[0])
 
     if version_id is not None and version_id not in version_list:
+        cursor.close()
+        connection.close()
+
         raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Version id is invalid"
@@ -133,15 +136,16 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     # Create a corresponding revision in the database.
     cursor.execute(revision_query, (
         revision.version_id, name,
-        revision_date,
-        revision.published,
+        revision_date, revision.published,
         ))
+    
     returned_revision = cursor.fetchone()
     connection.commit()
 
     fetch_version_data = queries.fetch_version_data()
     cursor.execute(fetch_version_data, (revision.version_id,))
     version_data = cursor.fetchone()
+
     revision_query = RevisionOut(
                 id=returned_revision[0],
                 date=returned_revision[1],
@@ -167,6 +171,9 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
                 bibleRevision.append(revision_query.id)
     
     if not has_text:
+        cursor.close()
+        connection.close()
+
         raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="File has no text."

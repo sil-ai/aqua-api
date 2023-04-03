@@ -63,6 +63,9 @@ async def list_languages():
     language_result = cursor.fetchall()
     language_list = [Language(iso639=language[1], name=language[2]) for language in language_result]
     
+    cursor.close()
+    connection.close()
+
     return language_list
 
 
@@ -81,5 +84,8 @@ async def list_scripts():
     cursor.execute(list_script)
     script_result = cursor.fetchall()
     script_list = [Script(iso15924=script[1], name=script[2]) for script in script_result]
+
+    cursor.close()
+    connection.close()
 
     return script_list

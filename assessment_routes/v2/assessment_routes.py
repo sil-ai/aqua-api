@@ -120,8 +120,10 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
         
     cursor.execute(
             new_assessment, (
-                a.revision_id, reference_id, 
-                assessment_type_fixed, requested_time, 
+                a.revision_id, 
+                reference_id, 
+                assessment_type_fixed, 
+                requested_time, 
                 assessment_status,
                 )
             )
@@ -138,8 +140,6 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
             requested_time=assessment[4],
             status=assessment[5],
             )
-
-
     
     # Call runner to run assessment
 
@@ -157,6 +157,7 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
     header = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
     
     response = requests.post(runner_url, params=params, headers=header, json=new_assessment.dict(exclude={"requested_time": True, "start_time": True, "end_time": True, "status": True}))
+    
     if response.status_code != 200:
         cursor.close()
         connection.close()
@@ -190,11 +191,9 @@ async def delete_assessment(assessment_id: int):
     for assessment in assessment_result:
         assessments_list.append(assessment[0])
     if assessment_id in assessments_list:
-        cursor.execute(
-                delete_assessment_results_mutation, (assessment_id,)
-                )
-
+        cursor.execute(delete_assessment_results_mutation, (assessment_id,))
         cursor.execute(delete_assessment, (assessment_id,))
+
         assessment_result = cursor.fetchone()
         delete_response = ("Assessment " +
             str(
