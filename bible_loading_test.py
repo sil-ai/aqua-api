@@ -40,7 +40,7 @@ version_id = fetch_version_data[0]
 revision_date = str(date.today())
 revision_query = queries.insert_bible_revision()
         
-revision_upload = cursor.execute(revision_query, (
+cursor.execute(revision_query, (
     version_id, None,
     revision_date, False
     )

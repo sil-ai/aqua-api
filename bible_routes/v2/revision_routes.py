@@ -120,7 +120,7 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     connection = postgres_conn()
     cursor = connection.cursor()
     
-    name = revision.name if revision.name else "null"
+    name = revision.name if revision.name else None
     revision_date = str(date.today())
     revision_query = queries.insert_bible_revision()
 
@@ -132,7 +132,7 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
 
     # Create a corresponding revision in the database.
     cursor.execute(revision_query, (
-        revision.version_id, revision.name,
+        revision.version_id, name,
         revision_date,
         revision.published,
         ))

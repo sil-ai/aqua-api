@@ -197,7 +197,7 @@ async def get_result(
         results = Result(
                 id=result[0],
                 assessment_id=result[assessment_tag],
-                vref=result[vref_tag] if vref_tag != None else None,
+                vref=result[vref_tag] if vref_tag is not None else None,
                 source=result[source_tag],
                 target=[{key: value} for key, value in ast.literal_eval(str(result[target_tag])).items()] if ast.literal_eval(str(result[target_tag])) else None,
                 score=result[score_tag],

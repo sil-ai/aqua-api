@@ -309,12 +309,12 @@ def get_results_with_text_agg_query():
 
 
 def get_scripts_query():
-    iso_scripts = 'SELECT * FROM "isoScript"';
+    iso_scripts = 'SELECT * FROM "isoScript";'
         
     return iso_scripts
 
 
 def get_languages_query():
-    iso_languages = 'SELECT * FROM "isoLanguage"';
+    iso_languages = 'SELECT * FROM "isoLanguage";'
          
     return iso_languages

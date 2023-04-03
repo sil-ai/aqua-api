@@ -190,7 +190,7 @@ async def delete_assessment(assessment_id: int):
     for assessment in assessment_result:
         assessments_list.append(assessment[0])
     if assessment_id in assessments_list:
-        assessment_results_mutation = cursor.execute(
+        cursor.execute(
                 delete_assessment_results_mutation, (assessment_id,)
                 )
 
