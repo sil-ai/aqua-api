@@ -98,9 +98,11 @@ async def add_version(v: VersionIn = Depends()):
     new_version = queries.add_version_query()
 
     cursor.execute(
-        v.name, v.isoLanguage, v.isoScript,
-        v.abbreviation, v.rights, v.forwardTranslation,
-        v.backTranslation, v.machineTranslation
+        new_version, (
+            v.name, v.isoLanguage, v.isoScript,
+            v.abbreviation, v.rights, v.forwardTranslation,
+            v.backTranslation, v.machineTranslation,
+        )
     )
         
     connection.commit()
