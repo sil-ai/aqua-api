@@ -165,13 +165,13 @@ async def get_result(
         fetch_results = queries.get_results_query()
         fetch_results_agg = queries.get_results_agg_query()
         table_name = "assessmentResult"
-        assessment_tag = 2
-        vref_tag = 1
-        source_tag = 4
-        target_tag = 5
-        score_tag = 3
-        flag_tag = 6
-        note_tag = 7
+        assessment_tag = 1
+        vref_tag = 5
+        source_tag = 7
+        target_tag = 8
+        score_tag = 2
+        flag_tag = 3
+        note_tag = 4
 
     cursor.execute(list_assessments)
     assessment_response = cursor.fetchall()
@@ -194,7 +194,6 @@ async def get_result(
 
     result_list = []
     for result in result_data:
-        print(result[flag_tag])
         results = Result(
                 id=result[0],
                 assessment_id=result[assessment_tag],
@@ -207,7 +206,7 @@ async def get_result(
                 revision_text=result[10] if table_name == "assessment_result_with_text" else None,
                 reference_text=result[11] if table_name == "assessment_result_with_text" in result else None,
                 )
-            
+        
         result_list.append(results)
         
     total_count = result_agg_data[0]
