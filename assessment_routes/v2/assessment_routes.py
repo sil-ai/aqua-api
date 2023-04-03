@@ -126,7 +126,7 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
 
     assessment = cursor.fetchall()
 
-    cursor.commit()
+    connection.commit()
 
     new_assessment = AssessmentOut(
             id=assessment[0],
@@ -200,7 +200,7 @@ async def delete_assessment(assessment_id: int):
                 ) + " deleted successfully"
             )
 
-        cursor.commit()
+        connection.commit()
 
     else:
         cursor.close()

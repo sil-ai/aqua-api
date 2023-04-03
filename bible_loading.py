@@ -9,7 +9,7 @@ def text_dataframe(verses, bibleRevision):
     vref = pd.read_csv("fixtures/vref.txt", sep=" |:", names=my_col, engine="python")
 
     vref["text"] = verses
-    vref["bibleRevision"] = bibleRevision
+    vref["biblerevision"] = bibleRevision
 
     vref = vref.dropna()
 

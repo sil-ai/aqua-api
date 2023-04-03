@@ -64,7 +64,7 @@ def insert_bible_revision():
                     )
                   VALUES ((%s), (%s), (%s), (%s))
                 RETURNING 
-                  id, name, date, published
+                  id, date, bibleversion, name, published
                 """
  
     return bible_revise

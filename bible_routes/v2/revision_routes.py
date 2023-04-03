@@ -130,15 +130,15 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
 
     # Create a corresponding revision in the database.
     cursor.execute(revision_query, (
-        revision_version_id, name,
+        revision.version_id, revision.name,
         revision_date,
-        revision_published,
+        revision.published,
         ))
     returned_revision = cursor.fetchone()
-    cursor.commit()
+    connection.commit()
 
     fetch_version_data = queries.fetch_version_data()
-    cursor.execute(fetch_version_data, (version_id,))
+    cursor.execute(fetch_version_data, (revision.version_id,))
     version_data = cursor.fetchone()
     revision_query = RevisionOut(
                 id=returned_revision[0],
@@ -207,6 +207,8 @@ async def delete_revision(id: int):
         cursor.execute(delete_verses_mutation, (id,))
 
         cursor.execute(delete_revision, (id,))
+        connection.commit()
+
         revision_result = cursor.fetchone()
 
         delete_response = ("Revision " +

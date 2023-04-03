@@ -157,7 +157,7 @@ async def delete_version(id: int):
 
         cursor.execute(delete_version, (id,))
         version_delete_result = cursor.fetchone()
-        cursor.commit()
+        connection.commit()
 
         delete_response = ("Version " +
             version_delete_result[0] +
