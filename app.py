@@ -57,6 +57,7 @@ def configure_routing(app):
 
     #!!!: send a deprecation notice but leave the v1 route for awhile
     #if v2 is introduced but change /latest and / to /v2/language_routes.router
+
     app.include_router(language_router_v1, prefix="/v1", tags=["Version 1 / default"])
     app.include_router(language_router_v2, prefix="/v2", tags=["Version 2 / Latest"])
     app.include_router(language_router_v2, prefix="/latest", tags=["Version 2 / Latest"])
