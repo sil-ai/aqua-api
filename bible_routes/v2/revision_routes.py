@@ -101,7 +101,7 @@ async def list_revisions(version_id: Optional[int]=None):
                     version_id=revision[2],
                     version_abbreviation=version_data[0],
                     name=revision[4],
-                    published=revision[3]
+                    published=revision[3],
             )
 
             revisions_data.append(revision_data)

@@ -192,12 +192,12 @@ async def delete_assessment(assessment_id: int):
         assessments_list.append(assessment[0])
     if assessment_id in assessments_list:
         cursor.execute(delete_assessment_results_mutation, (assessment_id,))
-        cursor.execute(delete_assessment)
+        cursor.execute(delete_assessment, (assessment_id,))
 
         assessment_result = cursor.fetchone()
         delete_response = ("Assessment " +
             str(
-                assessment_result["delete_assessment"]["returning"][0]["id"]
+                assessment_result[0]
                 ) + " deleted successfully"
             )
 

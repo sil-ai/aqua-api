@@ -36,7 +36,7 @@ class RevisionIn(BaseModel):
 class RevisionOut(BaseModel):
     id: int
     version_id: int
-    version_abbreviation: str
+    version_abbreviation: Optional[str] = None
     date: Optional[datetime.date] = None
     name: Optional[str] = None
     published: Optional[bool] = False

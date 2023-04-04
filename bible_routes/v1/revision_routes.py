@@ -82,7 +82,7 @@ async def list_revisions(version_id: Optional[int]=None):
     else:
         if version_id:
             list_revision = queries.list_revisions_query()
-            cursor.execute(list_revision)
+            cursor.execute(list_revision, (version_id,))
             revision_result = cursor.fetchall()
         else:
             list_revision = queries.list_all_revisions_query()
