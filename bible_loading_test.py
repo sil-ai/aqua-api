@@ -1,45 +1,56 @@
 import os
+import re
 
 import pandas as pd
 import numpy as np
 import sqlalchemy as db
-from gql import Client, gql
-from gql.transport.requests import RequestsHTTPTransport
+import psycopg2
 from datetime import date
 
 import bible_loading
 import queries
 
 
-headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
-transport = RequestsHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
+conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
+connection = psycopg2.connect(
+        host=conn_list[3],
+        database=conn_list[4],
+        user=conn_list[1],
+        password=conn_list[2],
+        sslmode="require"
         )
 
-version_query = queries.add_version_query(
-        '"loading_test"', '"eng"', '"Latn"', '"BLTEST"', 
-        "null", "null", "null", "false"
-        )
+cursor = connection.cursor()
 
-with Client(transport=transport,
-        fetch_schema_from_transport=True) as test_client:
+version_query = queries.add_version_query()
+
+fetch_version_query = queries.fetch_bible_version_by_abbreviation()
  
-    version_upload = gql(version_query)
-    test_client.execute(version_upload)
+cursor.execute(version_query, (
+    "loading_test", "eng", "Latn", "BLTEST",
+    None, None, None, False
+    )
+)
+cursor.close()
 
-    fetch_version_query = queries.fetch_bible_version_by_abbreviation('"BLTEST"')
-    fetch_version = gql(fetch_version_query)
-    fetch_response = test_client.execute(fetch_version)
-    version_id = fetch_response["bibleVersion"][0]["id"]
 
-    revision_date = '"' + str(date.today()) + '"'
-    revision_query = queries.insert_bible_revision(
-            version_id, "null", revision_date, "false"
-            )
+cursor = connection.cursor()
+
+cursor.execute(fetch_version_query, ("BLTEST",))
+fetch_version_data = cursor.fetchone()
+version_id = fetch_version_data[0]
+
+revision_date = str(date.today())
+revision_query = queries.insert_bible_revision()
         
-    revision_upload = gql(revision_query)
-    revision_response = test_client.execute(revision_upload)
-    revision_id = revision_response["insert_bibleRevision"]["returning"][0]["id"]    
+cursor.execute(revision_query, (
+    version_id, None,
+    revision_date, False
+    ))
+
+connection.commit()
+revision_response = cursor.fetchone()
+revision_id = revision_response[0]    
 
 
 def test_text_dataframe(): 
@@ -76,8 +87,8 @@ def test_text_dataframe():
 
     status = 0
     for _, row in verseText.iterrows():
-        if row["verseReference"] in test_data["locations"]:
-            location = test_data["locations"].index(row["verseReference"])
+        if row["versereference"] in test_data["locations"]:
+            location = test_data["locations"].index(row["versereference"])
             if row["text"] in test_data["text"][location]:
                 status += 1
                 if status == 8:
@@ -94,8 +105,8 @@ def test_text_loading():
     
     verse_dict = {
         "text": ["TEST"], 
-        "bibleRevision": [revision_id], 
-        "verseReference": ["GEN 1:1"]
+        "biblerevision": [revision_id], 
+        "versereference": ["GEN 1:1"]
         }
 
     verseText = pd.DataFrame(verse_dict)
@@ -119,20 +130,19 @@ def test_upload_bible():
                 verses.append(line.replace("\n", ""))
                 bibleRevision.append(revision_id)
         
-
-    with Client(transport=transport,
-        fetch_schema_from_transport=True) as delete_client:
-        
-        bible_upload = bible_loading.upload_bible(verses, bibleRevision)
-        fetch_version_query = queries.fetch_bible_version_by_abbreviation('"BLTEST"')
-        fetch_version = gql(fetch_version_query)
-        fetch_response = test_client.execute(fetch_version)
-        version_id = fetch_response["bibleVersion"][0]["id"]
-        delete_version_mutation = queries.delete_bible_version(version_id)
-        delete_version = gql(delete_version_mutation)
-        delete_response = delete_client.execute(delete_version)
-        delete_check = delete_response["delete_bibleVersion"]["returning"][0]["name"]
-
+    bible_upload = bible_loading.upload_bible(verses, bibleRevision)
+    fetch_version_query = queries.fetch_bible_version_by_abbreviation()
+    cursor.execute(fetch_version_query, ("BLTEST",))
+    fetch_response = cursor.fetchone()
+    version_id = fetch_response[0]
+    delete_version_mutation = queries.delete_bible_version()
+    cursor.execute(delete_version_mutation, (version_id,))
+    delete_response = cursor.fetchone()
+    delete_check = delete_response[0]
     
+    connection.commit()
+    cursor.close()
+    connection.close()
+
     assert bible_upload is True
     assert delete_check == "loading_test"

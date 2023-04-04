@@ -9,21 +9,21 @@ def text_dataframe(verses, bibleRevision):
     vref = pd.read_csv("fixtures/vref.txt", sep=" |:", names=my_col, engine="python")
 
     vref["text"] = verses
-    vref["bibleRevision"] = bibleRevision
+    vref["biblerevision"] = bibleRevision
 
     vref = vref.dropna()
 
     verse_id = []
     for index, row in vref.iterrows():
         ids = (
-            row["book"] + " " +
-            str(row["chapter"]) + ":" +
-            str(row["verse"])
-            )
+                row["book"] + " " +
+                str(row["chapter"]) + ":" +
+                str(row["verse"])
+                )
 
         verse_id.append(ids)
 
-    vref["verseReference"] = verse_id
+    vref["versereference"] = verse_id
     verseText = vref.drop(columns=["book", "chapter", "verse"])
 
     return verseText

@@ -2,12 +2,12 @@ __version__ = 'v2'
 
 import os
 from typing import List
+import re
 
 import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
-from gql import Client, gql
-from gql.transport.aiohttp import AIOHTTPTransport
+import psycopg2
 
 from models import Language, Script
 import queries
@@ -15,9 +15,6 @@ from key_fetch import get_secret
 
 
 router = fastapi.APIRouter()
-
-# Configure connection to the GraphQL endpoint
-headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -37,6 +34,18 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
     return True
 
 
+def postgres_conn():
+    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
+    connection = psycopg2.connect(
+            host=conn_list[3],
+            database=conn_list[4],
+            user=conn_list[1],
+            password=conn_list[2],
+            sslmode="require"
+            )
+
+    return connection
+
 
 @router.get("/language", dependencies=[Depends(api_key_auth)], response_model=List[Language])
 async def list_languages():
@@ -44,18 +53,19 @@ async def list_languages():
     Get a list of ISO 639-2 language codes and their English names. Any version added to the database 
     must have a language code that is in this list.
     """
-    transport = AIOHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"),
-        headers=headers,
-        )
+    
+    connection = postgres_conn()
+    cursor = connection.cursor()
     
     list_language = queries.get_languages_query()
 
-    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        language_query = gql(list_language)
-        language_result = await client.execute(language_query)
-    language_list = [Language(iso639=language["iso639"], name=language["name"]) for language in language_result["isoLanguage"]]
+    cursor.execute(list_language)
+    language_result = cursor.fetchall()
+    language_list = [Language(iso639=language[1], name=language[2]) for language in language_result]
     
+    cursor.close()
+    connection.close()
+
     return language_list
 
 
@@ -65,16 +75,17 @@ async def list_scripts():
     Get a list of ISO 15924 script codes and their English names. Any version added to the database
     must have a script code that is in this list.
     """
-    transport = AIOHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"),
-        headers=headers,
-        )
+
+    connection = postgres_conn()
+    cursor = connection.cursor()
     
     list_script = queries.get_scripts_query()
 
-    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        script_query = gql(list_script)
-        script_result = await client.execute(script_query)
-    script_list = [Script(iso15924=script["iso15924"], name=script["name"]) for script in script_result["isoScript"]]
+    cursor.execute(list_script)
+    script_result = cursor.fetchall()
+    script_list = [Script(iso15924=script[1], name=script[2]) for script in script_result]
+
+    cursor.close()
+    connection.close()
 
     return script_list

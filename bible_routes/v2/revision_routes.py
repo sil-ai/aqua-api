@@ -4,12 +4,12 @@ import os
 from datetime import date
 from typing import Optional, List
 from tempfile import NamedTemporaryFile
+import re
 
 import fastapi
 from fastapi import Depends, HTTPException, status, File, UploadFile
 from fastapi.security.api_key import APIKeyHeader
-from gql import Client, gql
-from gql.transport.aiohttp import AIOHTTPTransport
+import psycopg2
 import numpy as np
 
 import queries
@@ -19,9 +19,6 @@ from models import RevisionIn, RevisionOut
 
 
 router = fastapi.APIRouter()
-
-# Configure connection to the GraphQL endpoint
-headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -41,6 +38,19 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
     return True
 
 
+def postgres_conn():
+    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
+    connection = psycopg2.connect(
+            host=conn_list[3],
+            database=conn_list[4],
+            user=conn_list[1],
+            password=conn_list[2],
+            sslmode="require"
+            )
+
+    return connection
+
+
 @router.get("/revision", dependencies=[Depends(api_key_auth)], response_model=List[RevisionOut])
 async def list_revisions(version_id: Optional[int]=None):
     """
@@ -48,47 +58,56 @@ async def list_revisions(version_id: Optional[int]=None):
     
     If version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.
     """
-    transport = AIOHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"),
-        headers=headers,
-        )
-    
-    if version_id:
-        list_revision = queries.list_revisions_query(version_id)
-    else:
-        list_revision = queries.list_all_revisions_query()
+ 
+    connection = postgres_conn()
+    cursor = connection.cursor()
 
     list_versions = queries.list_versions_query()
 
-    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        version_query = gql(list_versions)
-        version_result = await client.execute(version_query)
+    cursor.execute(list_versions)
+    version_result = cursor.fetchall()
 
-        version_list = []
-        for version in version_result["bibleVersion"]:
-            version_list.append(version["id"])
+    version_list = []
+    for version in version_result:
+        version_list.append(version[0])
 
-        if version_id is not None and version_id not in version_list:
-            raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Version id is invalid"
-                    )
-        else:
-            revision_query = gql(list_revision)
-            revision_result = await client.execute(revision_query)
+    if version_id is not None and version_id not in version_list:
+        cursor.close()
+        connection.close()
 
-            revisions_data = []
-            for revision in revision_result["bibleRevision"]:
-                revision_data = RevisionOut(
-                        id=revision["id"],
-                        date=revision["date"],
-                        version_id=revision["bibleVersionByBibleversion"]["id"],
-                        version_abbreviation=revision["bibleVersionByBibleversion"]["abbreviation"],
-                        name=revision["name"],
-                        published=revision["published"]
+        raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Version id is invalid"
                 )
+    else:
+        if version_id:
+            list_revision = queries.list_revisions_query()
+            cursor.execute(list_revision, (version_id,))
+            revision_result = cursor.fetchall()
+        else:
+            list_revision = queries.list_all_revisions_query()
+            cursor.execute(list_revision)
+            revision_result = cursor.fetchall()
 
-                revisions_data.append(revision_data)
+        revisions_data = []
+        for revision in revision_result:
+            fetch_version_data = queries.fetch_version_data()
+            cursor.execute(fetch_version_data, (revision[2],))
+            version_data = cursor.fetchone()
+            
+            revision_data = RevisionOut(
+                    id=revision[0],
+                    date=revision[1],
+                    version_id=revision[2],
+                    version_abbreviation=version_data[0],
+                    name=revision[4],
+                    published=revision[3],
+            )
+
+            revisions_data.append(revision_data)
+
+    cursor.close()
+    connection.close()
 
     return revisions_data
 
@@ -100,19 +119,13 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
 
     The file must be a text file with each verse on a new line, in "vref" format. The text file must be 41,899 lines long.
     """
-    transport = AIOHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"),
-        headers=headers,
-        )
     
-    name = '"' + revision.name + '"' if revision.name else "null"
-    revision_date = '"' + str(date.today()) + '"'
-    revision_query = queries.insert_bible_revision(
-                        revision.version_id, 
-                        name, 
-                        revision_date, 
-                        str(revision.published).lower(),
-        )
+    connection = postgres_conn()
+    cursor = connection.cursor()
+    
+    name = revision.name if revision.name else None
+    revision_date = str(date.today())
+    revision_query = queries.insert_bible_revision()
 
     # Convert into bytes and save as a temporary file.
     contents = await file.read()
@@ -121,19 +134,25 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     temp_file.seek(0)
 
     # Create a corresponding revision in the database.
-    async with Client(transport=transport,
-        fetch_schema_from_transport=True) as client:
+    cursor.execute(revision_query, (
+        revision.version_id, name,
+        revision_date, revision.published,
+        ))
+    
+    returned_revision = cursor.fetchone()
+    connection.commit()
 
-        mutation = gql(revision_query)
+    fetch_version_data = queries.fetch_version_data()
+    cursor.execute(fetch_version_data, (revision.version_id,))
+    version_data = cursor.fetchone()
 
-        returned_revision = await client.execute(mutation)
-        revision_query = RevisionOut(
-                id=returned_revision["insert_bibleRevision"]["returning"][0]["id"],
-                date=returned_revision["insert_bibleRevision"]["returning"][0]["date"],
-                version_id=returned_revision["insert_bibleRevision"]["returning"][0]["bibleVersionByBibleversion"]["id"],
-                version_abbreviation=returned_revision["insert_bibleRevision"]["returning"][0]["bibleVersionByBibleversion"]["abbreviation"],
-                name=returned_revision["insert_bibleRevision"]["returning"][0]["name"],
-                published=returned_revision["insert_bibleRevision"]["returning"][0]["published"]
+    revision_query = RevisionOut(
+                id=returned_revision[0],
+                date=returned_revision[1],
+                version_id=returned_revision[2],
+                version_abbreviation=version_data[0],
+                name=returned_revision[4],
+                published=returned_revision[3]
         )
 
     # Parse the input Bible revision data.
@@ -152,6 +171,9 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
                 bibleRevision.append(revision_query.id)
     
     if not has_text:
+        cursor.close()
+        connection.close()
+
         raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="File has no text."
@@ -164,6 +186,9 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     temp_file.close()
     await file.close()
 
+    cursor.close()
+    connection.close()
+
     return revision_query
 
 
@@ -172,40 +197,45 @@ async def delete_revision(id: int):
     """
     Deletes a revision from the database. The revision must exist in the database.
     """
-    transport = AIOHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"),
-        headers=headers,
-        )
+    
+    connection = postgres_conn()
+    cursor = connection.cursor()
     
     fetch_revisions = queries.check_revisions_query()
-    delete_revision = queries.delete_revision_mutation(id)
-    delete_verses_mutation = queries.delete_verses_mutation(id)
+    delete_revision = queries.delete_revision_mutation()
+    delete_verses_mutation = queries.delete_verses_mutation()
 
-    async with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        revision_data = gql(fetch_revisions)
-        revision_result = await client.execute(revision_data)
+    cursor.execute(fetch_revisions)
+    revision_result = cursor.fetchall()
 
-        revisions_list = []
-        for revisions in revision_result["bibleRevision"]:
-            revisions_list.append(revisions["id"])
+    revisions_list = []
+    for revisions in revision_result:
+        revisions_list.append(revisions[0])
 
-        if id in revisions_list:
-            verse_mutation = gql(delete_verses_mutation)
-            await client.execute(verse_mutation)
+    if id in revisions_list:
+        cursor.execute(delete_verses_mutation, (id,))
 
-            revision_mutation = gql(delete_revision)
-            revision_result = await client.execute(revision_mutation)
+        cursor.execute(delete_revision, (id,))
+        connection.commit()
 
-            delete_response = ("Revision " +
-                str(
-                    revision_result["delete_bibleRevision"]["returning"][0]["id"]
-                    ) + " deleted successfully"
+        revision_result = cursor.fetchone()
+
+        delete_response = ("Revision " +
+            str(
+                revision_result[0]
+                ) + " deleted successfully"
+            )
+
+    else:
+        cursor.close()
+        connection.close()
+
+        raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Revision is invalid, this revision id does not exist."
                 )
 
-        else:
-            raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Revision is invalid, this revision id does not exist."
-                    )
+    cursor.close()
+    connection.close()
 
     return delete_response

@@ -9,7 +9,6 @@ import pytest
 import fastapi
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from gql.transport.requests import RequestsHTTPTransport
 from pydantic.error_wrappers import ValidationError
 
 import bible_routes.v2.language_routes as language_routes_v2
@@ -30,11 +29,6 @@ from models import VersionIn, RevisionIn, AssessmentIn
 
 version_name = 'App delete test'
 version_abbreviation = 'APP-DEL'
-
-headers = {'x-hasura-admin-secret': os.getenv("GRAPHQL_SECRET")}
-transport = RequestsHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"), verify=True, retries=3, headers=headers
-        )
 
 version_prefixes = ['v1', 'v2']
 

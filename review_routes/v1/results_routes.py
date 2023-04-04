@@ -3,12 +3,12 @@ __version__ = 'v1'
 import os
 from typing import List, Optional
 from enum import Enum
+import re
 
 import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
-from gql import Client, gql
-from gql.transport.requests import RequestsHTTPTransport
+import psycopg2
 
 import queries
 from key_fetch import get_secret
@@ -20,13 +20,6 @@ class aggType(Enum):
     verse = "verse"
 
 router = fastapi.APIRouter()
-
-# Configure connection to the GraphQL endpoint
-headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
-transport = RequestsHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"), verify=True,
-        retries=3, headers=headers
-        )
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -44,6 +37,19 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
         )
 
     return True
+
+
+def postgres_conn():
+    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
+    connection = psycopg2.connect(
+            host=conn_list[3],
+            database=conn_list[4],
+            user=conn_list[1],
+            password=conn_list[2],
+            sslmode="require"
+            )
+
+    return connection
 
 
 @router.get("/result", dependencies=[Depends(api_key_auth)], response_model=List[Result])
@@ -67,56 +73,83 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
                 detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results."
         )
 
+    connection = postgres_conn()
+    cursor = connection.cursor()
+
     list_assessments = queries.list_assessments_query()
 
     if aggregate == aggType['chapter']:
-        fetch_results = queries.get_results_chapter_agg_query(assessment_id)
+        fetch_results = queries.get_results_chapter_query_v1()
         table_name = "group_results_chapter"
+        assessment_tag = 2
+        vref_tag = 1
+        source_tag = 4
+        target_tag = 5
+        score_tag = 3
+        flag_tag = 6
+        note_tag = 7
     
     elif include_text:
-        fetch_results = queries.get_results_with_text_query(assessment_id)
+        fetch_results = queries.get_results_with_text_query_v1()
         table_name = "assessment_result_with_text"
-        
+        assessment_tag = 3
+        vref_tag = 9
+        source_tag = 4
+        target_tag = 5
+        score_tag = 3
+        flag_tag = 6
+        note_tag = 7
+
     else:
-        fetch_results = queries.get_results_query(assessment_id)
+        fetch_results = queries.get_results_query_v1()
         table_name = "assessmentResult"
+        assessment_tag = 1
+        vref_tag = 5
+        source_tag = 7
+        target_tag = 8
+        score_tag = 2
+        flag_tag = 3
+        note_tag = 4
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
+    cursor.execute(list_assessments)
+    assessment_response = cursor.fetchall()
 
-        fetch_assessments = gql(list_assessments)
-        assessment_response = client.execute(fetch_assessments)
+    assessment_data = {}
+    for assessment in assessment_response:
+        if assessment[0] not in assessment_data:
+            assessment_data[assessment[0]] = assessment[3]
 
-        assessment_data = {}
-        for assessment in assessment_response["assessment"]:
-            if assessment["id"] not in assessment_data:
-                assessment_data[assessment["id"]] = assessment["type"]
+    if assessment_id in assessment_data:
+        cursor.execute(fetch_results, (assessment_id,))
+        result_data = cursor.fetchall()
 
-        if assessment_id in assessment_data:
-            result_query = gql(fetch_results)
-            result_data = client.execute(result_query)
-
-            result_list = []
-            for result in result_data[table_name]:
-                results = Result(
-                        id=result["id"] if 'id' in result and result['id'] != 'null' else None,
-                        assessment_id=result["assessmentByAssessment"]["id"] if 'assessmentByAssessment' in result else result['assessment'],
-                        vref=result["vref"] if 'vref' in result else result['vref_group'],
-                        source=result["source"] if result["source"] != 'null' else None,
-                        target=str(result["target"]) if result["target"] != 'null' else None,
-                        score=result["score"],
-                        flag=result["flag"],
-                        note=result["note"],
-                        revision_text=result["revisionText"] if 'revisionText' in result else None,
-                        reference_text=result["referenceText"] if 'referenceText' in result else None,
-                    )
+        result_list = []
+        for result in result_data:
+            results = Result(
+                    id=result[0],
+                    assessment_id=result[assessment_tag],
+                    vref=result[vref_tag] if vref_tag is not None else None,
+                    source=result[source_tag],
+                    target=str(result[target_tag]) if result[target_tag] != 'null' else None,
+                    score=result[score_tag],
+                    flag=result[flag_tag] if result[flag_tag] else False,
+                    note=result[note_tag] if result[note_tag] else None,
+                    revision_text=result[10] if table_name == "assessment_result_with_text" else None,
+                    reference_text=result[11] if table_name == "assessment_result_with_text" else None,
+                    )    
                 
-                result_list.append(results)
+            result_list.append(results)
 
-        else:
-            raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Assessment Id invalid, this assessment does not exist"
+    else:
+        cursor.close()
+        connection.close()
 
-                    )
+        raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment Id invalid, this assessment does not exist"
+                )
+
+    cursor.close()
+    connection.close()
 
     return result_list

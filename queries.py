@@ -1,630 +1,351 @@
 def list_versions_query():
-    list_version = """
-                query {
-                  bibleVersion {
-                    id
-                    name
-                    abbreviation
-                    isoLanguageByIsolanguage {
-                      iso639
-                    }
-                    isoScriptByIsoscript {
-                      iso15924
-                    }
-                    rights
-                    forwardTranslation
-                    backTranslation
-                    machineTranslation
-                  }
-                }
-                """
+    list_version = 'SELECT * FROM "bibleVersion"'
         
     return list_version
 
 
-def add_version_query(name, isoLanguage, isoScript, 
-                abbreviation, rights, forwardTranslation, 
-                backTranslation, machineTranslation):
-    
+def add_version_query():
     add_version = """
-                  mutation {{
-                    insert_bibleVersion(objects: {{
-                      name: {}, isoLanguage: {}, isoScript: {}, 
-                      abbreviation: {}, rights: {}, 
-                      forwardTranslation: {}, backTranslation: {}, 
-                      machineTranslation: {}
-                    }}) {{
-                      returning {{
-                        id
-                        name
-                        abbreviation
-                        isoLanguageByIsolanguage {{
-                          name
-                        }}
-                        isoScriptByIsoscript {{
-                            name
-                        }}
-                        rights
-                        forwardTranslation
-                        backTranslation
-                        machineTranslation
-                      }}
-                    }}
-                  }}
-                  """.format(name, isoLanguage, 
-                          isoScript, abbreviation, rights, 
-                          forwardTranslation, backTranslation,
-                          machineTranslation
-                          )
+                INSERT INTO "bibleVersion" (
+                    name, isolanguage, isoscript,
+                    abbreviation, rights, forwardtranslation,
+                    backtranslation, machinetranslation)
+                  VALUES ((%s), (%s), (%s), (%s), (%s), (%s), (%s), (%s))
+                  RETURNING 
+                      id, name, isolanguage, isoscript,
+                      abbreviation, rights, forwardtranslation,
+                      backtranslation, machinetranslation;
+                """
 
     return add_version
 
 
-def check_version_query():
-    check_version = """
-                    query {
-                      bibleVersion {
-                        abbreviation
-                      }
-                    }
-                    """
-    
-    return check_version
-
-
-def delete_bible_version(id):
+def delete_bible_version():
     delete_version = """
-                     mutation {{
-                       delete_bibleVersion(where: {{
-                         id: {{
-                           _eq: {}
-                         }}
-                       }}) {{
-                         affected_rows
-                         returning {{
-                           name
-                         }}
-                       }}
-                     }}
-                     """.format(id)
+                    DELETE FROM  "bibleVersion"
+                      WHERE id=(%s)
+                    RETURNING name; 
+                    """
 
     return delete_version
 
 
-def delete_revision_mutation(bibleRevision):
+def delete_revision_mutation():
     delete_revision = """
-                    mutation {{
-                      delete_bibleRevision(where: {{
-                        id: {{
-                          _eq: {}
-                        }}
-                      }}) {{
-                        affected_rows
-                        returning {{
-                          id
-                        }}
-                      }}
-                    }}
-                    """.format(bibleRevision)
+                    DELETE FROM "bibleRevision"
+                      WHERE id=(%s)
+                    RETURNING id;
+                    """
 
     return delete_revision
 
 
 def check_revisions_query():
     check_revision = """
-                    query {
-                      bibleRevision {
-                        id
-                      }
-                    }
+                    SELECT id FROM "bibleRevision";
                     """
 
     return check_revision
 
 
-def delete_verses_mutation(bibleRevision):
-    delete_verses = """ 
-                    mutation {{
-                      delete_verseText(where: {{
-                        bibleRevision: {{
-                          _eq: {}
-                        }}
-                      }}) {{
-                        affected_rows
-                      }}
-                    }}
-                    """.format(bibleRevision)
+def delete_verses_mutation():
+    delete_verses = """
+                    DELETE FROM "verseText"
+                      WHERE biblerevision=(%s);
+                    """
     
     return delete_verses
 
 
-def insert_bible_revision(version, name, date, published):
+def insert_bible_revision():
     bible_revise = """
-                mutation {{
-                  insert_bibleRevision(objects: {{
-                    bibleVersion: {}, name: {}, date: {}, published: {}
-                    }}) {{
-                    returning {{
-                      id
-                      name
-                      date
-                      published
-                      bibleVersionByBibleversion {{
-                        id
-                        abbreviation
-                      }}
-                    }}
-                  }}
-                }}
-                """.format(version, name, date, published)
-        
+                INSERT INTO "bibleRevision" (
+                    bibleversion, name, date, published
+                    )
+                  VALUES ((%s), (%s), (%s), (%s))
+                RETURNING 
+                  id, date, bibleversion, published, name
+                """
+ 
     return bible_revise
 
 
-def fetch_bible_version_by_abbreviation(abbreviation):
+def fetch_bible_version_by_abbreviation():
     version_id = """
-                query {{
-                  bibleVersion(where: {{
-                    abbreviation: {{
-                      _eq: {}
-                    }}
-                  }}) {{
-                    id
-                    }}
-                }}
-                """.format(abbreviation)
+                SELECT * FROM "bibleVersion"
+                  WHERE abbreviation=(%s);
+                """
         
     return version_id
 
 
 def list_all_revisions_query():
     list_revisions = """
-                  query {
-                    bibleRevision {
-                      id
-                      date
-                      name
-                      published
-                      bibleVersionByBibleversion {
-                        id
-                        abbreviation
-                      }
-                    }
-                  }
-                  """
+                    SELECT * FROM "bibleRevision";
+                    """
 
     return list_revisions
 
 
-def list_revisions_query(version_id):
+def list_revisions_query():
     list_revisions = """
-                  query {{
-                    bibleRevision(where: {{
-                      bibleVersionByBibleversion: {{
-                        id: {{
-                          _eq: {}
-                        }}
-                      }}
-                    }}) {{
-                      id
-                      date
-                      name
-                      published
-                      bibleVersionByBibleversion {{
-                        id
-                        abbreviation
-                      }}
-                    }}
-                  }}
-                  """.format(version_id)
+                    SELECT * FROM "bibleRevision"
+                      WHERE bibleversion=(%s);
+                    """
 
     return list_revisions
 
 
-def get_chapter_query(revision, chapterReference):
+def version_data_revisions_query():
+    version_data_revisions = """
+                    SELECT id, abbreviation FROM "bibleVersion"
+                      WHERE id=(%s);
+                    """
+
+    return version_data_revisions
+
+
+def fetch_version_data():
+    fetch_version = """
+                    SELECT abbreviation FROM "bibleVersion"
+                      WHERE id=(%s);
+                    """
+
+    return fetch_version
+
+
+def get_chapter_query(chapterReference):
     get_chapter = """
-                query {{
-                  verseText(where: {{
-                    bibleRevision: {{
-                      _eq: {}
-                    }}, 
-                    verseReferenceByVersereference: {{
-                      chapterReference: {{
-                        fullChapterId: {{
-                          _eq: {}
-                        }}
-                      }}
-                    }}
-                  }}) {{
-                    id
-                    text
-                    verseReference
-                    bibleRevisionByBiblerevision {{
-                        id
-                    }}
-                  }}
-                }}
-                """.format(revision, chapterReference)
+                SELECT * FROM "verseText" "vt"
+                  INNER JOIN "verseReference" "vr" ON vt.versereference = fullverseid
+                    WHERE vr.chapter = {};
+                """.format(chapterReference)
 
     return get_chapter
 
 
-def get_verses_query(revision, verseReference):
+def get_verses_query(verseReference):
     get_verses = """
-              query {{
-                verseText(where: {{
-                  bibleRevision: {{
-                    _eq: {}
-                  }}, 
-                  verseReference: {{
-                    _eq: {}
-                  }}
-                }}) {{
-                  id
-                  text
-                  verseReference
-                  bibleRevisionByBiblerevision {{
-                    id
-                  }}
-                }}
-              }}
-              """.format(revision, verseReference)
+                SELECT * FROM "verseText"
+                  WHERE biblerevision=(%s)
+                    AND versereference={};
+                """.format(verseReference)
     
     return get_verses
 
 
-def get_book_query(revision, bookReference):
+def get_book_query():
     get_book = """
-            query {{
-              verseText(where: {{
-                bibleRevision: {{
-                  _eq: {}
-                }}, _and: {{
-                  verseReferenceByVersereference: {{
-                    chapterReference: {{
-                      bookReference: {{
-                        _eq: {}
-                      }}
-                    }}
-                  }}
-                }}
-              }}) {{
-                id
-                text
-                verseReference
-                bibleRevisionByBiblerevision {{
-                  id
-                }}
-                }}
-              }}
-            """.format(revision, bookReference)
+                SELECT * FROM "verseText" "vt"
+                  INNER JOIN "verseReference" "vr" ON vt.versereference = fullverseid
+                    WHERE vr.book = (%s);
+                """
 
     return get_book
 
 
-def get_text_query(revision):
+def get_text_query():
     get_text = """
-            query {{
-              verseText(where: {{
-                bibleRevision: {{
-                  _eq: {}
-                }}
-              }}) {{
-                id
-                text
-                verseReference
-                bibleRevisionByBiblerevision {{
-                  id
-                }}
-              }}
-            }}
-            """.format(revision)
+            SELECT * FROM "verseText"
+              WHERE biblerevision=(%s);
+            """
 
     return get_text
 
 
 def list_assessments_query():
     list_assessment = """
-                query MyQuery {
-                  assessment {
-                    id
-                    revision
-                    reference
-                    type
-                    requested_time
-                    start_time
-                    end_time
-                    status
-                  }
-                }
-                """
+                    SELECT * FROM "assessment";
+                    """
         
     return list_assessment
 
 
-def add_assessment_query(revision, reference, assessment_type, requested_time, status):
-    
+def add_assessment_query():
     add_assessment = """
-                  mutation MyMutation {{
-                    insert_assessment(objects: {{
-                      revision: {}, reference: {}, type: {},
-                      requested_time: {}, status: {}
-                    }}) {{
-                      returning {{
-                        id
-                        revision
-                        reference
-                        type
-                        requested_time
-                        status
-                      }}
-                    }}
-                  }}
-                  """.format(revision, reference, assessment_type, 
-                          requested_time, status 
-                          )
+                    INSERT INTO "assessment" (
+                        revision, reference, type,
+                        requested_time, status
+                        )
+                      VALUES ((%s), (%s), (%s), (%s), (%s))
+                    RETURNING 
+                      id, revision, reference, type, 
+                      requested_time, status;
+                    """
 
     return add_assessment
 
 
 def check_assessments_query():
     check_assessment = """
-                    query {
-                      assessment {
-                        id
-                      }
-                    }
+                    SELECT id FROM "assessment";
                     """
 
     return check_assessment
 
 
-def delete_assessment_mutation(assessment):
+def delete_assessment_mutation():
     delete_assessment = """
-                    mutation {{
-                      delete_assessment(where: {{
-                        id: {{
-                          _eq: {}
-                        }}
-                      }}) {{
-                        affected_rows
-                        returning {{
-                          id
-                        }}
-                      }}
-                    }}
-                    """.format(assessment)
+                        DELETE FROM "assessment"
+                          WHERE id=(%s)
+                        RETURNING id;
+                        """
 
     return delete_assessment
 
 
-def delete_assessment_results_mutation(assessment):
-    delete_assessment_results = """ 
-                    mutation {{
-                      delete_assessmentResult(where: {{
-                        assessment: {{
-                          _eq: {}
-                        }}
-                      }}) {{
-                        affected_rows
-                      }}
-                    }}
-                    """.format(assessment)
-    
+def delete_assessment_results_mutation():
+    delete_assessment_results = """
+                        DELETE FROM "assessmentResult"
+                          WHERE assessment=(%s);
+                        """
+
     return delete_assessment_results
 
 
-def get_results_query(assessment_id, limit='null', offset=0):
+def get_results_query():
     get_results = """
-                query {{
-                  assessmentResult(
-                    limit: {}
-                    offset: {}
-                    where: {{
-                      assessment: {{
-                        _eq: {}
-                      }}
-                    }}
-                  ) 
-                  
-                  {{
-                    id
-                    score
-                    flag
-                    note
-                    vref
-                    source
-                    target
-                    assessmentByAssessment {{
-                      id
-                    }}
-                  }}
-                  assessmentResult_aggregate(
-                    where: {{
-                        assessment: {{
-                            _eq: {}
-                        }}
-                    }}
-                  ) {{
-    aggregate {{
-      count
-    }}
-  }}
-                }}
-                """.format(limit, offset, assessment_id, assessment_id)
+                SELECT * FROM "assessmentResult"
+                  WHERE assessment=(%s)
+                  LIMIT (%s)
+                  OFFSET (%s);
+                """
 
     return get_results
 
 
-def get_results_chapter_agg_query(assessment_id, limit='null', offset=0):
-    get_results_chapter_agg = """
-                query {{
-                    group_results_chapter(
-                        limit: {}
-                        offset: {}
-                        where: {{assessment: {{
-                            _eq: {}
-                            }}
-                            }}
-                            ) {{
-                    score
-                    vref_group
-                    assessment
-                    source
-                    target
-                    note
-                    flag
-                    }}
-                
-                group_results_chapter_aggregate(
-                    where: {{
-                        assessment: {{
-                            _eq: {}
-                        }}
-                    }}
-                  ) {{
-    aggregate {{
-      count
-    }}
-  }}
-                }}
-                """.format(limit, offset, assessment_id, assessment_id)
+def get_results_agg_query():
+    get_results_agg = """
+                SELECT COUNT(id)
+                  FROM "assessmentResult"
+                    WHERE assessment=(%s);
+                """
+
+    return get_results_agg
+
+
+def get_results_chapter_query():
+    get_results_chapter = """
+                SELECT * FROM "group_results_chapter"
+                  WHERE assessment=(%s)
+                  ORDER BY id
+                  LIMIT (%s)
+                  OFFSET (%s);
+                """
     
-    return get_results_chapter_agg
+    return get_results_chapter
     
 
-def get_results_book_agg_query(assessment_id, limit='null', offset=0):
+def get_results_chapter_agg_query():
+    get_results_chapter_agg = """
+                SELECT COUNT(id)
+                  FROM "group_results_chapter"
+                    WHERE assessment=(%s);
+                """
+
+    return get_results_chapter_agg
+
+
+def get_results_book_query():
+    get_results_book = """
+                SELECT * FROM "group_results_book"
+                  WHERE assessment=(%s)
+                  ORDER BY id
+                  LIMIT (%s)
+                  OFFSET (%s);
+                """
+
+    return get_results_book
+
+
+def get_results_book_agg_query():
     get_results_book_agg = """
-                query {{
-                    group_results_book(
-                        limit: {}
-                        offset: {}
-                        where: {{assessment: {{
-                            _eq: {}
-                            }}
-                            }}
-                            ) {{
-                    score
-                    vref_group
-                    assessment
-                    source
-                    target
-                    note
-                    flag
-                    }}
-                
-                group_results_book_aggregate(
-                    where: {{
-                        assessment: {{
-                            _eq: {}
-                        }}
-                    }}
-                  ) {{
-    aggregate {{
-      count
-    }}
-  }}
-                }}
-                """.format(limit, offset, assessment_id, assessment_id)
+                SELECT COUNT(id)
+                  FROM "group_results_book"
+                    WHERE assessment=(%s);
+                """
 
     return get_results_book_agg
 
 
-def get_results_text_agg_query(assessment_id, limit='null', offset=0):
+def get_results_text_query():
+    get_results_text = """
+                SELECT * FROM "group_results_text"
+                   WHERE assessment=(%s)
+                    ORDER BY id
+                   LIMIT (%s)
+                   OFFSET (%s);
+                """
+
+    return get_results_text
+
+
+def get_results_text_agg_query():
     get_results_text_agg = """
-                query {{
-                    group_results_text(
-                        limit: {}
-                        offset: {}
-                        where: {{assessment: {{
-                            _eq: {}
-                            }}
-                            }}
-                            ) {{
-                    score
-                    assessment
-                    source
-                    target
-                    note
-                    flag
-                    }}
-                
-                group_results_text_aggregate(
-                    where: {{
-                        assessment: {{
-                            _eq: {}
-                        }}
-                    }}
-                  ) {{
-    aggregate {{
-      count
-    }}
-  }}
-                }}
-                """.format(limit, offset, assessment_id, assessment_id)
+                SELECT COUNT(id)
+                  FROM "group_results_text"
+                    WHERE assessment=(%s);
+                """
 
     return get_results_text_agg
 
 
-def get_results_with_text_query(assessment_id, limit='null', offset=0):
+def get_results_with_text_query():
     get_results_with_text = """
-                query {{
-                    assessment_result_with_text(
-                        limit: {}
-                        offset: {}
-                        where: {{assessment: {{
-                            _eq: {}
-                            }}
-                            }}
-                            ) {{
-                    score
-                    vref
-                    assessment
-                    source
-                    target
-                    note
-                    flag
-                    revisionText
-                    referenceText
-                    }}
-                    assessment_result_with_text_aggregate(
-                    where: {{
-                        assessment: {{
-                            _eq: {}
-                        }}
-                    }}
-                  ) {{
-    aggregate {{
-      count
-    }}
-  }}
-                }}
-                """.format(limit, offset, assessment_id, assessment_id)
+                SELECT * FROM "assessment_result_with_text"
+                  WHERE assessment=(%s)
+                  ORDER BY id
+                  LIMIT (%s)
+                  OFFSET (%s);
+                """
 
     return get_results_with_text
 
 
-def get_scripts_query():
-    iso_scripts = """
-        query list_scripts {
-          isoScript {
-            iso15924
-            name
-          }
-        }
-        """
+def get_results_with_text_agg_query():
+    get_results_with_text_agg = """
+                SELECT COUNT(id)
+                  FROM "assessment_result_with_text"
+                    WHERE assessment=(%s);
+                """
 
+    return get_results_with_text_agg
+
+
+def get_scripts_query():
+    iso_scripts = 'SELECT * FROM "isoScript";'
+        
     return iso_scripts
 
 
 def get_languages_query():
-    iso_languages = """
-        query list_languages {
-          isoLanguage {
-            iso639
-            name
-          }
-        }
-        """
-    
+    iso_languages = 'SELECT * FROM "isoLanguage";'
+         
     return iso_languages
+
+#delete when v1 is removed
+def get_results_query_v1():
+    get_results = """
+                SELECT * FROM "assessmentResult"
+                  WHERE assessment=(%s);
+                """
+
+    return get_results
+
+
+def get_results_chapter_query_v1():
+    get_results_chapter = """
+                SELECT * FROM "group_results_chapter"
+                  WHERE assessment=(%s);
+                """
+    
+    return get_results_chapter
+
+
+def get_results_with_text_query_v1():
+    get_results_with_text = """
+                SELECT * FROM "assessment_result_with_text"
+                  WHERE assessment=(%s);
+                """
+
+    return get_results_with_text

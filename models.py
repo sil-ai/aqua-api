@@ -36,7 +36,7 @@ class RevisionIn(BaseModel):
 class RevisionOut(BaseModel):
     id: int
     version_id: int
-    version_abbreviation: str
+    version_abbreviation: Optional[str] = None
     date: Optional[datetime.date] = None
     name: Optional[str] = None
     published: Optional[bool] = False
@@ -98,7 +98,7 @@ class Result_v1(BaseModel):
 class Result_v2(BaseModel):
     id: Optional[int] = None
     assessment_id: int
-    vref: str
+    vref: Optional[str] = None
     source: Optional[str] = None
     target: Optional[List[dict]] = None
     score: float
