@@ -47,6 +47,7 @@ cursor.execute(revision_query, (
     revision_date, False
     ))
 
+connection.commit()
 revision_response = cursor.fetchone()
 revision_id = revision_response[0]    
 
@@ -138,7 +139,7 @@ def test_upload_bible():
     delete_response = cursor.fetchone()
     delete_check = delete_response[0]
     
-    cursor.commit()
+    connection.commit()
     cursor.close()
     connection.close()
 
