@@ -144,7 +144,7 @@ async def get_book(revision: int, verse: str):
         books_data.append(verse_data)
 
     cursor.close()
-    connecrion.close()
+    connection.close()
 
     return books_data
 
@@ -156,21 +156,27 @@ async def get_text(revision: int):
 
     (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
     """
-    text_query = queries.get_text_query(revision)
+    
+    connection = postgres_conn()
+    cursor = connection.cursor()
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        query = gql(text_query)
-        result = client.execute(query)
+    text_query = queries.get_text_query()
+
+    cursor.execute(text_query, (revision,))
+    result = cursor.fetchall()
 
     texts_data = []
-    for verse in result["verseText"]:
+    for verse in result:
         verse_data = VerseText(
-                id=verse["id"],
-                text=verse["text"],
-                verseReference=verse["verseReference"],
-                revision_id=verse["bibleRevisionByBiblerevision"]["id"],
+                id=verse[0],
+                text=verse[1],
+                verseReference=verse[3],
+                revision_id=verse[2],
             )
 
         texts_data.append(verse_data)
+
+    cursor.close()
+    connection.close()
 
     return texts_data
