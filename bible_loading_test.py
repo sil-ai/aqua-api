@@ -43,7 +43,7 @@ revision_query = queries.insert_bible_revision()
 cursor.execute(revision_query, (
     version_id, None,
     revision_date, False
-    )
+    ))
 
 revision_response = cursor.fetchone()
 revision_id = revision_response[0]    
