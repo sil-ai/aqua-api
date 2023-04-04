@@ -22,16 +22,18 @@ connection = psycopg2.connect(
 cursor = connection.cursor()
 
 version_query = queries.add_version_query()
+
+fetch_version_query = queries.fetch_bible_version_by_abbreviation()
  
-cursor.execute(fetch_version_query, (
+cursor.execute(version_query, (
     "loading_test", "eng", "Latn", "BLTEST",
     None, None, None, False
     )
 )
+cursor.close()
 
-cursor.commit()
 
-fetch_version_query = queries.fetch_bible_version_by_abbreviation()
+cursor = connection.cursor()
 
 cursor.execute(fetch_version_query, ("BLTEST",))
 fetch_version_data = cursor.fetchone()
@@ -83,7 +85,7 @@ def test_text_dataframe():
 
     status = 0
     for _, row in verseText.iterrows():
-        if row["verseReference"] in test_data["locations"]:
+        if row["versereference"] in test_data["locations"]:
             location = test_data["locations"].index(row["versereference"])
             if row["text"] in test_data["text"][location]:
                 status += 1
@@ -101,8 +103,8 @@ def test_text_loading():
     
     verse_dict = {
         "text": ["TEST"], 
-        "bibleRevision": [revision_id], 
-        "verseReference": ["GEN 1:1"]
+        "biblerevision": [revision_id], 
+        "versereference": ["GEN 1:1"]
         }
 
     verseText = pd.DataFrame(verse_dict)
@@ -132,7 +134,7 @@ def test_upload_bible():
     fetch_response = cursor.fetchone()
     version_id = fetch_response[0]
     delete_version_mutation = queries.delete_bible_version()
-    cursor.execute(delete_version_mutation, (version_id,)
+    cursor.execute(delete_version_mutation, (version_id,))
     delete_response = cursor.fetchone()
     delete_check = delete_response[0]
     
