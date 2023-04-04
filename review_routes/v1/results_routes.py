@@ -132,10 +132,10 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
                     source=result[source_tag],
                     target=str(result[target_tag]) if result[target_tag] != 'null' else None,
                     score=result[score_tag],
-                    flag=result[flag_tag],
-                    note=result[note_tag],
+                    flag=result[flag_tag] if result[flag_tag] else False,
+                    note=result[note_tag] if result[note_tag] else None,
                     revision_text=result[10] if table_name == "assessment_result_with_text" else None,
-                    reference_text=result[11] if table_name == "assessment_result_with_text" in result else None,
+                    reference_text=result[11] if table_name == "assessment_result_with_text" else None,
                     )    
                 
             result_list.append(results)
