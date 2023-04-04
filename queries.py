@@ -116,9 +116,9 @@ def fetch_version_data():
 
 def get_chapter_query(chapterReference):
     get_chapter = """
-                SELECT * FROM "verseText"
-                  WHERE biblerevision=(%s)
-                    AND chapterreference={};
+                SELECT * FROM "verseText" "vt"
+                  INNER JOIN "verseReference" "vr" ON vt.versereference = fullverseid
+                    WHERE vr.chapter = {};
                 """.format(chapterReference)
 
     return get_chapter
@@ -136,10 +136,10 @@ def get_verses_query(verseReference):
 
 def get_book_query():
     get_book = """
-            SELECT * FROM "verseText"
-              WHERE biblerevision=(%s)
-                AND bookreference=(%s);
-            """
+                SELECT * FROM "verseText" "vt"
+                  INNER JOIN "verseReference" "vr" ON vt.versereference = fullverseid
+                    WHERE vr.book = (%s);
+                """
 
     return get_book
 

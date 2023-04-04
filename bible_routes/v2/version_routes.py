@@ -145,11 +145,11 @@ async def delete_version(id: int):
     for version in version_result:
         version_list.append(version[0])
 
-    cursor.execute(fetch_revisions, (id, id,))
+    cursor.execute(fetch_revisions, (id,))
     revision_result = cursor.fetchall()
 
     if id in version_list:
-        cursor.execute(fetch_revisions, (id, id,))
+        cursor.execute(fetch_revisions, (id,))
         revision_result = cursor.fetchall()
 
         for revision in revision_result:

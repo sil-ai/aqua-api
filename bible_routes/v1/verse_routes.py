@@ -2,12 +2,12 @@ __version__ = 'v1'
 
 import os
 from typing import List
+import re
 
 import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
-from gql import Client, gql
-from gql.transport.requests import RequestsHTTPTransport
+import psycopg2
  
 import queries
 from key_fetch import get_secret
@@ -15,13 +15,6 @@ from models import VerseText
 
 
 router = fastapi.APIRouter()
-
-# Configure connection to the GraphQL endpoint
-headers = {"x-hasura-admin-secret": os.getenv("GRAPHQL_SECRET")}
-transport = RequestsHTTPTransport(
-        url=os.getenv("GRAPHQL_URL"), verify=True,
-        retries=3, headers=headers
-        )
 
 api_keys = get_secret(
         os.getenv("KEY_VAULT"),
@@ -41,6 +34,18 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
     return True
 
 
+def postgres_conn():
+    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
+    connection = psycopg2.connect(
+            host=conn_list[3],
+            database=conn_list[4],
+            user=conn_list[1],
+            password=conn_list[2]
+            )
+
+    return connection
+
+
 @router.get("/chapter", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
 async def get_chapter(revision_id: int, book: str, chapter: int):
     """
@@ -48,23 +53,29 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
 
     (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
     """
-    chapterReference = '"' + book + " " + str(chapter) + '"'
-    get_chapters = queries.get_chapter_query(revision_id, chapterReference)
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        query = gql(get_chapters)
-        result = client.execute(query)
+    connection = postgres_conn()
+    cursor = connection.cursor()
+
+    chapterReference = "'" + book + " " + str(chapter) + "'"
+    get_chapters = queries.get_chapter_query(chapterReference)
+
+    cursor.execute(get_chapters, (revision_id,))
+    result = cursor.fetchall()
 
     chapter_data = []
-    for verse in result["verseText"]:
+    for verse in result:
         verse_data = VerseText(
-            id=verse["id"],
-            text=verse["text"],
-            verseReference=verse["verseReference"],
-            revision_id=verse["bibleRevisionByBiblerevision"]["id"],
+            id=verse[0],
+            text=verse[1],
+            verseReference=verse[3],
+            revision_id=verse[2],
         )
 
         chapter_data.append(verse_data)
+
+    cursor.close()
+    connection.close()
 
     return chapter_data
 
@@ -76,23 +87,29 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
 
     (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
     """
+
+    connection = postgres_conn()
+    cursor = connection.cursor()
+
     verseReference = (
-            '"' + book + " " + str(chapter) + ":" + str(verse) + '"'
+            "'" + book + " " + str(chapter) + ":" + str(verse) + "'"
             )   
     
-    get_verses = queries.get_verses_query(revision_id, verseReference)
+    get_verses = queries.get_verses_query(verseReference)
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        query = gql(get_verses)
-        result = client.execute(query)
-        verse = result["verseText"][0]  # There should only be one result
+    cursor.execute(get_verses, (revision_id,))
+    result = cursor.fetchall()
+    verse = result[0]  # There should only be one result
 
     verse_data = VerseText(
-        id=verse["id"],
-        text=verse["text"],
-        verseReference=verse["verseReference"],
-        revision_id=verse["bibleRevisionByBiblerevision"]["id"],
+        id=verse[0],
+        text=verse[1],
+        verseReference=verse[3],
+        revision_id=verse[2],
     )
+
+    cursor.close()
+    connection.close()
 
     return verse_data
 
@@ -104,23 +121,30 @@ async def get_book(revision: int, verse: str):
 
     (In future versions, this could return the book, chapter and verse rather than just the reference, if that was helpful.)
     """
-    bookReference = '"' + verse + '"'
-    get_book_data = queries.get_book_query(revision, bookReference)
+    
+    connection = postgres_conn()
+    cursor = connection.cursor()
 
-    with Client(transport=transport, fetch_schema_from_transport=True) as client:
-        query = gql(get_book_data)
-        result = client.execute(query)
+    bookReference = '"' + verse + '"'
+    get_book_data = queries.get_book_query()
+
+
+    cursor.execute(get_book_data, (revision, bookReference,))
+    result = cursor.fetchall()
 
     books_data = []
-    for verse in result["verseText"]:
+    for verse in result:
         verse_data = VerseText(
-                id=verse["id"],
-                text=verse["text"],
-                verseReference=verse["verseReference"],
-                revision_id=verse["bibleRevisionByBiblerevision"]["id"],
+                id=verse[0],
+                text=verse[1],
+                verseReference=verse[3],
+                revision_id=verse[2],
             )
 
         books_data.append(verse_data)
+
+    cursor.close()
+    connecrion.close()
 
     return books_data
 

@@ -21,19 +21,9 @@ def text_dataframe(verses, bibleRevision):
                 str(row["verse"])
                 )
 
-        book_id = (row["book"])
-
-        chapter_id = (
-                row["book"] + " " +
-                str(row["chapter"])
-                )
-
         verse_id.append(ids)
 
     vref["versereference"] = verse_id
-    vref["bookreference"] = book_id
-    vref["chapterreference"] = chapter_id
-
     verseText = vref.drop(columns=["book", "chapter", "verse"])
 
     return verseText

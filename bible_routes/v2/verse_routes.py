@@ -66,6 +66,8 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
 
     cursor.execute(get_chapters, (revision_id,))
     result = cursor.fetchall()
+    
+    print(result[0])
 
     chapter_data = []
     for verse in result:

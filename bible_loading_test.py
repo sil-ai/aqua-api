@@ -102,9 +102,7 @@ def test_text_loading():
     verse_dict = {
         "text": ["TEST"], 
         "bibleRevision": [revision_id], 
-        "verseReference": ["GEN 1:1"],
-        "bookreference": ["GEN"],
-        "chapterreference": ["GEN 1"]
+        "verseReference": ["GEN 1:1"]
         }
 
     verseText = pd.DataFrame(verse_dict)
