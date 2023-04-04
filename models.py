@@ -98,7 +98,7 @@ class Result_v1(BaseModel):
 class Result_v2(BaseModel):
     id: Optional[int] = None
     assessment_id: int
-    vref: str
+    vref: Optional[str] = None
     source: Optional[str] = None
     target: Optional[List[dict]] = None
     score: float

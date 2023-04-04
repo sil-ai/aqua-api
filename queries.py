@@ -228,6 +228,7 @@ def get_results_chapter_query():
     get_results_chapter = """
                 SELECT * FROM "group_results_chapter"
                   WHERE assessment=(%s)
+                  ORDER BY id
                   LIMIT (%s)
                   OFFSET (%s);
                 """
@@ -249,6 +250,7 @@ def get_results_book_query():
     get_results_book = """
                 SELECT * FROM "group_results_book"
                   WHERE assessment=(%s)
+                  ORDER BY id
                   LIMIT (%s)
                   OFFSET (%s);
                 """
@@ -270,6 +272,7 @@ def get_results_text_query():
     get_results_text = """
                 SELECT * FROM "group_results_text"
                    WHERE assessment=(%s)
+                    ORDER BY id
                    LIMIT (%s)
                    OFFSET (%s);
                 """
@@ -291,6 +294,7 @@ def get_results_with_text_query():
     get_results_with_text = """
                 SELECT * FROM "assessment_result_with_text"
                   WHERE assessment=(%s)
+                  ORDER BY id
                   LIMIT (%s)
                   OFFSET (%s);
                 """
