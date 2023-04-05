@@ -94,11 +94,11 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
         table_name = "assessment_result_with_text"
         assessment_tag = 3
         vref_tag = 9
-        source_tag = 4
-        target_tag = 5
-        score_tag = 3
-        flag_tag = 6
-        note_tag = 7
+        source_tag = 5
+        target_tag = 6
+        score_tag = 4
+        flag_tag = 7
+        note_tag = 8
 
     else:
         fetch_results = queries.get_results_query_v1()

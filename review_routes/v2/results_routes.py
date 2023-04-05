@@ -155,11 +155,11 @@ async def get_result(
         table_name = "assessment_result_with_text"
         assessment_tag = 3
         vref_tag = 9
-        source_tag = 4
-        target_tag = 5
-        score_tag = 3
-        flag_tag = 6
-        note_tag = 7
+        source_tag = 5
+        target_tag = 6
+        score_tag = 4
+        flag_tag = 7
+        note_tag = 8
 
     else:
         fetch_results = queries.get_results_query()
@@ -195,18 +195,18 @@ async def get_result(
     result_list = []
     for result in result_data:
         results = Result(
-                id=result[0],
-                assessment_id=result[assessment_tag],
-                vref=result[vref_tag] if vref_tag is not None else None,
-                source=result[source_tag],
-                target=[{key: value} for key, value in ast.literal_eval(str(result[target_tag])).items()] if ast.literal_eval(str(result[target_tag])) and result["target"] is not None else None,
-                score=result[score_tag],
-                flag=result[flag_tag] if result[flag_tag] else False,
-                note=result[note_tag] if result[note_tag] else None,
-                revision_text=result[10] if table_name == "assessment_result_with_text" else None,
-                reference_text=result[11] if table_name == "assessment_result_with_text" else None,
-                )
-        
+            id=result[0],
+            assessment_id=result[assessment_tag],
+            vref=result[vref_tag] if vref_tag is not None else None,
+            source=result[source_tag],
+            target=[{key: value} for key, value in ast.literal_eval(str(result[target_tag])).items()] if ast.literal_eval(str(result[target_tag])) and result[target_tag] is not None else None,
+            score=result[score_tag],
+            flag=result[flag_tag] if result[flag_tag] else False,
+            note=result[note_tag] if result[note_tag] else None,
+            revision_text=result[10] if table_name == "assessment_result_with_text" else None,
+            reference_text=result[11] if table_name == "assessment_result_with_text" else None,
+            )
+    
         result_list.append(results)
         
     total_count = result_agg_data[0][0]
