@@ -3,7 +3,7 @@ import pytest
 
 __version__ = 'v2'
 
-from prepare_semsim_data import process_idx, prepare_data
+from prepare_semsim_data import prepare_data
 
 @pytest.fixture(scope='session')
 def combined_bible():
