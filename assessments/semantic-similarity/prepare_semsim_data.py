@@ -90,9 +90,10 @@ def prepare_data(df):
             combined_verse =  ''.join(df.loc[start_ref:end_ref,:]['tar'].to_list())
             combined_ref = f'{chapter}:{start}-{end}'
             #update the dataframe
-            df1.loc[start_ref,:] = combined_verse
+            #!!! Make sure not to update src!
+            df1.loc[start_ref, 'tar'] = combined_verse
             df1.rename(index={start_ref:combined_ref},inplace=True)
-    return df1[~ df1['src'].str.contains('<range>')]
+    return df1#df1[~ df1['src'].str.contains('<range>')]
 
 if __name__ == '__main__':
     df = pd.read_pickle('./fixtures/bible_combined.pkl')
