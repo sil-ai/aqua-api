@@ -164,6 +164,8 @@ async def get_result(
         score_tag = 4
         flag_tag = 7
         note_tag = 8
+        revision_tag = 10
+        reference_tag = 11
 
     else:
         fetch_results = queries.get_results_query()
@@ -171,8 +173,8 @@ async def get_result(
         table_name = "assessmentResult"
         assessment_tag = 1
         vref_tag = 5
-        source_tag = 7
-        target_tag = 8
+        source_tag = 6
+        target_tag = 7
         score_tag = 2
         flag_tag = 3
         note_tag = 4
@@ -203,8 +205,8 @@ async def get_result(
             score=result[score_tag],
             flag=result[flag_tag] if result[flag_tag] else False,
             note=result[note_tag] if result[note_tag] else None,
-            revision_text=result[10] if table_name == "assessment_result_with_text" else None,
-            reference_text=result[11] if table_name == "assessment_result_with_text" else None,
+            revision_text=result[revision_tag] if table_name == "assessment_result_with_text" else None,
+            reference_text=result[reference_tag] if table_name == "assessment_result_with_text" else None,
             )
     
         result_list.append(results)
