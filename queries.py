@@ -206,9 +206,9 @@ def delete_assessment_results_mutation():
 def get_results_query():
     get_results = """
                 SELECT * FROM "assessmentResult"
-                  WHERE assessment=(%s)
-                  LIMIT (%s)
-                  OFFSET (%s);
+                  WHERE assessment=($1)
+                  LIMIT ($2)
+                  OFFSET ($3);
                 """
 
     return get_results
@@ -218,7 +218,7 @@ def get_results_agg_query():
     get_results_agg = """
                 SELECT COUNT(id)
                   FROM "assessmentResult"
-                    WHERE assessment=(%s);
+                    WHERE assessment=($1);
                 """
 
     return get_results_agg
@@ -227,10 +227,10 @@ def get_results_agg_query():
 def get_results_chapter_query():
     get_results_chapter = """
                 SELECT * FROM "group_results_chapter"
-                  WHERE assessment=(%s)
+                  WHERE assessment=($1)
                   ORDER BY id
-                  LIMIT (%s)
-                  OFFSET (%s);
+                  LIMIT ($2)
+                  OFFSET ($3);
                 """
     
     return get_results_chapter
@@ -240,7 +240,7 @@ def get_results_chapter_agg_query():
     get_results_chapter_agg = """
                 SELECT COUNT(id)
                   FROM "group_results_chapter"
-                    WHERE assessment=(%s);
+                    WHERE assessment=($1);
                 """
 
     return get_results_chapter_agg
@@ -249,10 +249,10 @@ def get_results_chapter_agg_query():
 def get_results_book_query():
     get_results_book = """
                 SELECT * FROM "group_results_book"
-                  WHERE assessment=(%s)
+                  WHERE assessment=($1)
                   ORDER BY id
-                  LIMIT (%s)
-                  OFFSET (%s);
+                  LIMIT ($2)
+                  OFFSET ($3);
                 """
 
     return get_results_book
@@ -262,7 +262,7 @@ def get_results_book_agg_query():
     get_results_book_agg = """
                 SELECT COUNT(id)
                   FROM "group_results_book"
-                    WHERE assessment=(%s);
+                    WHERE assessment=($1);
                 """
 
     return get_results_book_agg
@@ -271,10 +271,10 @@ def get_results_book_agg_query():
 def get_results_text_query():
     get_results_text = """
                 SELECT * FROM "group_results_text"
-                   WHERE assessment=(%s)
+                   WHERE assessment=($1)
                     ORDER BY id
-                   LIMIT (%s)
-                   OFFSET (%s);
+                   LIMIT ($2)
+                   OFFSET ($3);
                 """
 
     return get_results_text
@@ -284,7 +284,7 @@ def get_results_text_agg_query():
     get_results_text_agg = """
                 SELECT COUNT(id)
                   FROM "group_results_text"
-                    WHERE assessment=(%s);
+                    WHERE assessment=($1);
                 """
 
     return get_results_text_agg
@@ -293,10 +293,10 @@ def get_results_text_agg_query():
 def get_results_with_text_query():
     get_results_with_text = """
                 SELECT * FROM "assessment_result_with_text"
-                  WHERE assessment=(%s)
+                  WHERE assessment=($1)
                   ORDER BY id
-                  LIMIT (%s)
-                  OFFSET (%s);
+                  LIMIT ($2)
+                  OFFSET ($3);
                 """
 
     return get_results_with_text
@@ -306,7 +306,7 @@ def get_results_with_text_agg_query():
     get_results_with_text_agg = """
                 SELECT COUNT(id)
                   FROM "assessment_result_with_text"
-                    WHERE assessment=(%s);
+                    WHERE assessment=($1);
                 """
 
     return get_results_with_text_agg

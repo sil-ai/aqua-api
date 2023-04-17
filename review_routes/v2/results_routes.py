@@ -9,7 +9,7 @@ import ast
 import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
-import psycopg2
+import asyncpg
 
 import queries
 from key_fetch import get_secret
@@ -41,14 +41,13 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
     return True
 
 
-def postgres_conn():
+async def postgres_conn():
     conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
-    connection = psycopg2.connect(
+    connection = await asyncpg.connect(
             host=conn_list[3],
             database=conn_list[4],
             user=conn_list[1],
             password=conn_list[2],
-            sslmode="require"
             )
 
     return connection
@@ -100,8 +99,13 @@ async def get_result(
                 detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results."
         )
     
-    connection = postgres_conn()
-    cursor = connection.cursor()
+    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
+    connection = await asyncpg.connect(
+            host=conn_list[3],
+            database=conn_list[4],
+            user=conn_list[1],
+            password=conn_list[2],
+            )
 
     list_assessments = queries.list_assessments_query()
 
@@ -160,6 +164,8 @@ async def get_result(
         score_tag = 4
         flag_tag = 7
         note_tag = 8
+        revision_tag = 10
+        reference_tag = 11
 
     else:
         fetch_results = queries.get_results_query()
@@ -167,19 +173,17 @@ async def get_result(
         table_name = "assessmentResult"
         assessment_tag = 1
         vref_tag = 5
-        source_tag = 7
-        target_tag = 8
+        source_tag = 6
+        target_tag = 7
         score_tag = 2
         flag_tag = 3
         note_tag = 4
 
-    cursor.execute(list_assessments)
-    assessment_response = cursor.fetchall()
-
-    assessment_data = {}
+    assessment_response = await connection.fetch(list_assessments)
+    assessment_data = []
     for assessment in assessment_response:
-        if assessment[0] not in assessment_data:
-            assessment_data[assessment[0]] = assessment[3]
+        if assessment['id'] not in assessment_data:
+            assessment_data.append(assessment['id'])
 
     if assessment_id not in assessment_data:
         raise HTTPException(
@@ -187,10 +191,8 @@ async def get_result(
             detail="Assessment not found."
             )
 
-    cursor.execute(fetch_results, (assessment_id, limit, offset,))
-    result_data = cursor.fetchall()
-    cursor.execute(fetch_results_agg, (assessment_id,))
-    result_agg_data = cursor.fetchall()
+    result_data = await connection.fetch(fetch_results, assessment_id, limit, offset)
+    result_agg_data = await connection.fetch(fetch_results_agg, assessment_id)
 
     result_list = []
     for result in result_data:
@@ -203,12 +205,14 @@ async def get_result(
             score=result[score_tag],
             flag=result[flag_tag] if result[flag_tag] else False,
             note=result[note_tag] if result[note_tag] else None,
-            revision_text=result[10] if table_name == "assessment_result_with_text" else None,
-            reference_text=result[11] if table_name == "assessment_result_with_text" else None,
+            revision_text=result[revision_tag] if table_name == "assessment_result_with_text" else None,
+            reference_text=result[reference_tag] if table_name == "assessment_result_with_text" else None,
             )
     
         result_list.append(results)
         
     total_count = result_agg_data[0][0]
+
+    connection.close()
 
     return {'results': result_list, 'total_count': total_count}
