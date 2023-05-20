@@ -106,6 +106,7 @@ class Result_v2(BaseModel):
     note: Optional[str] = None
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
+    hide: bool = False
 
 # # Results model to record in the DB.
 # class MissingWord(BaseModel):
