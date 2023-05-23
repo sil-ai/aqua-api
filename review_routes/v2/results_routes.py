@@ -55,7 +55,8 @@ async def postgres_conn():
 
 @router.get("/result", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[Result], int]])
 async def get_result(
-    assessment_id: int, 
+    assessment_id: int,
+    book: Optional[str] = None,
     page: Optional[int] = None, 
     page_size: Optional[int] = None,
     aggregate: Optional[aggType] = None, 
@@ -68,6 +69,8 @@ async def get_result(
     ----------
     assessment_id : int
         The ID of the assessment to get results for.
+    book : str, optional
+        Restrict results to one book.
     page : int, optional
         The page of results to return. If set, page_size must also be set.
     page_size : int, optional
@@ -115,6 +118,13 @@ async def get_result(
     else:
         offset = 0
         limit = None
+    
+    if book is not None:
+        book = book.upper()
+    else:
+        book = ''
+
+    hide_tag = None
 
     if aggregate == aggType['chapter']:
         fetch_results = queries.get_results_chapter_query()
@@ -164,8 +174,9 @@ async def get_result(
         score_tag = 4
         flag_tag = 7
         note_tag = 8
-        revision_tag = 10
-        reference_tag = 11
+        hide_tag = 10
+        revision_tag = 11
+        reference_tag = 12
 
     else:
         fetch_results = queries.get_results_query()
@@ -178,6 +189,7 @@ async def get_result(
         score_tag = 2
         flag_tag = 3
         note_tag = 4
+        hide_tag = 8
 
     assessment_response = await connection.fetch(list_assessments)
     assessment_data = []
@@ -191,8 +203,12 @@ async def get_result(
             detail="Assessment not found."
             )
 
-    result_data = await connection.fetch(fetch_results, assessment_id, limit, offset)
-    result_agg_data = await connection.fetch(fetch_results_agg, assessment_id)
+    if table_name == "group_results_text":
+        result_data = await connection.fetch(fetch_results, assessment_id, limit, offset)
+        result_agg_data = await connection.fetch(fetch_results_agg, assessment_id)
+    else:
+        result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, book)
+        result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, book)
 
     result_list = []
     for result in result_data:
@@ -202,17 +218,17 @@ async def get_result(
             vref=result[vref_tag] if vref_tag is not None else None,
             source=result[source_tag],
             target=[{key: value} for key, value in ast.literal_eval(str(result[target_tag])).items()] if ast.literal_eval(str(result[target_tag])) and result[target_tag] is not None else None,
-            score=result[score_tag],
+            score=str(result[score_tag]),
             flag=result[flag_tag] if result[flag_tag] else False,
             note=result[note_tag] if result[note_tag] else None,
             revision_text=result[revision_tag] if table_name == "assessment_result_with_text" else None,
             reference_text=result[reference_tag] if table_name == "assessment_result_with_text" else None,
+            hide=result[hide_tag] if hide_tag and hide_tag in result else False
             )
-    
         result_list.append(results)
         
     total_count = result_agg_data[0][0]
 
-    connection.close()
+    await connection.close()
 
     return {'results': result_list, 'total_count': total_count}

@@ -207,6 +207,7 @@ def get_results_query():
     get_results = """
                 SELECT * FROM "assessmentResult"
                   WHERE assessment=($1)
+                  and vref LIKE ($4) || '%'
                   LIMIT ($2)
                   OFFSET ($3);
                 """
@@ -218,7 +219,8 @@ def get_results_agg_query():
     get_results_agg = """
                 SELECT COUNT(id)
                   FROM "assessmentResult"
-                    WHERE assessment=($1);
+                    WHERE assessment=($1)
+                  and vref LIKE ($2) || '%';
                 """
 
     return get_results_agg
@@ -228,6 +230,7 @@ def get_results_chapter_query():
     get_results_chapter = """
                 SELECT * FROM "group_results_chapter"
                   WHERE assessment=($1)
+                  and vref_group LIKE ($4) || '%'
                   ORDER BY id
                   LIMIT ($2)
                   OFFSET ($3);
@@ -240,7 +243,8 @@ def get_results_chapter_agg_query():
     get_results_chapter_agg = """
                 SELECT COUNT(id)
                   FROM "group_results_chapter"
-                    WHERE assessment=($1);
+                    WHERE assessment=($1)
+                  and vref_group LIKE ($2) || '%';
                 """
 
     return get_results_chapter_agg
@@ -250,6 +254,7 @@ def get_results_book_query():
     get_results_book = """
                 SELECT * FROM "group_results_book"
                   WHERE assessment=($1)
+                  and vref_group LIKE ($4) || '%'
                   ORDER BY id
                   LIMIT ($2)
                   OFFSET ($3);
@@ -262,7 +267,8 @@ def get_results_book_agg_query():
     get_results_book_agg = """
                 SELECT COUNT(id)
                   FROM "group_results_book"
-                    WHERE assessment=($1);
+                    WHERE assessment=($1)
+                  and vref_group LIKE ($2) || '%';
                 """
 
     return get_results_book_agg
@@ -293,7 +299,8 @@ def get_results_text_agg_query():
 def get_results_with_text_query():
     get_results_with_text = """
                 SELECT * FROM "assessment_result_with_text"
-                  WHERE assessment=($1)
+                  WHERE assessment=($1) 
+                  and vref LIKE ($4) || '%'
                   ORDER BY id
                   LIMIT ($2)
                   OFFSET ($3);
@@ -306,7 +313,8 @@ def get_results_with_text_agg_query():
     get_results_with_text_agg = """
                 SELECT COUNT(id)
                   FROM "assessment_result_with_text"
-                    WHERE assessment=($1);
+                    WHERE assessment=($1)
+                  and vref LIKE ($2) || '%';
                 """
 
     return get_results_with_text_agg
