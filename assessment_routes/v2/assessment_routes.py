@@ -82,7 +82,7 @@ async def get_assessments():
 
 
 @router.post("/assessment", dependencies=[Depends(api_key_auth)], response_model=AssessmentOut)
-async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
+async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = '', return_all_results: bool = False):
     """
     Requests an assessment to be run on a revision and (where required) a reference revision.
 
@@ -140,7 +140,6 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
             requested_time=assessment[4],
             status=assessment[5],
             )
-    
     # Call runner to run assessment
 
     dash_modal_suffix = '-' + modal_suffix if len(modal_suffix) > 0 else ''
@@ -153,11 +152,10 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = ''):
     params = {
         'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
         'modal_suffix': modal_suffix,
+        'return_all_results': return_all_results,
         }
     header = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
-    
     response = requests.post(runner_url, params=params, headers=header, json=new_assessment.dict(exclude={"requested_time": True, "start_time": True, "end_time": True, "status": True}))
-    
     if response.status_code != 200:
         cursor.close()
         connection.close()
