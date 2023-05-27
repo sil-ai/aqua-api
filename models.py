@@ -108,6 +108,18 @@ class Result_v2(BaseModel):
     reference_text: Optional[str] = None
     hide: bool = False
 
+
+class WordAlignment(BaseModel):
+    id: Optional[int] = None
+    assessment_id: int
+    vref: str = None
+    source: str
+    target: str
+    score: float
+    flag: bool = False
+    note: Optional[str] = None
+    hide: bool = False
+
 # # Results model to record in the DB.
 # class MissingWord(BaseModel):
 #     assessment_id: int

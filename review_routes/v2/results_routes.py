@@ -10,10 +10,12 @@ import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
 import asyncpg
+from pydantic.error_wrappers import ValidationError
 
 import queries
 from key_fetch import get_secret
 from models import Result_v2 as Result
+from models import WordAlignment
 
 
 class aggType(Enum):
@@ -227,6 +229,116 @@ async def get_result(
             )
         result_list.append(results)
         
+    total_count = result_agg_data[0][0]
+
+    await connection.close()
+
+    return {'results': result_list, 'total_count': total_count}
+
+
+@router.get("/alignmentscores", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[WordAlignment], int]])
+async def get_alignment_scores(
+    assessment_id: int,
+    book: Optional[str] = None,
+    chapter: Optional[int] = None,
+    verse: Optional[int] = None,
+    page: Optional[int] = None, 
+    page_size: Optional[int] = None,
+):
+
+    if page is not None and page_size is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="If page is set, page_size must also be set."
+            )
+
+    if verse is not None and chapter is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="If verse is set, chapter must also be set."
+            )
+    
+    if chapter is not None and book is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="If chapter is set, book must also be set."
+            )
+
+    
+    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
+    connection = await asyncpg.connect(
+            host=conn_list[3],
+            database=conn_list[4],
+            user=conn_list[1],
+            password=conn_list[2],
+            )
+
+    list_assessments = queries.list_assessments_query()
+
+    if page is not None and page_size is not None:
+            offset = (page - 1) * page_size
+            limit = page_size
+    else:
+        offset = 0
+        limit = None
+    
+    if book is not None:
+        vref = book.upper() + ' '
+    else:
+        vref = ''
+
+    if chapter is not None:
+        vref = vref + str(chapter) + ':'
+    
+    if verse is not None:
+        vref = vref + str(verse)
+        fetch_results = queries.get_alignment_scores_exact_query()
+        fetch_results_agg = queries.get_alignment_scores_agg_exact_query()
+    
+    else:
+        fetch_results = queries.get_alignment_scores_like_query()
+        fetch_results_agg = queries.get_alignment_scores_agg_like_query()
+
+    hide_tag = None
+
+    assessment_tag = 1
+    vref_tag = 5
+    source_tag = 6
+    target_tag = 7
+    score_tag = 2
+    flag_tag = 3
+    note_tag = 4
+    hide_tag = 8
+
+    assessment_response = await connection.fetch(list_assessments)
+    assessment_data = []
+    for assessment in assessment_response:
+        if assessment['id'] not in assessment_data:
+            assessment_data.append(assessment['id'])
+
+    if assessment_id not in assessment_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found."
+            )
+
+    result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, vref)
+    result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, vref)
+
+    result_list = []
+    for result in result_data:
+        results = WordAlignment(
+            id=result[0],
+            assessment_id=result[assessment_tag],
+            vref=result[vref_tag] if vref_tag is not None else None,
+            source=str(result[source_tag]),
+            target=str(result[target_tag]),
+            score=result[score_tag],
+            flag=result[flag_tag] if result[flag_tag] else False,
+            note=result[note_tag] if result[note_tag] else None,
+            hide=result[hide_tag] if hide_tag and hide_tag in result else False
+            )
+        result_list.append(results)
     total_count = result_agg_data[0][0]
 
     await connection.close()
