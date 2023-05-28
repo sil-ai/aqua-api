@@ -176,9 +176,9 @@ async def get_result(
         score_tag = 4
         flag_tag = 7
         note_tag = 8
-        hide_tag = 10
-        revision_tag = 11
-        reference_tag = 12
+        hide_tag = 12
+        revision_tag = 10
+        reference_tag = 11
 
     else:
         fetch_results = queries.get_results_query()
