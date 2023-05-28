@@ -10,7 +10,6 @@ import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
 import asyncpg
-from pydantic.error_wrappers import ValidationError
 
 import queries
 from key_fetch import get_secret
