@@ -357,3 +357,51 @@ def get_results_with_text_query_v1():
                 """
 
     return get_results_with_text
+
+
+def get_alignment_scores_like_query():
+    get_alignment_scores = """
+                SELECT * FROM "alignmentTopSourceScores"
+                  WHERE assessment=($1) 
+                  and vref LIKE ($4) || '%'
+                  ORDER BY id
+                  LIMIT ($2)
+                  OFFSET ($3);
+                """
+
+    return get_alignment_scores
+
+
+def get_alignment_scores_exact_query():
+    get_alignment_scores = """
+                SELECT * FROM "alignmentTopSourceScores"
+                  WHERE assessment=($1) 
+                  and vref = ($4)
+                  ORDER BY id
+                  LIMIT ($2)
+                  OFFSET ($3);
+                """
+
+    return get_alignment_scores
+
+
+def get_alignment_scores_agg_like_query():
+    get_alignment_scores_agg = """
+                SELECT COUNT(id)
+                  FROM "alignmentTopSourceScores"
+                    WHERE assessment=($1)
+                  and vref LIKE ($2) || '%';
+                """
+
+    return get_alignment_scores_agg
+
+
+def get_alignment_scores_agg_exact_query():
+    get_alignment_scores_agg = """
+                SELECT COUNT(id)
+                  FROM "alignmentTopSourceScores"
+                    WHERE assessment=($1)
+                  and vref = ($2);
+                """
+
+    return get_alignment_scores_agg
