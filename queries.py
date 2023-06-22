@@ -208,6 +208,8 @@ def get_results_query():
                 SELECT * FROM "assessmentResult"
                   WHERE assessment=($1)
                   and vref LIKE ($4) || '%'
+                  AND (source IS NULL) = ($5)
+                  ORDER BY id
                   LIMIT ($2)
                   OFFSET ($3);
                 """
@@ -220,6 +222,7 @@ def get_results_agg_query():
                 SELECT COUNT(id)
                   FROM "assessmentResult"
                     WHERE assessment=($1)
+                  AND (source IS NULL) = ($3)
                   and vref LIKE ($2) || '%';
                 """
 
@@ -231,6 +234,7 @@ def get_results_chapter_query():
                 SELECT * FROM "group_results_chapter"
                   WHERE assessment=($1)
                   and vref_group LIKE ($4) || '%'
+                  AND (source IS NULL) = ($5)
                   ORDER BY id
                   LIMIT ($2)
                   OFFSET ($3);
@@ -244,7 +248,9 @@ def get_results_chapter_agg_query():
                 SELECT COUNT(id)
                   FROM "group_results_chapter"
                     WHERE assessment=($1)
-                  and vref_group LIKE ($2) || '%';
+                  and vref_group LIKE ($2) || '%'
+                  AND (source IS NULL) = ($3)
+                  ;
                 """
 
     return get_results_chapter_agg
@@ -255,6 +261,7 @@ def get_results_book_query():
                 SELECT * FROM "group_results_book"
                   WHERE assessment=($1)
                   and vref_group LIKE ($4) || '%'
+                  AND (source IS NULL) = ($5)
                   ORDER BY id
                   LIMIT ($2)
                   OFFSET ($3);
@@ -268,7 +275,9 @@ def get_results_book_agg_query():
                 SELECT COUNT(id)
                   FROM "group_results_book"
                     WHERE assessment=($1)
-                  and vref_group LIKE ($2) || '%';
+                  and vref_group LIKE ($2) || '%'
+                  AND (source IS NULL) = ($3)
+                  ;
                 """
 
     return get_results_book_agg
@@ -278,6 +287,7 @@ def get_results_text_query():
     get_results_text = """
                 SELECT * FROM "group_results_text"
                    WHERE assessment=($1)
+                  AND (source IS NULL) = ($4)
                     ORDER BY id
                    LIMIT ($2)
                    OFFSET ($3);
@@ -290,7 +300,8 @@ def get_results_text_agg_query():
     get_results_text_agg = """
                 SELECT COUNT(id)
                   FROM "group_results_text"
-                    WHERE assessment=($1);
+                    WHERE assessment=($1)
+                  AND (source IS NULL) = ($2);
                 """
 
     return get_results_text_agg
@@ -301,6 +312,7 @@ def get_results_with_text_query():
                 SELECT * FROM "assessment_result_with_text"
                   WHERE assessment=($1) 
                   and vref LIKE ($4) || '%'
+                  AND (source IS NULL) = ($5)
                   ORDER BY id
                   LIMIT ($2)
                   OFFSET ($3);
@@ -314,7 +326,9 @@ def get_results_with_text_agg_query():
                 SELECT COUNT(id)
                   FROM "assessment_result_with_text"
                     WHERE assessment=($1)
-                  and vref LIKE ($2) || '%';
+                  and vref LIKE ($2) || '%'
+                  AND (source IS NULL) = ($3)
+                  ;
                 """
 
     return get_results_with_text_agg
