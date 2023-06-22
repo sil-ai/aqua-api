@@ -207,7 +207,7 @@ async def get_result(
 
     assessment_type = assessment_response[assessment_ids.index(assessment_id)]['type']
 
-    source_null = assessment_type == "missing-words" and reverse
+    source_null = not(assessment_type == "missing-words" and not reverse)  # For missing words, if not reverse, we only want the non-null source results
 
     if table_name == "group_results_text":
         result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, source_null)
