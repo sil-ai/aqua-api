@@ -376,12 +376,20 @@ def test_result(client):
             "page_size": 100,
             "book": "gen",
     }
+    test_config_reverse = {
+            "assessment_id": assessment_id,
+            "reverse": True,
+    }
 
     for prefix in version_prefixes:
         test_response = client.get(f"/{prefix}/result", params=test_config)
         fail_response = client.get(f"/{prefix}/result", params=fail_config)
+        test_response_reverse = client.get(f"/{prefix}/result", params=test_config_reverse)
+
         assert test_response.status_code == 200
         assert fail_response.status_code == 404
+        assert test_response_reverse.status_code == 200
+
 
         if prefix != 'v1':
             test_response_chapter_agg = client.get(f"/{prefix}/result", params=test_config_chapter_agg)

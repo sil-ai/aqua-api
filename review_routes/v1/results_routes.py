@@ -53,7 +53,7 @@ def postgres_conn():
 
 
 @router.get("/result", dependencies=[Depends(api_key_auth)], response_model=List[Result])
-async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, include_text: Optional[bool] = False):
+async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, include_text: Optional[bool] = False, reverse: Optional[bool] = False):
     """
     Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
 
@@ -114,13 +114,23 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
     cursor.execute(list_assessments)
     assessment_response = cursor.fetchall()
 
-    assessment_data = {}
+    assessment_ids = []
     for assessment in assessment_response:
-        if assessment[0] not in assessment_data:
-            assessment_data[assessment[0]] = assessment[3]
+        if assessment[0] not in assessment_ids:
+            assessment_ids.append(assessment[0])
 
-    if assessment_id in assessment_data:
-        cursor.execute(fetch_results, (assessment_id,))
+    if assessment_id not in assessment_ids:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found."
+            )
+    
+    assessment_type = assessment_response[assessment_ids.index(assessment_id)][3]
+
+    source_null = not(assessment_type == "missing-words" and not reverse)  # For missing words, if not reverse, we only want the non-null source results
+
+    if assessment_id in assessment_ids:
+        cursor.execute(fetch_results, (assessment_id, source_null))
         result_data = cursor.fetchall()
 
         result_list = []

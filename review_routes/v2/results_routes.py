@@ -61,7 +61,8 @@ async def get_result(
     page: Optional[int] = None, 
     page_size: Optional[int] = None,
     aggregate: Optional[aggType] = None, 
-    include_text: Optional[bool] = False
+    include_text: Optional[bool] = False,
+    reverse: Optional[bool] = False,
 ):
     """
     Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
@@ -193,23 +194,27 @@ async def get_result(
         hide_tag = 8
 
     assessment_response = await connection.fetch(list_assessments)
-    assessment_data = []
+    assessment_ids = []
     for assessment in assessment_response:
-        if assessment['id'] not in assessment_data:
-            assessment_data.append(assessment['id'])
+        if assessment['id'] not in assessment_ids:
+            assessment_ids.append(assessment['id'])
 
-    if assessment_id not in assessment_data:
+    if assessment_id not in assessment_ids:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assessment not found."
             )
 
+    assessment_type = assessment_response[assessment_ids.index(assessment_id)]['type']
+
+    source_null = not(assessment_type == "missing-words" and not reverse)  # For missing words, if not reverse, we only want the non-null source results
+
     if table_name == "group_results_text":
-        result_data = await connection.fetch(fetch_results, assessment_id, limit, offset)
-        result_agg_data = await connection.fetch(fetch_results_agg, assessment_id)
+        result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, source_null)
+        result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, source_null)
     else:
-        result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, book)
-        result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, book)
+        result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, book, source_null)
+        result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, book, source_null)
 
     result_list = []
     for result in result_data:
