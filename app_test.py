@@ -384,8 +384,12 @@ def test_result(client):
     for prefix in version_prefixes:
         test_response = client.get(f"/{prefix}/result", params=test_config)
         fail_response = client.get(f"/{prefix}/result", params=fail_config)
+        test_response_reverse = client.get(f"/{prefix}/result", params=test_config_reverse)
+
         assert test_response.status_code == 200
         assert fail_response.status_code == 404
+        assert test_response_reverse.status_code == 200
+
 
         if prefix != 'v1':
             test_response_chapter_agg = client.get(f"/{prefix}/result", params=test_config_chapter_agg)
@@ -396,7 +400,6 @@ def test_result(client):
             test_response_pagination = client.get(f"/{prefix}/result", params=test_config_pagination)
             test_response_book = client.get(f"/{prefix}/result", params=test_config_book)
             test_response_pagination_book = client.get(f"/{prefix}/result", params=test_config_pagination_book)
-            test_response_reverse = client.get(f"/{prefix}/result", params=test_config_reverse)
             
             
             assert test_response_chapter_agg.status_code == 200 and \
@@ -406,8 +409,7 @@ def test_result(client):
             test_response_aggregate_and_include_text.status_code == 400 and \
             test_response_pagination.status_code == 200 and \
             test_response_book.status_code == 200 and \
-            test_response_pagination_book.status_code == 200 and \
-            test_response_reverse.status_code == 200
+            test_response_pagination_book.status_code == 200
         
 
 def test_delete_revision(client):
