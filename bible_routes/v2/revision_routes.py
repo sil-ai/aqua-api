@@ -102,6 +102,7 @@ async def list_revisions(version_id: Optional[int]=None):
                     version_abbreviation=version_data[0],
                     name=revision[4],
                     published=revision[3],
+                    backTranslation=revision[5],
             )
 
             revisions_data.append(revision_data)
@@ -127,6 +128,10 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     revision_date = str(date.today())
     revision_query = queries.insert_bible_revision()
 
+    fetch_version_data = queries.fetch_version_data()
+    cursor.execute(fetch_version_data, (revision.version_id,))
+    version_data = cursor.fetchone()
+
     # Convert into bytes and save as a temporary file.
     contents = await file.read()
     temp_file = NamedTemporaryFile()
@@ -134,17 +139,24 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     temp_file.seek(0)
 
     # Create a corresponding revision in the database.
-    cursor.execute(revision_query, (
+    try:
+        cursor.execute(revision_query, (
         revision.version_id, name,
         revision_date, revision.published,
+        revision.backTranslation,
         ))
+    except psycopg2.errors.ForeignKeyViolation:
+        cursor.close()
+        connection.close()
+        raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The backTranslation parameter, if it exists, must be the valid ID of a revision that already exists in the database."
+                )
     
     returned_revision = cursor.fetchone()
     connection.commit()
 
-    fetch_version_data = queries.fetch_version_data()
-    cursor.execute(fetch_version_data, (revision.version_id,))
-    version_data = cursor.fetchone()
+
 
     revision_query = RevisionOut(
                 id=returned_revision[0],
@@ -152,7 +164,8 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
                 version_id=returned_revision[2],
                 version_abbreviation=version_data[0],
                 name=returned_revision[4],
-                published=returned_revision[3]
+                published=returned_revision[3],
+                backTranslation=returned_revision[5],
         )
 
     # Parse the input Bible revision data.

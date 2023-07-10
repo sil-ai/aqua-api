@@ -218,13 +218,14 @@ async def get_result(
 
     result_list = []
     for result in result_data:
+        print(result[0])
         results = Result(
             id=result[0],
             assessment_id=result[assessment_tag],
             vref=result[vref_tag] if vref_tag is not None else None,
             source=result[source_tag],
             target=[{key: value} for key, value in ast.literal_eval(str(result[target_tag])).items()] if ast.literal_eval(str(result[target_tag])) and result[target_tag] is not None else None,
-            score=result[score_tag],
+            score=result[score_tag] if result[score_tag] else 0,
             flag=result[flag_tag] if result[flag_tag] else False,
             note=result[note_tag] if result[note_tag] else None,
             revision_text=result[revision_tag] if table_name == "assessment_result_with_text" else None,
