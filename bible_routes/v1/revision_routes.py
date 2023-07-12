@@ -134,11 +134,20 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     temp_file.seek(0)
 
     # Create a corresponding revision in the database.
-    cursor.execute(revision_query, (
+    try:
+        cursor.execute(revision_query, (
         revision.version_id, name,
         revision_date, revision.published,
+        revision.backTranslation,
         ))
-
+    except psycopg2.errors.ForeignKeyViolation:
+        cursor.close()
+        connection.close()
+        raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The backTranslation parameter, if it exists, must be the valid ID of a revision that already exists in the database."
+                )
+    
     returned_revision = cursor.fetchone()
     connection.commit()
 
