@@ -218,7 +218,6 @@ async def get_result(
 
     result_list = []
     for result in result_data:
-        print(result[0])
         results = Result(
             id=result[0],
             assessment_id=result[assessment_tag],
