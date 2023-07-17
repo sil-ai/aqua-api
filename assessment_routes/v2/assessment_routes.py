@@ -161,7 +161,7 @@ async def add_assessment(a: AssessmentIn=Depends(), modal_suffix: str = '', retu
         connection.close()
 
         print("Runner failed to run assessment")
-        return response
+        raise HTTPException(status_code=response.status_code, detail=response.text)
     
     cursor.close()
     connection.close()
