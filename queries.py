@@ -60,11 +60,11 @@ def delete_verses_mutation():
 def insert_bible_revision():
     bible_revise = """
                 INSERT INTO "bibleRevision" (
-                    bibleversion, name, date, published
+                    bibleversion, name, date, published, backTranslation
                     )
-                  VALUES ((%s), (%s), (%s), (%s))
+                  VALUES ((%s), (%s), (%s), (%s), (%s))
                 RETURNING 
-                  id, date, bibleversion, published, name
+                  id, date, bibleversion, published, name, backTranslation
                 """
  
     return bible_revise
@@ -107,7 +107,7 @@ def version_data_revisions_query():
 
 def fetch_version_data():
     fetch_version = """
-                    SELECT abbreviation FROM "bibleVersion"
+                    SELECT abbreviation, backTranslation FROM "bibleVersion"
                       WHERE id=(%s);
                     """
 

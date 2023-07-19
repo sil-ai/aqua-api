@@ -31,7 +31,7 @@ class RevisionIn(BaseModel):
     version_id: int
     name: Optional[str] = None
     published: Optional[bool] = False
-
+    backTranslation: Optional[int] = None
 
 class RevisionOut(BaseModel):
     id: int
@@ -40,6 +40,7 @@ class RevisionOut(BaseModel):
     date: Optional[datetime.date] = None
     name: Optional[str] = None
     published: Optional[bool] = False
+    backTranslation: Optional[int] = None
 
 
 class VerseText(BaseModel):
