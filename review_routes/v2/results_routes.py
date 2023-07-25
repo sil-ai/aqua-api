@@ -58,6 +58,7 @@ async def postgres_conn():
 async def get_result(
     assessment_id: int,
     book: Optional[str] = None,
+    chapter: Optional[int] = None,
     page: Optional[int] = None, 
     page_size: Optional[int] = None,
     aggregate: Optional[aggType] = None, 
@@ -73,6 +74,8 @@ async def get_result(
         The ID of the assessment to get results for.
     book : str, optional
         Restrict results to one book.
+    chapter : int, optional
+        Restrict results to one chapter. If set, book must also be set.
     page : int, optional
         The page of results to return. If set, page_size must also be set.
     page_size : int, optional
@@ -92,6 +95,12 @@ async def get_result(
     missing word appears in the baseline reference texts, and so there is a higher likelihood that it is a word that should
     be included in the text being assessed.
     """
+    if chapter is not None and book is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If chapter is set, book must also be set."
+        )
+
     if page is not None and page_size is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -122,9 +131,11 @@ async def get_result(
         limit = None
     
     if book is not None:
-        book = book.upper()
+        vref = book.upper()
+        if chapter is not None:
+            vref = vref + ' ' + str(chapter) + ':'
     else:
-        book = ''
+        vref = ''
 
     hide_tag = None
 
@@ -208,13 +219,14 @@ async def get_result(
     assessment_type = assessment_response[assessment_ids.index(assessment_id)]['type']
 
     source_null = not(assessment_type in ["missing-words", "question-answering"] and not reverse)  # For missing words, if not reverse, we only want the non-null source results
-
+    
     if table_name == "group_results_text":
         result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, source_null)
         result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, source_null)
+
     else:
-        result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, book, source_null)
-        result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, book, source_null)
+        result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, vref, source_null)
+        result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, vref, source_null)
 
     result_list = []
     for result in result_data:
