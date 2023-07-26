@@ -59,6 +59,7 @@ async def get_result(
     assessment_id: int,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
+    verse: Optional[int] = None,
     page: Optional[int] = None, 
     page_size: Optional[int] = None,
     aggregate: Optional[aggType] = None, 
@@ -76,6 +77,8 @@ async def get_result(
         Restrict results to one book.
     chapter : int, optional
         Restrict results to one chapter. If set, book must also be set.
+    verse : int, optional
+        Restrict results to one verse. If set, book and chapter must also be set.
     page : int, optional
         The page of results to return. If set, page_size must also be set.
     page_size : int, optional
@@ -99,6 +102,12 @@ async def get_result(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If chapter is set, book must also be set."
+        )
+
+    if verse is not None and chapter is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If verse is set, chapter must also be set."
         )
 
     if page is not None and page_size is None:
@@ -129,80 +138,9 @@ async def get_result(
     else:
         offset = 0
         limit = None
-    
-    if book is not None:
-        vref = book.upper()
-        if chapter is not None:
-            vref = vref + ' ' + str(chapter) + ':'
-    else:
-        vref = ''
 
-    hide_tag = None
-
-    if aggregate == aggType['chapter']:
-        fetch_results = queries.get_results_chapter_query()
-        fetch_results_agg = queries.get_results_chapter_agg_query()
-        table_name = "group_results_chapter"        
-        assessment_tag = 2
-        vref_tag = 1
-        source_tag = 4
-        target_tag = 5
-        score_tag = 3
-        flag_tag = 6
-        note_tag = 7
-    
-    elif aggregate == aggType['book']:
-        fetch_results = queries.get_results_book_query()
-        fetch_results_agg = queries.get_results_book_agg_query()
-        table_name = "group_results_book"
-        assessment_tag = 2
-        vref_tag = 1
-        source_tag = 4
-        target_tag = 5
-        score_tag = 3
-        flag_tag = 6
-        note_tag = 7
-
-    
-    elif aggregate == aggType['text']:
-        fetch_results = queries.get_results_text_query()
-        fetch_results_agg = queries.get_results_text_agg_query()
-        table_name = "group_results_text"
-        assessment_tag = 1
-        vref_tag = None
-        source_tag = 3
-        target_tag = 4
-        score_tag = 2
-        flag_tag = 5
-        note_tag = 6
-    
-    elif include_text:
-        fetch_results = queries.get_results_with_text_query()
-        fetch_results_agg = queries.get_results_with_text_agg_query()
-        table_name = "assessment_result_with_text"
-        assessment_tag = 3
-        vref_tag = 9
-        source_tag = 5
-        target_tag = 6
-        score_tag = 4
-        flag_tag = 7
-        note_tag = 8
-        hide_tag = 12
-        revision_tag = 10
-        reference_tag = 11
-
-    else:
-        fetch_results = queries.get_results_query()
-        fetch_results_agg = queries.get_results_agg_query()
-        table_name = "assessmentResult"
-        assessment_tag = 1
-        vref_tag = 5
-        source_tag = 6
-        target_tag = 7
-        score_tag = 2
-        flag_tag = 3
-        note_tag = 4
-        hide_tag = 8
+    query_limit = limit
+    query_offset = offset
 
     assessment_response = await connection.fetch(list_assessments)
     assessment_ids = []
@@ -215,33 +153,219 @@ async def get_result(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assessment not found."
             )
-
     assessment_type = assessment_response[assessment_ids.index(assessment_id)]['type']
 
     source_null = not(assessment_type in ["missing-words", "question-answering"] and not reverse)  # For missing words, if not reverse, we only want the non-null source results
+
+
+    if aggregate == aggType['chapter']:
+        query_select = """
+                (row_number() OVER ())::integer AS id,
+                assessment,
+                book,
+                chapter,
+                NULL::integer AS verse,
+                avg("assessmentResult".score) AS score,
+                NULL::text AS source,
+                NULL::text AS target,
+                false AS flag,
+                NULL::text AS note,
+                NULL::text AS revision_text,
+                NULL::text AS reference_text,
+                false AS hide
+        """
+        agg_query_select = 'WITH cte AS (SELECT max(id)'
+
+        query_from = '"assessmentResult"'
+        query_where = {
+                'assessment': assessment_id,
+                '(source IS NULL)': source_null,
+                'book': f"'{book.upper()}'" if book is not None else None,
+                'chapter': chapter if chapter is not None else None,
+        }
+        query_group_by = [
+                'assessment',
+                'book',
+                'chapter',
+        ]
+        query_order_by = None
     
-    if table_name == "group_results_text":
-        result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, source_null)
-        result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, source_null)
+    elif aggregate == aggType['book']:
+        query_select = """
+                (row_number() OVER ())::integer AS id,
+                assessment,
+                book,
+                NULL::integer AS chapter,
+                NULL::integer AS verse,
+                avg("assessmentResult".score) AS score,
+                NULL::text AS source,
+                NULL::text AS target,
+                false AS flag,
+                NULL::text AS note,
+                NULL::text AS revision_text,
+                NULL::text AS reference_text,
+                false AS hide
+        """
+        agg_query_select = 'WITH cte AS (SELECT max(id)'
+
+        query_from = '"assessmentResult"'
+        query_where = {
+                'assessment': assessment_id,
+                '(source IS NULL)': source_null,
+                'book': f"'{book.upper()}'" if book is not None else None,
+        }
+        query_group_by = [
+                'assessment',
+                'book',
+        ]
+        query_order_by = None
+
+    elif aggregate == aggType['text']:
+        query_select = """
+                (row_number() OVER ())::integer AS id,
+                assessment,
+                NULL::text AS book,
+                NULL::integer AS chapter,
+                NULL::integer AS verse,
+                avg("assessmentResult".score) AS score,
+                NULL::text AS source,
+                NULL::text AS target,
+                false AS flag,
+                NULL::text AS note,
+                NULL::text AS revision_text,
+                NULL::text AS reference_text,
+                false AS hide
+        """
+        agg_query_select = 'WITH cte AS (SELECT max(id)'
+
+        query_from = '"assessmentResult"'
+        query_where = {
+                'assessment': assessment_id,
+                '(source IS NULL)': source_null,
+        }
+        query_group_by = [
+                'assessment',
+        ]
+        query_order_by = None
+
+    elif include_text:
+        query_select = """
+                ar.id,
+                ar.assessment,
+                ar.book,
+                ar.chapter,
+                ar.verse,
+                ar.score,
+                ar.source,
+                ar.target,
+                ar.flag,
+                ar.note,
+                vt1.text AS revisiontext,
+                vt2.text AS referencetext,
+                ar.hide
+                """
+        agg_query_select = '''
+                WITH cte AS (SELECT *
+
+                '''
+        query_from = """
+        ((("assessmentResult" ar
+        JOIN assessment a
+        ON ((ar.assessment = a.id)))
+        JOIN "verseText" vt1
+        ON (((ar.vref = vt1.versereference)
+        AND (vt1.biblerevision = a.revision))))
+        LEFT JOIN "verseText" vt2
+        ON (((ar.vref = vt2.versereference)
+        AND (vt2.biblerevision = a.reference))))
+        """
+        query_where = {
+                'assessment': assessment_id,
+                '(source IS NULL)': source_null,
+                'book': f"'{book.upper()}'" if book is not None else None,
+                'chapter': chapter if chapter is not None else None,
+                'verse': verse if verse is not None else None,
+        }
+        query_group_by = []
+        query_order_by = None
 
     else:
-        result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, vref, source_null)
-        result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, vref, source_null)
+        query_select = """
+                id,
+                assessment,
+                book,
+                chapter,
+                verse,
+                score,
+                source,
+                target,
+                flag,
+                note,
+                NULL::text AS revision_text,
+                NULL::text AS reference_text,
+                hide
+        """
+        agg_query_select = 'WITH cte AS (SELECT id '
+
+        query_from = '"assessmentResult"'
+        query_where = {
+                'assessment': assessment_id,
+                '(source IS NULL)': source_null,
+                'book': f"'{book.upper()}'" if book is not None else None,
+                'chapter': chapter if chapter is not None else None,
+                'verse': verse if verse is not None else None,
+        }
+        query_group_by = []
+        query_order_by = None
+
+
+    query = f"SELECT {query_select}\n"
+    if query_from:
+        query += f"FROM {query_from}\n"
+    if query_where:
+        query += f"WHERE {' AND '.join([f'{key} = {value}' for key, value in query_where.items() if value is not None])}\n"
+    if query_group_by:
+        query += f"GROUP BY {', '.join(query_group_by)}\n"
+    if query_order_by:
+        query += f"ORDER BY {query_order_by}\n"
+    if query_limit:
+        query += f"LIMIT {query_limit}\n"
+    if query_offset:
+        query += f"OFFSET {query_offset}\n"
+
+    agg_query = agg_query_select
+    if query_from:
+        agg_query += f"FROM {query_from}\n"
+    if query_where:
+        agg_query += f"WHERE {' AND '.join([f'{key} = {value}' for key, value in query_where.items() if value is not None])}\n"
+    if query_group_by:
+        agg_query += f"GROUP BY {', '.join(query_group_by)}\n"
+    agg_query += ")\n"
+    agg_query += "SELECT count(*) AS row_count FROM cte;"
+
+    result_data = await connection.fetch(query)
+    result_agg_data = await connection.fetch(agg_query)
 
     result_list = []
     for result in result_data:
+        vref = result[2]
+        if result[3] is not None:
+            vref = vref + ' ' + str(result[3])
+            if result[4] is not None:
+                vref = vref + ':' + str(result[4])
+
         results = Result(
             id=result[0],
-            assessment_id=result[assessment_tag],
-            vref=result[vref_tag] if vref_tag is not None else None,
-            source=result[source_tag],
-            target=[{key: value} for key, value in ast.literal_eval(str(result[target_tag])).items()] if ast.literal_eval(str(result[target_tag])) and result[target_tag] is not None else None,
-            score=result[score_tag] if result[score_tag] else 0,
-            flag=result[flag_tag] if result[flag_tag] else False,
-            note=result[note_tag] if result[note_tag] else None,
-            revision_text=result[revision_tag] if table_name == "assessment_result_with_text" else None,
-            reference_text=result[reference_tag] if table_name == "assessment_result_with_text" else None,
-            hide=result[hide_tag] if hide_tag and hide_tag in result else False
+            assessment_id=result[1],
+            vref=vref,
+            score=result[5] if result[5] else 0,
+            source=result[6],
+            target=[{key: value} for key, value in ast.literal_eval(str(result[7])).items()] if ast.literal_eval(str(result[7])) and result[7] is not None else None,
+            flag=result[8] if result[8] else False,
+            note=result[9] if result[9] else None,
+            revision_text=result[10],
+            reference_text=result[11],
+            hide=result[12],
             )
         result_list.append(results)
         
@@ -261,7 +385,25 @@ async def get_alignment_scores(
     page: Optional[int] = None, 
     page_size: Optional[int] = None,
 ):
+    """
+    Returns a list of all alignment scores between words for a given word alignment assessment.
 
+    Parameters
+    ----------
+    assessment_id : int
+        The ID of the assessment to get results for.
+    book : str, optional
+        Restrict results to one book.
+    chapter : int, optional
+        Restrict results to one chapter. If set, book must also be set.
+    verse : int, optional
+        Restrict results to one verse. If set, book and chapter must also be set.
+    page : int, optional
+        The page of results to return. If set, page_size must also be set.
+    page_size : int, optional
+        The number of results to return per page. If set, page must also be set.
+    """
+    
     if page is not None and page_size is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
