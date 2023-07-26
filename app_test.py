@@ -369,6 +369,17 @@ def test_result(client):
             "assessment_id": assessment_id,
             "book": "gen",
     }
+    test_config_chapter = {
+            "assessment_id": assessment_id,
+            "book": "gen",
+            "chapter": 1,
+    }
+    test_config_verse = {
+            "assessment_id": assessment_id,
+            "book": "gen",
+            "chapter": 1,
+            "verse": 1,
+    }
 
     test_config_pagination_book = {
             "assessment_id": assessment_id,
@@ -399,6 +410,8 @@ def test_result(client):
             test_response_aggregate_and_include_text = client.get(f"/{prefix}/result", params=test_config_aggregate_and_include_text)
             test_response_pagination = client.get(f"/{prefix}/result", params=test_config_pagination)
             test_response_book = client.get(f"/{prefix}/result", params=test_config_book)
+            test_response_chapter = client.get(f"/{prefix}/result", params=test_config_chapter)
+            test_response_verse = client.get(f"/{prefix}/result", params=test_config_verse)
             test_response_pagination_book = client.get(f"/{prefix}/result", params=test_config_pagination_book)
             
             
@@ -409,6 +422,8 @@ def test_result(client):
             test_response_aggregate_and_include_text.status_code == 400 and \
             test_response_pagination.status_code == 200 and \
             test_response_book.status_code == 200 and \
+            test_response_chapter.status_code == 200 and \
+            test_response_verse.status_code == 200 and \
             test_response_pagination_book.status_code == 200
         
 
