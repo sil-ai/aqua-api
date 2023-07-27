@@ -99,7 +99,7 @@ class Result_v1(BaseModel):
 
 class Result_v2(BaseModel):
     id: Optional[int] = None
-    assessment_id: int
+    assessment_id: Optional[int] = None
     vref: Optional[str] = None
     source: Optional[str] = None
     target: Optional[List[dict]] = None
@@ -108,6 +108,18 @@ class Result_v2(BaseModel):
     note: Optional[str] = None
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
+    hide: bool = False
+
+
+class MultipleResult(BaseModel):
+    id: Optional[int] = None
+    assessment_id: Optional[int] = None
+    revision_id: Optional[int] = None
+    reference_id: Optional[int] = None
+    vref: Optional[str] = None
+    score: float
+    flag: bool = False
+    note: Optional[str] = None
     hide: bool = False
 
 
