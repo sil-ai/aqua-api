@@ -159,7 +159,7 @@ async def get_result(
                 book,
                 chapter,
                 NULL::integer AS verse,
-                avg("assessmentResult".score) AS score,
+                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -189,7 +189,7 @@ async def get_result(
                 book,
                 NULL::integer AS chapter,
                 NULL::integer AS verse,
-                avg("assessmentResult".score) AS score,
+                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -217,7 +217,7 @@ async def get_result(
                 NULL::text AS book,
                 NULL::integer AS chapter,
                 NULL::integer AS verse,
-                avg("assessmentResult".score) AS score,
+                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -429,7 +429,7 @@ async def get_compare_results(
     else:
         query += 'NULL::integer AS verse,'
     query += f"""
-                avg("assessmentResult".score) AS score,
+                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -567,7 +567,7 @@ async def get_average_results(
                 book,
                 chapter,
                 NULL::integer AS verse,
-                avg("assessmentResult".score) AS score,
+                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -590,7 +590,7 @@ async def get_average_results(
                 book,
                 NULL::integer AS chapter,
                 NULL::integer AS verse,
-                avg("assessmentResult".score) AS score,
+                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -612,7 +612,7 @@ async def get_average_results(
                 NULL::text AS book,
                 NULL::integer AS chapter,
                 NULL::integer AS verse,
-                avg("assessmentResult".score) AS score,
+                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -634,7 +634,7 @@ async def get_average_results(
                 ar.book,
                 ar.chapter,
                 ar.verse,
-                avg(ar.score) AS score,
+                COALESCE(avg(NULLIF(ar.score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -679,7 +679,7 @@ async def get_average_results(
                 book,
                 chapter,
                 verse,
-                avg("assessmentResult".score) AS score,
+                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -725,7 +725,7 @@ async def get_average_results(
         query += f"LIMIT {query_limit}\n"
     if query_offset:
         query += f"OFFSET {query_offset}\n"
-    
+    print(query)
     result_data = await connection.fetch(query)
     result_agg_data = await connection.fetch(agg_query)
 
