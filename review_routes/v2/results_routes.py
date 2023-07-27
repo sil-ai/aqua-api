@@ -311,7 +311,7 @@ async def get_result(
     if query_order_by:
         query += f"ORDER BY {query_order_by}\n"
     else:
-        query += f"ORDER BY id\n"
+        query += "ORDER BY id\n"
     if query_limit:
         query += f"LIMIT {query_limit}\n"
     if query_offset:
@@ -720,7 +720,7 @@ async def get_average_results(
     if query_order_by:
         query += f"ORDER BY {query_order_by}\n"
     else:
-        query += f"ORDER BY id\n"
+        query += "ORDER BY id\n"
     agg_query = 'SELECT COUNT(*) AS row_count FROM (' + query + ') AS sub;'
     
     if query_limit:
