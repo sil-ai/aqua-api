@@ -266,9 +266,9 @@ async def get_result(
         query_where = {
                 'assessment': assessment_id,
                 '(source IS NULL)': source_null,
-                'book': f"'{book.upper()}'" if book is not None else None,
-                'chapter': chapter if chapter is not None else None,
-                'verse': verse if verse is not None else None,
+                'ar.book': f"'{book.upper()}'" if book is not None else None,
+                'ar.chapter': chapter if chapter is not None else None,
+                'ar.verse': verse if verse is not None else None,
         }
         query_group_by = []
         query_order_by = None
@@ -312,12 +312,12 @@ async def get_result(
         query += f"ORDER BY {query_order_by}\n"
     else:
         query += "ORDER BY id\n"
+    agg_query = 'SELECT COUNT(*) AS row_count FROM (' + query + ') AS sub;'
     if query_limit:
         query += f"LIMIT {query_limit}\n"
     if query_offset:
         query += f"OFFSET {query_offset}\n"
-    agg_query = 'SELECT COUNT(*) AS row_count FROM (' + query + ') AS sub;'
-
+    
     result_data = await connection.fetch(query)
     result_agg_data = await connection.fetch(agg_query)
 
