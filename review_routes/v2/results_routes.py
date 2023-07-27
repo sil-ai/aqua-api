@@ -486,6 +486,7 @@ async def get_compare_results(
 async def get_average_results(
     revision_id: Optional[int] = None,
     reference_id: Optional[int] = None,
+    assessment_type: str = 'word-alignment',
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
@@ -549,16 +550,15 @@ async def get_average_results(
     filtered_assessments = {}
     if revision_id:
         for assessment in assessment_response:
-            if assessment['revision'] == revision_id and assessment['type'] == 'word-alignment':
+            if assessment['revision'] == revision_id and assessment['type'] == assessment_type:
                 filtered_assessments[assessment['reference']] = assessment['id']
     else:
         for assessment in assessment_response:
-            if assessment['reference'] == reference_id and assessment['type'] == 'word-alignment':
+            if assessment['reference'] == reference_id and assessment['type'] == assessment_type:
                 filtered_assessments[assessment['revision']] = assessment['id']
     assessment_ids = list(filtered_assessments.values())
-    print(filtered_assessments)
     if len(assessment_ids) == 0:
-        return {'results': []}
+        return {'results': [], 'total_count': 0}
     
     if aggregate == aggType['chapter']:
         query_select = """
@@ -696,8 +696,6 @@ async def get_average_results(
         }
         query_order_by = None
 
-    print(query_where)
-    print(any(value is not None for value in query_where.values()))
     query = f"SELECT {query_select}\n"
     if query_from:
         query += f"FROM {query_from}\n"
@@ -727,10 +725,7 @@ async def get_average_results(
         query += f"LIMIT {query_limit}\n"
     if query_offset:
         query += f"OFFSET {query_offset}\n"
-
-    print(query)
-
-    print(agg_query)
+    
     result_data = await connection.fetch(query)
     result_agg_data = await connection.fetch(agg_query)
 
