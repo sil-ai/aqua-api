@@ -725,7 +725,7 @@ async def get_average_results(
         query += f"LIMIT {query_limit}\n"
     if query_offset:
         query += f"OFFSET {query_offset}\n"
-    print(query)
+    
     result_data = await connection.fetch(query)
     result_agg_data = await connection.fetch(agg_query)
 
