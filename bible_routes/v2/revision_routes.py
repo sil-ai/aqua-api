@@ -103,6 +103,7 @@ async def list_revisions(version_id: Optional[int]=None):
                     name=revision[4],
                     published=revision[3],
                     backTranslation=revision[5],
+                    isoLanguage=revision[6],
             )
 
             revisions_data.append(revision_data)
