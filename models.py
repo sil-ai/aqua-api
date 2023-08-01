@@ -41,6 +41,7 @@ class RevisionOut(BaseModel):
     name: Optional[str] = None
     published: Optional[bool] = False
     backTranslation: Optional[int] = None
+    isoLanguage: Optional[str] = None
 
 
 class VerseText(BaseModel):
