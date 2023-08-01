@@ -78,6 +78,9 @@ async def get_assessments():
 
         assessment_data.append(data)
 
+    # Sort assessment_data by requested_time in descending order (most recent first)
+    assessment_data = sorted(assessment_data, key=lambda x: x.requested_time, reverse=True)
+
     return assessment_data
 
 
