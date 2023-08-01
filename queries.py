@@ -93,8 +93,8 @@ def list_revisions_query():
     list_revisions = """
                     SELECT br.id, br.date, br.bibleversion, br.published, br.name, br.backtranslation, bv.isoLanguage
                     FROM "bibleRevision" br
-                      WHERE bibleversion=(%s)
                     INNER JOIN "bibleVersion" bv ON br.bibleversion = bv.id
+                      WHERE bibleversion=(%s)
                     """
 
     return list_revisions
