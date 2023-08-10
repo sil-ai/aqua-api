@@ -361,7 +361,21 @@ async def get_compare_results(
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
 ):
+    """
+    Get results for a given assessment_type for a revision_id and reference_id, optionally filtered by book, chapter, and verse.
+    Compares results from multiple baselines if baseline_ids is set, or from all assessments of assessment_type 
+    with reference reference_id if baseline_ids is not set.
+    Returns a list of results, with:
+
+    score: the score for the given assessment
+    mean_score: the mean score over the baseline assessments
+    stdev_score: the standard deviation of the scores over the baseline assessments
+    z_score: the z-score of the score compared to the baseline assessments
+    
+    """
     if aggregate is not None and aggregate not in ['book', 'chapter']:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -387,6 +401,12 @@ async def get_compare_results(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If verse is set, chapter must also be set."
         )
+    if page is not None and page_size is not None:
+        offset = (page - 1) * page_size
+        limit = page_size
+    else:
+        offset = 0
+        limit = None
 
     conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
     connection = await asyncpg.connect(
@@ -495,10 +515,17 @@ async def get_compare_results(
                 {'AND verse = ' + str(verse) if verse is not None else ''}
             GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
             ) AS revision
-            ON baseline.book = revision.book {'and baseline.chapter = revision.chapter' if aggregate in ['chapter', None] else ''} {'and baseline.verse = revision.verse' if aggregate is None else ''}
+            ON baseline.book = revision.book {'and baseline.chapter = revision.chapter ' if aggregate in ['chapter', None] else ''} {'and baseline.verse = revision.verse ' if aggregate is None else ''}
+            
     """
-
+    agg_query = 'SELECT COUNT(*) AS row_count FROM (' + query + ') AS sub;'
+    
+    query += f"LIMIT {str(limit)} " if limit is not None else ''
+    query += f"OFFSET {str(offset)}" if offset is not None else ''
+    
     result_data = await connection.fetch(query)
+    result_agg_data = await connection.fetch(agg_query)
+    await connection.close()
 
     result_list = []
 
@@ -522,9 +549,9 @@ async def get_compare_results(
             )
         result_list.append(results)
     
-    await connection.close()
+    total_count = result_agg_data[0][0]
 
-    return {'results': result_list}
+    return {'results': result_list, 'total_count': total_count}
 
 
 @router.get("/averageresults", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[Result], int]])
