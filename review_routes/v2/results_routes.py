@@ -416,7 +416,19 @@ async def get_compare_results(
             password=conn_list[2],
             statement_cache_size=0,
             )
-
+    
+    if not baseline_ids:
+        # If no baseline ids are requested, use the first revision for each system_ version.
+        list_revisions = queries.list_all_revisions_query()
+        revision_response = await connection.fetch(list_revisions)
+        system_revisions = {}
+        for revision in revision_response[::-1]:  # Go backwards, so you end up with the first revision for each
+                                                    # version. These are more likely to be assessed, since they 
+                                                    # are used for Missing Words
+            if revision['abbreviation'][:7] == 'system_':
+                system_revisions[revision['abbreviation']] = revision['id']
+        baseline_ids = system_revisions.values()
+    
     list_assessments = queries.list_assessments_query()
     assessment_response = await connection.fetch(list_assessments)
     assessment_id = None
