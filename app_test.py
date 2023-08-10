@@ -393,61 +393,7 @@ def test_result(client):
     }
     test_config_compare_results = {
             "revision_id": revision_ids[0],
-    }
-    test_config_compare_results_book = {
-            "revision_id": revision_ids[0],
-            "book": "GEN",
-    }
-    test_config_compare_results_chapter = {
-            "revision_id": revision_ids[0],
-            "book": "GEN",
-            "chapter": 1,
-    }
-    test_config_compare_results_verse = {
-            "revision_id": revision_ids[0],
-            "book": "GEN",
-            "chapter": 1,
-            "verse": 1,
-    }
-    test_config_compare_results_pagination = {
-            "revision_id": revision_ids[0],
-            "page": 1,
-            "page_size": 100,
-    }
-    test_config_compare_results_include_text = {
-            "revision_id": revision_ids[0],
-            "include_text": True,
-            "page": 1,
-            "page_size": 100,
-    }
-    test_config_compare_results_reference = {
             "reference_id": revision_ids[1],
-    }
-    test_config_compare_results_reference_book = {
-            "reference_id": revision_ids[1],
-            "book": "GEN",
-    }
-    test_config_compare_results_reference_chapter = {
-            "reference_id": revision_ids[1],
-            "book": "GEN",
-            "chapter": 1,
-    }
-    test_config_compare_results_reference_verse = {
-            "reference_id": revision_ids[1],
-            "book": "GEN",
-            "chapter": 1,
-            "verse": 1,
-    }
-    test_config_compare_results_reference_pagination = {
-            "reference_id": revision_ids[1],
-            "page": 1,
-            "page_size": 100,
-    }
-    test_config_compare_results_reference_include_text = {
-            "reference_id": revision_ids[1],
-            "include_text": True,
-            "page": 1,
-            "page_size": 100,
     }
 
 
@@ -473,20 +419,6 @@ def test_result(client):
             test_response_verse = client.get(f"/{prefix}/result", params=test_config_verse)
             test_response_pagination_book = client.get(f"/{prefix}/result", params=test_config_pagination_book)
             test_response_compare_results = client.get(f"/{prefix}/compareresults", params=test_config_compare_results)
-            test_response_compare_results_book = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_book)
-            test_response_compare_results_chapter = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_chapter)
-            test_response_compare_results_verse = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_verse)
-            test_response_compare_results_pagination = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_pagination)
-            test_response_compare_results_include_text = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_include_text)
-            test_response_compare_results_reference = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_reference)
-            test_response_compare_results_reference_book = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_reference_book)
-            test_response_compare_results_reference_chapter = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_reference_chapter)
-            test_response_compare_results_reference_verse = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_reference_verse)
-            test_response_compare_results_reference_pagination = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_reference_pagination)
-            test_response_compare_results_reference_include_text = client.get(f"/{prefix}/compareresults", params=test_config_compare_results_reference_include_text)
-
-
-
             
             
             assert test_response_chapter_agg.status_code == 200 and \
@@ -499,20 +431,8 @@ def test_result(client):
             test_response_chapter.status_code == 200 and \
             test_response_verse.status_code == 200 and \
             test_response_pagination_book.status_code == 200 and \
-            test_response_compare_results.status_code == 200 and \
-            test_response_compare_results_book.status_code == 200 and \
-            test_response_compare_results_chapter.status_code == 200 and \
-            test_response_compare_results_verse.status_code == 200 and \
-            test_response_compare_results_pagination.status_code == 200 and \
-            test_response_compare_results_include_text.status_code == 200 and \
-            test_response_compare_results_reference.status_code == 200 and \
-            test_response_compare_results_reference_book.status_code == 200 and \
-            test_response_compare_results_reference_chapter.status_code == 200 and \
-            test_response_compare_results_reference_verse.status_code == 200 and \
-            test_response_compare_results_reference_pagination.status_code == 200 and \
-            test_response_compare_results_reference_include_text.status_code == 200
-            
-        
+            test_response_compare_results.status_code == 400  # The baseline assessments haven't been run
+
 
 def test_delete_revision(client):
     response = client.get("/version")

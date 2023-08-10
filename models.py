@@ -119,6 +119,9 @@ class MultipleResult(BaseModel):
     reference_id: Optional[int] = None
     vref: Optional[str] = None
     score: float
+    mean_score: Optional[float] = None
+    stdev_score: Optional[float] = None
+    z_score: Optional[float] = None
     flag: bool = False
     note: Optional[str] = None
     hide: bool = False
