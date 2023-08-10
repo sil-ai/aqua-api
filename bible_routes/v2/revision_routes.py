@@ -91,15 +91,12 @@ async def list_revisions(version_id: Optional[int]=None):
 
         revisions_data = []
         for revision in revision_result:
-            fetch_version_data = queries.fetch_version_data()
-            cursor.execute(fetch_version_data, (revision[2],))
-            version_data = cursor.fetchone()
             
             revision_data = RevisionOut(
                     id=revision[0],
                     date=revision[1],
                     version_id=revision[2],
-                    version_abbreviation=version_data[0],
+                    version_abbreviation=revision[7],
                     name=revision[4],
                     published=revision[3],
                     backTranslation=revision[5],

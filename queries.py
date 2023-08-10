@@ -81,7 +81,7 @@ def fetch_bible_version_by_abbreviation():
 
 def list_all_revisions_query():
     list_revisions = """
-                    SELECT br.id, br.date, br.bibleversion, br.published, br.name, br.backtranslation, bv.isoLanguage
+                    SELECT br.id, br.date, br.bibleversion, br.published, br.name, br.backtranslation, bv.isoLanguage, bv.abbreviation
                     FROM "bibleRevision" br
                     INNER JOIN "bibleVersion" bv ON br.bibleversion = bv.id
                     """
@@ -91,7 +91,7 @@ def list_all_revisions_query():
 
 def list_revisions_query():
     list_revisions = """
-                    SELECT br.id, br.date, br.bibleversion, br.published, br.name, br.backtranslation, bv.isoLanguage
+                    SELECT br.id, br.date, br.bibleversion, br.published, br.name, br.backtranslation, bv.isoLanguage, bv.abbreviation
                     FROM "bibleRevision" br
                     INNER JOIN "bibleVersion" bv ON br.bibleversion = bv.id
                       WHERE bibleversion=(%s)
