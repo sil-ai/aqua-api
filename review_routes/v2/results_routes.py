@@ -351,10 +351,11 @@ async def get_result(
     return {'results': result_list, 'total_count': total_count}
 
 
-@router.get("/compareresults", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[MultipleResult], int]])
+@router.get("/compareresults", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[MultipleResult], int, dict]])
 async def get_compare_results(
-    revision_id: int,
-    reference_id: int,
+    revision_id: Optional[int] = None,
+    reference_id: Optional[int] = None,
+    assessment_id: Optional[int] = None,
     baseline_ids: List[int] = Query(None),
     assessment_type: str = 'word-alignment',
     aggregate: Optional[str] = None,
@@ -363,6 +364,7 @@ async def get_compare_results(
     verse: Optional[int] = None,
     page: Optional[int] = None,
     page_size: Optional[int] = None,
+    include_text: Optional[bool] = False,
 ):
     """
     Get results for a given assessment_type for a revision_id and reference_id, optionally filtered by book, chapter, and verse.
@@ -376,6 +378,21 @@ async def get_compare_results(
     z_score: the z-score of the score compared to the baseline assessments
     
     """
+    if include_text and aggregate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="include_text and aggregate cannot both be set. Text can only be included for verse-level results."
+        )
+    if assessment_id is None and (revision_id is None or reference_id is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either assessment_id or both revision_id and reference_id must be set."
+        )
+    if assessment_id is not None and (revision_id is not None or reference_id is not None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only one of assessment_id or (both revision_id and reference_id) can be set."
+        )
     if aggregate is not None and aggregate not in ['book', 'chapter']:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -421,51 +438,53 @@ async def get_compare_results(
         # If no baseline ids are requested, use the first revision for each system_ version.
         list_revisions = queries.list_all_revisions_query()
         revision_response = await connection.fetch(list_revisions)
+        list_versions = queries.list_versions_query()
+        version_response = await connection.fetch(list_versions)
         system_revisions = {}
         for revision in revision_response[::-1]:  # Go backwards, so you end up with the first revision for each
                                                     # version. These are more likely to be assessed, since they 
                                                     # are used for Missing Words
             if revision['abbreviation'][:7] == 'system_':
                 system_revisions[revision['abbreviation']] = revision['id']
-        baseline_ids = system_revisions.values()
+        baseline_ids = list(system_revisions.values())
     
     list_assessments = queries.list_assessments_query()
     assessment_response = await connection.fetch(list_assessments)
-    assessment_id = None
+    
     # Get the word alignment assessment ids for the given revision or reference, without duplicates
-    baseline_assessments = {}
+    if assessment_id:
+        revision_id = [assessment['revision'] for assessment in assessment_response if assessment['id'] == assessment_id][0]
+        reference_id = [assessment['reference'] for assessment in assessment_response if assessment['id'] == assessment_id][0]
+        assessment_type = [assessment['type'] for assessment in assessment_response if assessment['id'] == assessment_id][0]
+    
+    baseline_revisions = {}
     for assessment in assessment_response:
         for baseline_id in baseline_ids:
+            if baseline_id not in baseline_revisions:
+                baseline_revisions[baseline_id] = {}
+                baseline_revisions[baseline_id]['revision_name'] = [revision['name'] for revision in revision_response if revision['id'] == baseline_id][0]
+                baseline_revisions[baseline_id]['version_id'] = [revision['bibleversion'] for revision in revision_response if revision['id'] == baseline_id][0]
+
+                baseline_revisions[baseline_id]['version_name'] = [version['name'] for version in version_response if version['id'] == baseline_revisions[baseline_id]['version_id']][0]
+                baseline_revisions[baseline_id]['assessment_id'] = None
             if assessment['revision'] == baseline_id and assessment['reference'] == reference_id and assessment['type'] == assessment_type:
-                baseline_assessments[baseline_id] = assessment['id']
+                baseline_revisions[baseline_id]['assessment_id'] = assessment['id']
+                baseline_revisions[baseline_id]['assessment_status'] = assessment['status']
                 continue
-        if assessment['revision'] == revision_id and assessment['reference'] == reference_id and assessment['type'] == assessment_type:
+
+        if not assessment_id and assessment['revision'] == revision_id and assessment['reference'] == reference_id and assessment['type'] == assessment_type:
             assessment_id = assessment['id']
-    
+
     if not assessment_id:
         raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"""
                 Assessment for {assessment_type} from {revision_id} to {reference_id} not found.
                 Please run this assessment first. 
-                 """
+                """
             )
-    
-    # Make sure all baseline_ids are keys in baseline_assessments:
-    missing_baseline_ids = []
-    for baseline_id in baseline_ids:
-        if baseline_id not in baseline_assessments:
-            missing_baseline_ids.append(baseline_id)
-    if missing_baseline_ids:
-        raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"""
-                Baseline assessment for {assessment_type} from {missing_baseline_ids} to {reference_id} not found.
-                Please run this assessment first. 
-                 """
-            )
-
-    baseline_assessment_ids = list(baseline_assessments.values())
+    baseline_assessment_ids = [baseline_assessments.get('assessment_id') for baseline_assessments in baseline_revisions.values()]
+    baseline_assessment_ids = [assessment_id for assessment_id in baseline_assessment_ids if assessment_id is not None]
     
     query_where = {}
     if book is not None:
@@ -474,62 +493,110 @@ async def get_compare_results(
             query_where['chapter'] = chapter
             if verse is not None:
                 query_where['verse'] = verse
-    
-    query = f"""
-        SELECT
+    query = ''
+
+    if include_text:
+        query += """
+        SELECT 
             (row_number() OVER ())::integer AS id,
-            {'baseline.book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
-            {'baseline.chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
-            {'baseline.verse' if aggregate is None else 'NULL::integer AS verse'},
-            revision.score,
-            baseline.mean_score,
-            baseline.stdev_score,
-            CASE
-                WHEN baseline.stdev_score = 0 THEN 0
-                ELSE (revision.score - baseline.mean_score) / baseline.stdev_score
-            END AS z_score
-        FROM
-        (
-        SELECT
-            {'baseline_all.book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
-            {'baseline_all.chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
-            {'baseline_all.verse' if aggregate is None else 'NULL::integer AS verse'},
-            COALESCE(avg(NULLIF(baseline_all.score, 'NaN')::numeric), 0) AS mean_score,
-            COALESCE(stddev_pop(NULLIF(baseline_all.score, 'NaN')::numeric), 0) AS stdev_score
+                results.book,
+                results.chapter,
+                results.verse,
+                results.score,
+                results.mean_score,
+                results.stdev_score,
+                results.z_score,
+                vt1.text as revision_text,
+                vt2.text as reference_text
         FROM (
-        SELECT
-            (row_number() OVER ())::integer AS id,
-            assessment,
-            {'book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
-            {'chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
-            {'verse' if aggregate is None else 'NULL::integer AS verse'},
-            COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score
-    FROM "assessmentResult"
-    WHERE assessment IN ({', '.join([str(assessment_id) for assessment_id in baseline_assessment_ids])})
-    {"AND book = '" + book + "'" if book is not None else ''}
-    {'AND chapter = ' + str(chapter) if chapter is not None else ''}
-    {'AND verse = ' + str(verse) if verse is not None else ''}
-    GROUP BY assessment, book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
-            ) AS baseline_all
-            GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
-            ) AS baseline
-            JOIN
-            (SELECT
+        """
+    if len(baseline_assessment_ids) > 0:
+        query += f"""
+            SELECT
                 (row_number() OVER ())::integer AS id,
+                {'baseline.book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
+                {'baseline.chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
+                {'baseline.verse' if aggregate is None else 'NULL::integer AS verse'},
+                revision.score,
+                baseline.mean_score,
+                baseline.stdev_score,
+                CASE
+                    WHEN baseline.stdev_score = 0 THEN 0
+                    ELSE (revision.score - baseline.mean_score) / baseline.stdev_score
+                END AS z_score,
+                NULL::text AS revision_text,
+                NULL::text AS reference_text
+            FROM
+            (
+            SELECT
+                {'baseline_all.book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
+                {'baseline_all.chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
+                {'baseline_all.verse' if aggregate is None else 'NULL::integer AS verse'},
+                COALESCE(avg(NULLIF(baseline_all.score, 'NaN')::numeric), 0) AS mean_score,
+                COALESCE(stddev_pop(NULLIF(baseline_all.score, 'NaN')::numeric), 0) AS stdev_score
+            FROM (
+            SELECT
+                (row_number() OVER ())::integer AS id,
+                assessment,
                 {'book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
                 {'chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
                 {'verse' if aggregate is None else 'NULL::integer AS verse'},
                 COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score
-                FROM "assessmentResult"
-                WHERE assessment = {assessment_id}
-                {"AND book = '" + book + "'" if book is not None else ''}
-                {'AND chapter = ' + str(chapter) if chapter is not None else ''}
-                {'AND verse = ' + str(verse) if verse is not None else ''}
+        FROM "assessmentResult"
+        WHERE assessment IN ({', '.join([str(assessment_id) for assessment_id in baseline_assessment_ids])})
+        {"AND book = '" + book + "'" if book is not None else ''}
+        {'AND chapter = ' + str(chapter) if chapter is not None else ''}
+        {'AND verse = ' + str(verse) if verse is not None else ''}
+        GROUP BY assessment, book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
+                ) AS baseline_all
+                GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
+                ) AS baseline
+                JOIN
+                (SELECT
+                    (row_number() OVER ())::integer AS id,
+                    {'book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
+                    {'chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
+                    {'verse' if aggregate is None else 'NULL::integer AS verse'},
+                    COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score
+                    FROM "assessmentResult"
+                    WHERE assessment = {assessment_id}
+                    {"AND book = '" + book + "'" if book is not None else ''}
+                    {'AND chapter = ' + str(chapter) if chapter is not None else ''}
+                    {'AND verse = ' + str(verse) if verse is not None else ''}
+                GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
+                ) AS revision
+                ON baseline.book = revision.book {'and baseline.chapter = revision.chapter ' if aggregate in ['chapter', None] else ''} {'and baseline.verse = revision.verse ' if aggregate is None else ''}
+                
+        """
+    else:
+        query += f"""
+            SELECT 
+            book, 
+            chapter, 
+            verse, 
+            COALESCE(avg(NULLIF(score, 'NaN')::numeric), 0) AS score, 
+            NULL::float as mean_score, 
+            0::float as stdev_score, 
+            0::float as z_score
+            FROM
+            "assessmentResult"
+            WHERE assessment={assessment_id}
+                    {"AND book = '" + book + "'" if book is not None else ''}
+                    {'AND chapter = ' + str(chapter) if chapter is not None else ''}
+                    {'AND verse = ' + str(verse) if verse is not None else ''}
             GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
-            ) AS revision
-            ON baseline.book = revision.book {'and baseline.chapter = revision.chapter ' if aggregate in ['chapter', None] else ''} {'and baseline.verse = revision.verse ' if aggregate is None else ''}
-            
-    """
+            """
+    if include_text:
+        query += f"""
+            ) AS results
+            JOIN "verseText" vt1
+        ON (((results.book = vt1.book and results.chapter = vt1.chapter and results.verse = vt1.verse)
+        AND (vt1.biblerevision = {revision_id})))
+            JOIN "verseText" vt2
+        ON (((results.book = vt2.book and results.chapter = vt2.chapter and results.verse = vt2.verse)
+        AND (vt2.biblerevision = {reference_id})))
+        """
+    
     agg_query = 'SELECT COUNT(*) AS row_count FROM (' + query + ') AS sub;'
     
     query += f"LIMIT {str(limit)} " if limit is not None else ''
@@ -558,12 +625,14 @@ async def get_compare_results(
             mean_score=result[5] if result[5] else 0,
             stdev_score=result[6] if result[6] else 0,
             z_score=result[7] if result[7] else 0,
+            revision_text=result[8],
+            reference_text=result[9],
             )
         result_list.append(results)
     
     total_count = result_agg_data[0][0]
 
-    return {'results': result_list, 'total_count': total_count}
+    return {'results': result_list, 'total_count': total_count, 'baseline_revisions': baseline_revisions}
 
 
 @router.get("/averageresults", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[Result], int]])
