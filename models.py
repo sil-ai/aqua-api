@@ -124,6 +124,8 @@ class MultipleResult(BaseModel):
     z_score: Optional[float] = None
     flag: bool = False
     note: Optional[str] = None
+    revision_text: Optional[str] = None
+    reference_text: Optional[str] = None
     hide: bool = False
 
 
