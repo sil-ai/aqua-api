@@ -495,21 +495,7 @@ async def get_compare_results(
                 query_where['verse'] = verse
     query = ''
 
-    if include_text:
-        query += """
-        SELECT 
-            (row_number() OVER ())::integer AS id,
-                results.book,
-                results.chapter,
-                results.verse,
-                results.score,
-                results.mean_score,
-                results.stdev_score,
-                results.z_score,
-                vt1.text as revision_text,
-                vt2.text as reference_text
-        FROM (
-        """
+
     if len(baseline_assessment_ids) > 0:
         query += f"""
             SELECT
@@ -524,8 +510,8 @@ async def get_compare_results(
                     WHEN baseline.stdev_score = 0 THEN 0
                     ELSE (revision.score - baseline.mean_score) / baseline.stdev_score
                 END AS z_score,
-                NULL::text AS revision_text,
-                NULL::text AS reference_text
+                baseline.revision_text,
+                baseline.reference_text
             FROM
             (
             SELECT
@@ -533,23 +519,34 @@ async def get_compare_results(
                 {'baseline_all.chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
                 {'baseline_all.verse' if aggregate is None else 'NULL::integer AS verse'},
                 COALESCE(avg(NULLIF(baseline_all.score, 'NaN')::numeric), 0) AS mean_score,
-                COALESCE(stddev_pop(NULLIF(baseline_all.score, 'NaN')::numeric), 0) AS stdev_score
+                COALESCE(stddev_pop(NULLIF(baseline_all.score, 'NaN')::numeric), 0) AS stdev_score,
+                baseline_all.revision_text,
+                baseline_all.reference_text
             FROM (
             SELECT
                 (row_number() OVER ())::integer AS id,
-                assessment,
-                {'book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
-                {'chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
-                {'verse' if aggregate is None else 'NULL::integer AS verse'},
-                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score
-        FROM "assessmentResult"
+                ar.assessment,
+                {'ar.book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
+                {'ar.chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
+                {'ar.verse' if aggregate is None else 'NULL::integer AS verse'},
+                {'vt1.text as revision_text' if include_text else 'NULL::text AS revision_text'},
+                {'vt2.text as reference_text' if include_text else 'NULL::text AS reference_text'},
+                COALESCE(avg(NULLIF(ar.score, 'NaN')::numeric), 0) AS score
+        FROM "assessmentResult" ar
+        {f'''
+         JOIN "verseText" vt1 ON vt1.book = ar.book AND vt1.chapter = ar.chapter AND vt1.verse = ar.verse
+        AND vt1.biblerevision = {revision_id}
+        JOIN "verseText" vt2 ON vt2.book = ar.book AND vt2.chapter = ar.chapter AND vt2.verse = ar.verse
+        AND vt2.biblerevision = {reference_id}
+         ''' 
+         if include_text else ''}
         WHERE assessment IN ({', '.join([str(assessment_id) for assessment_id in baseline_assessment_ids])})
-        {"AND book = '" + book + "'" if book is not None else ''}
-        {'AND chapter = ' + str(chapter) if chapter is not None else ''}
-        {'AND verse = ' + str(verse) if verse is not None else ''}
-        GROUP BY assessment, book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
+        {"AND ar.book = '" + book + "'" if book is not None else ''}
+        {'AND ar.chapter = ' + str(chapter) if chapter is not None else ''}
+        {'AND ar.verse = ' + str(verse) if verse is not None else ''}
+        GROUP BY ar.assessment, ar.book {', ar.chapter' if aggregate in ['chapter', None] else ''} {', ar.verse' if aggregate is None else ''} {', vt1.text' if include_text else ''} {', vt2.text' if include_text else ''}
                 ) AS baseline_all
-                GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
+                GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''} , baseline_all.revision_text, baseline_all.reference_text
                 ) AS baseline
                 JOIN
                 (SELECT
@@ -586,16 +583,6 @@ async def get_compare_results(
                     {'AND verse = ' + str(verse) if verse is not None else ''}
             GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
             """
-    if include_text:
-        query += f"""
-            ) AS results
-            JOIN "verseText" vt1
-        ON (((results.book = vt1.book and results.chapter = vt1.chapter and results.verse = vt1.verse)
-        AND (vt1.biblerevision = {revision_id})))
-            JOIN "verseText" vt2
-        ON (((results.book = vt2.book and results.chapter = vt2.chapter and results.verse = vt2.verse)
-        AND (vt2.biblerevision = {reference_id})))
-        """
     
     agg_query = 'SELECT COUNT(*) AS row_count FROM (' + query + ') AS sub;'
     
