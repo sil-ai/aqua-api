@@ -378,7 +378,7 @@ async def get_compare_results(
     z_score: the z-score of the score compared to the baseline assessments
     
     """
-    if len(book) > 3:  # Important, to protect against SQL injection
+    if book and len(book) > 3:  # Important, to protect against SQL injection
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Book must be a valid three-letter book abbreviation."
