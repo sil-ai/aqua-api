@@ -357,7 +357,7 @@ async def get_compare_results(
     reference_id: Optional[int] = None,
     assessment_id: Optional[int] = None,
     baseline_ids: List[int] = Query(None),
-    assessment_type: AssessmentType = 'word-alignment',
+    assessment_type: AssessmentType = AssessmentType('word-alignment'),
     aggregate: Optional[str] = None,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
