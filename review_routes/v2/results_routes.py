@@ -14,7 +14,7 @@ import asyncpg
 import queries
 from key_fetch import get_secret
 from models import Result_v2 as Result
-from models import WordAlignment, MultipleResult
+from models import WordAlignment, MultipleResult, AssessmentType
 
 
 class aggType(Enum):
@@ -357,7 +357,7 @@ async def get_compare_results(
     reference_id: Optional[int] = None,
     assessment_id: Optional[int] = None,
     baseline_ids: List[int] = Query(None),
-    assessment_type: str = 'word-alignment',
+    assessment_type: AssessmentType = AssessmentType('word-alignment'),
     aggregate: Optional[str] = None,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
@@ -378,6 +378,11 @@ async def get_compare_results(
     z_score: the z-score of the score compared to the baseline assessments
     
     """
+    if book and len(book) > 3:  # Important, to protect against SQL injection
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Book must be a valid three-letter book abbreviation."
+        )
     if include_text and aggregate is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -455,7 +460,7 @@ async def get_compare_results(
     if assessment_id:
         revision_id = [assessment['revision'] for assessment in assessment_response if assessment['id'] == assessment_id][0]
         reference_id = [assessment['reference'] for assessment in assessment_response if assessment['id'] == assessment_id][0]
-        assessment_type = [assessment['type'] for assessment in assessment_response if assessment['id'] == assessment_id][0]
+        assessment_type = AssessmentType([assessment['type'] for assessment in assessment_response if assessment['id'] == assessment_id][0])
     
     baseline_revisions = {}
     for assessment in assessment_response:
@@ -467,19 +472,19 @@ async def get_compare_results(
 
                 baseline_revisions[baseline_id]['version_name'] = [version['name'] for version in version_response if version['id'] == baseline_revisions[baseline_id]['version_id']][0]
                 baseline_revisions[baseline_id]['assessment_id'] = None
-            if assessment['revision'] == baseline_id and assessment['reference'] == reference_id and assessment['type'] == assessment_type:
+            if assessment['revision'] == baseline_id and assessment['reference'] == reference_id and assessment['type'] == assessment_type.value:
                 baseline_revisions[baseline_id]['assessment_id'] = assessment['id']
                 baseline_revisions[baseline_id]['assessment_status'] = assessment['status']
                 continue
 
-        if not assessment_id and assessment['revision'] == revision_id and assessment['reference'] == reference_id and assessment['type'] == assessment_type:
+        if not assessment_id and assessment['revision'] == revision_id and assessment['reference'] == reference_id and assessment['type'] == assessment_type.value:
             assessment_id = assessment['id']
 
     if not assessment_id:
         raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"""
-                Assessment for {assessment_type} from {revision_id} to {reference_id} not found.
+                Assessment for {assessment_type.value} from {revision_id} to {reference_id} not found.
                 Please run this assessment first. 
                 """
             )
