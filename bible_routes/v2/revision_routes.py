@@ -96,11 +96,12 @@ async def list_revisions(version_id: Optional[int]=None):
                     id=revision[0],
                     date=revision[1],
                     version_id=revision[2],
-                    version_abbreviation=revision[7],
+                    version_abbreviation=revision[8],
                     name=revision[4],
                     published=revision[3],
                     backTranslation=revision[5],
-                    isoLanguage=revision[6],
+                    machineTranslation=revision[6],
+                    isoLanguage=revision[7],
             )
 
             revisions_data.append(revision_data)
@@ -142,6 +143,7 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
         revision.version_id, name,
         revision_date, revision.published,
         revision.backTranslation,
+        revision.machineTranslation,
         ))
     except psycopg2.errors.ForeignKeyViolation:
         cursor.close()
@@ -164,6 +166,7 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
                 name=returned_revision[4],
                 published=returned_revision[3],
                 backTranslation=returned_revision[5],
+                machineTranslation=returned_revision[6],
         )
 
     # Parse the input Bible revision data.

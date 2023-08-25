@@ -60,11 +60,11 @@ def delete_verses_mutation():
 def insert_bible_revision():
     bible_revise = """
                 INSERT INTO "bibleRevision" (
-                    bibleversion, name, date, published, backTranslation
+                    bibleversion, name, date, published, backTranslation, machineTranslation
                     )
-                  VALUES ((%s), (%s), (%s), (%s), (%s))
+                  VALUES ((%s), (%s), (%s), (%s), (%s), (%s))
                 RETURNING 
-                  id, date, bibleversion, published, name, backTranslation
+                  id, date, bibleversion, published, name, backTranslation, machineTranslation;
                 """
  
     return bible_revise
@@ -81,7 +81,7 @@ def fetch_bible_version_by_abbreviation():
 
 def list_all_revisions_query():
     list_revisions = """
-                    SELECT br.id, br.date, br.bibleversion, br.published, br.name, br.backtranslation, bv.isoLanguage, bv.abbreviation
+                    SELECT br.id, br.date, br.bibleversion, br.published, br.name, br.backtranslation, br.machinetranslation, bv.isoLanguage, bv.abbreviation
                     FROM "bibleRevision" br
                     INNER JOIN "bibleVersion" bv ON br.bibleversion = bv.id
                     """
@@ -91,7 +91,7 @@ def list_all_revisions_query():
 
 def list_revisions_query():
     list_revisions = """
-                    SELECT br.id, br.date, br.bibleversion, br.published, br.name, br.backtranslation, bv.isoLanguage, bv.abbreviation
+                    SELECT br.id, br.date, br.bibleversion, br.published, br.name, br.backtranslation, br.machinetranslation, bv.isoLanguage, bv.abbreviation
                     FROM "bibleRevision" br
                     INNER JOIN "bibleVersion" bv ON br.bibleversion = bv.id
                       WHERE bibleversion=(%s)

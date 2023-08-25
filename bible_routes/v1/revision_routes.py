@@ -139,6 +139,7 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
         revision.version_id, name,
         revision_date, revision.published,
         revision.backTranslation,
+        revision.machineTranslation,
         ))
     except psycopg2.errors.ForeignKeyViolation:
         cursor.close()

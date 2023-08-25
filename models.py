@@ -32,6 +32,7 @@ class RevisionIn(BaseModel):
     name: Optional[str] = None
     published: Optional[bool] = False
     backTranslation: Optional[int] = None
+    machineTranslation: Optional[bool] = False
 
 class RevisionOut(BaseModel):
     id: int
@@ -41,6 +42,7 @@ class RevisionOut(BaseModel):
     name: Optional[str] = None
     published: Optional[bool] = False
     backTranslation: Optional[int] = None
+    machineTranslation: Optional[bool] = False
     isoLanguage: Optional[str] = None
 
 
