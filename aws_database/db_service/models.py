@@ -88,23 +88,7 @@ class IsoScript(Base):
     iso15924 = Column(Text, unique=True)
     name = Column(Text)
 
-class LocalizedBookName(Base):
-    __tablename__ = 'localizedBookName'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(Text)
-    bookreference_id = Column(Integer, ForeignKey('bookReference.number'))
-    bibleversion_id = Column(Integer, ForeignKey('bibleVersion.id'))
 
-class Question(Base):
-    __tablename__ = 'question'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    start_verse = Column(Text, ForeignKey('verseReference.fullverseid'))
-    end_verse = Column(Text, ForeignKey('verseReference.fullverseid'))
-    language = Column(Text, ForeignKey('isoLanguage.iso639'))
-    question = Column(Text)
-    answer = Column(Text)
 
 class VerseReference(Base):
     __tablename__ = 'verseReference'
@@ -124,18 +108,6 @@ class VerseText(Base):
     book = Column(Text)
     chapter = Column(Integer)
     verse = Column(Integer)
-
-class AssessmentMissingWords(Base):
-    __tablename__ = 'assessmentMissingWords'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    assessment_id = Column(Integer, ForeignKey('assessment.id'), nullable=False)
-    score = Column(Numeric)
-    flag = Column(Boolean)
-    vref = Column(Text, ForeignKey('verseReference.fullverseid'))
-    source = Column(Text)
-    note = Column(Text)
-    target = Column(JSONB)
 
 class AlignmentThresholdScores(Base):
     __tablename__ = 'alignmentThresholdScores'
@@ -161,17 +133,4 @@ class AlignmentTopSourceScores(Base):
     vref = Column(Text)
     source = Column(Text)
     target = Column(Text)
-    hide = Column(Boolean)
-
-class GroupResultsChapter(Base):
-    __tablename__ = 'group_results_chapter'
-    
-    id = Column(Integer, primary_key=True, index=True)
-    vref_group = Column(Text)
-    assessment_id = Column(Integer, ForeignKey('assessment.id'), nullable=False)
-    score = Column(Numeric)
-    source = Column(Text)
-    target = Column(Text)
-    flag = Column(Boolean)
-    note = Column(Text)
 
