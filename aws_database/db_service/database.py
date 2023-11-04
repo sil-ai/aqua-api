@@ -7,12 +7,18 @@ import os
 # Load environment variables from .env file
 load_dotenv()
 
-# Retrieve the DATABASE_URL from the .env file
-DATABASE_URL = os.getenv('DATABASE_URL')
+# Construct the DATABASE_URL from the environment variables
+DB_USER = os.getenv('DB_USER')
+DB_PASS = os.getenv('DB_PASS')
+DB_HOST = os.getenv('DB_HOST')
+DB_PORT = os.getenv('DB_PORT')
+DB_NAME = os.getenv('DB_NAME')
+
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
 # If the DATABASE_URL is not set, we should raise an exception
 if not DATABASE_URL:
-    raise ValueError("No DATABASE_URL set for Flask application. Did you forget to run 'source .env'?")
+    raise ValueError("No DATABASE_URL.")
 
 engine = create_engine(DATABASE_URL)
 db_session = scoped_session(sessionmaker(autocommit=False, autoflush=False, bind=engine))
@@ -23,6 +29,5 @@ Base.query = db_session.query_property()
 def init_db():
     # Import all modules here that might define models so that
     # they will be registered properly on the metadata.
-    # Otherwise, you will have to import them first before calling init_db()
-    from .models import ExampleModel  # Replace ExampleModel with your actual models
+    import db_service.models  # Replace with your actual models
     Base.metadata.create_all(bind=engine)
