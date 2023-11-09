@@ -63,7 +63,6 @@ class AssessmentType(Enum):
     missing_words = 'missing-words'
     semantic_similarity = 'semantic-similarity'
     question_answering = 'question-answering'
-    word_tests = 'word-tests'
 
 
 class AssessmentIn(BaseModel):
