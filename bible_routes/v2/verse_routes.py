@@ -134,7 +134,7 @@ async def get_book(revision: int, book: str):
     get_book_data = queries.get_book_query()
     cursor.execute(get_book_data, (revision, book,))
     result = cursor.fetchall()
-    
+
     books_data = []
     for verse in result:
         verse_data = VerseText(
