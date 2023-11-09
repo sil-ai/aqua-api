@@ -76,6 +76,9 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
             text=verse[1],
             verseReference=verse[3],
             revision_id=verse[2],
+            book=verse[4],
+            chapter=verse[5],
+            verse=verse[6],
         )
 
         chapter_data.append(verse_data)
@@ -112,6 +115,9 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
         text=verse[1],
         verseReference=verse[3],
         revision_id=verse[2],
+        book=verse[4],
+        chapter=verse[5],
+        verse=verse[6],
     )
 
     cursor.close()
