@@ -142,7 +142,7 @@ def get_book_query():
     get_book = """
                 SELECT * FROM "verseText" "vt"
                   INNER JOIN "verseReference" "vr" ON vt.versereference = fullverseid
-                    WHERE vr.book = (%s);
+                    WHERE vt.biblerevision=(%s) and vt.book = (%s);
                 """
 
     return get_book
