@@ -51,6 +51,9 @@ class VerseText(BaseModel):
     text: str
     verseReference: str
     revision_id: int
+    book: Optional[str] = None
+    chapter: Optional[int] = None
+    verse: Optional[int] = None
 
 
 class AssessmentType(Enum):
@@ -60,6 +63,7 @@ class AssessmentType(Enum):
     missing_words = 'missing-words'
     semantic_similarity = 'semantic-similarity'
     question_answering = 'question-answering'
+    word_tests = 'word-tests'
 
 
 class AssessmentIn(BaseModel):
