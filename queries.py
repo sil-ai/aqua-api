@@ -122,7 +122,9 @@ def get_chapter_query(chapterReference):
     get_chapter = """
                 SELECT * FROM "verseText" "vt"
                   INNER JOIN "verseReference" "vr" ON vt.versereference = fullverseid
-                    WHERE vr.chapter = {};
+                  WHERE biblerevision=(%s)
+                    AND vr.chapter = {}
+                    ORDER BY vt.id;
                 """.format(chapterReference)
 
     return get_chapter

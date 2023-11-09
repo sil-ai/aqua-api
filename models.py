@@ -51,6 +51,9 @@ class VerseText(BaseModel):
     text: str
     verseReference: str
     revision_id: int
+    book: Optional[str] = None
+    chapter: Optional[int] = None
+    verse: Optional[int] = None
 
 
 class AssessmentType(Enum):

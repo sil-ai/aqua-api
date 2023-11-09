@@ -76,6 +76,9 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
             text=verse[1],
             verseReference=verse[3],
             revision_id=verse[2],
+            book=verse[4],
+            chapter=verse[5],
+            verse=verse[6],
         )
 
         chapter_data.append(verse_data)
@@ -112,6 +115,9 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
         text=verse[1],
         verseReference=verse[3],
         revision_id=verse[2],
+        book=verse[4],
+        chapter=verse[5],
+        verse=verse[6],
     )
 
     cursor.close()
@@ -121,7 +127,7 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
 
 
 @router.get("/book", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
-async def get_book(revision: int, book: str):
+async def get_book(revision_id: int, book: str):
     """
     Gets a list of verse texts for a revision for a given book.
 
@@ -132,7 +138,7 @@ async def get_book(revision: int, book: str):
     cursor = connection.cursor()
 
     get_book_data = queries.get_book_query()
-    cursor.execute(get_book_data, (revision, book,))
+    cursor.execute(get_book_data, (revision_id, book,))
     result = cursor.fetchall()
 
     books_data = []
@@ -142,6 +148,9 @@ async def get_book(revision: int, book: str):
                 text=verse[1],
                 verseReference=verse[3],
                 revision_id=verse[2],
+                book=verse[4],
+                chapter=verse[5],
+                verse=verse[6],
             )
 
         books_data.append(verse_data)
