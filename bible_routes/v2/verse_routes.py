@@ -87,7 +87,7 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
     return chapter_data
 
 
-@router.get("/verse", dependencies=[Depends(api_key_auth)], response_model=VerseText)
+@router.get("/verse", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
 async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
     """
     Gets a single verse text for a revision for a given book, chapter and verse.
@@ -106,22 +106,24 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
 
     cursor.execute(get_verses, (revision_id,))
     result = cursor.fetchall()
-    verse = result[0]  # There should only be one result
 
-    verse_data = VerseText(
-        id=verse[0],
-        text=verse[1],
-        verseReference=verse[3],
-        revision_id=verse[2],
-        book=verse[4],
-        chapter=verse[5],
-        verse=verse[6],
-    )
+    verse_list = []
+    for verse in result:
+        verse_data = VerseText(
+            id=verse[0],
+            text=verse[1],
+            verseReference=verse[3],
+            revision_id=verse[2],
+            book=verse[4],
+            chapter=verse[5],
+            verse=verse[6],
+        )
+        verse_list.append(verse_data)
 
     cursor.close()
     connection.close()
 
-    return verse_data
+    return verse_list
 
 
 @router.get("/book", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
