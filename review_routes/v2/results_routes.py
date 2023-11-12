@@ -149,7 +149,7 @@ async def get_result(
             )
     assessment_type = assessment_response[assessment_ids.index(assessment_id)]['type']
 
-    source_null = not(assessment_type in ["missing-words", "question-answering"] and not reverse)  # For missing words, if not reverse, we only want the non-null source results
+    source_null = not(assessment_type in ["missing-words", "question-answering", "word-tests"] and not reverse)  # For missing words, if not reverse, we only want the non-null source results
 
 
     if aggregate == aggType['chapter']:
@@ -573,15 +573,25 @@ async def get_compare_results(
     else:
         query += f"""
             SELECT 
-            book, 
-            chapter, 
-            verse, 
+                (row_number() OVER ())::integer AS id,
+                {'book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
+                {'chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
+                {'verse' if aggregate is None else 'NULL::integer AS verse'},
             COALESCE(avg(NULLIF(score, 'NaN')::numeric), 0) AS score, 
             NULL::float as mean_score, 
             0::float as stdev_score, 
-            0::float as z_score
+            0::float as z_score,
+            {'vt1.text as revision_text' if include_text else 'NULL::text AS revision_text'},
+            {'vt2.text as reference_text' if include_text else 'NULL::text AS reference_text'}
             FROM
             "assessmentResult"
+            {f'''
+            JOIN "verseText" vt1 ON vt1.book = ar.book AND vt1.chapter = ar.chapter AND vt1.verse = ar.verse
+            AND vt1.biblerevision = {revision_id}
+            JOIN "verseText" vt2 ON vt2.book = ar.book AND vt2.chapter = ar.chapter AND vt2.verse = ar.verse
+            AND vt2.biblerevision = {reference_id}
+            ''' 
+         if include_text else ''}
             WHERE assessment={assessment_id}
                     {"AND book = '" + book + "'" if book is not None else ''}
                     {'AND chapter = ' + str(chapter) if chapter is not None else ''}
@@ -593,7 +603,7 @@ async def get_compare_results(
     
     query += f"LIMIT {str(limit)} " if limit is not None else ''
     query += f"OFFSET {str(offset)}" if offset is not None else ''
-    
+    print(query)
     result_data = await connection.fetch(query)
     result_agg_data = await connection.fetch(agg_query)
     await connection.close()
