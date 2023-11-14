@@ -603,7 +603,6 @@ async def get_compare_results(
     
     query += f"LIMIT {str(limit)} " if limit is not None else ''
     query += f"OFFSET {str(offset)}" if offset is not None else ''
-    print(query)
     result_data = await connection.fetch(query)
     result_agg_data = await connection.fetch(agg_query)
     await connection.close()
