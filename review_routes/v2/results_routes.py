@@ -438,13 +438,14 @@ async def get_compare_results(
             password=conn_list[2],
             statement_cache_size=0,
             )
-    
+
+    list_versions = queries.list_versions_query()
+    version_response = await connection.fetch(list_versions)
+    list_revisions = queries.list_all_revisions_query()
+    revision_response = await connection.fetch(list_revisions)
+
     if not baseline_ids:
         # If no baseline ids are requested, use the first revision for each system_ version.
-        list_revisions = queries.list_all_revisions_query()
-        revision_response = await connection.fetch(list_revisions)
-        list_versions = queries.list_versions_query()
-        version_response = await connection.fetch(list_versions)
         system_revisions = {}
         for revision in revision_response[::-1]:  # Go backwards, so you end up with the first revision for each
                                                     # version. These are more likely to be assessed, since they 
