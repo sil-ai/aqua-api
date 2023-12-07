@@ -5,6 +5,7 @@ from typing import Optional, Dict, Union, List
 from enum import Enum
 import re
 import ast
+import math
 
 import fastapi
 from fastapi import Depends, HTTPException, status, Query
@@ -328,12 +329,14 @@ async def get_result(
             vref = vref + ' ' + str(result[3])
             if result[4] is not None:
                 vref = vref + ':' + str(result[4])
+        
+        score = 0 if result[5] is None or math.isnan(result[5]) else result[5]
 
         results = Result(
             id=result[0],
             assessment_id=result[1],
             vref=vref,
-            score=result[5] if result[5] else 0,
+            score=score,
             source=result[6],
             target=[{key: value} for key, value in ast.literal_eval(str(result[7])).items()] if ast.literal_eval(str(result[7])) and result[7] is not None else None,
             flag=result[8] if result[8] else False,
