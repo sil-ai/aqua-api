@@ -2,10 +2,20 @@ version: '3'
 services:
   api:
     build: .
+    image: ${REGISTRY}/${IMAGENAME}:latest
     ports:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql://dbuser:dbpassword@db:5432/dbname
+      - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
+      - AWS_SECRET_KEY=${AWS_SECRET_KEY}
+      - GRAPHQL_URL=${GRAPHQL_URL}
+      - GRAPHQL_SECRET=${GRAPHQL_SECRET}
+      - AQUA_DB=${AQUA_DB}
+      - TEST_KEY=${TEST_KEY}
+      - FAIL_KEY=${FAIL_KEY}
+      - KEY_VAULT=${KEY_VAULT}
+      - MODAL_WEBHOOK_TOKEN=${MODAL_WEBHOOK_TOKEN}
     depends_on:
       - db
 
