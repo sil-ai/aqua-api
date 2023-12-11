@@ -5,6 +5,7 @@ services:
     image: ${REGISTRY}/${IMAGENAME}:latest
     ports:
       - "8000:8000"
+    command: pytest
     environment:
       - DATABASE_URL=postgresql://dbuser:dbpassword@db:5432/dbname
       - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
