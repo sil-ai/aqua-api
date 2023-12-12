@@ -8,6 +8,7 @@ import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
 import psycopg2
+from pydantic import BaseModel
 
 import queries
 from key_fetch import get_secret
@@ -123,6 +124,51 @@ async def add_version(v: VersionIn = Depends()):
     connection.close()
 
     return new_version
+
+
+class RenameVersionIn(BaseModel):
+    id: int
+    new_name: str
+
+@router.post("/version/rename", dependencies=[Depends(api_key_auth)], response_model=VersionOut)
+async def rename_version(data: RenameVersionIn = Depends()):
+    """
+    Rename an existing version.
+    """
+
+    connection = postgres_con()
+    cursor = connection.cursor()
+
+    update_query = queries.update_version_name_query()
+
+    try:
+        cursor.execute(update_query, (data.new_name, data.id))
+        connection.commit()
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    updated_version = cursor.fetchone()
+
+    if not updated_version:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    renamed_version = VersionOut(
+        id=updated_version[0],
+        name=updated_version[1],
+        abbreviation=updated_version[4],
+        isoLanguage=updated_version[2],
+        isoScript=updated_version[3],
+        rights=updated_version[5],
+        forwardTranslation=updated_version[6],
+        backTranslation=updated_version[7],
+        machineTranslation=updated_version[8]
+    )
+
+    cursor.close()
+    connection.close()
+
+    return renamed_version
 
 
 @router.delete("/version", dependencies=[Depends(api_key_auth)])
