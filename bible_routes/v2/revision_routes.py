@@ -5,6 +5,7 @@ from datetime import date
 from typing import Optional, List
 from tempfile import NamedTemporaryFile
 import re
+from pydantic import BaseModel
 
 import fastapi
 from fastapi import Depends, HTTPException, status, File, UploadFile
@@ -204,6 +205,54 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     connection.close()
 
     return revision_query
+
+
+class RenameRevisionIn(BaseModel):
+    id: int
+    new_name: str
+
+@router.post("/revision/rename", dependencies=[Depends(api_key_auth)], response_model=RevisionOut)
+async def rename_revision(data: RenameRevisionIn = Depends()):
+    """
+    Rename an existing version.
+    """
+
+    connection = postgres_conn()
+    cursor = connection.cursor()
+
+    update_query = queries.update_revision_name_query()
+
+    try:
+        cursor.execute(update_query, (data.new_name, data.id))
+        connection.commit()
+    except Exception as e:
+        connection.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    updated_revision = cursor.fetchone()
+
+    if not updated_revision:
+        raise HTTPException(status_code=404, detail="Version not found")
+    
+    fetch_version_data = queries.fetch_version_data()
+    cursor.execute(fetch_version_data, (updated_revision[2],))
+    version_data = cursor.fetchone()
+
+    renamed_revision = RevisionOut(
+                id=updated_revision[0],
+                date=updated_revision[1],
+                version_id=updated_revision[2],
+                version_abbreviation=version_data[0],
+                name=updated_revision[4],
+                published=updated_revision[3],
+                backTranslation=updated_revision[5],
+                machineTranslation=updated_revision[6],
+        )
+
+    cursor.close()
+    connection.close()
+
+    return renamed_revision
 
 
 @router.delete("/revision", dependencies=[Depends(api_key_auth)])

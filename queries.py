@@ -30,6 +30,18 @@ def delete_bible_version():
     return delete_version
 
 
+def update_version_name_query():
+    update_version_name = """
+                        UPDATE "bibleVersion"
+                          SET name=(%s)
+                          WHERE id=(%s)
+                        RETURNING id, name, isolanguage, isoscript,
+                    abbreviation, rights, forwardtranslation,
+                    backtranslation, machinetranslation;
+                        """
+
+    return update_version_name
+
 def delete_revision_mutation():
     delete_revision = """
                     DELETE FROM "bibleRevision"
@@ -68,6 +80,17 @@ def insert_bible_revision():
                 """
  
     return bible_revise
+
+
+def update_revision_name_query():
+    update_revision_name = """
+                        UPDATE "bibleRevision"
+                          SET name=(%s)
+                          WHERE id=(%s)
+                        RETURNING id, date, bibleversion, published,
+                        name, backtranslation, machinetranslation;
+                        """
+    return update_revision_name
 
 
 def fetch_bible_version_by_abbreviation():
