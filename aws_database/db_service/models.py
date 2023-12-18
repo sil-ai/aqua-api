@@ -17,8 +17,8 @@ from sqlalchemy.sql import func
 Base = declarative_base()
 
 
-class AlignmentThresholdScores(Base):
-    __tablename__ = "alignmentthresholdscores"
+class alignment_threshold_scores(Base):
+    __tablename__ = "alignment_threshold_scores"
 
     id = Column(Integer, primary_key=True)
     assessment_id = Column(Integer, ForeignKey("assessment.id"))
@@ -31,8 +31,8 @@ class AlignmentThresholdScores(Base):
     hide = Column(Boolean)
 
 
-class AlignmentTopSourceScores(Base):
-    __tablename__ = "alignmentTopSourceScores"
+class alignment_top_source_scores(Base):
+    __tablename__ = "alignment_top_source_scores"
 
     id = Column(Integer, primary_key=True)
     assessment_id = Column(Integer, ForeignKey("assessment.id"))
@@ -49,8 +49,8 @@ class Assessment(Base):
     __tablename__ = "assessment"
 
     id = Column(Integer, primary_key=True)
-    revision_id = Column(Integer, ForeignKey("bibleRevision.id"))
-    reference_id = Column(Integer, ForeignKey("bibleRevision.id"))
+    revision_id = Column(Integer, ForeignKey("bible_revision.id"))
+    reference_id = Column(Integer, ForeignKey("bible_revision.id"))
     type = Column(Text)
     status = Column(Text)
     requested_time = Column(TIMESTAMP, default=func.now())
@@ -58,8 +58,8 @@ class Assessment(Base):
     end_time = Column(TIMESTAMP)
 
 
-class AssessmentResult(Base):
-    __tablename__ = "assessmentResult"
+class assessment_result(Base):
+    __tablename__ = "assessment_result"
 
     id = Column(Integer, primary_key=True)
     assessment_id = Column(Integer, ForeignKey("assessment.id"))
@@ -75,25 +75,25 @@ class AssessmentResult(Base):
     verse = Column(Integer)
 
 
-class BibleRevision(Base):
-    __tablename__ = "bibleRevision"
+class bible_revision(Base):
+    __tablename__ = "bible_revision"
 
     id = Column(Integer, primary_key=True)
     date = Column(DateTime)
-    bible_version_id = Column(Integer, ForeignKey("bibleVersion.id"))
+    bible_version_id = Column(Integer, ForeignKey("bible_version.id"))
     published = Column(Boolean)
     name = Column(Text)
-    back_translation_id = Column(Integer, ForeignKey("bibleRevision.id"))
+    back_translation_id = Column(Integer, ForeignKey("bible_revision.id"))
     machine_translation = Column(Boolean, default=False)
 
 
-class BibleVersion(Base):
-    __tablename__ = "bibleVersion"
+class bible_version(Base):
+    __tablename__ = "bible_version"
 
     id = Column(Integer, primary_key=True)
     name = Column(Text)
-    isoLanguage = Column(String(3), ForeignKey("isoLanguage.iso639"))
-    isoScript = Column(String(4), ForeignKey("isoScript.iso15924"))
+    iso_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    iso_script = Column(String(4), ForeignKey("iso_script.iso15924"))
     abbreviation = Column(Text)
     rights = Column(Text)
     forward_translation_id = Column(Integer)
@@ -101,58 +101,58 @@ class BibleVersion(Base):
     machine_translation = Column(Boolean)
 
 
-class BookReference(Base):
-    __tablename__ = "bookReference"
+class book_reference(Base):
+    __tablename__ = "book_reference"
 
     abbreviation = Column(Text, primary_key=True)
     name = Column(Text)
     number = Column(Integer)
 
 
-class ChapterReference(Base):
-    __tablename__ = "chapterReference"
+class chapter_reference(Base):
+    __tablename__ = "chapter_reference"
 
     full_chapter_id = Column(Text, primary_key=True)
     number = Column(Integer)
-    book_reference = Column(Text, ForeignKey("bookReference.abbreviation"))
+    book_reference = Column(Text, ForeignKey("book_reference.abbreviation"))
 
 
 class IsoLanguage(Base):
-    __tablename__ = "isoLanguage"
+    __tablename__ = "iso_language"
 
     iso639 = Column(String(3), primary_key=True, unique=True)
     name = Column(Text)
 
 
 class IsoScript(Base):
-    __tablename__ = "isoScript"
+    __tablename__ = "iso_script"
 
     iso15924 = Column(String(4), primary_key=True, unique=True)
     name = Column(Text)
 
 
-class VerseReference(Base):
-    __tablename__ = "verseReference"
+class verse_reference(Base):
+    __tablename__ = "verse_reference"
 
     full_verse_id = Column(Text, primary_key=True, unique=True)
     number = Column(Integer)
-    chapter = Column(Text, ForeignKey("chapterReference.full_chapter_id"))
-    book_reference = Column(Text, ForeignKey("bookReference.abbreviation"))
+    chapter = Column(Text, ForeignKey("chapter_reference.full_chapter_id"))
+    book_reference = Column(Text, ForeignKey("book_reference.abbreviation"))
 
 
 class VerseText(Base):
-    __tablename__ = "verseText"
+    __tablename__ = "verse_text"
 
     id = Column(Integer, primary_key=True)
     text = Column(Text)
-    bible_revision_id = Column(Integer, ForeignKey("bibleRevision.id"))
-    verse_reference = Column(Text, ForeignKey("verseReference.full_verse_id"))
+    bible_revision_id = Column(Integer, ForeignKey("bible_revision.id"))
+    verse_reference = Column(Text, ForeignKey("verse_reference.full_verse_id"))
     book = Column(Text)
     chapter = Column(Integer)
     verse = Column(Integer)
 
     # Relationship definitions (if needed)
     bible_revision = relationship(
-        "BibleRevision", backref=backref("verse_texts", cascade="all, delete-orphan")
+        "bible_revision", backref=backref("verse_texts", cascade="all, delete-orphan")
     )
-    verse_reference = relationship("VerseReference", backref="verse_texts")
+    verse_reference = relationship("verse_reference", backref="verse_texts")

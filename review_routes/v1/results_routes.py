@@ -102,7 +102,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
 
     else:
         fetch_results = queries.get_results_query_v1()
-        table_name = "assessmentResult"
+        table_name = "assessment_result"
         assessment_tag = 1
         vref_tag = 5
         source_tag = 6

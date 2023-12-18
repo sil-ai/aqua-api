@@ -11,7 +11,7 @@ def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
         aws_access_key_id=AWS_ACCESS_KEY,
         aws_secret_access_key=AWS_SECRET_KEY
     )
-
+    secret = None
     try:
         get_secret_value_response = client.get_secret_value(
             SecretId=KEY_VAULT
@@ -35,11 +35,12 @@ def get_secret(KEY_VAULT, AWS_ACCESS_KEY, AWS_SECRET_KEY):
 
     API_KEYS = []
     removable = ["{", "}", '"']
-    format_keys = secret.translate(
-            {ord(c):'' for c in removable}
-            ).split(',')
-    for keys in format_keys:
-        key = keys.split(':')
-        API_KEYS.append(key[1])
+    if secret:
+        format_keys = secret.translate(
+                {ord(c):'' for c in removable}
+                ).split(',')
+        for keys in format_keys:
+            key = keys.split(':')
+            API_KEYS.append(key[1])
 
     return API_KEYS

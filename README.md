@@ -16,7 +16,7 @@
 - `/revision`
     - ✔️ `GET` - lists revisions
     - ✔️ `POST` - uploads Bible data to create a new revision
-    - ✔️ `DELETE` - removes a revision and the downstream `verseText` data
+    - ✔️ `DELETE` - removes a revision and the downstream `verse_text` data
 - `/assessment`
     - ✔️ `GET` - lists assessments
     - ✔️ `POST` - triggers a new assessment (regardless of assessment type)

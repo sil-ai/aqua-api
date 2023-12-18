@@ -57,8 +57,8 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
     connection = postgres_conn()
     cursor = connection.cursor()
 
-    chapterReference = "'" + book + " " + str(chapter) + "'"
-    get_chapters = queries.get_chapter_query(chapterReference)
+    chapter_reference = "'" + book + " " + str(chapter) + "'"
+    get_chapters = queries.get_chapter_query(chapter_reference)
 
     cursor.execute(get_chapters, (revision_id,))
     result = cursor.fetchall()
@@ -68,7 +68,7 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
         verse_data = VerseText(
             id=verse[0],
             text=verse[1],
-            verseReference=verse[3],
+            verse_reference=verse[3],
             revision_id=verse[2],
         )
 
@@ -91,11 +91,11 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
     connection = postgres_conn()
     cursor = connection.cursor()
 
-    verseReference = (
+    verse_reference = (
             "'" + book + " " + str(chapter) + ":" + str(verse) + "'"
             )   
     
-    get_verses = queries.get_verses_query(verseReference)
+    get_verses = queries.get_verses_query(verse_reference)
 
     cursor.execute(get_verses, (revision_id,))
     result = cursor.fetchall()
@@ -104,7 +104,7 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
     verse_data = VerseText(
         id=verse[0],
         text=verse[1],
-        verseReference=verse[3],
+        verse_reference=verse[3],
         revision_id=verse[2],
     )
 
@@ -125,11 +125,11 @@ async def get_book(revision: int, verse: str):
     connection = postgres_conn()
     cursor = connection.cursor()
 
-    bookReference = '"' + verse + '"'
+    book_reference = '"' + verse + '"'
     get_book_data = queries.get_book_query()
 
 
-    cursor.execute(get_book_data, (revision, bookReference,))
+    cursor.execute(get_book_data, (revision, book_reference,))
     result = cursor.fetchall()
 
     books_data = []
@@ -137,7 +137,7 @@ async def get_book(revision: int, verse: str):
         verse_data = VerseText(
                 id=verse[0],
                 text=verse[1],
-                verseReference=verse[3],
+                verse_reference=verse[3],
                 revision_id=verse[2],
             )
 
@@ -170,7 +170,7 @@ async def get_text(revision: int):
         verse_data = VerseText(
                 id=verse[0],
                 text=verse[1],
-                verseReference=verse[3],
+                verse_reference=verse[3],
                 revision_id=verse[2],
             )
 

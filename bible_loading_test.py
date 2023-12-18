@@ -55,17 +55,17 @@ revision_id = revision_response[0]
 
 def test_text_dataframe(): 
     verses = []
-    bibleRevision = []
+    bible_revision = []
     with open("fixtures/test_bible.txt", "r") as f:
         for line in f:
             if line == "\n" or line == "" or line == " ":
                 verses.append(np.nan)
-                bibleRevision.append(np.nan)
+                bible_revision.append(np.nan)
             else:
                 verses.append(line.replace("\n", ""))
-                bibleRevision.append(revision_id)
+                bible_revision.append(revision_id)
 
-    verseText = bible_loading.text_dataframe(verses, bibleRevision)
+    verse_text = bible_loading.text_dataframe(verses, bible_revision)
 
     test_data = {
             "locations": [
@@ -86,7 +86,7 @@ def test_text_dataframe():
             }
 
     status = 0
-    for _, row in verseText.iterrows():
+    for _, row in verse_text.iterrows():
         if row["versereference"] in test_data["locations"]:
             location = test_data["locations"].index(row["versereference"])
             if row["text"] in test_data["text"][location]:
@@ -105,13 +105,13 @@ def test_text_loading():
     
     verse_dict = {
         "text": ["TEST"], 
-        "biblerevision": [revision_id], 
+        "bible_revision": [revision_id], 
         "versereference": ["GEN 1:1"]
         }
 
-    verseText = pd.DataFrame(verse_dict)
+    verse_text = pd.DataFrame(verse_dict)
 
-    text_load = bible_loading.text_loading(verseText, db_engine)
+    text_load = bible_loading.text_loading(verse_text, db_engine)
     assert text_load is True
 
     #TODO - Do an explicit SQL query to check that the data was uploaded.
@@ -120,17 +120,17 @@ def test_text_loading():
 
 def test_upload_bible(): 
     verses = []
-    bibleRevision = []
+    bible_revision = []
     with open("fixtures/test_bible.txt", "r") as f:
         for line in f:
             if line == "\n" or line == "" or line == " ":
                 verses.append(np.nan)
-                bibleRevision.append(np.nan)
+                bible_revision.append(np.nan)
             else:
                 verses.append(line.replace("\n", ""))
-                bibleRevision.append(revision_id)
+                bible_revision.append(revision_id)
         
-    bible_upload = bible_loading.upload_bible(verses, bibleRevision)
+    bible_upload = bible_loading.upload_bible(verses, bible_revision)
     fetch_version_query = queries.fetch_bible_version_by_abbreviation()
     cursor.execute(fetch_version_query, ("BLTEST",))
     fetch_response = cursor.fetchone()

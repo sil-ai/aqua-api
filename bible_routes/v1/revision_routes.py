@@ -167,18 +167,18 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
 
     # Parse the input Bible revision data.
     verses = []
-    bibleRevision = []
+    bible_revision = []
     has_text = False
 
     with open(temp_file.name, "r") as bible_data:
         for line in bible_data:
             if line == "\n" or line == "" or line == " ":
                 verses.append(np.nan)
-                bibleRevision.append(revision_query.id)
+                bible_revision.append(revision_query.id)
             else:
                 has_text=True
                 verses.append(line.replace("\n", ""))
-                bibleRevision.append(revision_query.id)
+                bible_revision.append(revision_query.id)
     
     if not has_text:
         cursor.close()
@@ -190,7 +190,7 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
         )
 
     # Push the revision to the database.
-    bible_loading.upload_bible(verses, bibleRevision)
+    bible_loading.upload_bible(verses, bible_revision)
 
     # Clean up.
     temp_file.close()

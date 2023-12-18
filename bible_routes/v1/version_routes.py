@@ -66,8 +66,8 @@ async def list_version():
                     id=version[0], 
                     name=version[1], 
                     abbreviation=version[4], 
-                    isoLanguage=version[2], 
-                    isoScript=version[3], 
+                    iso_language=version[2], 
+                    iso_script=version[3], 
                     rights=version[5],
                     forwardTranslation=version[6],
                     backTranslation=version[7],
@@ -87,7 +87,7 @@ async def add_version(v: VersionIn = Depends()):
     """
     Create a new version. 
 
-    `isoLanguage` and `isoScript` must be valid ISO39 and ISO 15924 codes, which can be found by GET /language and GET /script.
+    `iso_language` and `iso_script` must be valid ISO39 and ISO 15924 codes, which can be found by GET /language and GET /script.
 
     `forwardTranslation` and `backTranslation` are optional integers, corresponding to the version_id of the version that is the forward and back translation used by this version.
     """
@@ -99,7 +99,7 @@ async def add_version(v: VersionIn = Depends()):
 
     cursor.execute(
         new_version, (
-            v.name, v.isoLanguage, v.isoScript,
+            v.name, v.iso_language, v.iso_script,
             v.abbreviation, v.rights, v.forwardTranslation,
             v.backTranslation, v.machineTranslation,
         )
@@ -112,8 +112,8 @@ async def add_version(v: VersionIn = Depends()):
         id=revision[0],
         name=revision[1],
         abbreviation=revision[4],
-        isoLanguage=revision[2],
-        isoScript=revision[3],
+        iso_language=revision[2],
+        iso_script=revision[3],
         rights=revision[5],
         forwardTranslation=revision[6],
         backTranslation=revision[7],
