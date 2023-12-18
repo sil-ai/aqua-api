@@ -1,28 +1,30 @@
 all: build-local
 
 IMAGENAME=aqua-api
+REGISTRY=docker-local
 GH_BRANCH=$(shell basename ${GITHUB_REF})
 
 build-local:
-	docker build -t ${REGISTRY}/${IMAGENAME}:latest .
+	docker build  -t ${REGISTRY}/${IMAGENAME}:latest .
 
 build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
-test:
-	docker run --shm-size=1g \
-	-e AWS_ACCESS_KEY=${AWS_ACCESS_KEY} \
-	-e AWS_SECRET_KEY=${AWS_SECRET_KEY} \
-	-e GRAPHQL_URL=${GRAPHQL_URL} \
-	-e GRAPHQL_SECRET=${GRAPHQL_SECRET} \
-	-e AQUA_DB=${AQUA_DB} \
-	-e TEST_KEY=${TEST_KEY} \
-	-e FAIL_KEY=${FAIL_KEY} \
-	-e KEY_VAULT=${KEY_VAULT} \
-	-e MODAL_WEBHOOK_TOKEN=${MODAL_WEBHOOK_TOKEN} \
-	-p 8000:8000 \
-	${REGISTRY}/${IMAGENAME}:latest pytest
+up:
+	docker-compose up -d
 
+down:
+	docker-compose down
+
+migrate:
+	docker-compose run --rm api /bin/sh -c "cd /aws_database && alembic upgrade head "
+
+
+test: migrate
+	export AQUA_DB="postgresql://dbuser:dbpassword@db/dbname" && \
+	docker-compose run --rm api pytest
+
+	
 push-branch:
 	docker push ${REGISTRY}/${IMAGENAME}:latest
 	docker tag ${REGISTRY}/${IMAGENAME}:latest ${REGISTRY}/${IMAGENAME}:${GITHUB_SHA}

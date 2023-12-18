@@ -19,13 +19,7 @@ from db_service.database import Base  # adjust the path as needed
 load_dotenv()
 
 # Construct the DATABASE_URL from the environment variables
-DB_USER = os.getenv("DB_USER")
-DB_PASS = os.getenv("DB_PASS")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
-
-DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+DATABASE_URL = os.getenv("AQUA_DB")
 
 
 # this is the Alembic Config object, which provides

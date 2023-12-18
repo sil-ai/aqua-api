@@ -7,12 +7,12 @@ def list_versions_query():
 def add_version_query():
     add_version = """
                 INSERT INTO "bibleVersion" (
-                    name, isolanguage, isoscript,
+                    name, isoLanguage, isoScript,
                     abbreviation, rights, forwardtranslation,
                     backtranslation, machinetranslation)
                   VALUES ((%s), (%s), (%s), (%s), (%s), (%s), (%s), (%s))
                   RETURNING 
-                      id, name, isolanguage, isoscript,
+                      id, name, isoLanguage, isoScript,
                       abbreviation, rights, forwardtranslation,
                       backtranslation, machinetranslation;
                 """
@@ -342,15 +342,15 @@ def get_results_with_text_agg_query():
 
 
 def get_scripts_query():
-    iso_scripts = 'SELECT * FROM "isoScript";'
+    isoScripts = 'SELECT * FROM "isoScript";'
         
-    return iso_scripts
+    return isoScripts
 
 
 def get_languages_query():
-    iso_languages = 'SELECT * FROM "isoLanguage";'
+    isoLanguages = 'SELECT * FROM "isoLanguage";'
          
-    return iso_languages
+    return isoLanguages
 
 #delete when v1 is removed
 def get_results_query_v1():

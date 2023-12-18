@@ -8,21 +8,9 @@ from db_service.models import Base
 # Load environment variables from .env file
 load_dotenv()
 
-# Construct the DATABASE_URL from the environment variables
-DB_USER = os.getenv("DB_USER")
-DB_PASS = os.getenv("DB_PASS")
-DB_HOST = os.getenv("DB_HOST")
-DB_PORT = os.getenv("DB_PORT")
-DB_NAME = os.getenv("DB_NAME")
+DATABASE_URL = os.getenv("AQUA_DB")
 
-DATABASE_URL = (
-    f"postgresql://"
-    f"{DB_USER}:"
-    f"{DB_PASS}@"
-    f"{DB_HOST}:"
-    f"{DB_PORT}/"
-    f"{DB_NAME}"
-)
+
 # If the DATABASE_URL is not set, we should raise an exception
 if not DATABASE_URL:
     raise ValueError("No DATABASE_URL.")
