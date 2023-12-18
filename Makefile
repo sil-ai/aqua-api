@@ -22,7 +22,7 @@ migrate:
 
 test: migrate
 	export AQUA_DB="postgresql://dbuser:dbpassword@db/dbname" && \
-	docker-compose run --rm api pytest
+	docker-compose run --rm api pytest -s
 
 	
 push-branch:

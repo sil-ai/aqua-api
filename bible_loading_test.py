@@ -22,17 +22,24 @@ connection = psycopg2.connect(
 
 cursor = connection.cursor()
 
+iso_language_query = queries.add_iso_language()
+iso_script_query = queries.add_iso_script()
+
 version_query = queries.add_version_query()
 
 fetch_version_query = queries.fetch_bible_version_by_abbreviation()
- 
-cursor.execute(version_query, (
-    "loading_test", "eng", "Latn", "BLTEST",
-    None, None, None, False
-    )
-)
-cursor.close()
 
+with connection.cursor() as cursor:
+    cursor.execute(iso_language_query,("eng","english"))
+    cursor.execute(iso_script_query,("Latn","latin"))
+    
+    connection.commit()
+    
+    cursor.execute(version_query, (
+        "loading_test", "eng", "Latn", "BLTEST",
+        None, None, None, False
+        )
+    )
 
 cursor = connection.cursor()
 
@@ -87,8 +94,8 @@ def test_text_dataframe():
 
     status = 0
     for _, row in verse_text.iterrows():
-        if row["versereference"] in test_data["locations"]:
-            location = test_data["locations"].index(row["versereference"])
+        if row["verse_reference"] in test_data["locations"]:
+            location = test_data["locations"].index(row["verse_reference"])
             if row["text"] in test_data["text"][location]:
                 status += 1
                 if status == 8:
@@ -106,7 +113,7 @@ def test_text_loading():
     verse_dict = {
         "text": ["TEST"], 
         "bible_revision": [revision_id], 
-        "versereference": ["GEN 1:1"]
+        "verse_reference": ["GEN 1:1"]
         }
 
     verse_text = pd.DataFrame(verse_dict)

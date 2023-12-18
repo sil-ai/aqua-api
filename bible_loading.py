@@ -23,7 +23,7 @@ def text_dataframe(verses, bible_revision):
 
         verse_id.append(ids)
 
-    vref["versereference"] = verse_id
+    vref["verse_reference"] = verse_id
     verse_text = vref.drop(columns=["book", "chapter", "verse"])
 
     return verse_text

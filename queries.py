@@ -3,18 +3,39 @@ def list_versions_query():
         
     return list_version
 
+def add_iso_language():
+    iso_language = """
+                INSERT INTO "iso_language" (
+                    iso639, name )
+                  VALUES ((%s), (%s))
+                  RETURNING 
+                    iso639, name
+                """
+    return iso_language
+
+def add_iso_script():
+    iso_script = """
+                INSERT INTO "iso_script" (
+                    iso15924, name )
+                  VALUES ((%s), (%s))
+                  RETURNING 
+                    iso15924, name
+                """
+    return iso_script
+
+
 
 def add_version_query():
     add_version = """
-                INSERT INTO "bible_version" (
+              INSERT INTO "bible_version" (
                     name, iso_language, iso_script,
                     abbreviation, rights, forward_translation_id,
                     back_translation_id, machine_translation)
                   VALUES ((%s), (%s), (%s), (%s), (%s), (%s), (%s), (%s))
                   RETURNING 
                       id, name, iso_language, iso_script,
-                      abbreviation, rights, forwardtranslation,
-                      backtranslation, machine_translation;
+                      abbreviation, rights, forward_translation_id,
+                      back_translation_id, machine_translation;
                 """
 
     return add_version
@@ -60,11 +81,11 @@ def delete_verses_mutation():
 def insert_bible_revision():
     bible_revise = """
                 INSERT INTO "bible_revision" (
-                    bible_version, name, date, published, backTranslation, machineTranslation
+                  id, date, bible_version_id, published, name, back_translation_id, machine_translation
                     )
                   VALUES ((%s), (%s), (%s), (%s), (%s), (%s))
                 RETURNING 
-                  id, date, bible_version, published, name, backTranslation, machineTranslation;
+                  id, date, bible_version_id, published, name, back_translation_id, machine_translation;
                 """
  
     return bible_revise
@@ -81,7 +102,7 @@ def fetch_bible_version_by_abbreviation():
 
 def list_all_revisions_query():
     list_revisions = """
-                    SELECT br.id, br.date, br.bible_version, br.published, br.name, br.backtranslation, br.machinetranslation, bv.iso_language, bv.abbreviation
+                    SELECT br.id, br.date, br.bible_version, br.published, br.name, br.back_translation_id, br.back_translation_id, bv.iso_language, bv.abbreviation
                     FROM "bible_revision" br
                     INNER JOIN "bible_version" bv ON br.bible_version = bv.id
                     """
@@ -91,7 +112,7 @@ def list_all_revisions_query():
 
 def list_revisions_query():
     list_revisions = """
-                    SELECT br.id, br.date, br.bible_version, br.published, br.name, br.backtranslation, br.machinetranslation, bv.iso_language, bv.abbreviation
+                    SELECT br.id, br.date, br.bible_version, br.published, br.name, br.back_translation_id, br.machine_translation, bv.iso_language, bv.abbreviation
                     FROM "bible_revision" br
                     INNER JOIN "bible_version" bv ON br.bible_version = bv.id
                       WHERE bible_version=(%s)
@@ -111,7 +132,7 @@ def version_data_revisions_query():
 
 def fetch_version_data():
     fetch_version = """
-                    SELECT abbreviation, backTranslation FROM "bible_version"
+                    SELECT abbreviation, back_translation_id FROM "bible_version"
                       WHERE id=(%s);
                     """
 
@@ -121,7 +142,7 @@ def fetch_version_data():
 def get_chapter_query(chapter_reference):
     get_chapter = """
                 SELECT * FROM "verse_text" "vt"
-                  INNER JOIN "verse_reference" "vr" ON vt.versereference = fullverseid
+                  INNER JOIN "verse_reference" "vr" ON vt.verse_reference = fullverseid
                   WHERE bible_revision=(%s)
                     AND vr.chapter = {}
                     ORDER BY vt.id;
@@ -134,7 +155,7 @@ def get_verses_query(verse_reference):
     get_verses = """
                 SELECT * FROM "verse_text"
                   WHERE bible_revision=(%s)
-                    AND versereference={};
+                    AND verse_reference={};
                 """.format(verse_reference)
     
     return get_verses
@@ -143,7 +164,7 @@ def get_verses_query(verse_reference):
 def get_book_query():
     get_book = """
                 SELECT * FROM "verse_text" "vt"
-                  INNER JOIN "verse_reference" "vr" ON vt.versereference = fullverseid
+                  INNER JOIN "verse_reference" "vr" ON vt.verse_reference = fullverseid
                     WHERE vt.bible_revision=(%s) and vt.book = (%s)
                     ORDER BY id;
                 """

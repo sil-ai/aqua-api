@@ -257,10 +257,10 @@ async def get_result(
         JOIN assessment a
         ON ((ar.assessment = a.id)))
         JOIN "verse_text" vt1
-        ON (((ar.vref = vt1.versereference)
+        ON (((ar.vref = vt1.verse_reference)
         AND (vt1.bible_revision = a.revision))))
         LEFT JOIN "verse_text" vt2
-        ON (((ar.vref = vt2.versereference)
+        ON (((ar.vref = vt2.verse_reference)
         AND (vt2.bible_revision = a.reference))))
         """
         query_where = {
