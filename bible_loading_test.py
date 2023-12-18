@@ -51,8 +51,8 @@ revision_date = str(date.today())
 revision_query = queries.insert_bible_revision()
         
 cursor.execute(revision_query, (
-    version_id, None,
-    revision_date, False, None, True
+    version_id, 
+    revision_date, None, False, None, True
     ))
 
 connection.commit()
