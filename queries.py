@@ -1,7 +1,38 @@
 def list_versions_query():
     list_version = 'SELECT * FROM "bible_version"'
-        
     return list_version
+  
+def add_chapter_reference():
+    chapter_reference_sql = """
+                INSERT INTO "chapter_reference" (
+                    full_chapter_id, number, book_reference)
+                  VALUES ((%s), (%s), (%s))
+                  RETURNING 
+                    full_chapter_id, number, book_reference
+                """
+    return chapter_reference_sql
+   
+  
+def add_book_reference():
+    book_reference_sql = """
+                INSERT INTO "book_reference" (
+                    abbreviation, name, number)
+                  VALUES ((%s), (%s), (%s))
+                  RETURNING 
+                    abbreviation, name, number
+                """
+    return book_reference_sql
+
+def add_verse_reference():
+    verse_reference_sql = """
+                INSERT INTO "verse_reference" (
+                    full_verse_id, number, chapter, book_reference )
+                  VALUES ((%s), (%s), (%s), (%s))
+                  RETURNING 
+                    full_verse_id, number, chapter, book_reference
+                """
+    return verse_reference_sql
+
 
 def add_iso_language():
     iso_language = """
@@ -80,7 +111,6 @@ def delete_verses_mutation():
 def insert_bible_revision():
     bible_revise = """
                 INSERT INTO "bible_revision" (
-                  id, 
                   date, 
                   bible_version_id, 
                   published, 

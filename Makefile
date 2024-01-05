@@ -10,9 +10,10 @@ build-local:
 build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
-db-up:
+localdb-up:
 	export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
 	docker-compose up -d db 
+	sleep 5 # too fast for db to start
 	cd aws_database && alembic upgrade head
 
 up:

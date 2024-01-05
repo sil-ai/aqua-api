@@ -83,7 +83,7 @@ class bible_revision(Base):
     bible_version_id = Column(Integer, ForeignKey("bible_version.id"))
     published = Column(Boolean)
     name = Column(Text)
-    back_translation_id = Column(Integer, ForeignKey("bible_revision.id"))
+    back_translation_id = Column(Integer, ForeignKey("bible_version.id"))
     machine_translation = Column(Boolean, default=False)
 
 
@@ -155,4 +155,4 @@ class VerseText(Base):
     bible_revision = relationship(
         "bible_revision", backref=backref("verse_texts", cascade="all, delete-orphan")
     )
-    verse_reference = relationship("verse_reference", backref="verse_texts")
+    # verse_reference = relationship("verse_reference", backref="verse_texts")
