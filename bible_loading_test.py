@@ -17,15 +17,7 @@ import queries
 #     sys.exit(1)
 
 
-conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
-connection = psycopg2.connect(
-        host=conn_list[3],
-        database=conn_list[4],
-        user=conn_list[1],
-        password=conn_list[2],
-        sslmode="disable"
-        )
-
+connection = psycopg2.connect(os.getenv("AQUA_DB"))
 cursor = connection.cursor()
 
 iso_language_query = queries.add_iso_language()
