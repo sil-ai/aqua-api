@@ -3,7 +3,7 @@ import psycopg2
 from sqlalchemy import create_engine
 
 # Database connection URL
-db_url = "postgresql://jmansdorfer:ez2w7XftYJTE@ep-floral-mountain-128217.us-east-2.aws.neon.tech/aqua"
+db_url = "postgres://..."
 
 # SQL Query
 query = 'SELECT * FROM "verseReference"'
