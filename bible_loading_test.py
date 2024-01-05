@@ -10,7 +10,7 @@ import numpy as np
 from sqlalchemy import create_engine
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def db_setup_teardown():
     setup = setup_database()
     yield setup
@@ -44,10 +44,6 @@ def setup_database():
             cursor.execute(iso_language_query, ("eng", "english"))
             cursor.execute(iso_script_query, ("Latn", "latin"))
             cursor.execute(version_query, ("loading_test", "eng", "Latn", "BLTEST", None, None, None, False))
-            # cursor.execute(book_reference_query, ("GEN", "Genesis", 1))
-            # cursor.execute(chapter_reference_query,("GEN 1", 1, "GEN"))
-            # cursor.execute(verse_reference_query, ("GEN 1:1", 1, "GEN 1", "GEN"))
-
 
             fetch_version_query = queries.fetch_bible_version_by_abbreviation()
             cursor.execute(fetch_version_query, ("BLTEST",))
@@ -140,30 +136,15 @@ def test_text_loading(db_setup_teardown):
 
 def test_upload_bible(db_setup_teardown): 
     verses = []
-    bible_revision_id = []
+    bible_revision = []
     with open("fixtures/test_bible.txt", "r") as f:
         for line in f:
             if line.strip():
                 verses.append(line.strip())
-                bible_revision_id.append(db_setup_teardown)
+                bible_revision.append(db_setup_teardown)
             else:
                 verses.append(np.nan)
-                bible_revision_id.append(np.nan)
+                bible_revision.append(np.nan)
         
-    bible_upload = bible_loading.upload_bible(verses, bible_revision_id)
-
-    # Verify upload and cleanup
-    with psycopg2.connect(os.getenv("AQUA_DB")) as conn:
-        with conn.cursor() as cursor:
-            fetch_version_query = queries.fetch_bible_version_by_abbreviation()
-            cursor.execute(fetch_version_query, ("BLTEST",))
-            fetch_response = cursor.fetchone()
-            version_id = fetch_response[0]
-
-            delete_version_mutation = queries.delete_bible_version()
-            cursor.execute(delete_version_mutation, (version_id,))
-            delete_response = cursor.fetchone()
-            delete_check = delete_response[0]
-
+    bible_upload = bible_loading.upload_bible(verses, bible_revision)
     assert bible_upload is True
-    assert delete_check == "loading_test"
