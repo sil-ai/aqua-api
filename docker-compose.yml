@@ -5,6 +5,7 @@ services:
     image: ${REGISTRY}/${IMAGENAME}:latest
     ports:
       - "8000:8000"
+      - "5678:5678" # Expose the debug port
    # command: pytest -v
     environment:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}

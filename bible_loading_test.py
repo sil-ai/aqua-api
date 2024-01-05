@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 
 import pandas as pd
 import numpy as np
@@ -9,6 +10,11 @@ from datetime import date
 
 import bible_loading
 import queries
+
+# # Check if running inside a Docker container
+# if not os.path.exists('/.dockerenv'):
+#     print("This script is not running inside a Docker container.")
+#     sys.exit(1)
 
 
 conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
@@ -52,7 +58,12 @@ revision_query = queries.insert_bible_revision()
         
 cursor.execute(revision_query, (
     version_id, 
-    revision_date, None, False, None, True
+    revision_date, 
+    None, 
+    False, 
+    None, 
+    None, 
+    True
     ))
 
 connection.commit()

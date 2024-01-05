@@ -10,19 +10,21 @@ build-local:
 build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
+db-up:
+	export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
+	docker-compose up -d db 
+	cd aws_database && alembic upgrade head
+
 up:
 	docker-compose up -d
 
 down:
 	docker-compose down
 
-migrate:
+test: 
 	docker-compose run --rm api /bin/sh -c "cd /aws_database && alembic upgrade head "
-
-
-test: migrate
 	export AQUA_DB="postgresql://dbuser:dbpassword@db/dbname" && \
-	docker-compose run --rm api pytest -s
+	docker-compose run --rm api  pytest -v
 
 	
 push-branch:

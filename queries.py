@@ -77,19 +77,36 @@ def delete_verses_mutation():
     
     return delete_verses
 
-
 def insert_bible_revision():
     bible_revise = """
                 INSERT INTO "bible_revision" (
-                  id, date, bible_version_id, published, name, back_translation_id, machine_translation
-                    )
-                  VALUES ((%s), (%s), (%s), (%s), (%s), (%s))
+                  id, 
+                  date, 
+                  bible_version_id, 
+                  published, 
+                  name, 
+                  back_translation_id, 
+                  machine_translation
+                )
+                VALUES (
+                  (%s), 
+                  (%s), 
+                  (%s), 
+                  (%s), 
+                  (%s), 
+                  (%s)
+                )
                 RETURNING 
-                  id, date, bible_version_id, published, name, back_translation_id, machine_translation;
+                  id, 
+                  date, 
+                  bible_version_id, 
+                  published, 
+                  name, 
+                  back_translation_id, 
+                  machine_translation;
                 """
  
     return bible_revise
-
 
 def fetch_bible_version_by_abbreviation():
     version_id = """
