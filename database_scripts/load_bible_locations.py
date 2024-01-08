@@ -48,7 +48,7 @@ def create_upsert_method(meta: db.MetaData, extra_update_fields: Optional[Dict[s
 
 def dataframe_creation():
     books = {"abbreviation": [], "name": [], "number": []}
-    chapters = {"fullChapterId": [], "number": [], "bookReference": []}
+    chapters = {"fullChapterId": [], "number": [], "book_reference": []}
     verses = {"fullVerseId": [], "number": [], "book": [], "chapt": []}
 
     chapter_dict = {}
@@ -83,7 +83,7 @@ def dataframe_creation():
                     )
             
             chapters["number"].append(chapter)
-            chapters["bookReference"].append(book)
+            chapters["book_reference"].append(book)
             chapters["fullChapterId"].append(chaptId)
 
     book_df = pd.DataFrame(books)
@@ -95,7 +95,7 @@ def dataframe_creation():
 
 def load_books(book_df, upsert_method, db_engine):
     book_df.to_sql(
-            "bookReference",
+            "book_reference",
             db_engine,
             index=False,
             if_exists="append",
@@ -107,7 +107,7 @@ def load_books(book_df, upsert_method, db_engine):
 
 def load_chapters(chapter_df, upsert_method, db_engine):
     chapter_df.to_sql(
-            "chapterReference",
+            "chapter_reference",
             db_engine,
             index=False,
             if_exists="append",
@@ -116,7 +116,7 @@ def load_chapters(chapter_df, upsert_method, db_engine):
     )
 
     chapter_sql = pd.read_sql_table(
-                "chapterReference", 
+                "chapter_reference", 
                 db_engine
                 )
 
@@ -129,7 +129,7 @@ def load_verses(verse_df, upsert_method, db_engine, chapter_sql):
         book = row["book"]
         chapter = row["chapt"]
         ids = chapter_sql.loc[
-                (chapter_sql["bookReference"] == book) &
+                (chapter_sql["book_reference"] == book) &
                 (chapter_sql["number"] == chapter),
                 "fullChapterId"].values[0]
         chapter_list.append(ids)
@@ -139,7 +139,7 @@ def load_verses(verse_df, upsert_method, db_engine, chapter_sql):
     verse_df = verse_df.drop(columns=["book", "chapt"])
 
     verse_df.to_sql(
-            "verseReference",
+            "verse_reference",
             db_engine,
             index=False,
             if_exists="append",

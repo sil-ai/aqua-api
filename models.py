@@ -6,8 +6,8 @@ import datetime
 
 class VersionIn(BaseModel):
     name: str
-    isoLanguage: str
-    isoScript: str
+    iso_language: str
+    iso_script: str
     abbreviation: str
     rights: Union[str, None] = None
     forwardTranslation: Union[int, None] = None
@@ -18,8 +18,8 @@ class VersionIn(BaseModel):
 class VersionOut(BaseModel):
     id: int
     name: str
-    isoLanguage: str
-    isoScript: str
+    iso_language: str
+    iso_script: str
     abbreviation: str
     rights: Union[str, None] = None
     forwardTranslation: Union[int, None] = None
@@ -43,14 +43,17 @@ class RevisionOut(BaseModel):
     published: Optional[bool] = False
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
-    isoLanguage: Optional[str] = None
+    iso_language: Optional[str] = None
 
 
 class VerseText(BaseModel):
     id: Optional[int] = None
     text: str
-    verseReference: str
+    verse_reference: str
     revision_id: int
+    book: Optional[str] = None
+    chapter: Optional[int] = None
+    verse: Optional[int] = None
 
 
 class AssessmentType(Enum):
@@ -89,7 +92,6 @@ class AssessmentOut(BaseModel):
 
 class Result_v1(BaseModel):
     id: Optional[int] = None
-    assessment_id: int
     vref: Optional[str] = None
     source: Optional[str] = None
     target: Optional[str] = None

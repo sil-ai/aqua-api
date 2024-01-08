@@ -39,14 +39,7 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
 
 
 def postgres_conn():
-    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
-    connection = psycopg2.connect(
-            host=conn_list[3],
-            database=conn_list[4],
-            user=conn_list[1],
-            password=conn_list[2],
-            sslmode="require"
-            )
+    connection = psycopg2.connect(os.getenv("AQUA_DB"))
 
     return connection
 
@@ -101,7 +94,7 @@ async def list_revisions(version_id: Optional[int]=None):
                     published=revision[3],
                     backTranslation=revision[5],
                     machineTranslation=revision[6],
-                    isoLanguage=revision[7],
+                    iso_language=revision[7],
             )
 
             revisions_data.append(revision_data)
@@ -171,18 +164,18 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
 
     # Parse the input Bible revision data.
     verses = []
-    bibleRevision = []
+    bible_revision = []
     has_text = False
 
     with open(temp_file.name, "r") as bible_data:
         for line in bible_data:
             if line == "\n" or line == "" or line == " ":
                 verses.append(np.nan)
-                bibleRevision.append(revision_query.id)
+                bible_revision.append(revision_query.id)
             else:
                 has_text=True
                 verses.append(line.replace("\n", ""))
-                bibleRevision.append(revision_query.id)
+                bible_revision.append(revision_query.id)
     
     if not has_text:
         cursor.close()
@@ -194,7 +187,7 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
         )
 
     # Push the revision to the database.
-    bible_loading.upload_bible(verses, bibleRevision)
+    bible_loading.upload_bible(verses, bible_revision)
 
     # Clean up.
     temp_file.close()

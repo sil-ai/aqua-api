@@ -96,8 +96,8 @@ def test_read_main(client):
 def test_add_version(client):
     test_version = VersionIn(
             name=version_name, 
-            isoLanguage="eng", 
-            isoScript="Latn",
+            iso_language="eng", 
+            iso_script="Latn",
             abbreviation=version_abbreviation,
         )
     for prefix in version_prefixes:

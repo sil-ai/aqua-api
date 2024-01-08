@@ -4,12 +4,12 @@ import pandas as pd
 
 
 # Parse the revision verses into a dataframe.
-def text_dataframe(verses, bibleRevision):
+def text_dataframe(verses, bible_revision):
     my_col = ["book", "chapter", "verse"]
     vref = pd.read_csv("fixtures/vref.txt", sep=" |:", names=my_col, engine="python")
 
     vref["text"] = verses
-    vref["biblerevision"] = bibleRevision
+    vref["bible_revision_id"] = bible_revision
 
     vref = vref.dropna()
 
@@ -23,20 +23,20 @@ def text_dataframe(verses, bibleRevision):
 
         verse_id.append(ids)
 
-    vref["versereference"] = verse_id
-    verseText = vref.drop(columns=["book", "chapter", "verse"])
+    vref["verse_reference"] = verse_id
+    verse_text = vref.drop(columns=["book", "chapter", "verse"])
 
-    return verseText
+    return verse_text
 
 
 # Direct upload to the SQL database.
-def text_loading(verseText, db_engine):
+def text_loading(verse_text, db_engine):
     
     #TODO - what happens when the upload fails?
     # Do we need to have a negative test for trying
     # to upload bad data.
-    verseText.to_sql(
-            "verseText",
+    verse_text.to_sql(
+            "verse_text",
             db_engine,
             index=False,
             if_exists="append",
@@ -45,10 +45,10 @@ def text_loading(verseText, db_engine):
     return True
 
 
-def upload_bible(verses, bibleRevision):
+def upload_bible(verses, bible_revision):
     # initialize SQL engine
     db_engine = db.create_engine(os.getenv("AQUA_DB"))
-    verseText = text_dataframe(verses, bibleRevision)
-    text_loading(verseText, db_engine)
+    verse_text = text_dataframe(verses, bible_revision)
+    text_loading(verse_text, db_engine)
 
     return True

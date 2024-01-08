@@ -40,14 +40,7 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
 
 
 def postgres_conn():
-    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
-    connection = psycopg2.connect(
-            host=conn_list[3],
-            database=conn_list[4],
-            user=conn_list[1],
-            password=conn_list[2],
-            sslmode="require"
-            )
+    connection = psycopg2.connect(os.getenv("AQUA_DB"))
 
     return connection
 
@@ -102,7 +95,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
 
     else:
         fetch_results = queries.get_results_query_v1()
-        table_name = "assessmentResult"
+        table_name = "assessment_result"
         assessment_tag = 1
         vref_tag = 5
         source_tag = 6

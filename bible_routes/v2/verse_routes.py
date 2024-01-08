@@ -38,14 +38,7 @@ def api_key_auth(api_key: str = Depends(api_key_header)):
 
 
 def postgres_conn():
-    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
-    connection = psycopg2.connect(
-            host=conn_list[3],
-            database=conn_list[4],
-            user=conn_list[1],
-            password=conn_list[2],
-            sslmode="require"
-            )
+    connection = psycopg2.connect(os.getenv("AQUA_DB"))
 
     return connection
 
@@ -61,21 +54,22 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
     connection = postgres_conn()
     cursor = connection.cursor()
 
-    chapterReference = "'" + book + " " + str(chapter) + "'"
-    get_chapters = queries.get_chapter_query(chapterReference)
+    chapter_reference = "'" + book + " " + str(chapter) + "'"
+    get_chapters = queries.get_chapter_query(chapter_reference)
 
     cursor.execute(get_chapters, (revision_id,))
     result = cursor.fetchall()
     
-    print(result[0])
-
     chapter_data = []
     for verse in result:
         verse_data = VerseText(
             id=verse[0],
             text=verse[1],
-            verseReference=verse[3],
+            verse_reference=verse[3],
             revision_id=verse[2],
+            book=verse[4],
+            chapter=verse[5],
+            verse=verse[6],
         )
 
         chapter_data.append(verse_data)
@@ -86,7 +80,7 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
     return chapter_data
 
 
-@router.get("/verse", dependencies=[Depends(api_key_auth)], response_model=VerseText)
+@router.get("/verse", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
 async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
     """
     Gets a single verse text for a revision for a given book, chapter and verse.
@@ -97,31 +91,36 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
     connection = postgres_conn()
     cursor = connection.cursor()
 
-    verseReference = (
+    verse_reference = (
             "'" + book + " " + str(chapter) + ":" + str(verse) + "'"
             )   
     
-    get_verses = queries.get_verses_query(verseReference)
+    get_verses = queries.get_verses_query(verse_reference)
 
     cursor.execute(get_verses, (revision_id,))
     result = cursor.fetchall()
-    verse = result[0]  # There should only be one result
 
-    verse_data = VerseText(
-        id=verse[0],
-        text=verse[1],
-        verseReference=verse[3],
-        revision_id=verse[2],
-    )
+    verse_list = []
+    for verse in result:
+        verse_data = VerseText(
+            id=verse[0],
+            text=verse[1],
+            verse_reference=verse[3],
+            revision_id=verse[2],
+            book=verse[4],
+            chapter=verse[5],
+            verse=verse[6],
+        )
+        verse_list.append(verse_data)
 
     cursor.close()
     connection.close()
 
-    return verse_data
+    return verse_list
 
 
 @router.get("/book", dependencies=[Depends(api_key_auth)], response_model=List[VerseText])
-async def get_book(revision: int, verse: str):
+async def get_book(revision_id: int, book: str):
     """
     Gets a list of verse texts for a revision for a given book.
 
@@ -131,10 +130,8 @@ async def get_book(revision: int, verse: str):
     connection = postgres_conn()
     cursor = connection.cursor()
 
-    bookReference = '"' + verse + '"'
     get_book_data = queries.get_book_query()
-
-    cursor.execute(get_book_data, (revision, bookReference,))
+    cursor.execute(get_book_data, (revision_id, book,))
     result = cursor.fetchall()
 
     books_data = []
@@ -142,8 +139,11 @@ async def get_book(revision: int, verse: str):
         verse_data = VerseText(
                 id=verse[0],
                 text=verse[1],
-                verseReference=verse[3],
+                verse_reference=verse[3],
                 revision_id=verse[2],
+                book=verse[4],
+                chapter=verse[5],
+                verse=verse[6],
             )
 
         books_data.append(verse_data)
@@ -175,7 +175,7 @@ async def get_text(revision: int):
         verse_data = VerseText(
                 id=verse[0],
                 text=verse[1],
-                verseReference=verse[3],
+                verse_reference=verse[3],
                 revision_id=verse[2],
             )
 

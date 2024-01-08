@@ -1,9 +1,9 @@
-FROM python:3.8.10
+FROM python:3.11
 
 COPY requirements.txt .
+# RUN apt update
 
-RUN apt update && \
-    pip install -r requirements.txt && \
+RUN pip install -r requirements.txt && \
     rm -rf var/lin/apt/lists/*
 
 RUN mkdir /app
@@ -12,6 +12,8 @@ ADD fixtures/ /app/fixtures/
 ADD bible_routes/ /app/bible_routes/
 ADD assessment_routes/ /app/assessment_routes/
 ADD review_routes/ /app/review_routes/
+ADD database/ /database
+ADD alembic/ /alembic
 
 WORKDIR /app
 

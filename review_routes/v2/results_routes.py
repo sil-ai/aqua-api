@@ -149,7 +149,7 @@ async def get_result(
             )
     assessment_type = assessment_response[assessment_ids.index(assessment_id)]['type']
 
-    source_null = not(assessment_type in ["missing-words", "question-answering"] and not reverse)  # For missing words, if not reverse, we only want the non-null source results
+    source_null = not(assessment_type in ["missing-words", "question-answering", "word-tests"] and not reverse)  # For missing words, if not reverse, we only want the non-null source results
 
 
     if aggregate == aggType['chapter']:
@@ -159,7 +159,7 @@ async def get_result(
                 book,
                 chapter,
                 NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
+                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -168,7 +168,7 @@ async def get_result(
                 NULL::text AS reference_text,
                 false AS hide
         """
-        query_from = '"assessmentResult"'
+        query_from = '"assessment_result"'
         query_where = {
                 'assessment': assessment_id,
                 '(source IS NULL)': source_null,
@@ -189,7 +189,7 @@ async def get_result(
                 book,
                 NULL::integer AS chapter,
                 NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
+                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -198,7 +198,7 @@ async def get_result(
                 NULL::text AS reference_text,
                 false AS hide
         """
-        query_from = '"assessmentResult"'
+        query_from = '"assessment_result"'
         query_where = {
                 'assessment': assessment_id,
                 '(source IS NULL)': source_null,
@@ -217,7 +217,7 @@ async def get_result(
                 NULL::text AS book,
                 NULL::integer AS chapter,
                 NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
+                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -226,7 +226,7 @@ async def get_result(
                 NULL::text AS reference_text,
                 false AS hide
         """
-        query_from = '"assessmentResult"'
+        query_from = '"assessment_result"'
         query_where = {
                 'assessment': assessment_id,
                 '(source IS NULL)': source_null,
@@ -253,15 +253,15 @@ async def get_result(
                 ar.hide
                 """
         query_from = """
-        ((("assessmentResult" ar
+        ((("assessment_result" ar
         JOIN assessment a
         ON ((ar.assessment = a.id)))
-        JOIN "verseText" vt1
-        ON (((ar.vref = vt1.versereference)
-        AND (vt1.biblerevision = a.revision))))
-        LEFT JOIN "verseText" vt2
-        ON (((ar.vref = vt2.versereference)
-        AND (vt2.biblerevision = a.reference))))
+        JOIN "verse_text" vt1
+        ON (((ar.vref = vt1.verse_reference)
+        AND (vt1.bible_revision = a.revision))))
+        LEFT JOIN "verse_text" vt2
+        ON (((ar.vref = vt2.verse_reference)
+        AND (vt2.bible_revision = a.reference))))
         """
         query_where = {
                 'assessment': assessment_id,
@@ -289,7 +289,7 @@ async def get_result(
                 NULL::text AS reference_text,
                 hide
         """
-        query_from = '"assessmentResult"'
+        query_from = '"assessment_result"'
         query_where = {
                 'assessment': assessment_id,
                 '(source IS NULL)': source_null,
@@ -438,13 +438,14 @@ async def get_compare_results(
             password=conn_list[2],
             statement_cache_size=0,
             )
-    
+
+    list_versions = queries.list_versions_query()
+    version_response = await connection.fetch(list_versions)
+    list_revisions = queries.list_all_revisions_query()
+    revision_response = await connection.fetch(list_revisions)
+
     if not baseline_ids:
         # If no baseline ids are requested, use the first revision for each system_ version.
-        list_revisions = queries.list_all_revisions_query()
-        revision_response = await connection.fetch(list_revisions)
-        list_versions = queries.list_versions_query()
-        version_response = await connection.fetch(list_versions)
         system_revisions = {}
         for revision in revision_response[::-1]:  # Go backwards, so you end up with the first revision for each
                                                     # version. These are more likely to be assessed, since they 
@@ -468,7 +469,7 @@ async def get_compare_results(
             if baseline_id not in baseline_revisions:
                 baseline_revisions[baseline_id] = {}
                 baseline_revisions[baseline_id]['revision_name'] = [revision['name'] for revision in revision_response if revision['id'] == baseline_id][0]
-                baseline_revisions[baseline_id]['version_id'] = [revision['bibleversion'] for revision in revision_response if revision['id'] == baseline_id][0]
+                baseline_revisions[baseline_id]['version_id'] = [revision['bible_version'] for revision in revision_response if revision['id'] == baseline_id][0]
 
                 baseline_revisions[baseline_id]['version_name'] = [version['name'] for version in version_response if version['id'] == baseline_revisions[baseline_id]['version_id']][0]
                 baseline_revisions[baseline_id]['assessment_id'] = None
@@ -537,12 +538,12 @@ async def get_compare_results(
                 {'vt1.text as revision_text' if include_text else 'NULL::text AS revision_text'},
                 {'vt2.text as reference_text' if include_text else 'NULL::text AS reference_text'},
                 COALESCE(avg(NULLIF(ar.score, 'NaN')::numeric), 0) AS score
-        FROM "assessmentResult" ar
+        FROM "assessment_result" ar
         {f'''
-         JOIN "verseText" vt1 ON vt1.book = ar.book AND vt1.chapter = ar.chapter AND vt1.verse = ar.verse
-        AND vt1.biblerevision = {revision_id}
-        JOIN "verseText" vt2 ON vt2.book = ar.book AND vt2.chapter = ar.chapter AND vt2.verse = ar.verse
-        AND vt2.biblerevision = {reference_id}
+         JOIN "verse_text" vt1 ON vt1.book = ar.book AND vt1.chapter = ar.chapter AND vt1.verse = ar.verse
+        AND vt1.bible_revision = {revision_id}
+        JOIN "verse_text" vt2 ON vt2.book = ar.book AND vt2.chapter = ar.chapter AND vt2.verse = ar.verse
+        AND vt2.bible_revision = {reference_id}
          ''' 
          if include_text else ''}
         WHERE assessment IN ({', '.join([str(assessment_id) for assessment_id in baseline_assessment_ids])})
@@ -559,8 +560,8 @@ async def get_compare_results(
                     {'book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
                     {'chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
                     {'verse' if aggregate is None else 'NULL::integer AS verse'},
-                    COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score
-                    FROM "assessmentResult"
+                    COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score
+                    FROM "assessment_result"
                     WHERE assessment = {assessment_id}
                     {"AND book = '" + book + "'" if book is not None else ''}
                     {'AND chapter = ' + str(chapter) if chapter is not None else ''}
@@ -573,15 +574,25 @@ async def get_compare_results(
     else:
         query += f"""
             SELECT 
-            book, 
-            chapter, 
-            verse, 
+                (row_number() OVER ())::integer AS id,
+                {'book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
+                {'chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
+                {'verse' if aggregate is None else 'NULL::integer AS verse'},
             COALESCE(avg(NULLIF(score, 'NaN')::numeric), 0) AS score, 
             NULL::float as mean_score, 
             0::float as stdev_score, 
-            0::float as z_score
+            0::float as z_score,
+            {'vt1.text as revision_text' if include_text else 'NULL::text AS revision_text'},
+            {'vt2.text as reference_text' if include_text else 'NULL::text AS reference_text'}
             FROM
-            "assessmentResult"
+            "assessment_result"
+            {f'''
+            JOIN "verse_text" vt1 ON vt1.book = ar.book AND vt1.chapter = ar.chapter AND vt1.verse = ar.verse
+            AND vt1.bible_revision = {revision_id}
+            JOIN "verse_text" vt2 ON vt2.book = ar.book AND vt2.chapter = ar.chapter AND vt2.verse = ar.verse
+            AND vt2.bible_revision = {reference_id}
+            ''' 
+         if include_text else ''}
             WHERE assessment={assessment_id}
                     {"AND book = '" + book + "'" if book is not None else ''}
                     {'AND chapter = ' + str(chapter) if chapter is not None else ''}
@@ -593,7 +604,6 @@ async def get_compare_results(
     
     query += f"LIMIT {str(limit)} " if limit is not None else ''
     query += f"OFFSET {str(offset)}" if offset is not None else ''
-    
     result_data = await connection.fetch(query)
     result_agg_data = await connection.fetch(agg_query)
     await connection.close()
@@ -712,7 +722,7 @@ async def get_average_results(
                 book,
                 chapter,
                 NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
+                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -721,7 +731,7 @@ async def get_average_results(
                 NULL::text AS reference_text,
                 false AS hide
         """
-        query_from = '"assessmentResult"'
+        query_from = '"assessment_result"'
         query_where = {
                 'book': f"'{book.upper()}'" if book is not None else None,
                 'chapter': chapter if chapter is not None else None,
@@ -735,7 +745,7 @@ async def get_average_results(
                 book,
                 NULL::integer AS chapter,
                 NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
+                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -744,7 +754,7 @@ async def get_average_results(
                 NULL::text AS reference_text,
                 false AS hide
         """
-        query_from = '"assessmentResult"'
+        query_from = '"assessment_result"'
         query_where = {
                 'book': f"'{book.upper()}'" if book is not None else None,
         }
@@ -757,7 +767,7 @@ async def get_average_results(
                 NULL::text AS book,
                 NULL::integer AS chapter,
                 NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
+                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -767,7 +777,7 @@ async def get_average_results(
                 false AS hide
         """
 
-        query_from = '"assessmentResult"'
+        query_from = '"assessment_result"'
         query_where = {
         }
         query_order_by = None
@@ -797,18 +807,18 @@ async def get_average_results(
                 false AS hide
                 """
         query_from = """
-        "assessmentResult" AS ar
-                            INNER JOIN "verseText" AS vt ON ar.book = vt.book 
+        "assessment_result" AS ar
+                            INNER JOIN "verse_text" AS vt ON ar.book = vt.book 
                             AND ar.chapter = vt.chapter 
                             AND ar.verse = vt.verse 
                             """
         if revision_id:
             query_from += f"""
-                            AND vt.biblerevision = {revision_id}
+                            AND vt.bible_revision = {revision_id}
         """
         else:
             query_from += f"""
-                            AND vt.biblerevision = {reference_id}
+                            AND vt.bible_revision = {reference_id}
         """
         query_where = {
                 'ar.book': f"'{book.upper()}'" if book is not None else None,
@@ -824,7 +834,7 @@ async def get_average_results(
                 book,
                 chapter,
                 verse,
-                COALESCE(avg(NULLIF("assessmentResult".score, 'NaN')::numeric), 0) AS score,
+                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
                 NULL::text AS source,
                 NULL::text AS target,
                 false AS flag,
@@ -833,7 +843,7 @@ async def get_average_results(
                 NULL::text AS reference_text,
                 false AS hide
         """
-        query_from = '"assessmentResult"'
+        query_from = '"assessment_result"'
         query_where = {
                 'book': f"'{book.upper()}'" if book is not None else None,
                 'chapter': chapter if chapter is not None else None,
