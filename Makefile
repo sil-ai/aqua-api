@@ -14,7 +14,7 @@ localdb-up:
 	export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
 	docker-compose up -d db 
 	sleep 5 # too fast for db to start
-	cd aws_database && alembic upgrade head
+	cd alembic && alembic upgrade head
 
 up:
 	docker-compose up -d
@@ -23,7 +23,7 @@ down:
 	docker-compose down
 
 test: 
-	docker-compose run --rm api /bin/sh -c "cd /aws_database && alembic upgrade head "
+	docker-compose run --rm api /bin/sh -c "cd /alembic && alembic upgrade head "
 	export AQUA_DB="postgresql://dbuser:dbpassword@db/dbname" && \
 	docker-compose run --rm api  pytest -v
 

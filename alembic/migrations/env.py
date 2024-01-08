@@ -7,13 +7,15 @@ from alembic import context
 
 import os
 import sys
+from pathlib import Path
+
 
 # This is needed to include the root of your project in the PYTHONPATH
 # so that Alembic can find the modules such as `db_service` and `.env`.
-sys.path.append(os.getcwd())
+sys.path.append(str(Path(__file__).parents[2]))
 
 from dotenv import load_dotenv
-from db_service.database import Base  # adjust the path as needed
+from database.database import Base  # adjust the path as needed
 
 # Load environment variables from .env file
 load_dotenv()
