@@ -4,7 +4,8 @@ __pycache__/
 *$py.class
 launch.json
 .env*
-
+.vscode/
+.vscode/*
 # C extensions
 *.so
 

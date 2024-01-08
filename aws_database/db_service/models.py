@@ -56,6 +56,7 @@ class Assessment(Base):
     requested_time = Column(TIMESTAMP, default=func.now())
     start_time = Column(TIMESTAMP)
     end_time = Column(TIMESTAMP)
+    assessment_version = Column(String, default="1")
 
 
 class assessment_result(Base):
