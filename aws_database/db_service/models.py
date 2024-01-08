@@ -57,6 +57,8 @@ class Assessment(Base):
     start_time = Column(TIMESTAMP)
     end_time = Column(TIMESTAMP)
     assessment_version = Column(String, default="1")
+    deleted = Column(Boolean, default=False)
+    deletedAt = Column(TIMESTAMP, default=None)
 
 
 class assessment_result(Base):
@@ -86,7 +88,8 @@ class bible_revision(Base):
     name = Column(Text)
     back_translation_id = Column(Integer, ForeignKey("bible_version.id"))
     machine_translation = Column(Boolean, default=False)
-
+    deleted = Column(Boolean, default=False)
+    deletedAt = Column(TIMESTAMP, default=None)
 
 class bible_version(Base):
     __tablename__ = "bible_version"
@@ -100,7 +103,8 @@ class bible_version(Base):
     forward_translation_id = Column(Integer)
     back_translation_id = Column(Integer)
     machine_translation = Column(Boolean)
-
+    deleted = Column(Boolean, default=False)
+    deletedAt = Column(TIMESTAMP, default=None)
 
 class book_reference(Base):
     __tablename__ = "book_reference"

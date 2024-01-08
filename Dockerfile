@@ -1,4 +1,4 @@
-FROM python:3.8.10
+FROM python:3.11
 
 COPY requirements.txt .
 # RUN apt update
