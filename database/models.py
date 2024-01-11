@@ -161,3 +161,34 @@ class VerseText(Base):
         "bible_revision", backref=backref("verse_texts", cascade="all, delete-orphan")
     )
     # verse_reference = relationship("verse_reference", backref="verse_texts")
+class User(Base):
+    __tablename__ = 'users'
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String(50), unique=True, nullable=False)
+    email = Column(String(50), unique=True, nullable=False)
+    hashed_password = Column(String(100), nullable=False)
+    is_admin = Column(Boolean, default=False)
+    # Relationship with UserGroups
+    groups = relationship("UserGroup", back_populates="user")
+
+
+class Group(Base):
+    __tablename__ = 'groups'
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(50), unique=True, nullable=False)
+    description = Column(Text)
+    # Relationship with UserGroups
+    users = relationship("UserGroup", back_populates="group")
+
+
+class UserGroup(Base):
+    __tablename__ = 'user_groups'
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    group_id = Column(Integer, ForeignKey('groups.id'), nullable=False)
+    # Relationships
+    user = relationship("User", back_populates="groups")
+    group = relationship("Group", back_populates="users")
