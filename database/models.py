@@ -161,7 +161,7 @@ class VerseText(Base):
         "bible_revision", backref=backref("verse_texts", cascade="all, delete-orphan")
     )
     # verse_reference = relationship("verse_reference", backref="verse_texts")
-class User(Base):
+class UserDB(Base):
     __tablename__ = 'users'
 
     id = Column(Integer, primary_key=True)
@@ -190,5 +190,5 @@ class UserGroup(Base):
     user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     group_id = Column(Integer, ForeignKey('groups.id'), nullable=False)
     # Relationships
-    user = relationship("User", back_populates="groups")
+    user = relationship("UserDB", back_populates="groups")
     group = relationship("Group", back_populates="users")

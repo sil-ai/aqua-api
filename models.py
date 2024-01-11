@@ -172,3 +172,18 @@ class Language(BaseModel):
 class Script(BaseModel):
     iso15924: str
     name: str
+    
+    
+class User(BaseModel):
+    username: str
+
+class UserAuth(User):
+    hashed_password: str
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+
