@@ -16,7 +16,7 @@ from assessment_routes.v1.assessment_routes import router as assessment_router_v
 from assessment_routes.v2.assessment_routes import router as assessment_router_v2
 from review_routes.v1.results_routes import router as results_router_v1
 from review_routes.v2.results_routes import router as results_router_v2
-
+from security_routes.auth_routes import router as security_router 
 
 app = fastapi.FastAPI()
 
@@ -86,6 +86,7 @@ def configure_routing(app):
     app.include_router(results_router_v1, prefix="/v1", tags=["Version 1 / default"])
     app.include_router(results_router_v2, prefix="/v2", tags=["Version 2 / Latest"])
     app.include_router(results_router_v2, prefix="/latest", tags=["Version 2 / Latest"])
+    app.include_router(security_router, prefix="/latest", tags=["Latest"])
 
 
     @app.get("/")
