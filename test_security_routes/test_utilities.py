@@ -1,6 +1,6 @@
 # tests/utilities/test_verify_password.py
 
-from security_routes.v3.test_utilities import verify_password
+from security_routes.utilities import verify_password
 import bcrypt
 
 def test_verify_password():
