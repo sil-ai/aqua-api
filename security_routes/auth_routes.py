@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from models import UserAuth, Token, TokenData  # Assuming these are your Pydantic models
 from database.models import UserDB  # Your SQLAlchemy model
-from database import get_db  # Function to get the database session
+from database.dependencies import get_db  # Function to get the database session
 from .utilities import verify_password  # You need to implement this function
 
 SECRET_KEY = "your_secret_key_here"
