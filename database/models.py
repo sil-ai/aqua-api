@@ -59,10 +59,9 @@ class Assessment(Base):
     assessment_version = Column(String, default="1")
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
-
-    group_id = Column(Integer, ForeignKey('groups.id'))
-    group = relationship("Group")
-
+    
+    results = relationship("assessment_result", cascade="all, delete", back_populates="assessment")
+    accessible_by = relationship("AssessmentAccess", cascade="all, delete", back_populates="assessment")
 
 class assessment_result(Base):
     __tablename__ = "assessment_result"
@@ -79,9 +78,18 @@ class assessment_result(Base):
     book = Column(Text)
     chapter = Column(Integer)
     verse = Column(Integer)
+    
 
-    group_id = Column(Integer, ForeignKey('groups.id'))
-    group = relationship("Group")
+class AssessmentAccess(Base):
+    __tablename__ = 'assessment_access'
+
+    id = Column(Integer, primary_key=True)
+    assessment_id = Column(Integer, ForeignKey('assessment.id'), nullable=False)
+    group_id = Column(Integer, ForeignKey('groups.id'), nullable=False)
+
+    # Relationships
+    assessment = relationship("Assessment", back_populates="accessible_by")
+    group = relationship("Group", back_populates="assessments_access")
 
 
 
@@ -97,10 +105,9 @@ class BibleRevision(Base):
     machine_translation = Column(Boolean, default=False)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
-
-    group_id = Column(Integer, ForeignKey('groups.id'))
-    group = relationship("Group")
-
+    
+    bible_version = relationship("BibleVersion", back_populates="revisions")
+    assessments = relationship("Assessment", cascade="all, delete", back_populates="bible_revision") 
 
 class BibleVersion(Base):
     __tablename__ = "bible_version"
@@ -116,10 +123,19 @@ class BibleVersion(Base):
     machine_translation = Column(Boolean)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
+    
+    accessible_by = relationship("BibleVersionAccess", back_populates="bible_version")
+    revisions = relationship("Revision", cascade="all, delete", back_populates="bible_version")
+class BibleVersionAccess(Base):
+    __tablename__ = 'bible_version_access'
 
-    group_id = Column(Integer, ForeignKey('groups.id'))
-    group = relationship("Group")
+    id = Column(Integer, primary_key=True)
+    bible_version_id = Column(Integer, ForeignKey('bible_version.id'), nullable=False)
+    group_id = Column(Integer, ForeignKey('groups.id'), nullable=False)
 
+    # Relationships
+    bible_version = relationship("BibleVersion", back_populates="accessible_by")
+    group = relationship("Group", back_populates="bible_versions_access")
 
 class book_reference(Base):
     __tablename__ = "book_reference"
@@ -172,9 +188,8 @@ class VerseText(Base):
     verse = Column(Integer)
 
     # Relationship definitions (if needed)
-    bible_revision = relationship(
-        "bible_revision", backref=backref("verse_texts", cascade="all, delete-orphan")
-    )
+
+    bible_revision = relationship("BibleRevision", back_populates="verse_texts", cascade="all, delete")
     # verse_reference = relationship("verse_reference", backref="verse_texts")
 class UserDB(Base):
     __tablename__ = 'users'
@@ -185,7 +200,7 @@ class UserDB(Base):
     hashed_password = Column(String(100), nullable=False)
     is_admin = Column(Boolean, default=False)
     # Relationship with UserGroups
-    groups = relationship("UserGroup", back_populates="user")
+    groups = relationship("UserGroup", back_populates="user", cascade="all, delete"))
 
 
 class Group(Base):
@@ -195,8 +210,9 @@ class Group(Base):
     name = Column(String(50), unique=True, nullable=False)
     description = Column(Text)
     # Relationship with UserGroups
-    users = relationship("UserGroup", back_populates="group")
-
+    users = relationship("UserGroup", back_populates="group", cascade="all, delete")
+    assessments_access = relationship("AssessmentAccess", back_populates="group", cascade="all, delete")
+    bible_versions_access = relationship("BibleVersionAccess", back_populates="group", cascade="all, delete")
 
 class UserGroup(Base):
     __tablename__ = 'user_groups'

@@ -21,7 +21,9 @@ from database.models import (
     Assessment as AssessmentModel, 
     BibleRevision as BibleRevisionModel, 
     UserDB as UserModel, 
-    UserGroup
+    UserGroup,
+    AssessmentAccess,
+    Assessment
 )
 from database.dependencies import get_db, postgres_conn
 from security_routes.utilities import (
@@ -46,71 +48,24 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
     Returns a list of all assessments the current user is authorized to access.
     """
 
-    assessments = db.query(AssessmentModel).all()
+    # Fetch the groups the user belongs to
+    if current_user.is_admin:
+        assessments = db.query(AssessmentModel).all()
+    else:
+        user_group_ids = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id).subquery()
+        assessments = db.query(Assessment).join(
+            AssessmentAccess, Assessment.id == AssessmentAccess.assessment_id
+        ).filter(
+            AssessmentAccess.group_id.in_(user_group_ids)
+        ).all()
 
-    assessment_data = []
-    for assessment in assessments:
-        # Get related bible_revision
-        bible_revision = db.query(BibleRevisionModel).filter(BibleRevisionModel.id == assessment.revision_id).first()
-        if not bible_revision:
-            continue  # Skip if bible_revision is not found
-
-        # Check if the current user has access to the related bible version
-        if not is_user_authorized_for_bible_version(current_user.id, bible_revision.bible_version_id, db):
-            continue  # Skip if the user is not authorized for this bible_version
-
-        data = AssessmentOut(
-            id=assessment.id,
-            revision_id=assessment.revision_id,
-            reference_id=assessment.reference_id,
-            type=assessment.type,
-            status=assessment.status,
-            requested_time=assessment.requested_time,
-            start_time=assessment.start_time,
-            end_time=assessment.end_time,
-        )
-        assessment_data.append(data)
-
-    # Sort assessment_data by requested_time in descending order (most recent first)
+    assessment_data = [AssessmentOut.from_orm(assessment) for assessment in assessments]
     assessment_data = sorted(assessment_data, key=lambda x: x.requested_time, reverse=True)
 
     return assessment_data
 
-
-@router.post("/assessment", response_model=AssessmentOut)
-async def add_assessment(
-    a: AssessmentIn = Depends(),
-    modal_suffix: str = '',
-    return_all_results: bool = False,
-    db: Session = Depends(get_db),
-    _ = Depends(api_key_auth)  # Assuming api_key_auth is a dependency for API key authentication
-):
-    """
-    Your function documentation here.
-    """
-    
-    modal_suffix = modal_suffix or os.getenv('MODAL_SUFFIX', '')
-    
-    if a.type in ["missing-words", "semantic-similarity", "word-alignment"] and a.reference_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Assessment type {a.type} requires a reference_id."
-        )
-
-    requested_time = datetime.now()
-    assessment = AssessmentModel(
-        revision_id=a.revision_id,
-        reference_id=a.reference_id,
-        type=a.type,
-        requested_time=requested_time,
-        status="queued"
-    )
-    
-    db.add(assessment)
-    db.commit()
-    db.refresh(assessment)
-
-    # Call runner to run assessment
+# Helper function to call assessment runner
+def call_assessment_runner(assessment: AssessmentModel, modal_suffix: str, return_all_results: bool) -> None:
     dash_modal_suffix = f'-{modal_suffix}' if modal_suffix else ''
     runner_url = f"https://sil-ai--runner{dash_modal_suffix}-assessment-runner.modal.run/"
 
@@ -134,7 +89,50 @@ async def add_assessment(
         print("Runner failed to run assessment")
         raise HTTPException(status_code=response.status_code, detail=response.text)
 
-    return assessment
+@router.post("/assessment", response_model=List[AssessmentOut])
+async def add_assessment(
+    a: AssessmentIn = Depends(),
+    modal_suffix: str = '',
+    return_all_results: bool = False,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user)  # Adjusted to get the current user model
+):
+    """
+    Add an assessment entry. For regular users, an entry is added for each group they are part of.
+    For admin users, the entry is not linked to any specific group.
+    """
+    modal_suffix = modal_suffix or os.getenv('MODAL_SUFFIX', '')
+    
+    if a.type in ["missing-words", "semantic-similarity", "word-alignment"] and a.reference_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Assessment type {a.type} requires a reference_id."
+        )
+
+    assessment = AssessmentModel(
+        revision_id=a.revision_id,
+        reference_id=a.reference_id,
+        type=a.type,
+        status="queued"
+    )
+
+    db.add(assessment)
+    db.commit()
+    db.refresh(assessment)
+
+    # If the user is not an admin, link the assessment to their groups
+    if not current_user.is_admin:
+        user_groups = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id).all()
+        for group_id in user_groups:
+            access = AssessmentAccess(assessment_id=assessment.id, group_id=group_id)
+            db.add(access)
+        db.commit()
+
+    # Call runner using helper function
+    call_assessment_runner(assessment, modal_suffix, return_all_results)
+
+    return [AssessmentOut.from_orm(assessment)]
+
 
 
 
@@ -156,11 +154,16 @@ async def delete_assessment(
             detail="Assessment not found."
         )
 
-    # Check if user is authorized to delete the assessment
-    if not current_user.is_admin and not db.query(UserGroup).filter(
-        UserGroup.user_id == current_user.id,
-        UserGroup.group_id == assessment.group_id
-    ).first():
+    if current_user.is_admin:
+        is_authorized = True
+    else:
+        user_group_ids = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id).subquery()
+        is_authorized = db.query(AssessmentAccess).filter(
+            AssessmentAccess.assessment_id == assessment_id,
+            AssessmentAccess.group_id.in_(user_group_ids)
+        ).first() is not None
+
+    if not is_authorized:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to delete this assessment."
@@ -170,4 +173,4 @@ async def delete_assessment(
     db.delete(assessment)
     db.commit()
 
-    return {"detail": f"Assessment {assessment_id} deleted successfully"}e
+    return {"detail": f"Assessment {assessment_id} deleted successfully"}

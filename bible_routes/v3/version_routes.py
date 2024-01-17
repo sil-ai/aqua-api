@@ -8,114 +8,72 @@ import fastapi
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
 import psycopg2
+from sqlalchemy.orm import Session
 
 import queries
 from key_fetch import get_secret
 from models import VersionIn, VersionOut
-
+from database.models import (
+    Assessment as AssessmentModel, 
+    BibleRevision as BibleRevisionModel, 
+    UserDB as UserModel, 
+    UserGroup,
+    BibleVersion as BibleVersionModel  
+    BibleVersionAccess,
+)
+from security_routes.utilities import (
+    get_current_user, 
+    api_key_auth, 
+    is_user_authorized_for_bible_version
+)
+from database.dependencies import get_db, postgres_conn
 router = fastapi.APIRouter()
 
-api_keys = get_secret(
-        os.getenv("KEY_VAULT"),
-        os.getenv("AWS_ACCESS_KEY"),
-        os.getenv("AWS_SECRET_KEY")
-        )
-
-api_key_header = APIKeyHeader(name="api_key", auto_error=False)
-
-def api_key_auth(api_key: str = Depends(api_key_header)):
-    if api_key not in api_keys:
-        raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Forbidden"
-        )
-
-    return True
-
-
-def postgres_con():
-    connection = psycopg2.connect(os.getenv("AQUA_DB"))
-
-    return connection
-
-
-@router.get("/version", dependencies=[Depends(api_key_auth)], response_model=List[VersionOut])
-async def list_version():
+@router.get("/version", response_model=List[VersionOut])
+async def list_version(db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
     """
-    Get a list of all versions.
+    Get a list of all versions that the current user is authorized to access.
     """
-    
-    list_versions = queries.list_versions_query()
+    if current_user.is_admin:
+        # Admin users can access all versions
+        versions = db.query(BibleVersionModel).all()
+    else:
+        # Fetch the groups the user belongs to
+        user_group_ids = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id).subquery()
 
-    connection = postgres_con()
-    cursor = connection.cursor()
-    cursor.execute(list_versions)
-    query_data = cursor.fetchall()
+        # Get versions that the user has access to through their groups
+        versions = db.query(BibleVersionModel).join(
+            BibleVersionAccess, BibleVersionModel.id == BibleVersionAccess.bible_version_id
+        ).filter(
+            BibleVersionAccess.group_id.in_(user_group_ids)
+        ).all()
 
-    version_data = []
-    for version in query_data: 
-        data = VersionOut(
-                    id=version[0], 
-                    name=version[1], 
-                    abbreviation=version[4], 
-                    iso_language=version[2], 
-                    iso_script=version[3], 
-                    rights=version[5],
-                    forwardTranslation=version[6],
-                    backTranslation=version[7],
-                    machineTranslation=version[8]
-                    )
-
-        version_data.append(data)
-
-    cursor.close()
-    connection.close()
-
-    return version_data
+    return [VersionOut.from_orm(version) for version in versions]
+]
 
 
-@router.post("/version", dependencies=[Depends(api_key_auth)], response_model=VersionOut)
-async def add_version(v: VersionIn = Depends()):
+@router.post("/version",response_model=VersionOut)
+async def add_version(v: VersionIn = Depends(), db: Session = Depends(get_db)):
     """
-    Create a new version. 
-
-    `iso_language` and `iso_script` must be valid ISO39 and ISO 15924 codes, which can be found by GET /language and GET /script.
-
-    `forwardTranslation` and `backTranslation` are optional integers, corresponding to the version_id of the version that is the forward and back translation used by this version.
+    Create a new version.
     """
-
-    connection = postgres_con()
-    cursor = connection.cursor()
-
-    new_version = queries.add_version_query()
-        
-    cursor.execute(
-            new_version, (
-                v.name, v.iso_language, v.iso_script,
-                v.abbreviation, v.rights, v.forwardTranslation, 
-                v.backTranslation, v.machineTranslation,
-                )
-            )
-
-    connection.commit()
-    revision = cursor.fetchone()
-
-    new_version = VersionOut(
-        id=revision[0],
-        name=revision[1],
-        abbreviation=revision[4],
-        iso_language=revision[2],
-        iso_script=revision[3],
-        rights=revision[5],
-        forwardTranslation=revision[6],
-        backTranslation=revision[7],
-        machineTranslation=revision[8]
+    new_version = VersionModel(
+        name=v.name,
+        iso_language=v.iso_language,
+        iso_script=v.iso_script,
+        abbreviation=v.abbreviation,
+        rights=v.rights,
+        forwardTranslation=v.forwardTranslation,
+        backTranslation=v.backTranslation,
+        machineTranslation=v.machineTranslation,
     )
 
-    cursor.close()
-    connection.close()
+    db.add(new_version)
+    db.commit()
+    db.refresh(new_version)
 
-    return new_version
+    return VersionOut.from_orm(new_version)
+
 
 
 @router.delete("/version", dependencies=[Depends(api_key_auth)])
