@@ -143,7 +143,6 @@ async def delete_assessment(
     assessment_id: int,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
-    _ = Depends(api_key_auth)
 ):
     """
     Deletes an assessment and its results, if the user is authorized.

@@ -85,7 +85,7 @@ class assessment_result(Base):
 
 
 
-class bible_revision(Base):
+class BibleRevision(Base):
     __tablename__ = "bible_revision"
 
     id = Column(Integer, primary_key=True)
