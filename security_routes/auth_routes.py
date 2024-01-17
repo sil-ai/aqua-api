@@ -20,7 +20,7 @@ router = APIRouter()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-def authenticate_user(db: Session, username: str, password: str):
+def authenticate_user(username: str, password: str, db: Session ):
     user = db.query(UserDB).filter(UserDB.username == username).first()
     if not user:
         return False
@@ -58,7 +58,7 @@ async def get_current_user(db: Session = Depends(get_db), token: str = Depends(o
 
 @router.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = authenticate_user(db, form_data.username, form_data.password)
+    user = authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

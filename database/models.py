@@ -17,7 +17,7 @@ from sqlalchemy.sql import func
 Base = declarative_base()
 
 
-class alignment_threshold_scores(Base):
+class AlignmentThresholdScores(Base):
     __tablename__ = "alignment_threshold_scores"
 
     id = Column(Integer, primary_key=True)
@@ -60,6 +60,9 @@ class Assessment(Base):
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
 
+    group_id = Column(Integer, ForeignKey('groups.id'))
+    group = relationship("Group")
+
 
 class assessment_result(Base):
     __tablename__ = "assessment_result"
@@ -77,6 +80,10 @@ class assessment_result(Base):
     chapter = Column(Integer)
     verse = Column(Integer)
 
+    group_id = Column(Integer, ForeignKey('groups.id'))
+    group = relationship("Group")
+
+
 
 class bible_revision(Base):
     __tablename__ = "bible_revision"
@@ -91,7 +98,11 @@ class bible_revision(Base):
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
 
-class bible_version(Base):
+    group_id = Column(Integer, ForeignKey('groups.id'))
+    group = relationship("Group")
+
+
+class BibleVersion(Base):
     __tablename__ = "bible_version"
 
     id = Column(Integer, primary_key=True)
@@ -105,6 +116,10 @@ class bible_version(Base):
     machine_translation = Column(Boolean)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
+
+    group_id = Column(Integer, ForeignKey('groups.id'))
+    group = relationship("Group")
+
 
 class book_reference(Base):
     __tablename__ = "book_reference"
