@@ -18,7 +18,7 @@ from database.models import (
     BibleRevision as BibleRevisionModel, 
     UserDB as UserModel, 
     UserGroup,
-    BibleVersion as BibleVersionModel  
+    BibleVersion as BibleVersionModel,  
     BibleVersionAccess,
 )
 from security_routes.utilities import (
@@ -57,7 +57,7 @@ async def add_version(v: VersionIn = Depends(), db: Session = Depends(get_db)):
     """
     Create a new version.
     """
-    new_version = VersionModel(
+    new_version = BibleVersionModel(
         name=v.name,
         iso_language=v.iso_language,
         iso_script=v.iso_script,
@@ -75,60 +75,31 @@ async def add_version(v: VersionIn = Depends(), db: Session = Depends(get_db)):
     return VersionOut.from_orm(new_version)
 
 
-
 @router.delete("/version", dependencies=[Depends(api_key_auth)])
-async def delete_version(id: int):
+async def delete_version(id: int, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
     """
-    Delete a version and all associated revisions, text and assessments.
+    Delete a version and all associated revisions, text, and assessments.
     """
-    
-    connection = postgres_con()
-    cursor = connection.cursor()
-    
-    fetch_versions = queries.list_versions_query()
-    fetch_revisions = queries.list_revisions_query()
-    delete_version = queries.delete_bible_version()
 
-    cursor.execute(fetch_versions)
-    version_result = cursor.fetchall()
+    # Check if the version exists
+    version = db.query(BibleVersionModel).filter(BibleVersionModel.id == id).first()
+    if not version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found.")
 
-    version_list = []
-    for version in version_result:
-        version_list.append(version[0])
+    # Check if the user is authorized to delete the version
+    if not current_user.is_admin:
+        user_group_ids = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id).subquery()
+        is_authorized = db.query(BibleVersionAccess).filter(
+            BibleVersionAccess.bible_version_id == id,
+            BibleVersionAccess.group_id.in_(user_group_ids)
+        ).first() is not None
 
-    cursor.execute(fetch_revisions, (id,))
-    revision_result = cursor.fetchall()
+        if not is_authorized:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User not authorized to delete this version.")
 
-    if id in version_list:
-        cursor.execute(fetch_revisions, (id,))
-        revision_result = cursor.fetchall()
+    # Perform the deletion
+    db.delete(version)
+    db.commit()
 
-        for revision in revision_result:
-            delete_verses = queries.delete_verses_mutation()
-            cursor.execute(delete_verses, (revision[0],))
+    return {"detail": f"Version {version.name} successfully deleted."}
 
-            delete_revision = queries.delete_revision_mutation()
-            cursor.execute(delete_revision, (revision[0],))
-
-        cursor.execute(delete_version, (id,))
-        version_delete_result = cursor.fetchone()
-        connection.commit()
-
-        delete_response = ("Version " +
-            version_delete_result[0] +
-            " successfully deleted."
-        )
-
-    else:
-        cursor.close()
-        connection.close()
-
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Version abbreviation invalid, version does not exist"
-        )
-
-    cursor.close()
-    connection.close()
-
-    return delete_response

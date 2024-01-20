@@ -31,7 +31,7 @@ class AlignmentThresholdScores(Base):
     hide = Column(Boolean)
 
 
-class alignment_top_source_scores(Base):
+class AlignmentTopSourceScores(Base):
     __tablename__ = "alignment_top_source_scores"
 
     id = Column(Integer, primary_key=True)
@@ -60,10 +60,13 @@ class Assessment(Base):
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
     
-    results = relationship("assessment_result", cascade="all, delete", back_populates="assessment")
+    results = relationship("AssessmentResult", cascade="all, delete", back_populates="assessment")
     accessible_by = relationship("AssessmentAccess", cascade="all, delete", back_populates="assessment")
+    revision = relationship("BibleRevision", foreign_keys=[revision_id], back_populates="assessments_as_revision")
+    reference = relationship("BibleRevision", foreign_keys=[reference_id], back_populates="assessments_as_reference")
+ 
 
-class assessment_result(Base):
+class AssessmentResult(Base):
     __tablename__ = "assessment_result"
 
     id = Column(Integer, primary_key=True)
@@ -78,6 +81,9 @@ class assessment_result(Base):
     book = Column(Text)
     chapter = Column(Integer)
     verse = Column(Integer)
+
+    assessment_id = Column(Integer, ForeignKey("assessment.id"))
+    assessment = relationship("Assessment", back_populates="results")
     
 
 class AssessmentAccess(Base):
@@ -101,14 +107,15 @@ class BibleRevision(Base):
     bible_version_id = Column(Integer, ForeignKey("bible_version.id"))
     published = Column(Boolean)
     name = Column(Text)
-    back_translation_id = Column(Integer, ForeignKey("bible_version.id"))
+    back_translation_id = Column(Integer) 
     machine_translation = Column(Boolean, default=False)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
     
     bible_version = relationship("BibleVersion", back_populates="revisions")
-    assessments = relationship("Assessment", cascade="all, delete", back_populates="bible_revision") 
-
+    verse_text = relationship("VerseText", back_populates="bible_revision")
+    assessments_as_revision = relationship("Assessment", cascade="all, delete", back_populates="revision", foreign_keys="[Assessment.revision_id]")
+    assessments_as_reference = relationship("Assessment", back_populates="reference", foreign_keys="[Assessment.reference_id]")
 class BibleVersion(Base):
     __tablename__ = "bible_version"
 
@@ -125,7 +132,7 @@ class BibleVersion(Base):
     deletedAt = Column(TIMESTAMP, default=None)
     
     accessible_by = relationship("BibleVersionAccess", back_populates="bible_version")
-    revisions = relationship("Revision", cascade="all, delete", back_populates="bible_version")
+    revisions = relationship("BibleRevision", cascade="all, delete", back_populates="bible_version")
 class BibleVersionAccess(Base):
     __tablename__ = 'bible_version_access'
 
@@ -137,7 +144,7 @@ class BibleVersionAccess(Base):
     bible_version = relationship("BibleVersion", back_populates="accessible_by")
     group = relationship("Group", back_populates="bible_versions_access")
 
-class book_reference(Base):
+class BookReference(Base):
     __tablename__ = "book_reference"
 
     abbreviation = Column(Text, primary_key=True)
@@ -145,7 +152,7 @@ class book_reference(Base):
     number = Column(Integer)
 
 
-class chapter_reference(Base):
+class ChapterReference(Base):
     __tablename__ = "chapter_reference"
 
     full_chapter_id = Column(Text, primary_key=True)
@@ -167,7 +174,7 @@ class IsoScript(Base):
     name = Column(Text)
 
 
-class verse_reference(Base):
+class VerseReference(Base):
     __tablename__ = "verse_reference"
 
     full_verse_id = Column(Text, primary_key=True, unique=True)
@@ -187,10 +194,9 @@ class VerseText(Base):
     chapter = Column(Integer)
     verse = Column(Integer)
 
-    # Relationship definitions (if needed)
 
-    bible_revision = relationship("BibleRevision", back_populates="verse_texts", cascade="all, delete")
-    # verse_reference = relationship("verse_reference", backref="verse_texts")
+    bible_revision = relationship("BibleRevision", back_populates="verse_text", cascade="all, delete")
+
 class UserDB(Base):
     __tablename__ = 'users'
 
@@ -200,7 +206,7 @@ class UserDB(Base):
     hashed_password = Column(String(100), nullable=False)
     is_admin = Column(Boolean, default=False)
     # Relationship with UserGroups
-    groups = relationship("UserGroup", back_populates="user", cascade="all, delete"))
+    groups = relationship("UserGroup", back_populates="user", cascade="all, delete")
 
 
 class Group(Base):
