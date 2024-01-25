@@ -1,4 +1,4 @@
-__version__ = 'v2'
+__version__ = 'v3'
 
 import os
 from typing import List
@@ -22,11 +22,10 @@ from database.models import (
     BibleVersionAccess,
 )
 from security_routes.utilities import (
-    get_current_user, 
-    api_key_auth, 
     is_user_authorized_for_bible_version
 )
-from database.dependencies import get_db, postgres_conn
+from security_routes.auth_routes import get_current_user
+from database.dependencies import get_db
 router = fastapi.APIRouter()
 
 @router.get("/version", response_model=List[VersionOut])
@@ -49,11 +48,10 @@ async def list_version(db: Session = Depends(get_db), current_user: UserModel = 
         ).all()
 
     return [VersionOut.from_orm(version) for version in versions]
-]
 
 
 @router.post("/version",response_model=VersionOut)
-async def add_version(v: VersionIn = Depends(), db: Session = Depends(get_db)):
+async def add_version(v: VersionIn = Depends(), db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
     """
     Create a new version.
     """
@@ -72,10 +70,17 @@ async def add_version(v: VersionIn = Depends(), db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_version)
 
+    user_group_ids = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id).subquery()
+    for group_id in user_group_ids:
+        access = BibleVersionAccess(bible_version_id=new_version.id, group_id=group_id)
+        db.add(access)
+    db.commit()
+
     return VersionOut.from_orm(new_version)
 
 
-@router.delete("/version", dependencies=[Depends(api_key_auth)])
+
+@router.delete("/version")
 async def delete_version(id: int, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
     """
     Delete a version and all associated revisions, text, and assessments.

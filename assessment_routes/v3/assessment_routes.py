@@ -25,12 +25,11 @@ from database.models import (
     AssessmentAccess,
     Assessment
 )
-from database.dependencies import get_db, postgres_conn
+from database.dependencies import get_db
 from security_routes.utilities import (
-    get_current_user, 
-    api_key_auth, 
     is_user_authorized_for_bible_version
 )
+from security_routes.auth_routes import get_current_user
 router = fastapi.APIRouter()
 
 api_keys = get_secret(

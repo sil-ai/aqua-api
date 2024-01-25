@@ -107,11 +107,12 @@ class BibleRevision(Base):
     bible_version_id = Column(Integer, ForeignKey("bible_version.id"))
     published = Column(Boolean)
     name = Column(Text)
-    back_translation_id = Column(Integer) 
+    back_translation_id = Column(Integer, ForeignKey("bible_revision.id"))
     machine_translation = Column(Boolean, default=False)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
     
+    back_translation = relationship('BibleRevision', remote_side=[id])
     bible_version = relationship("BibleVersion", back_populates="revisions")
     verse_text = relationship("VerseText", back_populates="bible_revision")
     assessments_as_revision = relationship("Assessment", cascade="all, delete", back_populates="revision", foreign_keys="[Assessment.revision_id]")
@@ -126,11 +127,12 @@ class BibleVersion(Base):
     abbreviation = Column(Text)
     rights = Column(Text)
     forward_translation_id = Column(Integer)
-    back_translation_id = Column(Integer)
+    back_translation_id = Column(Integer, ForeignKey("bible_version.id"))
     machine_translation = Column(Boolean)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
     
+    back_translation = relationship('BibleVersion', remote_side=[id])
     accessible_by = relationship("BibleVersionAccess", back_populates="bible_version")
     revisions = relationship("BibleRevision", cascade="all, delete", back_populates="bible_version")
 class BibleVersionAccess(Base):
