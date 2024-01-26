@@ -43,10 +43,17 @@ def setup_database(db_session):
 
 def setup_users_and_groups(db_session):
     """Setup test users and groups."""
-    test_user = UserDB(
-        username="testuser",
-        email="testuser@example.com",
-        hashed_password=bcrypt.hashpw("password".encode(), bcrypt.gensalt()).decode(),
+    # Create users
+    test_user1 = UserDB(
+        username="testuser1",
+        email="testuser1@example.com",
+        hashed_password=bcrypt.hashpw("password1".encode(), bcrypt.gensalt()).decode(),
+        is_admin=False
+    )
+    test_user2 = UserDB(
+        username="testuser2",
+        email="testuser2@example.com",
+        hashed_password=bcrypt.hashpw("password2".encode(), bcrypt.gensalt()).decode(),
         is_admin=False
     )
     admin_user = UserDB(
@@ -56,8 +63,21 @@ def setup_users_and_groups(db_session):
         is_admin=True
     )
 
-    db_session.add(test_user)
-    db_session.add(admin_user)
+    db_session.add_all([test_user1, test_user2, admin_user])
+    db_session.commit()
+
+    # Create groups
+    group1 = Group(name="Group1", description="Test Group 1")
+    group2 = Group(name="Group2", description="Test Group 2")
+
+    db_session.add_all([group1, group2])
+    db_session.commit()
+
+    # Associate users with groups
+    user_group1 = UserGroup(user_id=test_user1.id, group_id=group1.id)
+    user_group2 = UserGroup(user_id=test_user2.id, group_id=group2.id)
+
+    db_session.add_all([user_group1, user_group2])
     db_session.commit()
 
 def setup_references_and_isos(db_session):

@@ -19,7 +19,7 @@ def db_session():
 
  
 @pytest.fixture(scope="module")
-def client():
+def client(test_db_session):
     return TestClient(app)
 
 @pytest.fixture(scope="module")
