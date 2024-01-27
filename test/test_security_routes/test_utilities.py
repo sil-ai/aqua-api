@@ -3,6 +3,7 @@
 from security_routes.utilities import verify_password
 import bcrypt
 
+
 def test_verify_password():
     password = "test123"
     hashed_password = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()

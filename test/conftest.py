@@ -14,6 +14,21 @@ import pandas as pd
 engine = db.create_engine(os.getenv("AQUA_DB"))
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+@pytest.fixture(scope="module")
+def regular_token1(client):
+    response = client.post("/latest/token", data={"username": "testuser1", "password": "password1"})
+    return response.json().get("access_token")
+
+@pytest.fixture(scope="module")
+def regular_token2(client):
+    response = client.post("/latest/token", data={"username": "testuser2", "password": "password2"})
+    return response.json().get("access_token")
+
+@pytest.fixture(scope="module")
+def admin_token(client):
+    response = client.post("/latest/token", data={"username": "admin", "password": "adminpassword"})
+    return response.json().get("access_token")
+ 
 
 @pytest.fixture(scope="module")
 def test_db_session():

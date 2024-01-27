@@ -4,6 +4,7 @@ import sqlalchemy as db
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import os
+
 # Ensure that the DB session is properly initialized
 
 engine = db.create_engine(os.getenv("AQUA_DB"))
