@@ -1,28 +1,18 @@
 __version__ = 'v3'
 
-import os
 from typing import List
-import re
 
 import fastapi
 from fastapi import Depends, HTTPException, status
-from fastapi.security.api_key import APIKeyHeader
-import psycopg2
 from sqlalchemy.orm import Session
 
-import queries
 from key_fetch import get_secret
 from models import VersionIn, VersionOut
 from database.models import (
-    Assessment as AssessmentModel, 
-    BibleRevision as BibleRevisionModel, 
     UserDB as UserModel, 
     UserGroup,
     BibleVersion as BibleVersionModel,  
     BibleVersionAccess,
-)
-from security_routes.utilities import (
-    is_user_authorized_for_bible_version
 )
 from security_routes.auth_routes import get_current_user
 from database.dependencies import get_db
@@ -79,7 +69,6 @@ async def add_version(v: VersionIn = Depends(), db: Session = Depends(get_db), c
     db.commit()
 
     return VersionOut.model_validate(new_version)
-
 
 
 @router.delete("/version")
