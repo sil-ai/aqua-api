@@ -114,9 +114,9 @@ class BibleRevision(Base):
     
     back_translation = relationship('BibleRevision', remote_side=[id])
     bible_version = relationship("BibleVersion", back_populates="revisions")
-    verse_text = relationship("VerseText", back_populates="bible_revision")
+    verse_text = relationship("VerseText", cascade="all, delete",back_populates="bible_revision")
     assessments_as_revision = relationship("Assessment", cascade="all, delete", back_populates="revision", foreign_keys="[Assessment.revision_id]")
-    assessments_as_reference = relationship("Assessment", back_populates="reference", foreign_keys="[Assessment.reference_id]")
+    assessments_as_reference = relationship("Assessment", cascade="all, delete", back_populates="reference", foreign_keys="[Assessment.reference_id]")
 class BibleVersion(Base):
     __tablename__ = "bible_version"
 
@@ -133,7 +133,7 @@ class BibleVersion(Base):
     deletedAt = Column(TIMESTAMP, default=None)
     
     back_translation = relationship('BibleVersion', remote_side=[id])
-    accessible_by = relationship("BibleVersionAccess", back_populates="bible_version")
+    accessible_by = relationship("BibleVersionAccess", cascade="all, delete",  back_populates="bible_version")
     revisions = relationship("BibleRevision", cascade="all, delete", back_populates="bible_version")
 class BibleVersionAccess(Base):
     __tablename__ = 'bible_version_access'
@@ -218,7 +218,7 @@ class Group(Base):
     name = Column(String(50), unique=True, nullable=False)
     description = Column(Text)
     # Relationship with UserGroups
-    users = relationship("UserGroup", back_populates="group", cascade="all, delete")
+    users = relationship("UserGroup", back_populates="group")
     assessments_access = relationship("AssessmentAccess", back_populates="group", cascade="all, delete")
     bible_versions_access = relationship("BibleVersionAccess", back_populates="group", cascade="all, delete")
 

@@ -35,7 +35,7 @@ def regular_token2(client):
 
 @pytest.fixture(scope="module")
 def admin_token(client):
-    response = client.post("/latest/token", data={"username": "adminuser", "password": "adminpassword"})
+    response = client.post("/latest/token", data={"username": "admin", "password": "adminpassword"})
     return response.json().get("access_token")
    
 new_version_data = {

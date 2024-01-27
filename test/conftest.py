@@ -22,12 +22,13 @@ def test_db_session():
 
     # Add your test data setup here
     setup_database(db_session)
-
-    yield db_session
+    try:    
+        yield db_session
 
     # Teardown test data
-    teardown_database(db_session)
-    db_session.close()
+    finally:
+        teardown_database(db_session)
+        db_session.close()
 
 def setup_database(db_session):
     """Set up the database for testing with distinct sections for different data types."""
