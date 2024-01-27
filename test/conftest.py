@@ -1,8 +1,10 @@
 # conftest.py
 
+from app import app  # Import your FastAPI application instance
 import os
 import pytest
 import sqlalchemy as db
+from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from database.models import Base, UserDB, Group, UserGroup, IsoLanguage, IsoScript, BibleVersion, BibleRevision, BookReference, ChapterReference, VerseReference
@@ -13,6 +15,16 @@ import pandas as pd
 
 engine = db.create_engine(os.getenv("AQUA_DB"))
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+@pytest.fixture(scope="module")
+def db_session():
+    return TestingSessionLocal()
+
+
+@pytest.fixture(scope="module")
+def client(test_db_session):
+    return TestClient(app)
+
 
 @pytest.fixture(scope="module")
 def regular_token1(client):

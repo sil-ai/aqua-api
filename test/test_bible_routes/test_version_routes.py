@@ -1,11 +1,11 @@
-from fastapi.testclient import TestClient
-from app import app  # Import your FastAPI application instance
 from conftest import (
     test_db_session,
     TestingSessionLocal,
     regular_token1,
     regular_token2,
     admin_token,
+    client,
+    db_session,
 )
 import pytest
 
@@ -16,16 +16,6 @@ from database.models import (
     BibleVersion as BibleVersionModel,
     BibleVersionAccess,
 )
-
-
-@pytest.fixture(scope="module")
-def db_session():
-    return TestingSessionLocal()
-
-
-@pytest.fixture(scope="module")
-def client(test_db_session):
-    return TestClient(app)
 
 
 new_version_data = {
