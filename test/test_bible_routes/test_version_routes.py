@@ -9,6 +9,7 @@ from database.models import (
     BibleRevision as BibleRevisionModel, 
     UserDB as UserModel, 
     UserGroup,
+    Group,
     BibleVersion as BibleVersionModel,  
     BibleVersionAccess,
 )
@@ -43,30 +44,40 @@ new_version_data = {
     "iso_script": "Latn",
     "abbreviation": "NV",
     "rights": "Some Rights",
-    "forwardTranslation": None,
-    "backTranslation": None,
     "machineTranslation": False,
 }
 
     
-prefix = "/latest"
+prefix = "/v3"
 
 class TestRegularUserFlow:
-    def test_regular_user_create_list_and_delete_version(self, client, regular_token1, db_session):
+    def test_regular_user_create_list_and_delete_version(self, client, regular_token1, regular_token2, db_session):
         # Step 1: Create a version as a regular user
         headers = {"Authorization": f"Bearer {regular_token1}"}
-        create_response = client.post(f"{prefix}/version", json=new_version_data, headers=headers)
+        create_response = client.post(f"{prefix}/version", params=new_version_data, headers=headers)
         assert create_response.status_code == 200
         version_id = create_response.json().get("id")
 
         # Verify creation in DB
-        version_in_db = db_session.query(BibleVersionModel).filter_by(id=version_id).first()
-        assert version_in_db is not None
-        access_entrie = db_session.query(BibleVersionAccess).filter_by(bible_version_id=version_id).all()
-        assert len(access_entrie) == 1 
-        access_entrie.group_id == 'Group1'
-        access_entrie.user_id == 'testuser1'
-    
+        access_entries = db_session.query(
+            BibleVersionAccess, UserModel, Group
+        ).join(
+            Group, BibleVersionAccess.group_id == Group.id
+        ).join(
+            UserGroup, Group.id == UserGroup.group_id
+        ).join(
+            UserModel, UserGroup.user_id == UserModel.id
+        ).filter(
+            BibleVersionAccess.bible_version_id == version_id
+        ).all()
+
+        assert len(access_entries) == 1
+        access_entry, user, group = access_entries[0]
+
+        # Assert the names of the user and the group
+        assert user.username == 'testuser1'
+        assert group.name == 'Group1'
+
         # Step 2: List versions as a regular user
         list_response = client.get(f"{prefix}/version", headers=headers)
         assert list_response.status_code == 200
@@ -92,7 +103,7 @@ class TestRegularUserFlow:
         assert len(versions) == 0  # Check that user 2 does not get anything back
 
         # Step 3: Delete the version as a regular user
-        delete_response = client.delete(f"{prefix}/version/{version_id}", headers=headers)
+        delete_response = client.delete(f"{prefix}/version", params={"id": version_id}, headers=headers)
         assert delete_response.status_code == 200
 
         # Verify deletion in DB
@@ -103,7 +114,7 @@ class TestAdminFlow:
     def test_admin_create_list_and_delete_version(self, client, admin_token, regular_token1, db_session):
         # Step 1: Create a version as an regular user
         headers = {"Authorization": f"Bearer {regular_token1}"}
-        create_response = client.post(f"{prefix}/version", json=new_version_data, headers=headers)
+        create_response = client.post(f"{prefix}/version", params=new_version_data, headers=headers)
         assert create_response.status_code == 200
         version_id = create_response.json().get("id")
 
@@ -120,7 +131,7 @@ class TestAdminFlow:
         # Step 3: Delete the version as an admin
         headers = {"Authorization": f"Bearer {admin_token}"}
         # Delete the version by sending the ID in the request body
-        delete_response = client.delete(f"{prefix}/version", json={"id": version_id}, headers=headers)
+        delete_response = client.delete(f"{prefix}/version", params={"id": version_id}, headers=headers)
         assert delete_response.status_code == 200
 
         # Verify deletion in DB

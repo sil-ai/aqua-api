@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict 
 from enum import Enum
 from typing import Union, Optional, List
 import datetime
@@ -16,6 +16,7 @@ class VersionIn(BaseModel):
 
 
 class VersionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: int
     name: str
     iso_language: str
@@ -62,6 +63,7 @@ class AssessmentType(Enum):
     sentence_length = 'sentence-length'
     missing_words = 'missing-words'
     semantic_similarity = 'semantic-similarity'
+    model_config = ConfigDict(from_attributes=True)
     question_answering = 'question-answering'
 
 
@@ -75,6 +77,7 @@ class AssessmentIn(BaseModel):
 
 
 class AssessmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id: int
     revision_id: int
     reference_id: Optional[int] = None
@@ -84,8 +87,8 @@ class AssessmentOut(BaseModel):
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
     
-    class Config: 
-        use_enum_values = True
+    # class Config: 
+    #     use_enum_values = True
 
 
 # Results model to record in the DB.

@@ -58,7 +58,8 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
             AssessmentAccess.group_id.in_(user_group_ids)
         ).all()
 
-    assessment_data = [AssessmentOut.from_orm(assessment) for assessment in assessments]
+    assessment_data = [AssessmentOut.    return VersionOut.model_validate(new_version)
+(assessment) for assessment in assessments]
     assessment_data = sorted(assessment_data, key=lambda x: x.requested_time, reverse=True)
 
     return assessment_data
@@ -130,7 +131,8 @@ async def add_assessment(
     # Call runner using helper function
     call_assessment_runner(assessment, modal_suffix, return_all_results)
 
-    return [AssessmentOut.from_orm(assessment)]
+    return [AssessmentOut.    return VersionOut.model_validate(new_version)
+(assessment)]
 
 
 

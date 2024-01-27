@@ -47,7 +47,7 @@ async def list_version(db: Session = Depends(get_db), current_user: UserModel = 
             BibleVersionAccess.group_id.in_(user_group_ids)
         ).all()
 
-    return [VersionOut.from_orm(version) for version in versions]
+    return [VersionOut.model_validate(version) for version in versions]
 
 
 @router.post("/version",response_model=VersionOut)
@@ -61,22 +61,24 @@ async def add_version(v: VersionIn = Depends(), db: Session = Depends(get_db), c
         iso_script=v.iso_script,
         abbreviation=v.abbreviation,
         rights=v.rights,
-        forwardTranslation=v.forwardTranslation,
-        backTranslation=v.backTranslation,
-        machineTranslation=v.machineTranslation,
+        forward_translation_id=v.forwardTranslation,
+        back_translation_id=v.backTranslation,
+        machine_translation=v.machineTranslation,
     )
 
     db.add(new_version)
     db.commit()
     db.refresh(new_version)
 
-    user_group_ids = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id).subquery()
+    user_group_ids_query = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id)
+    user_group_ids = [group_id[0] for group_id in user_group_ids_query.all()]
+    
     for group_id in user_group_ids:
         access = BibleVersionAccess(bible_version_id=new_version.id, group_id=group_id)
         db.add(access)
     db.commit()
 
-    return VersionOut.from_orm(new_version)
+    return VersionOut.model_validate(new_version)
 
 
 
