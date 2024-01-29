@@ -1,19 +1,100 @@
 # test_revision_flows.py
 from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
 import pytest
 from pathlib import Path
-from conftest import client, regular_token1, regular_token2, regular_token1, admin_token, version_id  # Import necessary fixtures
+from conftest import (
+    client,
+    regular_token1,
+    regular_token2,
+    regular_token1,
+    admin_token,
+)  # Import necessary fixtures
+from bible_routes.v3.revision_routes import process_and_upload_revision
+
 
 from database.models import (
     BibleRevision as BibleRevisionModel,
-    VerseText as VerseModel,    
+    VerseText as VerseModel,
+    BibleVersion as BibleVersionModel,
 )
+
+
+def test_process_and_upload_revision(test_db_session: Session):
+    # Create a test Bible version in the database
+    test_version = BibleVersionModel(
+        name="Test Version",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="TV",
+        rights="Some Rights"
+        # Add other required fields if necessary
+    )
+    test_db_session.add(test_version)
+    test_db_session.commit()
+    test_db_session.refresh(test_version)
+
+    # Create a test revision associated with the test version
+    test_revision = BibleRevisionModel(
+        bible_version_id=test_version.id,
+        name="Test Revision",
+        date="2023-01-01",  # Use appropriate date format
+        published=True,
+        back_translation_id=None,
+        machine_translation=False,
+    )
+    test_db_session.add(test_revision)
+    test_db_session.commit()
+    test_db_session.refresh(test_revision)
+
+    # Read the contents of the test file
+    test_file_path = Path("fixtures/uploadtest.txt")
+    with open(test_file_path, "rb") as file:
+        file_content = file.read()
+
+    # Call the function with the test data
+    process_and_upload_revision(file_content, test_revision.id, test_db_session)
+
+    # Verify that verses were correctly uploaded
+    uploaded_verses = (
+        test_db_session.query(VerseModel)
+        .filter(VerseModel.revision_id == test_revision.id)
+        .all()
+    )
+    num_verses_in_file = sum(1 for _ in open(test_file_path))
+    assert len(uploaded_verses) == num_verses_in_file
+
+    # Clean up: delete the test revision, its verses, and the test version
+    test_db_session.query(VerseModel).filter(
+        VerseModel.revision_id == test_revision.id
+    ).delete()
+    test_db_session.delete(test_revision)
+    test_db_session.delete(test_version)
+    test_db_session.commit()
+
+
+prefix = "v3"
+
+
 @pytest.fixture(scope="module")
 def version_id(client, regular_token1):
+    new_version_data = {
+        "name": "New Version",
+        "iso_language": "eng",
+        "iso_script": "Latn",
+        "abbreviation": "NV",
+        "rights": "Some Rights",
+        "machineTranslation": False,
+    }
+
     # Fetch a version ID for testing
     headers = {"Authorization": f"Bearer {regular_token1}"}
-    response = client.get("/version", headers=headers)
-    return response.json()[0]['id']
+    create_response = client.post(
+        f"{prefix}/version", params=new_version_data, headers=headers
+    )
+    assert create_response.status_code == 200
+    version_id = create_response.json().get("id")
+    return version_id
 
 
 def upload_revision(client, token, version_id):
@@ -21,39 +102,53 @@ def upload_revision(client, token, version_id):
     test_revision = {
         "version_id": version_id,
         "name": "Test Revision",
-        "published": False,
-        "backTranslation": None,
-        "machineTranslation": False
     }
     test_upload_file = Path("fixtures/uploadtest.txt")
 
-    with open(test_upload_file, "r") as file:
+    with open(test_upload_file, "rb") as file:
         files = {"file": file}
-        response = client.post("/revision", params=test_revision, files=files, headers=headers)
+        response = client.post(
+            f"{prefix}/revision", params=test_revision, files=files, headers=headers
+        )
     return response.json()["id"]  # Return the ID of the uploaded revision
+
 
 def list_revision(client, token, revision_id=None):
     headers = {"Authorization": f"Bearer {token}"}
-    url = "/revision"
+    url = "{prefix}/revision"
     if revision_id:
         url += f"?version_id={revision_id}"
     response = client.get(url, headers=headers)
     return response.status_code
 
+
 def delete_revision(client, token, revision_id):
     headers = {"Authorization": f"Bearer {token}"}
-    response = client.delete(f"/revision?id={revision_id}", headers=headers)
+    response = client.delete(f"{prefix}/revision?id={revision_id}", headers=headers)
     return response.status_code
 
+
 def count_verses_in_revision(db_session, revision_id):
-    return db_session.query(VerseModel).filter(VerseModel.revision_id == revision_id).count()
+    return (
+        db_session.query(VerseModel)
+        .filter(VerseModel.revision_id == revision_id)
+        .count()
+    )
+
 
 def revision_exists(db_session, revision_id):
-    return db_session.query(BibleRevisionModel).filter(BibleRevisionModel.id == revision_id).count() > 0
+    return (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.id == revision_id)
+        .count()
+        > 0
+    )
 
 
 # Flow 1: Load, List, Check Access, and Delete as Regular User
-def test_regular_user_flow(client, regular_token1, regular_token2, version_id, db_session):
+def test_regular_user_flow(
+    client, regular_token1, regular_token2, version_id, db_session
+):
     revision_id = upload_revision(client, regular_token1, version_id)
 
     # Check status of the DB
@@ -62,7 +157,9 @@ def test_regular_user_flow(client, regular_token1, regular_token2, version_id, d
     assert revision_exists(db_session, revision_id)  # Ensure revision exists
 
     assert list_revision(client, regular_token1, revision_id) == 200
-    assert list_revision(client, regular_token2, revision_id) == 403  # Regular user 2 should not have access
+    assert (
+        list_revision(client, regular_token2, revision_id) == 403
+    )  # Regular user 2 should not have access
 
     assert delete_revision(client, regular_token1, revision_id) == 200
 
@@ -72,11 +169,13 @@ def test_regular_user_flow(client, regular_token1, regular_token2, version_id, d
 
 
 # Flow 2: Load as Regular User, List as Admin, and Delete as Admin
-def test_admin_flow(client, regular_token1, version_id, db_session):
-    revision_id = upload_revision(client, regular_token1, version_id, admin_token)
+def test_admin_flow(client, regular_token1, version_id, db_session, admin_token):
+    revision_id = upload_revision(client, regular_token1, version_id)
 
     assert revision_exists(db_session, revision_id)  # Ensure revision exists
-    assert list_revision(client, admin_token, revision_id) == 200  # Admin should have access
+    assert (
+        list_revision(client, admin_token, revision_id) == 200
+    )  # Admin should have access
 
     assert delete_revision(client, admin_token, revision_id) == 200
 

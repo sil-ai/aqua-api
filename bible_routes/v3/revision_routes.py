@@ -49,33 +49,40 @@ async def list_revisions(version_id: Optional[int] = None, db: Session = Depends
     return [RevisionOut.model_validate(revision) for revision in revisions]
 
 
+def process_and_upload_revision(file_content: bytes, revision_id: int, db: Session):
+    with NamedTemporaryFile() as temp_file:
+        temp_file.write(file_content)
+        temp_file.seek(0)
+
+        with open(temp_file.name, "r") as bible_data:
+            verses = [line.strip() for line in bible_data if line.strip()]
+
+        if not verses:
+            raise ValueError("File has no text.")
+
+        # Assuming upload_bible function exists
+        upload_bible(verses, [revision_id] * len(verses))
+
 
 @router.post("/revision", response_model=RevisionOut)
 async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = File(...), db: Session = Depends(get_db)):
-    """
-    Uploads a new revision to the database. The revision must correspond to a version that already exists in the database.
-    """
-    start_time = time.time()  # Start timer
+    start_time = time.time()
 
-    logging.info(f"Uploading new revision: {revision.dict()}")
-    # Check if the version exists
+    logging.info(f"Uploading new revision: {revision.model_dump()}")
     version = db.query(BibleVersionModel).filter(BibleVersionModel.id == revision.version_id).first()
     if not version:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Version id is invalid")
 
-    # Create a new revision
     new_revision = BibleRevisionModel(
-        version_id=revision.version_id,
+        bible_version_id=revision.version_id,
         name=revision.name,
         date=date.today(),
         published=revision.published,
         back_translation_id=revision.backTranslation,
         machine_translation=revision.machineTranslation
     )
-    
     db.add(new_revision)
 
-    # Try to commit, handle possible foreign key violation
     try:
         db.commit()
     except IntegrityError:
@@ -87,31 +94,14 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
 
     db.refresh(new_revision)
 
-    # Process the uploaded file
     contents = await file.read()
-    temp_file = NamedTemporaryFile()
-    temp_file.write(contents)
-    temp_file.seek(0)
+    try:
+        process_and_upload_revision(contents, new_revision.id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    # Parse the input Bible revision data
-    with open(temp_file.name, "r") as bible_data:
-        verses = [line.strip() for line in bible_data if line.strip()]
-
-    if not verses:
-        temp_file.close()
-        await file.close()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File has no text.")
-
-    # Push the revision to the database (assuming bible_loading.upload_bible exists)
-    upload_bible(verses, [new_revision.id] * len(verses))
-
-    # Clean up
-    temp_file.close()
-    await file.close()
-
-    end_time = time.time()  # End timer
+    end_time = time.time()
     processing_time = end_time - start_time
-
     logging.info(f"Uploaded revision successfully in {processing_time:.2f} seconds.")
 
     return RevisionOut.model_validate(new_revision)

@@ -7,14 +7,28 @@ import sqlalchemy as db
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from database.models import Base, UserDB, Group, UserGroup, IsoLanguage, IsoScript, BibleVersion, BibleRevision, BookReference, ChapterReference, VerseReference
+from database.models import (
+    Base,
+    UserDB,
+    Group,
+    UserGroup,
+    IsoLanguage,
+    IsoScript,
+    BibleVersion,
+    BibleRevision,
+    BookReference,
+    ChapterReference,
+    VerseReference,
+)
 import bcrypt
 from datetime import date
 import pandas as pd
+
 # Assuming you have an environment variable for your test database
 
 engine = db.create_engine(os.getenv("AQUA_DB"))
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 
 @pytest.fixture(scope="module")
 def db_session():
@@ -28,19 +42,27 @@ def client(test_db_session):
 
 @pytest.fixture(scope="module")
 def regular_token1(client):
-    response = client.post("/latest/token", data={"username": "testuser1", "password": "password1"})
+    response = client.post(
+        "/latest/token", data={"username": "testuser1", "password": "password1"}
+    )
     return response.json().get("access_token")
+
 
 @pytest.fixture(scope="module")
 def regular_token2(client):
-    response = client.post("/latest/token", data={"username": "testuser2", "password": "password2"})
+    response = client.post(
+        "/latest/token", data={"username": "testuser2", "password": "password2"}
+    )
     return response.json().get("access_token")
+
 
 @pytest.fixture(scope="module")
 def admin_token(client):
-    response = client.post("/latest/token", data={"username": "admin", "password": "adminpassword"})
+    response = client.post(
+        "/latest/token", data={"username": "admin", "password": "adminpassword"}
+    )
     return response.json().get("access_token")
- 
+
 
 @pytest.fixture(scope="module")
 def test_db_session():
@@ -49,13 +71,14 @@ def test_db_session():
 
     # Add your test data setup here
     setup_database(db_session)
-    try:    
+    try:
         yield db_session
 
     # Teardown test data
     finally:
         teardown_database(db_session)
         db_session.close()
+
 
 def setup_database(db_session):
     """Set up the database for testing with distinct sections for different data types."""
@@ -69,6 +92,7 @@ def setup_database(db_session):
     # Section 3: Loading Revision
     load_revision_data(db_session)
 
+
 def setup_users_and_groups(db_session):
     """Setup test users and groups."""
     # Create users
@@ -76,19 +100,21 @@ def setup_users_and_groups(db_session):
         username="testuser1",
         email="testuser1@example.com",
         hashed_password=bcrypt.hashpw("password1".encode(), bcrypt.gensalt()).decode(),
-        is_admin=False
+        is_admin=False,
     )
     test_user2 = UserDB(
         username="testuser2",
         email="testuser2@example.com",
         hashed_password=bcrypt.hashpw("password2".encode(), bcrypt.gensalt()).decode(),
-        is_admin=False
+        is_admin=False,
     )
     admin_user = UserDB(
         username="admin",
         email="admin@example.com",
-        hashed_password=bcrypt.hashpw("adminpassword".encode(), bcrypt.gensalt()).decode(),
-        is_admin=True
+        hashed_password=bcrypt.hashpw(
+            "adminpassword".encode(), bcrypt.gensalt()
+        ).decode(),
+        is_admin=True,
     )
 
     db_session.add_all([test_user1, test_user2, admin_user])
@@ -108,12 +134,13 @@ def setup_users_and_groups(db_session):
     db_session.add_all([user_group1, user_group2])
     db_session.commit()
 
+
 def setup_references_and_isos(db_session):
     """Setup reference data and ISO codes."""
     # Load data from CSV files
-    book_ref_df = pd.read_csv('fixtures/book_reference.txt', sep='\t')
-    chapter_ref_df = pd.read_csv('fixtures/chapter_reference.txt', sep='\t')
-    verse_ref_df = pd.read_csv('fixtures/verse_reference.txt', sep='\t')
+    book_ref_df = pd.read_csv("fixtures/book_reference.txt", sep="\t")
+    chapter_ref_df = pd.read_csv("fixtures/chapter_reference.txt", sep="\t")
+    verse_ref_df = pd.read_csv("fixtures/verse_reference.txt", sep="\t")
 
     # Populate book_reference, chapter_reference, verse_reference tables
     for _, row in book_ref_df.iterrows():
@@ -128,21 +155,32 @@ def setup_references_and_isos(db_session):
     db_session.add(IsoScript(iso15924="Latn", name="latin"))
     db_session.commit()
 
+
 def load_revision_data(db_session):
     """Load revision data into the database."""
     # Add version
-    version = BibleVersion(name="loading_test", iso_language="eng", iso_script="Latn", abbreviation="BLTEST")
+    version = BibleVersion(
+        name="loading_test",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="BLTEST",
+    )
     db_session.add(version)
 
     # Commit to save the version and retrieve its ID for the revision
     db_session.commit()
 
     # Add revision
-    revision = BibleRevision(date=date.today(), bible_version_id=version.id, published=False, machine_translation=True)
+    revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=version.id,
+        published=False,
+        machine_translation=True,
+    )
     db_session.add(revision)
     db_session.commit()
-   
-    
+
+
 def teardown_database(db_session):
     engine = db_session.get_bind()
     with engine.connect() as connection:
@@ -152,4 +190,3 @@ def teardown_database(db_session):
                 connection.execute(table_name.delete())
             connection.execute("SET session_replication_role = DEFAULT;")
             transaction.commit()
-
