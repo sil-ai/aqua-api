@@ -29,8 +29,6 @@ def is_user_authorized_for_bible_version(user_id, bible_version_id, session):
 
     return accessible is not None
 
-
-
 def is_user_authorized_for_revision(user_id, revision_id, session):
     # Admins have access to all revisions
     user = session.query(UserDB).filter(UserDB.id == user_id).first()
