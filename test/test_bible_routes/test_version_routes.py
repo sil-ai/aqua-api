@@ -7,7 +7,6 @@ from conftest import (
     client,
     db_session,
 )
-import pytest
 
 from database.models import (
     UserDB as UserModel,
