@@ -1,248 +1,145 @@
-__version__ = 'v2'
-
-import os
-from datetime import date
-from typing import Optional, List
+from typing import List, Optional
+from fastapi import Depends, HTTPException, status, APIRouter, UploadFile, File
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError, NoResultFound
 from tempfile import NamedTemporaryFile
-import re
-
-import fastapi
-from fastapi import Depends, HTTPException, status, File, UploadFile
-from fastapi.security.api_key import APIKeyHeader
-import psycopg2
 import numpy as np
+import time
+import logging
+from datetime import date
 
-import queries
-import bible_loading
-from key_fetch import get_secret
-from models import RevisionIn, RevisionOut
+from bible_loading import upload_bible
+from models import RevisionOut, RevisionIn
+from database.models import BibleRevision as BibleRevisionModel, BibleVersion as BibleVersionModel, UserDB as UserModel
+from security_routes.utilities import is_user_authorized_for_revision
+from security_routes.auth_routes import get_current_user
+from database.dependencies import get_db
 
+router = APIRouter()
 
-router = fastapi.APIRouter()
-
-api_keys = get_secret(
-        os.getenv("KEY_VAULT"),
-        os.getenv("AWS_ACCESS_KEY"),
-        os.getenv("AWS_SECRET_KEY")
-        )
-
-api_key_header = APIKeyHeader(name="api_key", auto_error=False)
-
-def api_key_auth(api_key: str = Depends(api_key_header)):
-    if api_key not in api_keys:
-        raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Forbidden"
-        )
-
-    return True
-
-
-def postgres_conn():
-    connection = psycopg2.connect(os.getenv("AQUA_DB"))
-
-    return connection
-
-
-@router.get("/revision", dependencies=[Depends(api_key_auth)], response_model=List[RevisionOut])
-async def list_revisions(version_id: Optional[int]=None):
+@router.get("/revision", response_model=List[RevisionOut])
+async def list_revisions(version_id: Optional[int] = None, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
     """
     Returns a list of revisions. 
     
     If version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.
     """
- 
-    connection = postgres_conn()
-    cursor = connection.cursor()
+    start_time = time.time()  # Start timer
+    logging.info(f"User {current_user.id} requested list of revisions. Version ID: {'All' if version_id is None else version_id}")
 
-    list_versions = queries.list_versions_query()
+    if version_id:
+        # Check if version exists
+        version = db.query(BibleVersionModel).filter(BibleVersionModel.id == version_id).first()
+        if not version:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Version id is invalid")
 
-    cursor.execute(list_versions)
-    version_result = cursor.fetchall()
+        # Check if user is authorized to access the version
+        if not is_user_authorized_for_revision(current_user.id, version_id, db):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User not authorized to access this version.")
 
-    version_list = []
-    for version in version_result:
-        version_list.append(version[0])
-
-    if version_id is not None and version_id not in version_list:
-        cursor.close()
-        connection.close()
-
-        raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Version id is invalid"
-                )
+        revisions = db.query(BibleRevisionModel).filter(BibleRevisionModel.version_id == version_id).all()
     else:
-        if version_id:
-            list_revision = queries.list_revisions_query()
-            cursor.execute(list_revision, (version_id,))
-            revision_result = cursor.fetchall()
-        else:
-            list_revision = queries.list_all_revisions_query()
-            cursor.execute(list_revision)
-            revision_result = cursor.fetchall()
+        # List all revisions, but filter based on user authorization
+        revisions = db.query(BibleRevisionModel).all()
+        revisions = [revision for revision in revisions if is_user_authorized_for_revision(current_user.id, revision.version_id, db)]
 
-        revisions_data = []
-        for revision in revision_result:
-            
-            revision_data = RevisionOut(
-                    id=revision[0],
-                    date=revision[1],
-                    version_id=revision[2],
-                    version_abbreviation=revision[8],
-                    name=revision[4],
-                    published=revision[3],
-                    backTranslation=revision[5],
-                    machineTranslation=revision[6],
-                    iso_language=revision[7],
-            )
+    processing_time = time.time() - start_time
+    logging.info(f"Listed revisions for User {current_user.id} in {processing_time:.2f} seconds.")
 
-            revisions_data.append(revision_data)
-
-    cursor.close()
-    connection.close()
-
-    return revisions_data
+    return [RevisionOut.model_validate(revision) for revision in revisions]
 
 
-@router.post("/revision", dependencies=[Depends(api_key_auth)], response_model=RevisionOut)
-async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = File(...)):
+
+@router.post("/revision", response_model=RevisionOut)
+async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Uploads a new revision to the database. The revision must correspond to a version that already exists in the database.
-
-    The file must be a text file with each verse on a new line, in "vref" format. The text file must be 41,899 lines long.
     """
-    
-    connection = postgres_conn()
-    cursor = connection.cursor()
-    
-    name = revision.name if revision.name else None
-    revision_date = str(date.today())
-    revision_query = queries.insert_bible_revision()
+    start_time = time.time()  # Start timer
 
-    fetch_version_data = queries.fetch_version_data()
-    cursor.execute(fetch_version_data, (revision.version_id,))
-    version_data = cursor.fetchone()
+    logging.info(f"Uploading new revision: {revision.dict()}")
+    # Check if the version exists
+    version = db.query(BibleVersionModel).filter(BibleVersionModel.id == revision.version_id).first()
+    if not version:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Version id is invalid")
 
-    # Convert into bytes and save as a temporary file.
+    # Create a new revision
+    new_revision = BibleRevisionModel(
+        version_id=revision.version_id,
+        name=revision.name,
+        date=date.today(),
+        published=revision.published,
+        back_translation_id=revision.backTranslation,
+        machine_translation=revision.machineTranslation
+    )
+    
+    db.add(new_revision)
+
+    # Try to commit, handle possible foreign key violation
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The backTranslation parameter, if it exists, must be the valid ID of a revision that already exists in the database."
+        )
+
+    db.refresh(new_revision)
+
+    # Process the uploaded file
     contents = await file.read()
     temp_file = NamedTemporaryFile()
     temp_file.write(contents)
     temp_file.seek(0)
 
-    # Create a corresponding revision in the database.
-    try:
-        cursor.execute(revision_query, (
-        revision.version_id, name,
-        revision_date, revision.published,
-        revision.backTranslation,
-        revision.machineTranslation,
-        ))
-    except psycopg2.errors.ForeignKeyViolation:
-        cursor.close()
-        connection.close()
-        raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The backTranslation parameter, if it exists, must be the valid ID of a revision that already exists in the database."
-                )
-    
-    returned_revision = cursor.fetchone()
-    connection.commit()
-
-
-
-    revision_query = RevisionOut(
-                id=returned_revision[0],
-                date=returned_revision[1],
-                version_id=returned_revision[2],
-                version_abbreviation=version_data[0],
-                name=returned_revision[4],
-                published=returned_revision[3],
-                backTranslation=returned_revision[5],
-                machineTranslation=returned_revision[6],
-        )
-
-    # Parse the input Bible revision data.
-    verses = []
-    bible_revision = []
-    has_text = False
-
+    # Parse the input Bible revision data
     with open(temp_file.name, "r") as bible_data:
-        for line in bible_data:
-            if line == "\n" or line == "" or line == " ":
-                verses.append(np.nan)
-                bible_revision.append(revision_query.id)
-            else:
-                has_text=True
-                verses.append(line.replace("\n", ""))
-                bible_revision.append(revision_query.id)
-    
-    if not has_text:
-        cursor.close()
-        connection.close()
+        verses = [line.strip() for line in bible_data if line.strip()]
 
-        raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File has no text."
-        )
+    if not verses:
+        temp_file.close()
+        await file.close()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File has no text.")
 
-    # Push the revision to the database.
-    bible_loading.upload_bible(verses, bible_revision)
+    # Push the revision to the database (assuming bible_loading.upload_bible exists)
+    upload_bible(verses, [new_revision.id] * len(verses))
 
-    # Clean up.
+    # Clean up
     temp_file.close()
     await file.close()
 
-    cursor.close()
-    connection.close()
+    end_time = time.time()  # End timer
+    processing_time = end_time - start_time
 
-    return revision_query
+    logging.info(f"Uploaded revision successfully in {processing_time:.2f} seconds.")
+
+    return RevisionOut.model_validate(new_revision)
 
 
-@router.delete("/revision", dependencies=[Depends(api_key_auth)])
-async def delete_revision(id: int):
-    """
-    Deletes a revision from the database. The revision must exist in the database.
-    """
-    
-    connection = postgres_conn()
-    cursor = connection.cursor()
-    
-    fetch_revisions = queries.check_revisions_query()
-    delete_revision = queries.delete_revision_mutation()
-    delete_verses_mutation = queries.delete_verses_mutation()
 
-    cursor.execute(fetch_revisions)
-    revision_result = cursor.fetchall()
+@router.delete("/revision")
+async def delete_revision(id: int, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
+    start_time = time.time()  # Start timer
 
-    revisions_list = []
-    for revisions in revision_result:
-        revisions_list.append(revisions[0])
+    # Check if the revision exists and if the user is authorized
+    revision = db.query(BibleRevisionModel).filter(BibleRevisionModel.id == id).first()
+    if not revision:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Revision id is invalid or does not exist.")
 
-    if id in revisions_list:
-        cursor.execute(delete_verses_mutation, (id,))
+    if not is_user_authorized_for_revision(current_user.id, id, db):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User not authorized to delete this revision.")
 
-        cursor.execute(delete_revision, (id,))
-        connection.commit()
+    # Delete related verses and the revision
+    try:
+        db.delete(revision)
+        db.commit()
+    except NoResultFound:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Error occurred while deleting the revision.")
 
-        revision_result = cursor.fetchone()
+    end_time = time.time()  # End timer
+    processing_time = end_time - start_time
+    logging.info(f"Deleted revision {id} successfully in {processing_time:.2f} seconds.")
 
-        delete_response = ("Revision " +
-            str(
-                revision_result[0]
-                ) + " deleted successfully"
-            )
-
-    else:
-        cursor.close()
-        connection.close()
-
-        raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Revision is invalid, this revision id does not exist."
-                )
-
-    cursor.close()
-    connection.close()
-
-    return delete_response
+    return {"detail": f"Revision {id} deleted successfully."}
