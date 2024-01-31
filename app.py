@@ -2,6 +2,7 @@ __version__ = 'v1'
 
 import fastapi
 from fastapi.openapi.utils import get_openapi
+from fastapi.middleware.cors import CORSMiddleware
 
 #!!! calling path currently includes v1 folder
 from bible_routes.v1.language_routes import router as language_router_v1
@@ -19,6 +20,15 @@ from review_routes.v2.results_routes import router as results_router_v2
 
 
 app = fastapi.FastAPI()
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["POST", "GET", "OPTIONS"],  # Allows only specified methods
+    allow_headers=["*"],  # Allows all headers
+)
 
 def my_schema():
     DOCS_TITLE = "AQuA API"
