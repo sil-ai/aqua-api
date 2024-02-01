@@ -17,6 +17,21 @@ from database.dependencies import get_db
 
 router = APIRouter()
 
+def create_revision_out(revision: BibleRevisionModel, db: Session) -> RevisionOut:
+    # Fetch related BibleVersionModel data
+    version = db.query(BibleVersionModel).filter(BibleVersionModel.id == revision.bible_version_id).first()
+    version_abbreviation = version.abbreviation if version else None
+    iso_language = version.iso_language if version else None
+
+    # Prepare the data for RevisionOut
+    revision_out_data = revision.__dict__.copy()
+    revision_out_data.pop('_sa_instance_state', None)
+
+    revision_out_data['version_abbreviation'] = version_abbreviation
+    revision_out_data['iso_language'] = iso_language
+
+    return RevisionOut(**revision_out_data)
+
 @router.get("/revision", response_model=List[RevisionOut])
 async def list_revisions(version_id: Optional[int] = None, db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)):
     """
@@ -37,16 +52,17 @@ async def list_revisions(version_id: Optional[int] = None, db: Session = Depends
         if not is_user_authorized_for_revision(current_user.id, version_id, db):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User not authorized to access this version.")
 
-        revisions = db.query(BibleRevisionModel).filter(BibleRevisionModel.version_id == version_id).all()
+        revisions = db.query(BibleRevisionModel).filter(BibleRevisionModel.bible_version_id == version_id).all()
     else:
         # List all revisions, but filter based on user authorization
         revisions = db.query(BibleRevisionModel).all()
         revisions = [revision for revision in revisions if is_user_authorized_for_revision(current_user.id, revision.version_id, db)]
+    revision_out_list = [create_revision_out(revision, db) for revision in revisions]
 
     processing_time = time.time() - start_time
     logging.info(f"Listed revisions for User {current_user.id} in {processing_time:.2f} seconds.")
 
-    return [RevisionOut.model_validate(revision) for revision in revisions]
+    return revision_out_list
 
 
 def process_and_upload_revision(file_content: bytes, revision_id: int, db: Session):
@@ -54,14 +70,22 @@ def process_and_upload_revision(file_content: bytes, revision_id: int, db: Sessi
         temp_file.write(file_content)
         temp_file.seek(0)
 
+        verses = []
+        has_text = False
+
         with open(temp_file.name, "r") as bible_data:
-            verses = [line.strip() for line in bible_data if line.strip()]
+            for line in bible_data:
+                if line == "\n" or line == "" or line == " ":
+                    verses.append(np.nan)
+                else:
+                    has_text=True
+                    verses.append(line.replace("\n", ""))
 
-        if not verses:
-            raise ValueError("File has no text.")
+            if not has_text:
+                raise ValueError("File has no text.")
 
-        # Assuming upload_bible function exists
-        upload_bible(verses, [revision_id] * len(verses))
+            # Assuming upload_bible function exists
+            upload_bible(verses, [revision_id] * len(verses))
 
 
 @router.post("/revision", response_model=RevisionOut)
@@ -100,11 +124,13 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+    revision_out = create_revision_out(new_revision, db)
+
     end_time = time.time()
     processing_time = end_time - start_time
     logging.info(f"Uploaded revision successfully in {processing_time:.2f} seconds.")
 
-    return RevisionOut.model_validate(new_revision)
+    return revision_out
 
 
 

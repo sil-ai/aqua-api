@@ -189,7 +189,7 @@ class VerseText(Base):
     __tablename__ = "verse_text"
 
     id = Column(Integer, primary_key=True)
-    text = Column(Text)
+    text = Column(Text, nullable=True)
     bible_revision_id = Column(Integer, ForeignKey("bible_revision.id"))
     verse_reference = Column(Text, ForeignKey("verse_reference.full_verse_id"))
     book = Column(Text)

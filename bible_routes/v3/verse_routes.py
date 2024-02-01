@@ -37,7 +37,7 @@ async def get_chapter(
     result = (
         db.query(VerseModel)
         .filter(
-            VerseModel.revision_id == revision_id,
+            VerseModel.bible_revision_id == revision_id,
             VerseModel.book == book,
             VerseModel.chapter == chapter,
         )
@@ -67,7 +67,7 @@ async def get_verse(
     result = (
         db.query(VerseModel)
         .filter(
-            VerseModel.revision_id == revision_id,
+            VerseModel.bible_revision_id == revision_id,
             VerseModel.book == book,
             VerseModel.chapter == chapter,
             VerseModel.verse == verse,
@@ -95,7 +95,7 @@ async def get_book(
 
     result = (
         db.query(VerseModel)
-        .filter(VerseModel.revision_id == revision_id, VerseModel.book == book)
+        .filter(VerseModel.bible_revision_id == revision_id, VerseModel.book == book)
         .all()
     )
     return result
@@ -116,5 +116,5 @@ async def get_text(
             detail="User not authorized to access this revision.",
         )
 
-    result = db.query(VerseModel).filter(VerseModel.revision_id == revision_id).all()
+    result = db.query(VerseModel).filter(VerseModel.bible_revision_id == revision_id).all()
     return result
