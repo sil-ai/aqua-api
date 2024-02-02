@@ -3,13 +3,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 import pytest
 from pathlib import Path
-from conftest import (
-    client,
-    regular_token1,
-    regular_token2,
-    regular_token1,
-    admin_token,
-)  # Import necessary fixtures
 from bible_routes.v3.revision_routes import process_and_upload_revision
 
 
@@ -36,7 +29,7 @@ def test_process_and_upload_revision(test_db_session: Session):
 
     # Create a test revision associated with the test version
     test_revision = BibleRevisionModel(
-        bible_version_id=test_version.id,
+        version_id=test_version.id,
         name="Test Revision",
         date="2023-01-01",  # Use appropriate date format
         published=True,
@@ -76,8 +69,7 @@ def test_process_and_upload_revision(test_db_session: Session):
 prefix = "v3"
 
 
-@pytest.fixture(scope="module")
-def version_id(client, regular_token1):
+def create_bible_version(client, regular_token1):
     new_version_data = {
         "name": "New Version",
         "iso_language": "eng",
@@ -144,13 +136,30 @@ def revision_exists(db_session, revision_id):
         > 0
     )
 
+def version_exists(db_session, version_id):
+    version = (
+        db_session.query(BibleVersionModel)
+        .filter(BibleVersionModel.id == version_id)
+        .first()
+    )
+
+    return (
+        db_session.query(BibleVersionModel)
+        .filter(BibleVersionModel.id == version_id)
+        .count()
+        > 0
+    )
+
+
 
 # Flow 1: Load, List, Check Access, and Delete as Regular User
 def test_regular_user_flow(
-    client, regular_token1, regular_token2, version_id, db_session
+    client, regular_token1, regular_token2, db_session, test_db_session
 ):
+    version_id = create_bible_version(client, regular_token1)
+    assert version_exists(db_session, version_id)  
     revision_id = upload_revision(client, regular_token1, version_id)
-
+             
     # Check status of the DB
     assert revision_exists(db_session, revision_id)  # Ensure revision exists
 
@@ -159,27 +168,30 @@ def test_regular_user_flow(
     assert len(listed_revisions) == 1
     assert listed_revisions[0]["bible_version_id"] == version_id
 
-    response, _ = list_revision(client, regular_token2, revision_id)
+    response, _ = list_revision(client, regular_token2, version_id)
     assert response == 403  # Regular user 2 should not have access
 
     response, _ = list_revision(client, regular_token2, 999999999)
     assert response == 400  # invalid version
-    
+
     assert delete_revision(client, regular_token1, revision_id) == 200
 
     # Check status of the DB after deletion
     assert not revision_exists(db_session, revision_id)  # Ensure revision is deleted
     assert count_verses_in_revision(db_session, revision_id) == 0
 
+    assert version_exists(db_session, version_id)  
 
 # Flow 2: Load as Regular User, List as Admin, and Delete as Admin
-def test_admin_flow(client, regular_token1, version_id, db_session, admin_token):
+def test_admin_flow(client, regular_token1, admin_token, db_session):
+    version_id = create_bible_version(client, regular_token1)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     assert revision_exists(db_session, revision_id)  # Ensure revision exists
-    response, _ = list_revision(client, admin_token, revision_id)
+    response, _ = list_revision(client, admin_token, version_id)
     assert response == 200  # Admin should have access
 
     assert delete_revision(client, admin_token, revision_id) == 200
 
-    assert not revision_exists(db_session, revision_id)  # Ensure revision is deleted
+    assert not revision_exists(db_session, revision_id) 
+    assert version_exists(db_session, version_id)  

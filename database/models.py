@@ -113,7 +113,6 @@ class BibleRevision(Base):
     deletedAt = Column(TIMESTAMP, default=None)
     
     back_translation = relationship('BibleRevision', remote_side=[id])
-    bible_version = relationship("BibleVersion", back_populates="revisions")
     verse_text = relationship("VerseText", cascade="all, delete",back_populates="bible_revision")
     assessments_as_revision = relationship("Assessment", cascade="all, delete", back_populates="revision", foreign_keys="[Assessment.revision_id]")
     assessments_as_reference = relationship("Assessment", cascade="all, delete", back_populates="reference", foreign_keys="[Assessment.reference_id]")
