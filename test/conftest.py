@@ -35,12 +35,12 @@ def db_session():
     return TestingSessionLocal()
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def client():
     return TestClient(app)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def regular_token1(client, test_db_session):
     response = client.post(
         "/latest/token", data={"username": "testuser1", "password": "password1"}
@@ -48,7 +48,7 @@ def regular_token1(client, test_db_session):
     return response.json().get("access_token")
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def regular_token2(client):
     response = client.post(
         "/latest/token", data={"username": "testuser2", "password": "password2"}
@@ -56,7 +56,7 @@ def regular_token2(client):
     return response.json().get("access_token")
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def admin_token(client):
     response = client.post(
         "/latest/token", data={"username": "admin", "password": "adminpassword"}
@@ -64,7 +64,7 @@ def admin_token(client):
     return response.json().get("access_token")
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="module")
 def test_db_session():
     Base.metadata.create_all(bind=engine)
     db_session = TestingSessionLocal()

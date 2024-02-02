@@ -87,7 +87,7 @@ async def list_revisions(
         )
     else:
         # List all revisions, but filter based on user authorization
-        revisions = db.query(BibleVersionModel).all()
+        revisions = db.query(BibleRevisionModel).all()
         revisions = [
             revision
             for revision in revisions
@@ -124,8 +124,6 @@ def process_and_upload_revision(file_content: bytes, revision_id: int, db: Sessi
 
             # Assuming upload_bible function exists
             upload_bible(verses, [revision_id] * len(verses))
-
-
 @router.post("/revision", response_model=RevisionOut)
 async def upload_revision(
     revision: RevisionIn = Depends(),
@@ -154,7 +152,7 @@ async def upload_revision(
             detail="User not authorized to upload revision for this version.",
         )
 
-    new_revision = BibleVersionModel(
+    new_revision = BibleRevisionModel(
         bible_version_id=revision.version_id,
         name=revision.name,
         date=date.today(),
@@ -163,6 +161,12 @@ async def upload_revision(
         machine_translation=revision.machineTranslation,
     )
     db.add(new_revision)
+
+    contents = await file.read()
+    try:
+        process_and_upload_revision(contents, new_revision.id, db)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     try:
         db.commit()
@@ -175,12 +179,6 @@ async def upload_revision(
 
     db.refresh(new_revision)
 
-    contents = await file.read()
-    try:
-        process_and_upload_revision(contents, new_revision.id, db)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
     revision_out = create_revision_out(new_revision, db)
 
     end_time = time.time()
@@ -188,7 +186,6 @@ async def upload_revision(
     logging.info(f"Uploaded revision successfully in {processing_time:.2f} seconds.")
 
     return revision_out
-
 
 @router.delete("/revision")
 async def delete_revision(
@@ -199,7 +196,7 @@ async def delete_revision(
     start_time = time.time()  # Start timer
 
     # Check if the revision exists and if the user is authorized
-    revision = db.query(BibleVersionModel).filter(BibleVersionModel.id == id).first()
+    revision = db.query(BibleRevisionModel).filter(BibleRevisionModel.id == id).first()
     if not revision:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

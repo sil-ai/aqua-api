@@ -29,7 +29,7 @@ def test_process_and_upload_revision(test_db_session: Session):
 
     # Create a test revision associated with the test version
     test_revision = BibleRevisionModel(
-        version_id=test_version.id,
+        bible_version_id=test_version.id,
         name="Test Revision",
         date="2023-01-01",  # Use appropriate date format
         published=True,
