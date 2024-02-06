@@ -9,7 +9,7 @@ def text_dataframe(verses, bible_revision):
     vref = pd.read_csv("fixtures/vref.txt", sep=" |:", names=my_col, engine="python")
 
     vref["text"] = verses
-    vref["bible_revision_id"] = bible_revision
+    vref["revision_id"] = bible_revision
 
     vref = vref.dropna()
 
@@ -24,9 +24,10 @@ def text_dataframe(verses, bible_revision):
         verse_id.append(ids)
 
     vref["verse_reference"] = verse_id
-    verse_text = vref.drop(columns=["book", "chapter", "verse"])
+    # verse_text = vref.drop(columns=["book", "chapter", "verse"])
 
-    return verse_text
+    # return verse_text
+    return vref
 
 
 # Direct upload to the SQL database.

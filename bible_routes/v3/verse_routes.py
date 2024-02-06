@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from models import VerseText
 from database.models import (
     VerseText as VerseModel,
+    VerseReference as VerseReferenceModel,
     UserDB as UserModel,
 )
 from security_routes.auth_routes import get_current_user
@@ -34,16 +35,34 @@ async def get_chapter(
             detail="User not authorized to access this revision.",
         )
 
-    result = (
-        db.query(VerseModel)
-        .filter(
-            VerseModel.bible_revision_id == revision_id,
-            VerseModel.book == book,
-            VerseModel.chapter == chapter,
-        )
-        .all()
-    )
-    return result
+    result = db.query(
+        VerseModel.id, 
+        VerseModel.text, 
+        VerseModel.verse_reference, 
+        VerseModel.revision_id,
+        VerseModel.book,
+        VerseModel.chapter,
+        VerseModel.verse,
+        VerseReferenceModel.full_verse_id,  # Selecting fullverseid from VerseReferenceModel
+    ).join(
+        VerseReferenceModel, VerseModel.verse_reference == VerseReferenceModel.full_verse_id
+    ).filter(
+        VerseModel.revision_id == revision_id,
+        VerseModel.book == book,
+        VerseModel.chapter == chapter
+    ).order_by(VerseModel.id).all()
+
+    chapter_data = [VerseText(
+        id=verse.id,
+        text=verse.text,
+        verse_reference=verse.verse_reference,
+        revision_id=verse.revision_id,
+        book=verse.book,
+        chapter=verse.chapter,
+        verse=verse.verse,
+    ) for verse in result]
+
+    return chapter_data
 
 
 @router.get("/verse", response_model=List[VerseText])
@@ -67,7 +86,7 @@ async def get_verse(
     result = (
         db.query(VerseModel)
         .filter(
-            VerseModel.bible_revision_id == revision_id,
+            VerseModel.revision_id == revision_id,
             VerseModel.book == book,
             VerseModel.chapter == chapter,
             VerseModel.verse == verse,
@@ -95,7 +114,7 @@ async def get_book(
 
     result = (
         db.query(VerseModel)
-        .filter(VerseModel.bible_revision_id == revision_id, VerseModel.book == book)
+        .filter(VerseModel.revision_id == revision_id, VerseModel.book == book)
         .all()
     )
     return result
@@ -116,5 +135,5 @@ async def get_text(
             detail="User not authorized to access this revision.",
         )
 
-    result = db.query(VerseModel).filter(VerseModel.bible_revision_id == revision_id).all()
+    result = db.query(VerseModel).filter(VerseModel.revision_id == revision_id).all()
     return result

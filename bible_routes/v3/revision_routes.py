@@ -124,6 +124,7 @@ def process_and_upload_revision(file_content: bytes, revision_id: int, db: Sessi
 
             # Assuming upload_bible function exists
             upload_bible(verses, [revision_id] * len(verses))
+
 @router.post("/revision", response_model=RevisionOut)
 async def upload_revision(
     revision: RevisionIn = Depends(),
@@ -161,23 +162,20 @@ async def upload_revision(
         machine_translation=revision.machineTranslation,
     )
     db.add(new_revision)
-
-    contents = await file.read()
-    try:
-        process_and_upload_revision(contents, new_revision.id, db)
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The backTranslation parameter, if it exists, must be the valid ID of a revision that already exists in the database.",
-        )
-
+    db.flush() 
     db.refresh(new_revision)
+    db.commit()
+    
+    try:
+        # Read file and process revision
+        contents = await file.read()
+        process_and_upload_revision(contents, new_revision.id, db)
+        db.commit()  # Commit if processing is successful
+    except Exception as e:  # Catching a broader exception
+        # Delete the previously committed revision
+        db.delete(new_revision)
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     revision_out = create_revision_out(new_revision, db)
 

@@ -8,7 +8,7 @@ from bible_routes.v3.revision_routes import process_and_upload_revision
 
 from database.models import (
     BibleRevision as BibleRevisionModel,
-    VerseText as VerseModel,
+    VerseText as VerseText,
     BibleVersion as BibleVersionModel,
 )
 
@@ -51,15 +51,15 @@ def test_process_and_upload_revision(test_db_session: Session):
 
     # Verify that verses were correctly uploaded
     uploaded_verses = (
-        test_db_session.query(VerseModel)
-        .filter(VerseModel.bible_revision_id == test_revision.id)
+        test_db_session.query(VerseText)
+        .filter(VerseText.revision_id == test_revision.id)
         .all()
     )
     assert len(uploaded_verses) == non_empty_line_count
 
     # Clean up: delete the test revision, its verses, and the test version
-    test_db_session.query(VerseModel).filter(
-        VerseModel.bible_revision_id == test_revision.id
+    test_db_session.query(VerseText).filter(
+        VerseText.revision_id == test_revision.id
     ).delete()
     test_db_session.delete(test_revision)
     test_db_session.delete(test_version)
@@ -122,8 +122,8 @@ def delete_revision(client, token, revision_id):
 
 def count_verses_in_revision(db_session, revision_id):
     return (
-        db_session.query(VerseModel)
-        .filter(VerseModel.bible_revision_id == revision_id)
+        db_session.query(VerseText)
+        .filter(VerseText.revision_id == revision_id)
         .count()
     )
 
@@ -136,13 +136,8 @@ def revision_exists(db_session, revision_id):
         > 0
     )
 
-def version_exists(db_session, version_id):
-    version = (
-        db_session.query(BibleVersionModel)
-        .filter(BibleVersionModel.id == version_id)
-        .first()
-    )
 
+def version_exists(db_session, version_id):
     return (
         db_session.query(BibleVersionModel)
         .filter(BibleVersionModel.id == version_id)
@@ -151,17 +146,17 @@ def version_exists(db_session, version_id):
     )
 
 
-
 # Flow 1: Load, List, Check Access, and Delete as Regular User
 def test_regular_user_flow(
     client, regular_token1, regular_token2, db_session, test_db_session
 ):
     version_id = create_bible_version(client, regular_token1)
-    assert version_exists(db_session, version_id)  
+    assert version_exists(db_session, version_id)
     revision_id = upload_revision(client, regular_token1, version_id)
-             
+
     # Check status of the DB
     assert revision_exists(db_session, revision_id)  # Ensure revision exists
+    assert count_verses_in_revision(db_session, revision_id) > 0
 
     response, listed_revisions = list_revision(client, regular_token1, version_id)
     assert response == 200
@@ -180,7 +175,8 @@ def test_regular_user_flow(
     assert not revision_exists(db_session, revision_id)  # Ensure revision is deleted
     assert count_verses_in_revision(db_session, revision_id) == 0
 
-    assert version_exists(db_session, version_id)  
+    assert version_exists(db_session, version_id)
+
 
 # Flow 2: Load as Regular User, List as Admin, and Delete as Admin
 def test_admin_flow(client, regular_token1, admin_token, db_session):
@@ -193,5 +189,5 @@ def test_admin_flow(client, regular_token1, admin_token, db_session):
 
     assert delete_revision(client, admin_token, revision_id) == 200
 
-    assert not revision_exists(db_session, revision_id) 
-    assert version_exists(db_session, version_id)  
+    assert not revision_exists(db_session, revision_id)
+    assert version_exists(db_session, version_id)

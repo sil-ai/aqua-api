@@ -76,17 +76,17 @@ def teardown_database():
 def test_text_dataframe(db_setup_teardown): 
     revision_id = db_setup_teardown  # This is the value returned by setup_database
     verses = []
-    bible_revision_id = []
+    revision_id = []
     with open("fixtures/test_bible.txt", "r") as f:
         for line in f:
             if line.strip():
                 verses.append(line.strip())
-                bible_revision_id.append(revision_id)
+                revision_id.append(revision_id)
             else:
                 verses.append(np.nan)
-                bible_revision_id.append(np.nan)
+                revision_id.append(np.nan)
 
-    verse_text = bible_loading.text_dataframe(verses, bible_revision_id)
+    verse_text = bible_loading.text_dataframe(verses, revision_id)
 
     test_data = {
         "locations": [
@@ -123,7 +123,7 @@ def test_text_loading(db_setup_teardown):
     
     verse_dict = {
         "text": ["TEST"], 
-        "bible_revision_id": [revision_id], 
+        "revision_id": [revision_id], 
         "verse_reference": ["GEN 1:1"]
     }
 

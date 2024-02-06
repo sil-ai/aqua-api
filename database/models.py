@@ -190,12 +190,11 @@ class VerseText(Base):
 
     id = Column(Integer, primary_key=True)
     text = Column(Text, nullable=True)
-    bible_revision_id = Column(Integer, ForeignKey("bible_revision.id"))
+    revision_id = Column(Integer, ForeignKey("bible_revision.id"))
     verse_reference = Column(Text, ForeignKey("verse_reference.full_verse_id"))
     book = Column(Text)
     chapter = Column(Integer)
     verse = Column(Integer)
-
 
     bible_revision = relationship("BibleRevision", back_populates="verse_text", cascade="all, delete")
 
