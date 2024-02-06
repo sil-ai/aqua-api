@@ -30,9 +30,7 @@ def create_bible_version(client, regular_token1):
     # Fetch a version ID for testing
     headers = {"Authorization": f"Bearer {regular_token1}"}
     create_response = client.post(
-        f"{prefix}/version", 
-        params=new_version_data, 
-        headers=headers
+        f"{prefix}/version", params=new_version_data, headers=headers
     )
     assert create_response.status_code == 200
     version_id = create_response.json().get("id")
@@ -50,10 +48,7 @@ def upload_revision(client, token, version_id):
     with open(test_upload_file, "rb") as file:
         files = {"file": file}
         response = client.post(
-            f"{prefix}/revision", 
-            params=test_revision, 
-            files=files, 
-            headers=headers
+            f"{prefix}/revision", params=test_revision, files=files, headers=headers
         )
     return response.json()["id"]  # Return the ID of the uploaded revision
 
@@ -98,10 +93,10 @@ def test_verse_routes_flow(client, regular_token1, regular_token2, db_session):
         headers=headers,
     )
     assert chapter_response.status_code == 200
-    assert len(chapter_response.json()) >0   
+    assert len(chapter_response.json()) > 0
     assert chapter_response.json()[0]["book"] == book
     assert chapter_response.json()[0]["chapter"] == chapter
-    assert chapter_response.json()[0]["revision_id"] == revision_id 
+    assert chapter_response.json()[0]["revision_id"] == revision_id
 
     # Test /verse endpoint
     verse_response = client.get(
@@ -109,7 +104,7 @@ def test_verse_routes_flow(client, regular_token1, regular_token2, db_session):
         headers=headers,
     )
     assert verse_response.status_code == 200
-    assert len(chapter_response.json()) >0   
+    assert len(chapter_response.json()) > 0
     assert chapter_response.json()[0]["book"] == book
     assert chapter_response.json()[0]["chapter"] == chapter
     assert chapter_response.json()[0]["verse"] == verse
@@ -117,8 +112,7 @@ def test_verse_routes_flow(client, regular_token1, regular_token2, db_session):
 
     # Test /book endpoint
     book_response = client.get(
-        f"/{prefix}/book?revision_id={revision_id}&book={book}", 
-        headers=headers
+        f"/{prefix}/book?revision_id={revision_id}&book={book}", headers=headers
     )
     assert book_response.status_code == 200
     assert chapter_response.json()[0]["book"] == book
@@ -126,8 +120,7 @@ def test_verse_routes_flow(client, regular_token1, regular_token2, db_session):
 
     # Test /text endpoint
     text_response = client.get(
-        f"/{prefix}/text?revision_id={revision_id}", 
-        headers=headers
+        f"/{prefix}/text?revision_id={revision_id}", headers=headers
     )
     assert text_response.status_code == 200
     assert book_response.status_code == 200

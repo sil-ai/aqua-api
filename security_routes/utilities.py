@@ -22,7 +22,10 @@ def is_user_authorized_for_bible_version(user_id, bible_version_id, session):
     user_groups = session.query(UserGroup.group_id).filter(UserGroup.user_id == user_id).subquery()
 
     # Check if the Bible version is accessible by one of the user's groups
-    accessible = session.query(BibleVersion).filter(
+    accessible = session.query(BibleVersion).join(
+        BibleVersionAccess, 
+        BibleVersion.id == BibleVersionAccess.bible_version_id
+    ).filter(
         BibleVersion.id == bible_version_id,
         BibleVersionAccess.group_id.in_(user_groups)
     ).first()

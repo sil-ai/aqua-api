@@ -122,9 +122,7 @@ def delete_revision(client, token, revision_id):
 
 def count_verses_in_revision(db_session, revision_id):
     return (
-        db_session.query(VerseText)
-        .filter(VerseText.revision_id == revision_id)
-        .count()
+        db_session.query(VerseText).filter(VerseText.revision_id == revision_id).count()
     )
 
 
