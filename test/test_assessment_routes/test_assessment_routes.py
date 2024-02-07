@@ -10,7 +10,7 @@ from database.models import (
     UserDB,
 )
 
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 
 prefix = "v3"
 
@@ -60,8 +60,8 @@ def list_assessment(client, token, assessment_id=None):
 
 def delete_assessment(client, token, assessment_id):
     headers = {"Authorization": f"Bearer {token}"}
-    response = client.delete(f"{prefix}/assessment?id={assessment_id}", headers=headers)
-    return response.status_code
+    response = client.delete(f"{prefix}/assessment?assessment_id={assessment_id}", headers=headers)
+    return response
 
 
 def test_add_assessment_success(client, regular_token1, regular_token2, db_session, test_db_session):
@@ -117,20 +117,23 @@ def test_add_assessment_success(client, regular_token1, regular_token2, db_sessi
     response = list_assessment(client, regular_token1)  
     
     assert response.status_code == 200
-    
-    assert response.json()["status"] == "queued"    
-    assert response.json()["type"] == "missing-words"  
-    assert response.json()["revision_id"] == revision_id
-    assert response.json()["reference_id"] == reference_revision_id
-    assert response.json()["id"] == assessment_id
+    assert len(response.json()) == 1
+    assert response.json()[0]["status"] == "queued"    
+    assert response.json()[0]["type"] == "missing-words"  
+    assert response.json()[0]["revision_id"] == revision_id
+    assert response.json()[0]["reference_id"] == reference_revision_id
+    assert response.json()[0]["id"] == assessment_id
     
     # confirm that regular_token2 cannot access the assessment
     
     response = list_assessment(client, regular_token2)  
+    assert response.status_code == 200
+    assert len(response.json()) == 0
+    response = delete_assessment(client, regular_token2, assessment_id)  
     assert response.status_code == 403
-
+    
     # delete the assesment
-    response = delete_assessment(client, regular_token2)  
+    response = delete_assessment(client, regular_token1, assessment_id)  
     assert response.status_code == 200
     # check that the assessment has been deleted in the db
     assessment = db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
@@ -151,14 +154,24 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
         "reference_id": reference_revision_id,
         "type": "missing-words",
     }
+    
+    
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        # Ensure that accessing .text returns something serializable
+        mock_response.text = "Error message"
+        # If your code calls .json(), ensure it returns a serializable object
+        mock_response.json.return_value = {"error": "mock error"}
 
-    with patch("path.to.your.module.call_assessment_runner") as mock_runner:
-        mock_runner.return_value = Mock(status_code=500)
-
+        mock_runner.return_value = mock_response
         # Make the request
         response = client.post(
-            "/assessment",
-            json=assessment_data,
+            f"{prefix}/assessment",
+            params=assessment_data,
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 

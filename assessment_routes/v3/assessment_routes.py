@@ -136,7 +136,7 @@ async def add_assessment(
     # Call runner using helper function
     response = call_assessment_runner(assessment, modal_suffix, return_all_results)
 
-    if response.status_code != 200:
+    if not 200 <= response.status_code < 300:
         try:
             logger.error(f"Runner failed to run assessment {assessment.id}")
             print("Runner failed to run assessment")
@@ -150,8 +150,6 @@ async def add_assessment(
 
     
     return [AssessmentOut.model_validate(assessment)]
-
-
 
 
 @router.delete("/assessment")
@@ -168,7 +166,6 @@ async def delete_assessment(
     assessment = db.query(AssessmentModel).filter(AssessmentModel.id == assessment_id).first()
     if not assessment:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
             detail="Assessment not found."
         )
 
