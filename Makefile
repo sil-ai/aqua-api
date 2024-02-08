@@ -1,7 +1,7 @@
 all: build-local
 
-IMAGENAME=aqua-api
-REGISTRY=docker-local
+IMAGENAME=aqua-api-aws
+REGISTRY ?= docker-local
 GH_BRANCH=$(shell basename ${GITHUB_REF})
 
 build-local:
@@ -12,7 +12,7 @@ build-actions:
 
 localdb-up:
 	export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
-	docker-compose up -d db 
+	docker-compose  up -d db 
 	sleep 5 # too fast for db to start
 	cd alembic && alembic upgrade head
 
