@@ -6,7 +6,7 @@ on:
       - group_security
 
 env:
-  AWS_REGISTRY: aqua-api-aws
+  AWS_REGISTRY: 279795702643.dkr.ecr.us-east-1.amazonaws.com
 
 jobs:
 
