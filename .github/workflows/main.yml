@@ -1,10 +1,12 @@
-
 name: branch-build
 
 on:
   push:
     branches:
-      - master
+      - group_security
+
+env:
+  AWS_REGISTRY: aqua-api-aws
 
 jobs:
 
@@ -24,7 +26,7 @@ jobs:
     - name: Build API
       run: make build-actions
       env:
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
+        REGISTRY: ${{ env.AWS_REGISTRY }}
       
     - name: Test API
       run: make test
@@ -38,7 +40,7 @@ jobs:
         TEST_KEY: ${{ secrets.TEST_KEY }}
         FAIL_KEY: ${{ secrets.FAIL_KEY }}
         KEY_VAULT: ${{ secrets.KEY_VAULT }}
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
+        REGISTRY: ${{ env.AWS_REGISTRY }}
         MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
 
     - name: Configure AWS credentials
