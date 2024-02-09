@@ -1,8 +1,8 @@
-"""initial migration
+"""init_migration
 
-Revision ID: 0f6ea0dbb994
+Revision ID: 63a9ad3b1b82
 Revises: 
-Create Date: 2024-01-08 10:20:39.777445
+Create Date: 2024-02-08 16:50:30.923087
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '0f6ea0dbb994'
+revision: str = '63a9ad3b1b82'
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -26,6 +26,13 @@ def upgrade() -> None:
     sa.Column('number', sa.Integer(), nullable=True),
     sa.PrimaryKeyConstraint('abbreviation')
     )
+    op.create_table('groups',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('name', sa.String(length=50), nullable=False),
+    sa.Column('description', sa.Text(), nullable=True),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('name')
+    )
     op.create_table('iso_language',
     sa.Column('iso639', sa.String(length=3), nullable=False),
     sa.Column('name', sa.Text(), nullable=True),
@@ -37,6 +44,16 @@ def upgrade() -> None:
     sa.Column('name', sa.Text(), nullable=True),
     sa.PrimaryKeyConstraint('iso15924'),
     sa.UniqueConstraint('iso15924')
+    )
+    op.create_table('users',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('username', sa.String(length=50), nullable=False),
+    sa.Column('email', sa.String(length=50), nullable=False),
+    sa.Column('hashed_password', sa.String(length=100), nullable=False),
+    sa.Column('is_admin', sa.Boolean(), nullable=True),
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('email'),
+    sa.UniqueConstraint('username')
     )
     op.create_table('bible_version',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -50,6 +67,7 @@ def upgrade() -> None:
     sa.Column('machine_translation', sa.Boolean(), nullable=True),
     sa.Column('deleted', sa.Boolean(), nullable=True),
     sa.Column('deletedAt', sa.TIMESTAMP(), nullable=True),
+    sa.ForeignKeyConstraint(['back_translation_id'], ['bible_version.id'], ),
     sa.ForeignKeyConstraint(['iso_language'], ['iso_language.iso639'], ),
     sa.ForeignKeyConstraint(['iso_script'], ['iso_script.iso15924'], ),
     sa.PrimaryKeyConstraint('id')
@@ -61,6 +79,14 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['book_reference'], ['book_reference.abbreviation'], ),
     sa.PrimaryKeyConstraint('full_chapter_id')
     )
+    op.create_table('user_groups',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.Column('group_id', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['group_id'], ['groups.id'], ),
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
     op.create_table('bible_revision',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('date', sa.DateTime(), nullable=True),
@@ -71,8 +97,16 @@ def upgrade() -> None:
     sa.Column('machine_translation', sa.Boolean(), nullable=True),
     sa.Column('deleted', sa.Boolean(), nullable=True),
     sa.Column('deletedAt', sa.TIMESTAMP(), nullable=True),
-    sa.ForeignKeyConstraint(['back_translation_id'], ['bible_version.id'], ),
+    sa.ForeignKeyConstraint(['back_translation_id'], ['bible_revision.id'], ),
     sa.ForeignKeyConstraint(['bible_version_id'], ['bible_version.id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_table('bible_version_access',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('bible_version_id', sa.Integer(), nullable=False),
+    sa.Column('group_id', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['bible_version_id'], ['bible_version.id'], ),
+    sa.ForeignKeyConstraint(['group_id'], ['groups.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('verse_reference',
@@ -104,12 +138,12 @@ def upgrade() -> None:
     op.create_table('verse_text',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('text', sa.Text(), nullable=True),
-    sa.Column('bible_revision_id', sa.Integer(), nullable=True),
+    sa.Column('revision_id', sa.Integer(), nullable=True),
     sa.Column('verse_reference', sa.Text(), nullable=True),
     sa.Column('book', sa.Text(), nullable=True),
     sa.Column('chapter', sa.Integer(), nullable=True),
     sa.Column('verse', sa.Integer(), nullable=True),
-    sa.ForeignKeyConstraint(['bible_revision_id'], ['bible_revision.id'], ),
+    sa.ForeignKeyConstraint(['revision_id'], ['bible_revision.id'], ),
     sa.ForeignKeyConstraint(['verse_reference'], ['verse_reference.full_verse_id'], ),
     sa.PrimaryKeyConstraint('id')
     )
@@ -124,6 +158,7 @@ def upgrade() -> None:
     sa.Column('target', sa.Text(), nullable=True),
     sa.Column('hide', sa.Boolean(), nullable=True),
     sa.ForeignKeyConstraint(['assessment_id'], ['assessment.id'], ),
+    sa.ForeignKeyConstraint(['vref'], ['verse_reference.full_verse_id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('alignment_top_source_scores',
@@ -131,17 +166,25 @@ def upgrade() -> None:
     sa.Column('assessment_id', sa.Integer(), nullable=True),
     sa.Column('score', sa.Numeric(), nullable=True),
     sa.Column('flag', sa.Boolean(), nullable=True),
-    sa.Column('note', sa.Text(), nullable=True),
     sa.Column('vref', sa.Text(), nullable=True),
+    sa.Column('note', sa.Text(), nullable=True),
     sa.Column('source', sa.Text(), nullable=True),
     sa.Column('target', sa.Text(), nullable=True),
     sa.Column('hide', sa.Boolean(), nullable=True),
     sa.ForeignKeyConstraint(['assessment_id'], ['assessment.id'], ),
+    sa.ForeignKeyConstraint(['vref'], ['verse_reference.full_verse_id'], ),
+    sa.PrimaryKeyConstraint('id')
+    )
+    op.create_table('assessment_access',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('assessment_id', sa.Integer(), nullable=False),
+    sa.Column('group_id', sa.Integer(), nullable=False),
+    sa.ForeignKeyConstraint(['assessment_id'], ['assessment.id'], ),
+    sa.ForeignKeyConstraint(['group_id'], ['groups.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     op.create_table('assessment_result',
     sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('assessment_id', sa.Integer(), nullable=True),
     sa.Column('score', sa.Numeric(), nullable=True),
     sa.Column('flag', sa.Boolean(), nullable=True),
     sa.Column('note', sa.Text(), nullable=True),
@@ -152,7 +195,9 @@ def upgrade() -> None:
     sa.Column('book', sa.Text(), nullable=True),
     sa.Column('chapter', sa.Integer(), nullable=True),
     sa.Column('verse', sa.Integer(), nullable=True),
+    sa.Column('assessment_id', sa.Integer(), nullable=True),
     sa.ForeignKeyConstraint(['assessment_id'], ['assessment.id'], ),
+    sa.ForeignKeyConstraint(['vref'], ['verse_reference.full_verse_id'], ),
     sa.PrimaryKeyConstraint('id')
     )
     # ### end Alembic commands ###
@@ -161,15 +206,20 @@ def upgrade() -> None:
 def downgrade() -> None:
     # ### commands auto generated by Alembic - please adjust! ###
     op.drop_table('assessment_result')
+    op.drop_table('assessment_access')
     op.drop_table('alignment_top_source_scores')
     op.drop_table('alignment_threshold_scores')
     op.drop_table('verse_text')
     op.drop_table('assessment')
     op.drop_table('verse_reference')
+    op.drop_table('bible_version_access')
     op.drop_table('bible_revision')
+    op.drop_table('user_groups')
     op.drop_table('chapter_reference')
     op.drop_table('bible_version')
+    op.drop_table('users')
     op.drop_table('iso_script')
     op.drop_table('iso_language')
+    op.drop_table('groups')
     op.drop_table('book_reference')
     # ### end Alembic commands ###

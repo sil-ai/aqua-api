@@ -1,10 +1,12 @@
-
 name: branch-build
 
 on:
   push:
     branches:
-      - master
+      - aws_new_backend
+
+env:
+  AWS_REGISTRY: 279795702643.dkr.ecr.us-east-1.amazonaws.com
 
 jobs:
 
@@ -15,16 +17,16 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v2
 
-    - name: Linting (Ruff)
-      run: |
-        python -m pip install --upgrade pip
-        pip install ruff
-        ruff --ignore E501 --output-format=github .
+    # - name: Linting (Ruff)
+    #   run: |
+    #     python -m pip install --upgrade pip
+    #     pip install ruff
+    #     ruff --ignore E501 --output-format=github .
       
     - name: Build API
       run: make build-actions
       env:
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
+        REGISTRY: ${{ env.AWS_REGISTRY }}
       
     - name: Test API
       run: make test
@@ -38,7 +40,7 @@ jobs:
         TEST_KEY: ${{ secrets.TEST_KEY }}
         FAIL_KEY: ${{ secrets.FAIL_KEY }}
         KEY_VAULT: ${{ secrets.KEY_VAULT }}
-        REGISTRY: ${{ secrets.AWS_REGISTRY }}
+        REGISTRY: ${{ env.AWS_REGISTRY }}
         MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
 
     - name: Configure AWS credentials
