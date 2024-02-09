@@ -455,3 +455,20 @@ def get_alignment_scores_agg_exact_query():
                 """
 
     return get_alignment_scores_agg
+
+
+def get_word_alignments_query():
+    get_word_alignments = """
+                SELECT vt1.*, vt2.text AS "reference_text", als.target, als.score
+                FROM "verseText" vt1
+                JOIN "verseText" vt2 ON vt1.versereference = vt2.versereference
+                JOIN "alignmentTopSourceScores" als ON vt1.versereference = als.vref
+                WHERE vt1.biblerevision = ($1)
+                AND vt2.biblerevision = ($2)
+                AND als.assessment = ($3)
+                AND als.source = ($4)
+                AND vt1.text ~* ($5)
+                ORDER BY vt1.id
+                """
+
+    return get_word_alignments

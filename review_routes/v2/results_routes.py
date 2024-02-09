@@ -1044,3 +1044,81 @@ async def get_alignment_scores(
     await connection.close()
 
     return {'results': result_list, 'total_count': total_count}
+
+
+@router.get("/alignmentmatches", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[WordAlignment], int]])
+async def get_word_alignments(
+    revision_id: int,
+    reference_id: int,
+    assessment_id: int,
+    word: str,
+):
+    """
+    Returns a list of all word alignments for a given word in a word alignment assessment.
+
+    Parameters
+    ----------
+    assessment_id : int
+        The ID of the assessment to get results for.
+    word : str
+        The word to get alignments for.
+    threshold : float, optional
+        The minimum score for an alignment to be included in the results. Default is 0.15.
+    """
+
+    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
+    connection = await asyncpg.connect(
+            host=conn_list[3],
+            database=conn_list[4],
+            user=conn_list[1],
+            password=conn_list[2],
+            )
+
+    list_assessments = queries.list_assessments_query()
+
+    assessment_response = await connection.fetch(list_assessments)
+    assessment_data = []
+    for assessment in assessment_response:
+        if assessment['id'] not in assessment_data:
+            assessment_data.append(assessment['id'])
+
+    if assessment_id not in assessment_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found."
+            )
+    assessment = [assessment for assessment in assessment_response if assessment['id'] == assessment_id][0]
+
+    if assessment['type'] != 'word-alignment':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Assessment type must be 'word-alignment'."
+            )
+    if assessment['revision'] != revision_id or assessment['reference'] != reference_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Assessment revision and reference must match the given revision_id and reference_id."
+            )
+
+    fetch_results = queries.get_word_alignments_query()
+    word_with_boundaries = f'(\m{word}\M)'
+    result_data = await connection.fetch(fetch_results, reference_id, revision_id, assessment_id, word, word_with_boundaries)
+
+    result_list = []
+
+    for result in result_data:
+        results = WordAlignment(
+            id=result[0],
+            assessment_id=assessment_id,
+            reference_text=result[1],
+            vref=result[3],
+            revision_text=result[7],
+            source=word,
+            target=result[8],
+            score=result[9],
+            )
+        result_list.append(results)
+
+    await connection.close()
+
+    return {'results': result_list, 'total_count': len(result_list)}
