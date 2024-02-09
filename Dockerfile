@@ -15,7 +15,6 @@ ADD review_routes/ /app/review_routes/
 ADD security_routes/ /app/security_routes/
 ADD database/ /app/database
 ADD alembic/ /app/database
-PYTHONPATH=/app:$PYTHONPATHENV 
 
 WORKDIR /app
 ENV PYTHONPATH=/app:$PYTHONPATH
