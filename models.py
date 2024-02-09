@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict 
+from pydantic import BaseModel, ConfigDict, EmailStr 
 from enum import Enum
 from typing import Union, Optional, List
 import datetime
@@ -178,11 +178,20 @@ class Script(BaseModel):
     
     
 class User(BaseModel):
+    id: Optional[int] = None 
     username: str
-
-class UserAuth(User):
-    hashed_password: str
-
+    email: Optional[EmailStr] = None  # Assuming users have an email field
+    is_admin: Optional[bool] = False
+    password: Optional[str] = None 
+    class Config:
+        orm_mode = True
+# group pydantic model
+class Group(BaseModel):
+    id: Optional[int] = None
+    name: str
+    description: Optional[str] = None
+    class Config:
+        orm_mode = True
 class Token(BaseModel):
     access_token: str
     token_type: str
