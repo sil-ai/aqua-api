@@ -3,7 +3,7 @@ name: branch-build
 on:
   push:
     branches:
-      - group_security
+      - aws_new_backend
 
 env:
   AWS_REGISTRY: 279795702643.dkr.ecr.us-east-1.amazonaws.com
