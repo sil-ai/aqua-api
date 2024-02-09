@@ -144,6 +144,8 @@ class WordAlignment(BaseModel):
     flag: bool = False
     note: Optional[str] = None
     hide: bool = False
+    revision_text: Optional[str] = None
+    reference_text: Optional[str] = None
 
 # # Results model to record in the DB.
 # class MissingWord(BaseModel):
