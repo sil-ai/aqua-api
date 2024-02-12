@@ -18,10 +18,12 @@ from dotenv import load_dotenv
 from database.database import Base  # adjust the path as needed
 
 # Load environment variables from .env file
+# load_dotenv("../.env.production", override=True)
 load_dotenv()
 
 # Construct the DATABASE_URL from the environment variables
 DATABASE_URL = os.getenv("AQUA_DB")
+print(DATABASE_URL)
 
 
 # this is the Alembic Config object, which provides
