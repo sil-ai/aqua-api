@@ -1101,7 +1101,7 @@ async def get_word_alignments(
             )
 
     fetch_results = queries.get_word_alignments_query()
-    word_with_boundaries = f'(\m{word}\M)'
+    word_with_boundaries = f'(^|\s|\W){word}($|\s|\W)'
     result_data = await connection.fetch(fetch_results, reference_id, revision_id, assessment_id, word, word_with_boundaries)
 
     result_list = []
