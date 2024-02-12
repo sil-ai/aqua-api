@@ -21,6 +21,8 @@ from review_routes.v1.results_routes import router as results_router_v1
 from review_routes.v2.results_routes import router as results_router_v2
 from review_routes.v3.results_routes import router as results_router_v3
 from security_routes.auth_routes import router as security_router 
+from security_routes.admin_routes import router as admin_router
+
 app = fastapi.FastAPI()
 
 def my_schema():
@@ -92,6 +94,7 @@ def configure_routing(app):
     app.include_router(results_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
 
     app.include_router(security_router, prefix="/latest", tags=["Latest"])
+    app.include_router(admin_router, prefix="/latest", tags=["Latest"])
 
     @app.get("/")
     async def read_root():

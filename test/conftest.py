@@ -49,7 +49,7 @@ def regular_token1(client, test_db_session):
 
 
 @pytest.fixture(scope="module")
-def regular_token2(client):
+def regular_token2(client, test_db_session):
     response = client.post(
         "/latest/token", data={"username": "testuser2", "password": "password2"}
     )
@@ -57,7 +57,7 @@ def regular_token2(client):
 
 
 @pytest.fixture(scope="module")
-def admin_token(client):
+def admin_token(client, test_db_session):
     response = client.post(
         "/latest/token", data={"username": "admin", "password": "adminpassword"}
     )

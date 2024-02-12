@@ -2,12 +2,12 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, Depends, HTTPException, status, APIRouter
+from fastapi import Depends, HTTPException, status, APIRouter
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
-from models import UserAuth, Token, TokenData  
+from models import Token, User  
 from database.models import UserDB  # Your SQLAlchemy model
 from database.dependencies import get_db  # Function to get the database session
 from .utilities import verify_password , SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES 

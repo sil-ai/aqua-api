@@ -1,6 +1,4 @@
 # test_verse_routes_flow.py
-from fastapi.testclient import TestClient
-import pytest
 from conftest import (
     client,
     regular_token1,

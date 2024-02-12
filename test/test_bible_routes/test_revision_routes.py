@@ -9,7 +9,7 @@ from bible_routes.v3.revision_routes import process_and_upload_revision
 from database.models import (
     BibleRevision as BibleRevisionModel,
     VerseText as VerseText,
-    BibleVersion as BibleVersionModel,
+    BibleVersion as BibleVersionModel   ,
 )
 
 
