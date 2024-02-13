@@ -169,3 +169,18 @@ async def delete_user(
     db.delete(user)
     db.commit()
     return {"message": f"User '{username}' successfully deleted"}
+
+# create a change password endpoint
+@router.post("/change-password")
+async def change_password(
+    username: str,
+    new_password: str,
+    db: Session = Depends(get_db),
+    _: UserDB = Depends(get_current_admin),
+):
+    user = db.query(UserDB).filter(UserDB.username == username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.hashed_password = hash_password(new_password)
+    db.commit()
+    return {"message": f"Password for user '{username}' successfully changed"}
