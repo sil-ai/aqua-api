@@ -1062,8 +1062,6 @@ async def get_word_alignments(
         The ID of the assessment to get results for.
     word : str
         The word to get alignments for.
-    threshold : float, optional
-        The minimum score for an alignment to be included in the results. Default is 0.15.
     """
 
     conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
@@ -1101,8 +1099,9 @@ async def get_word_alignments(
             )
 
     fetch_results = queries.get_word_alignments_query()
-    word_with_boundaries = f'(^|\s|\W){word}($|\s|\W)'
-    result_data = await connection.fetch(fetch_results, reference_id, revision_id, assessment_id, word, word_with_boundaries)
+    word_with_boundaries = f'(^|\s|\W){word.lower()}($|\s|\W)'
+    capitalized_word_with_boundaries = f'(^|\s|\W){word.capitalize()}($|\s|\W)'
+    result_data = await connection.fetch(fetch_results, reference_id, revision_id, assessment_id, word, word_with_boundaries, capitalized_word_with_boundaries)
 
     result_list = []
 

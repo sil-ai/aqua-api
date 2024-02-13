@@ -467,7 +467,10 @@ def get_word_alignments_query():
                 AND vt2.biblerevision = ($2)
                 AND als.assessment = ($3)
                 AND als.source = ($4)
-                AND vt1.text ~* ($5)
+                AND (
+                    vt1.text ~* ($5)
+                    OR vt1.text ~* ($6)
+                )
                 ORDER BY vt1.id
                 """
 
