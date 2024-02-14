@@ -170,6 +170,7 @@ async def delete_user(
     db.commit()
     return {"message": f"User '{username}' successfully deleted"}
 
+
 # create a change password endpoint
 @router.post("/change-password")
 async def change_password(
