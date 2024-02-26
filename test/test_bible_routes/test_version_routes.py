@@ -102,34 +102,62 @@ class TestAdminFlow:
     ):
         # Step 1: Create a version as an regular user
         headers = {"Authorization": f"Bearer {regular_token1}"}
-        create_response = client.post(
+        create_response_1 = client.post(
             f"{prefix}/version", params=new_version_data, headers=headers
         )
-        assert create_response.status_code == 200
-        version_id = create_response.json().get("id")
+        assert create_response_1.status_code == 200
+        version_id_1 = create_response_1.json().get("id")
+
+        group = db_session.query(Group).first()
+        assert group is not None, "No groups found in the database"
+        group_id = group.id
+
+        params = {
+            **new_version_data,
+            "add_to_groups": [group_id],
+        }
+        create_response_2 = client.post(
+            f"{prefix}/version", params=params, headers=headers
+        )
+        assert create_response_2.status_code == 200
+        version_id_2 = create_response_2.json().get("id")
 
         # Verify creation in DB
-        version_in_db = (
-            db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+        version_in_db_1 = (
+            db_session.query(BibleVersionModel).filter_by(id=version_id_1).first()
         )
-        assert version_in_db is not None
+        assert version_in_db_1 is not None
+        version_in_db_2 = (
+            db_session.query(BibleVersionModel).filter_by(id=version_id_2).first()
+        )
+        assert version_in_db_2 is not None
+
 
         # Step 2: List versions as an admin
         list_response = client.get(f"{prefix}/version", headers=headers)
         assert list_response.status_code == 200
         versions = list_response.json()
-        assert len(versions) == 1, "There should be only one version"
+        assert len(versions) == 2, "There should be two versions"
 
         # Step 3: Delete the version as an admin
         headers = {"Authorization": f"Bearer {admin_token}"}
         # Delete the version by sending the ID in the request body
-        delete_response = client.delete(
-            f"{prefix}/version", params={"id": version_id}, headers=headers
+        delete_response_1 = client.delete(
+            f"{prefix}/version", params={"id": version_id_1}, headers=headers
         )
-        assert delete_response.status_code == 200
+        assert delete_response_1.status_code == 200
+        delete_response_2 = client.delete(
+            f"{prefix}/version", params={"id": version_id_2}, headers=headers
+        )
+        assert delete_response_2.status_code == 200
 
         # Verify deletion in DB
-        version_in_db = (
-            db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+        version_in_db_1 = (
+            db_session.query(BibleVersionModel).filter_by(id=version_id_1).first()
         )
-        assert version_in_db is None
+        assert version_in_db_1 is None
+        version_in_db_2 = (
+            db_session.query(BibleVersionModel).filter_by(id=version_id_2).first()
+        )
+        assert version_in_db_2 is None
+
