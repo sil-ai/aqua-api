@@ -109,7 +109,7 @@ class TestAdminFlow:
         version_id_1 = create_response_1.json().get("id")
 
         group = db_session.query(Group).first()
-        assert group is not None, "No groups found in the database"
+        assert group is not None
         group_id = group.id
 
         params = {
