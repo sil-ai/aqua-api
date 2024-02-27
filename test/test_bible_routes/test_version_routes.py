@@ -192,6 +192,12 @@ class TestAdminFlow:
         assert len(versions) == 1, "User 2 should only see one version"
         assert versions[0]["id"] == version_id_1
 
+        # Assert that user 2 cannot delete version_id_2
+        delete_response = client.delete(
+            f"{prefix}/version", params={"id": version_id_2}, headers=headers
+        )
+        assert delete_response.status_code == 403
+
         # Step 3: Delete the version as an admin
         headers = {"Authorization": f"Bearer {admin_token}"}
         # Delete the version by sending the ID in the request body
