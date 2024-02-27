@@ -1,10 +1,11 @@
 __version__ = "v3"
 
-from typing import List
+from typing import List, Optional
 
 import fastapi
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
+from pydantic import Field
 
 from key_fetch import get_secret
 from models import VersionIn, VersionOut
@@ -54,12 +55,13 @@ async def list_version(
 
 @router.post("/version", response_model=VersionOut)
 async def add_version(
-    v: VersionIn = Depends(),
+    v: VersionIn,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
-):
+    ):
     """
     Create a new version.
+    Optionally only add the version to specific groups, specified by their IDs.
     """
     new_version = BibleVersionModel(
         name=v.name,
@@ -82,6 +84,8 @@ async def add_version(
     user_group_ids = [group_id[0] for group_id in user_group_ids_query.all()]
 
     for group_id in user_group_ids:
+        if v.add_to_groups and group_id not in v.add_to_groups:
+            continue
         access = BibleVersionAccess(bible_version_id=new_version.id, group_id=group_id)
         db.add(access)
     db.commit()
