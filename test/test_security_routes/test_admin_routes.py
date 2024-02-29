@@ -1,7 +1,7 @@
 
 from fastapi import FastAPI, status
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from security_routes.utilities import verify_password
 
 from database.models import (
     UserDB,

@@ -24,9 +24,7 @@ import bcrypt
 from datetime import date
 import pandas as pd
 
-# Assuming you have an environment variable for your test database
-
-engine = db.create_engine(os.getenv("AQUA_DB"))
+engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
