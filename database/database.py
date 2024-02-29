@@ -6,7 +6,6 @@ import os
 from database.models import Base
 
 # Load environment variables from .env file
-# load_dotenv("../.env.production")
 load_dotenv()
 
 DATABASE_URL = os.getenv("AQUA_DB")

@@ -1,5 +1,7 @@
+
 from fastapi import FastAPI, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from security_routes.utilities import verify_password
 
 from database.models import (
     UserDB,
@@ -9,7 +11,6 @@ from database.models import (
 
 
 prefix = "/latest"
-
 
 def user_exists(db_session, username):
     return db_session.query(UserDB).filter(UserDB.username == username).count() > 0
@@ -41,7 +42,9 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     new_user_data = {
         "username": "new_user",
         "email": "new_user@example.com",
-        "password": "newpassword",
+
+        "password": "password123",
+
         "is_admin": False,
     }
 
@@ -67,6 +70,22 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.json()["password"] is None
     assert response.json()["is_admin"] == new_user_data["is_admin"]
     assert user_exists(test_db_session, new_user_data["username"])
+
+    # send a post request to update te password to the change-password enpoint
+    password_update = {
+        "username": "new_user",
+        "new_password": "newpassword",
+    }
+    response = client.post(
+        f"{prefix}/change-password",
+        params=password_update ,
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    # verify the password change in the database
+    user = test_db_session.query(UserDB).filter(UserDB.username == "new_user").first()
+    assert verify_password("newpassword", user.hashed_password)
+
 
     # Send a POST request to created a new user with the same username
     response = client.post(

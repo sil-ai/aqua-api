@@ -203,7 +203,7 @@ class UserDB(Base):
 
     id = Column(Integer, primary_key=True)
     username = Column(String(50), unique=True, nullable=False)
-    email = Column(String(50), unique=True, nullable=False)
+    email = Column(String(50), unique=False, nullable=True, default=None)
     hashed_password = Column(String(100), nullable=False)
     is_admin = Column(Boolean, default=False)
     # Relationship with UserGroups

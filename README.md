@@ -44,6 +44,10 @@ To run the API locally while developing:
     
 4. Use Postman or cURL to interact with (i.e., call) the various endpoints to see how they work. And/or pull up the docs at `localhost:8080/docs`
 
+## Environment Variables
+
+`AQUA_DB` - Specifies the database environment. **Important Note**: The `AQUA_DB` variable should never be set to `production value` in your local Bash session unless you are actively conducting a migration. Setting this variable to `production` outside of a controlled migration process can result in unintended changes to live data. Always ensure this variable is set to a development or staging value for local development.
+
 ## Using the API
 
 To use a deployed version of the API, you will need:
