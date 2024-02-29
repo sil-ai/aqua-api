@@ -143,6 +143,15 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert response.json()["detail"] == "Group is linked to users and cannot be deleted"
 
+    # send a post request to unlink the user from the group as an admin
+    response = client.post(
+        "/unlink-user-group",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        params={"username": "testuser1", "groupname": "testgroup1"},
+    )
+    assert response.status_code == 204
+    assert response.json() == {"message": "User testuser1 successfully unlinked from group testgroup1"}
+
     # send a post request to delete the user as a regular user
     response = client.delete(
         f"{prefix}/users",
