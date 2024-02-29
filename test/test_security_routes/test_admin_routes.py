@@ -150,7 +150,6 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
         params={"username": "testuser1", "groupname": "testgroup1"},
     )
     assert response.status_code == 204
-    assert response.json() == {"message": "User testuser1 successfully unlinked from group testgroup1"}
 
     # send a post request to delete the user as a regular user
     response = client.delete(
