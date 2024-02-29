@@ -132,6 +132,39 @@ async def link_user_to_group(
     return {"message": f"User {username} successfully linked to group {groupname}"}
 
 
+@router.post("/unlink-user-group", status_code=status.HTTP_204_NO_CONTENT)
+async def unlink_user_from_group(
+    username=str,
+    groupname=str,
+    db: Session = Depends(get_db),
+    _: UserDB = Depends(
+        get_current_admin
+    ),  # Ensuring only admin can unlink users from groups
+):
+    if not username or not groupname:
+        raise HTTPException(
+            status_code=400, detail="Username and group name are required"
+        )
+
+    user = db.query(UserDB).filter(UserDB.username == username).first()
+    group = db.query(GroupDB).filter(GroupDB.name == groupname).first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not group:
+        raise HTTPException(status_code=404, detail="Group not found")
+
+    link = db.query(UserGroup).filter_by(user_id=user.id, group_id=group.id).first()
+    if not link:
+        raise HTTPException(
+            status_code=404, detail="User is not linked to this group"
+        )
+
+    db.delete(link)
+    db.commit()
+    return {"message": f"User {username} successfully unlinked from group {groupname}"}
+
+
 @router.delete("/groups", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     groupname: str,
