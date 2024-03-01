@@ -117,7 +117,18 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.json()["name"] == group_data["name"]
     assert response.json()["description"] == group_data["description"]
     assert group_exists(test_db_session, group_data["name"])
-    #
+
+    #Send a GET request to get all the groups
+    response = client.get(
+        f"{prefix}/groups",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_200_OK
+    assert any(
+        d.get("name") == group_data["name"] and d.get("description") == group_data["description"]
+        for d in response.json()
+    )
+
     # Send a POST request to link the user to the group
 
     link_data = {

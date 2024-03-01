@@ -95,6 +95,17 @@ async def create_group(
     return return_group
 
 
+@router.get("/groups", response_model=list[Group])
+async def get_groups(
+    db: Session = Depends(get_db), _: UserDB = Depends(get_current_admin)
+):
+    groups = db.query(GroupDB).all()
+    return [
+        Group(id=group.id, name=group.name, description=group.description)
+        for group in groups
+    ]
+
+
 @router.post("/link-user-group", status_code=status.HTTP_201_CREATED)
 async def link_user_to_group(
     username=str,
