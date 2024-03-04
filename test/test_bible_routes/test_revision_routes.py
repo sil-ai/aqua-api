@@ -143,6 +143,15 @@ def version_exists(db_session, version_id):
         > 0
     )
 
+def rename_revision(client, token, revision_id, new_name):
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.put(
+        f"{prefix}/revision",
+        params={"id": revision_id, "new_name": new_name},
+        headers=headers,
+    )
+    return response.status_code
+
 
 # Flow 1: Load, List, Check Access, and Delete as Regular User
 def test_regular_user_flow(
@@ -166,6 +175,18 @@ def test_regular_user_flow(
 
     response, _ = list_revision(client, regular_token2, 999999999)
     assert response == 400  # invalid version
+    # check regular user can rename revision
+    assert rename_revision(client, regular_token1, revision_id, "New Name") == 200
+    # check status of db after renaming
+    assert (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.id == revision_id, BibleRevisionModel.name == "New Name")
+        .count()
+        > 0
+    )
+    #check that user 2 cannot rename the revision
+    assert rename_revision(client, regular_token2, revision_id, "New Name") == 403
+    
 
     assert delete_revision(client, regular_token1, revision_id) == 200
 

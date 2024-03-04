@@ -125,6 +125,7 @@ def process_and_upload_revision(file_content: bytes, revision_id: int, db: Sessi
             # Assuming upload_bible function exists
             upload_bible(verses, [revision_id] * len(verses))
 
+
 @router.post("/revision", response_model=RevisionOut)
 async def upload_revision(
     revision: RevisionIn = Depends(),
@@ -162,10 +163,10 @@ async def upload_revision(
         machine_translation=revision.machineTranslation,
     )
     db.add(new_revision)
-    db.flush() 
+    db.flush()
     db.refresh(new_revision)
     db.commit()
-    
+
     try:
         # Read file and process revision
         contents = await file.read()
@@ -184,6 +185,7 @@ async def upload_revision(
     logging.info(f"Uploaded revision successfully in {processing_time:.2f} seconds.")
 
     return revision_out
+
 
 @router.delete("/revision")
 async def delete_revision(
@@ -225,3 +227,35 @@ async def delete_revision(
     )
 
     return {"detail": f"Revision {id} deleted successfully."}
+
+
+# rename a revision endpoint
+@router.put("/revision")
+async def rename_revision(
+    id: int,
+    new_name: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Rename a revision.
+    """
+    # Check if the revision exists
+    revision = db.query(BibleRevisionModel).filter(BibleRevisionModel.id == id).first()
+    if not revision:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found."
+        )
+
+    # Check if the user is authorized to rename the revision
+    if not is_user_authorized_for_revision(current_user.id, id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to rename this revision.",
+        )
+
+    # Perform the rename
+    revision.name = new_name
+    db.commit()
+
+    return {"detail": f"Revision {id} successfully renamed."}

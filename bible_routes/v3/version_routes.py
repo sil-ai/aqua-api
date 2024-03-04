@@ -134,3 +134,51 @@ async def delete_version(
     db.commit()
 
     return {"detail": f"Version {version.name} successfully deleted."}
+
+
+# route to rename a version
+@router.put("/version")
+async def rename_version(
+    id: int,
+    new_name: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Rename a version.
+    """
+    # Check if the version exists
+    version = db.query(BibleVersionModel).filter(BibleVersionModel.id == id).first()
+    if not version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Version not found."
+        )
+
+    # Check if the user is authorized to rename the version
+    if not current_user.is_admin:
+        user_group_ids = (
+            db.query(UserGroup.group_id)
+            .filter(UserGroup.user_id == current_user.id)
+            .subquery()
+        )
+        is_authorized = (
+            db.query(BibleVersionAccess)
+            .filter(
+                BibleVersionAccess.bible_version_id == id,
+                BibleVersionAccess.group_id.in_(user_group_ids),
+            )
+            .first()
+            is not None
+        )
+
+        if not is_authorized:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized to rename this version.",
+            )
+
+    # Perform the renaming
+    version.name = new_name
+    db.commit()
+
+    return {"detail": f"Version {version.name} successfully renamed."}
