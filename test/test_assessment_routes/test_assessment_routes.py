@@ -1,5 +1,4 @@
 # test_revision_flows.py
-from fastapi.testclient import TestClient
 from pathlib import Path
 
 from database.models import (

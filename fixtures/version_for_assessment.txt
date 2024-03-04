@@ -1,0 +1,3 @@
+id	name	iso_language	iso_script	abbreviation
+115	Ngoreme	ngq	Latn	ngq-ngqNT
+505	Swahili Neno (reference)	swh	Latn	system_swh-ONEN
