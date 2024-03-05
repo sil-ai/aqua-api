@@ -160,10 +160,9 @@ def load_revision_data(db_session):
     """Load revision data into the database."""
     # Add version
     # query the id for testuser1
-    user = db_session.query(UserDB).filter(UserDB.username == 'testuser1').first()
+    user = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
     user_id = user.id if user else None
-     
-    
+
     version = BibleVersion(
         name="loading_test",
         iso_language="eng",

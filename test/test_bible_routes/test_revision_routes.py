@@ -16,7 +16,7 @@ from database.models import (
 
 def test_process_and_upload_revision(test_db_session: Session):
     # Create a test Bible version in the database
-    user = test_db_session.query(UserDB).filter(UserDB.username == 'testuser1').first()
+    user = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
     user_id = user.id if user else None
     test_version = BibleVersionModel(
         name="Test Version",
@@ -146,6 +146,7 @@ def version_exists(db_session, version_id):
         > 0
     )
 
+
 def rename_revision(client, token, revision_id, new_name):
     headers = {"Authorization": f"Bearer {token}"}
     response = client.put(
@@ -183,13 +184,14 @@ def test_regular_user_flow(
     # check status of db after renaming
     assert (
         db_session.query(BibleRevisionModel)
-        .filter(BibleRevisionModel.id == revision_id, BibleRevisionModel.name == "New Name")
+        .filter(
+            BibleRevisionModel.id == revision_id, BibleRevisionModel.name == "New Name"
+        )
         .count()
         > 0
     )
-    #check that user 2 cannot rename the revision
+    # check that user 2 cannot rename the revision
     assert rename_revision(client, regular_token2, revision_id, "New Name") == 403
-    
 
     assert delete_revision(client, regular_token1, revision_id) == 200
 

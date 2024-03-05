@@ -9,7 +9,9 @@ from database.dependencies import get_db
 from sqlalchemy.orm import aliased
 from sqlalchemy import func
 from sqlalchemy.sql import and_
-from database.models import AssessmentResult, Assessment, VerseText
+from database.models import AssessmentResult, Assessment, VerseText, UserDB as UserModel
+from security_routes.utilities import is_user_authorized_for_assessement
+from security_routes.auth_routes import get_current_user
 from models import Result_v2 as Result
 import ast
 
@@ -77,8 +79,11 @@ async def build_results_query(
     assessment_type = (
         db.query(Assessment.type).filter(Assessment.id == assessment_id).scalar()
     )
-# For missing words, if not reverse, we only want the non-null source results
-    only_non_null = assessment_type in ["missing-words", "question-answering", "word-tests"] and not reverse
+    # For missing words, if not reverse, we only want the non-null source results
+    only_non_null = (
+        assessment_type in ["missing-words", "question-answering", "word-tests"]
+        and not reverse
+    )
     if only_non_null:
         base_query = base_query.filter(AssessmentResult.source.isnot(None))
 
@@ -107,10 +112,8 @@ async def build_results_query(
             func.bool_or(AssessmentResult.flag).label("flag"),
             func.bool_or(AssessmentResult.hide).label("hide"),
         ).group_by(
-            AssessmentResult.id,
-            AssessmentResult.assessment_id,
-            AssessmentResult.book
-            )
+            AssessmentResult.id, AssessmentResult.assessment_id, AssessmentResult.book
+        )
     elif aggregate == aggType.text:
         base_query = base_query.with_entities(
             AssessmentResult.id,
@@ -222,6 +225,7 @@ async def get_result(
     include_text: Optional[bool] = False,
     reverse: Optional[bool] = False,
     db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
 ):
     """
     Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
@@ -256,6 +260,13 @@ async def get_result(
     be included in the text being assessed.
     """
     await validate_parameters(book, chapter, verse, aggregate, include_text)
+
+    if not is_user_authorized_for_assessement(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+
     query, count_query = await build_results_query(
         assessment_id,
         book,
@@ -278,24 +289,28 @@ async def get_result(
     for row in result_data:
         # Constructing the verse reference string
         vref = f"{row.book}"
-        if hasattr(row,"chapter") and row.chapter is not None:
+        if hasattr(row, "chapter") and row.chapter is not None:
             vref += f" {row.chapter}"
             if hasattr(row, "verse") and row.verse is not None:
                 vref += f":{row.verse}"
 
         # Building the Result object
         result_obj = Result(
-            id=row.id if hasattr(row, 'id') else None,
-            assessment_id=row.assessment_id if hasattr(row, 'assessment_id') else None,
+            id=row.id if hasattr(row, "id") else None,
+            assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
             vref=vref,
-            score=row.score if hasattr(row, 'score') else None,
-            source=row.source if hasattr(row, 'source') else None,
-            target=ast.literal_eval(row.target) if hasattr(row, 'target') and row.target is not None else None,
-            flag=row.flag if hasattr(row, 'flag') else None,
-            note=row.note if hasattr(row, 'note') else None,
-            revision_text=row.revision_text if hasattr(row, 'revision_text') else None,
-            reference_text=row.reference_text if hasattr(row, 'reference_text') else None,
-            hide=row.hide if hasattr(row, 'hide') else None,
+            score=row.score if hasattr(row, "score") else None,
+            source=row.source if hasattr(row, "source") else None,
+            target=ast.literal_eval(row.target)
+            if hasattr(row, "target") and row.target is not None
+            else None,
+            flag=row.flag if hasattr(row, "flag") else None,
+            note=row.note if hasattr(row, "note") else None,
+            revision_text=row.revision_text if hasattr(row, "revision_text") else None,
+            reference_text=row.reference_text
+            if hasattr(row, "reference_text")
+            else None,
+            hide=row.hide if hasattr(row, "hide") else None,
         )
         # Add the Result object to the result list
         result_list.append(result_obj)

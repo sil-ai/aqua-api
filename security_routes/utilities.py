@@ -13,6 +13,9 @@ from database.models import (
     UserDB,
     BibleRevision,
     BibleVersionAccess,
+    AssessmentAccess,
+    Assessment
+    
 )  # Your SQLAlchemy model
 
 
@@ -80,3 +83,29 @@ def is_user_authorized_for_revision(user_id, revision_id, session):
     )
 
     return accessible is not None
+
+def is_user_authorized_for_assessement(user_id, assessment_id, session):
+    # Admins have access to all assessments
+    user = session.query(UserDB).filter(UserDB.id == user_id).first()
+    if user and user.is_admin:
+        return True
+
+    # Fetch the groups the user belongs to
+    user_groups = (
+        session.query(UserGroup.group_id)
+        .filter(UserGroup.user_id == user_id)
+        .subquery()
+    )
+
+    # Check if the assessment is accessible by one of the user's groups
+    accessible = (
+        session.query(Assessment)
+        .join(AssessmentAccess, Assessment.id == AssessmentAccess.assessment_id)
+        .filter(
+            Assessment.id == assessment_id,
+            AssessmentAccess.group_id.in_(user_groups),
+        )
+        .first()
+    )
+
+    return accessible is not None   

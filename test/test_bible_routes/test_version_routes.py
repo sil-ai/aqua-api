@@ -90,20 +90,19 @@ class TestRegularUserFlow:
             headers=headers,
         )
         assert update_response.status_code == 200
-        #check the db for the new name
+        # check the db for the new name
         version_in_db = (
             db_session.query(BibleVersionModel).filter_by(id=version_id).first()
         )
         assert version_in_db.name == "Updated Version"
-        #check that user 2 cannot update the version
+        # check that user 2 cannot update the version
         update_response = client.put(
             f"{prefix}/version",
             params={"id": version_id, "new_name": "Updated Version"},
             headers=headers2,
         )
         assert update_response.status_code == 403
-        
-        
+
         # Step 3: Delete the version as a regular user
         delete_response = client.delete(
             f"{prefix}/version", params={"id": version_id}, headers=headers
