@@ -37,7 +37,7 @@ class TestRegularUserFlow:
         # Step 1: Create a version as a regular user
         headers = {"Authorization": f"Bearer {regular_token1}"}
         create_response = client.post(
-            f"{prefix}/version", params=new_version_data, headers=headers
+            f"{prefix}/version", json=new_version_data, headers=headers
         )
         assert create_response.status_code == 200
         version_id = create_response.json().get("id")
@@ -118,38 +118,125 @@ class TestRegularUserFlow:
 
 class TestAdminFlow:
     def test_admin_create_list_and_delete_version(
-        self, client, admin_token, regular_token1, db_session
+        self, client, admin_token, regular_token1, regular_token2, db_session
     ):
-        # Step 1: Create a version as an regular user
-        headers = {"Authorization": f"Bearer {regular_token1}"}
-        create_response = client.post(
-            f"{prefix}/version", params=new_version_data, headers=headers
+        group_1 = db_session.query(Group).first()
+        assert group_1 is not None
+
+        # Create a second group for the first regular user
+        group_3 = Group(name="Group3", description="Test Group 3")
+        db_session.add(group_3)
+        db_session.commit()
+
+        user_1 = db_session.query(UserModel).filter_by(username="testuser1").first()
+        user_2 = db_session.query(UserModel).filter_by(username="testuser2").first()
+
+        # Associate both regular users with the new group
+        user_group3 = UserGroup(user_id=user_1.id, group_id=group_3.id)
+        user_group4 = UserGroup(user_id=user_2.id, group_id=group_3.id)
+        db_session.add_all([user_group3, user_group4])
+        db_session.commit()
+
+        # Assert user 1 has access to group 1
+        user_group = (
+            db_session.query(UserGroup)
+            .filter(UserGroup.user_id == user_1.id, UserGroup.group_id == group_1.id)
+            .first()
         )
-        assert create_response.status_code == 200
-        version_id = create_response.json().get("id")
+        assert user_group is not None
+
+        # Assert user_2 does not have access to group 1
+        user_group = (
+            db_session.query(UserGroup)
+            .filter(UserGroup.user_id == user_2.id, UserGroup.group_id == group_1.id)
+            .first()
+        )
+        assert user_group is None
+
+        # Assert both users have access to group 3
+        user_group = (
+            db_session.query(UserGroup)
+            .filter(UserGroup.user_id == user_1.id, UserGroup.group_id == group_3.id)
+            .first()
+        )
+        assert user_group is not None
+        user_group = (
+            db_session.query(UserGroup)
+            .filter(UserGroup.user_id == user_2.id, UserGroup.group_id == group_3.id)
+            .first()
+        )
+        assert user_group is not None
+
+        # Step 1: Create a version as user 1, who is part of groups 1 and 3
+        headers = {"Authorization": f"Bearer {regular_token1}"}
+        create_response_1 = client.post(
+            f"{prefix}/version", json=new_version_data, headers=headers
+        )
+        assert create_response_1.status_code == 200
+        version_id_1 = create_response_1.json().get("id")
+
+        params = {
+            **new_version_data,
+            "add_to_groups": [group_1.id],
+        }
+        
+        create_response_2 = client.post(
+            f"{prefix}/version", json=params, headers=headers
+        )
+        assert create_response_2.status_code == 200
+        version_id_2 = create_response_2.json().get("id")
 
         # Verify creation in DB
-        version_in_db = (
-            db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+        version_in_db_1 = (
+            db_session.query(BibleVersionModel).filter_by(id=version_id_1).first()
         )
-        assert version_in_db is not None
+        assert version_in_db_1 is not None
+        version_in_db_2 = (
+            db_session.query(BibleVersionModel).filter_by(id=version_id_2).first()
+        )
+        assert version_in_db_2 is not None
 
-        # Step 2: List versions as an admin
+        # Verify user 1 can access both versions
         list_response = client.get(f"{prefix}/version", headers=headers)
         assert list_response.status_code == 200
         versions = list_response.json()
-        assert len(versions) == 1, "There should be only one version"
+        assert len(versions) == 2, "User 1 should see two versions"
+        assert versions[0]["id"] == version_id_1
+        assert versions[1]["id"] == version_id_2
+
+        # Verify user 2 can access only the first version
+        headers = {"Authorization": f"Bearer {regular_token2}"}
+        list_response = client.get(f"{prefix}/version", headers=headers)
+        assert list_response.status_code == 200
+        versions = list_response.json()
+        assert len(versions) == 1, "User 2 should only see one version"
+        assert versions[0]["id"] == version_id_1
+
+        # Assert that user 2 cannot delete version_id_2
+        delete_response = client.delete(
+            f"{prefix}/version", params={"id": version_id_2}, headers=headers
+        )
+        assert delete_response.status_code == 403
 
         # Step 3: Delete the version as an admin
         headers = {"Authorization": f"Bearer {admin_token}"}
         # Delete the version by sending the ID in the request body
-        delete_response = client.delete(
-            f"{prefix}/version", params={"id": version_id}, headers=headers
+        delete_response_1 = client.delete(
+            f"{prefix}/version", params={"id": version_id_1}, headers=headers
         )
-        assert delete_response.status_code == 200
+        assert delete_response_1.status_code == 200
+        delete_response_2 = client.delete(
+            f"{prefix}/version", params={"id": version_id_2}, headers=headers
+        )
+        assert delete_response_2.status_code == 200
 
         # Verify deletion in DB
-        version_in_db = (
-            db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+        version_in_db_1 = (
+            db_session.query(BibleVersionModel).filter_by(id=version_id_1).first()
         )
-        assert version_in_db is None
+        assert version_in_db_1 is None
+        version_in_db_2 = (
+            db_session.query(BibleVersionModel).filter_by(id=version_id_2).first()
+        )
+        assert version_in_db_2 is None
+

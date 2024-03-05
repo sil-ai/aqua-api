@@ -1,14 +1,15 @@
 # auth_routes.py
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import Depends, HTTPException, status, APIRouter
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
-from models import Token, User
-from database.models import UserDB  # Your SQLAlchemy model
+from models import Token, User, Group
+from database.models import UserDB
+
 from database.dependencies import get_db  # Function to get the database session
 from .utilities import (
     verify_password,
@@ -85,3 +86,10 @@ async def login_for_access_token(
 @router.get("/users/me")
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.get("/groups/me", response_model=List[Group])
+async def get_groups(
+        current_user: User = Depends(get_current_user)
+):
+    return [user_group.group for user_group in current_user.groups]

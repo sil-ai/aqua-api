@@ -13,6 +13,7 @@ class VersionIn(BaseModel):
     forwardTranslation: Union[int, None] = None
     backTranslation: Union[int, None] = None
     machineTranslation: bool = False
+    add_to_groups: Optional[List[int]] = None
 
 
 class VersionOut(BaseModel):
