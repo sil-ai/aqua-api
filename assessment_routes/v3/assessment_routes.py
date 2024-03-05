@@ -59,7 +59,7 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
     return assessment_data
 
 # Helper function to call assessment runner
-def call_assessment_runner(assessment: AssessmentModel, modal_suffix: str, return_all_results: bool):
+def call_assessment_runner(assessment: AssessmentIn, modal_suffix: str, return_all_results: bool):
     dash_modal_suffix = f'-{modal_suffix}' if modal_suffix else ''
     runner_url = f"https://sil-ai--runner{dash_modal_suffix}-assessment-runner.modal.run/"
 
@@ -76,7 +76,7 @@ def call_assessment_runner(assessment: AssessmentModel, modal_suffix: str, retur
         runner_url,
         params=params,
         headers=header,
-        json=assessment.dict(exclude={"requested_time": True, "start_time": True, "end_time": True, "status": True})
+        json=assessment.dict()
     )
     return response
 
@@ -134,7 +134,7 @@ async def add_assessment(
         db.commit()
 
     # Call runner using helper function
-    response = call_assessment_runner(assessment, modal_suffix, return_all_results)
+    response = call_assessment_runner(a, modal_suffix, return_all_results)
 
     if not 200 <= response.status_code < 300:
         try:
