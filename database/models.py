@@ -131,7 +131,9 @@ class BibleVersion(Base):
     machine_translation = Column(Boolean)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
-    
+    owner_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+
+    owner = relationship("UserDB", backref=backref("bible_versions"))
     back_translation = relationship('BibleVersion', remote_side=[id])
     accessible_by = relationship("BibleVersionAccess", cascade="all, delete",  back_populates="bible_version")
     revisions = relationship("BibleRevision", cascade="all, delete", back_populates="bible_version")
@@ -208,7 +210,7 @@ class UserDB(Base):
     is_admin = Column(Boolean, default=False)
     # Relationship with UserGroups
     groups = relationship("UserGroup", back_populates="user", cascade="all, delete")
-
+    owner_of = relationship("BibleVersion", back_populates="owner")
 
 class Group(Base):
     __tablename__ = 'groups'

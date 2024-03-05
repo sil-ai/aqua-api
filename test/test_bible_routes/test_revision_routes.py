@@ -10,18 +10,21 @@ from database.models import (
     BibleRevision as BibleRevisionModel,
     VerseText as VerseText,
     BibleVersion as BibleVersionModel,
+    UserDB,
 )
 
 
 def test_process_and_upload_revision(test_db_session: Session):
     # Create a test Bible version in the database
+    user = test_db_session.query(UserDB).filter(UserDB.username == 'testuser1').first()
+    user_id = user.id if user else None
     test_version = BibleVersionModel(
         name="Test Version",
         iso_language="eng",
         iso_script="Latn",
         abbreviation="TV",
-        rights="Some Rights"
-        # Add other required fields if necessary
+        rights="Some Rights",
+        owner_id=user_id,
     )
     test_db_session.add(test_version)
     test_db_session.commit()

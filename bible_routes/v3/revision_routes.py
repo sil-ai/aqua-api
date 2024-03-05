@@ -202,13 +202,13 @@ async def delete_revision(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Revision id is invalid or does not exist.",
         )
-
-    if not is_user_authorized_for_revision(current_user.id, id, db):
+    # check for owner of the version that correspond to this revision or if the user is admin
+    if not current_user.is_admin and revision.bible_version.owner_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to delete this revision.",
         )
-
+    
     # Delete related verses and the revision
     try:
         db.delete(revision)
@@ -248,13 +248,12 @@ async def rename_revision(
         )
 
     # Check if the user is authorized to rename the revision
-    if not is_user_authorized_for_revision(current_user.id, id, db):
+    if not current_user.is_admin and revision.bible_version.owner_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to rename this revision.",
+            detail="User not authorized to delete this revision.",
         )
-
-    # Perform the rename
+        # Perform the rename
     revision.name = new_name
     db.commit()
 

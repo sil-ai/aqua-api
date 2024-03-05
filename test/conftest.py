@@ -159,11 +159,17 @@ def setup_references_and_isos(db_session):
 def load_revision_data(db_session):
     """Load revision data into the database."""
     # Add version
+    # query the id for testuser1
+    user = db_session.query(UserDB).filter(UserDB.username == 'testuser1').first()
+    user_id = user.id if user else None
+     
+    
     version = BibleVersion(
         name="loading_test",
         iso_language="eng",
         iso_script="Latn",
         abbreviation="BLTEST",
+        owner_id=user_id,
     )
     db_session.add(version)
 
