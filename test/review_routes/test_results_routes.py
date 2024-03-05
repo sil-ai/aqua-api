@@ -84,6 +84,4 @@ def test_regular_user_flow(client, regular_token1, regular_token2, test_db_sessi
         params=params,
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
-
-    # Check that the response is as expected
     assert response.status_code == 403
