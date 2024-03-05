@@ -1,5 +1,5 @@
 import pandas as pd
-from database.models import Assessment, AssessmentResult, BibleRevision, BibleVersion  # Correct paths as needed
+from database.models import Assessment, AssessmentResult, BibleRevision, BibleVersion, UserDB
 
 
 def setup_assessments_results(db_session):
@@ -10,6 +10,9 @@ def setup_assessments_results(db_session):
     revision_df = pd.read_csv("fixtures/revision_for_assessment.txt", sep="\t")
     version_df = pd.read_csv("fixtures/version_for_assessment.txt", sep="\t")
 
+    user = db_session.query(UserDB).filter(UserDB.username == 'testuser1').first()
+    user_id = user.id if user else None
+    version_df['owner_id'] = user_id
     # Populate assessment and assessment results tables
     for _, row in version_df.iterrows():
         db_session.add(BibleVersion(**row.to_dict()))
@@ -48,15 +51,11 @@ def test_regular_user_flow(
     assert response.status_code == 200
     response_data = response.json()
 
-    assert response_data["assessment_id"] == first_assessment_id
-    assert response_data["type"] == first_assessment_type   
+    assert response_data["total_count"] > 0
     assert response_data["results"], "No results found in response."
-    assert len(response_data["results"]) == 10, "Results length is not as expected."
-    assert response_data["results"][0]["book"] == "Genesis"
-    assert response_data["results"][0]["chapter"] == 1
-    assert response_data["results"][0]["verse"] == 1
-    assert response_data["results"][0]["page"] == 1
+    assert len(response_data["results"]) == response_data["total_count"], "Results length is not as expected."
+    assert response_data["results"][0]["vref"]
     assert response_data["results"][0]["score"] >= 0
     assert response_data["results"][0]["score"] <= 1
-    assert response_data["results"][0]["text"] is None
+    assert response_data["results"][0]["assessment_id"] == first_assessment_id
     

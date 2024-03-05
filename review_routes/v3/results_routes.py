@@ -278,33 +278,27 @@ async def get_result(
     for row in result_data:
         # Constructing the verse reference string
         vref = f"{row.book}"
-        if row.chapter is not None:
+        if hasattr(row,"chapter") and row.chapter is not None:
             vref += f" {row.chapter}"
-            if row.verse is not None:
+            if hasattr(row, "verse") and row.verse is not None:
                 vref += f":{row.verse}"
 
         # Building the Result object
-        # Note: Adjustments may be needed based on the actual structure of your Result model
         result_obj = Result(
-            id=row.id,
-            assessment_id=row.assessment_id,
+            id=row.id if hasattr(row, 'id') else None,
+            assessment_id=row.assessment_id if hasattr(row, 'assessment_id') else None,
             vref=vref,
-            score=row.score
-            if row.score is not None
-            else 0,  # Default score to 0 if None
-            source=row.source,
-            target=ast.literal_eval(row.target)
-            if row.target is not None
-            else None,  # Safely evaluate the string representation of a list/dict
-            flag=row.flag,
-            note=row.note   ,
-            revision_text=row.revision_text,
-            reference_text=row.reference_text,
-            hide=row.hide,
+            score=row.score if hasattr(row, 'score') else None,
+            source=row.source if hasattr(row, 'source') else None,
+            target=ast.literal_eval(row.target) if hasattr(row, 'target') and row.target is not None else None,
+            flag=row.flag if hasattr(row, 'flag') else None,
+            note=row.note if hasattr(row, 'note') else None,
+            revision_text=row.revision_text if hasattr(row, 'revision_text') else None,
+            reference_text=row.reference_text if hasattr(row, 'reference_text') else None,
+            hide=row.hide if hasattr(row, 'hide') else None,
         )
         # Add the Result object to the result list
         result_list.append(result_obj)
-
     total_count = (
         result_agg_data.scalar()
     )  # Get the total count from the aggregation query
