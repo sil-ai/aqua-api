@@ -1,7 +1,5 @@
 # version_id conftest.py
 
-from app import app  # Import your FastAPI application instance
-import os
 import pytest
 import sqlalchemy as db
 from fastapi.testclient import TestClient
@@ -47,6 +45,9 @@ modules_to_mock = [
 def mock_v1_v2_routes(monkeypatch):
     for module_path in modules_to_mock:
         monkeypatch.setattr(f"{module_path}.router", mock_router)
+
+from app import app  
+
 engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
