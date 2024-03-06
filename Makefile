@@ -25,6 +25,7 @@ down:
 
 test: localdb-up
 	export PYTHONPATH=${PWD} && \
+	export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
 	pytest test
 
 	
