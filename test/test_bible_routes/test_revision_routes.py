@@ -10,18 +10,21 @@ from database.models import (
     BibleRevision as BibleRevisionModel,
     VerseText as VerseText,
     BibleVersion as BibleVersionModel,
+    UserDB,
 )
 
 
 def test_process_and_upload_revision(test_db_session: Session):
     # Create a test Bible version in the database
+    user = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    user_id = user.id if user else None
     test_version = BibleVersionModel(
         name="Test Version",
         iso_language="eng",
         iso_script="Latn",
         abbreviation="TV",
-        rights="Some Rights"
-        # Add other required fields if necessary
+        rights="Some Rights",
+        owner_id=user_id,
     )
     test_db_session.add(test_version)
     test_db_session.commit()
@@ -144,6 +147,16 @@ def version_exists(db_session, version_id):
     )
 
 
+def rename_revision(client, token, revision_id, new_name):
+    headers = {"Authorization": f"Bearer {token}"}
+    response = client.put(
+        f"{prefix}/revision",
+        params={"id": revision_id, "new_name": new_name},
+        headers=headers,
+    )
+    return response.status_code
+
+
 # Flow 1: Load, List, Check Access, and Delete as Regular User
 def test_regular_user_flow(
     client, regular_token1, regular_token2, db_session, test_db_session
@@ -166,6 +179,19 @@ def test_regular_user_flow(
 
     response, _ = list_revision(client, regular_token2, 999999999)
     assert response == 400  # invalid version
+    # check regular user can rename revision
+    assert rename_revision(client, regular_token1, revision_id, "New Name") == 200
+    # check status of db after renaming
+    assert (
+        db_session.query(BibleRevisionModel)
+        .filter(
+            BibleRevisionModel.id == revision_id, BibleRevisionModel.name == "New Name"
+        )
+        .count()
+        > 0
+    )
+    # check that user 2 cannot rename the revision
+    assert rename_revision(client, regular_token2, revision_id, "New Name") == 403
 
     assert delete_revision(client, regular_token1, revision_id) == 200
 

@@ -35,32 +35,42 @@ async def get_chapter(
             detail="User not authorized to access this revision.",
         )
 
-    result = db.query(
-        VerseModel.id, 
-        VerseModel.text, 
-        VerseModel.verse_reference, 
-        VerseModel.revision_id,
-        VerseModel.book,
-        VerseModel.chapter,
-        VerseModel.verse,
-        VerseReferenceModel.full_verse_id,  # Selecting fullverseid from VerseReferenceModel
-    ).join(
-        VerseReferenceModel, VerseModel.verse_reference == VerseReferenceModel.full_verse_id
-    ).filter(
-        VerseModel.revision_id == revision_id,
-        VerseModel.book == book,
-        VerseModel.chapter == chapter
-    ).order_by(VerseModel.id).all()
+    result = (
+        db.query(
+            VerseModel.id,
+            VerseModel.text,
+            VerseModel.verse_reference,
+            VerseModel.revision_id,
+            VerseModel.book,
+            VerseModel.chapter,
+            VerseModel.verse,
+            VerseReferenceModel.full_verse_id,  # Selecting fullverseid from VerseReferenceModel
+        )
+        .join(
+            VerseReferenceModel,
+            VerseModel.verse_reference == VerseReferenceModel.full_verse_id,
+        )
+        .filter(
+            VerseModel.revision_id == revision_id,
+            VerseModel.book == book,
+            VerseModel.chapter == chapter,
+        )
+        .order_by(VerseModel.id)
+        .all()
+    )
 
-    chapter_data = [VerseText(
-        id=verse.id,
-        text=verse.text,
-        verse_reference=verse.verse_reference,
-        revision_id=verse.revision_id,
-        book=verse.book,
-        chapter=verse.chapter,
-        verse=verse.verse,
-    ) for verse in result]
+    chapter_data = [
+        VerseText(
+            id=verse.id,
+            text=verse.text,
+            verse_reference=verse.verse_reference,
+            revision_id=verse.revision_id,
+            book=verse.book,
+            chapter=verse.chapter,
+            verse=verse.verse,
+        )
+        for verse in result
+    ]
 
     return chapter_data
 

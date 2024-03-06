@@ -150,6 +150,8 @@ def setup_references_and_isos(db_session):
 
     # Add ISO language and script
     db_session.add(IsoLanguage(iso639="eng", name="english"))
+    db_session.add(IsoLanguage(iso639="ngq", name="ngq"))
+    db_session.add(IsoLanguage(iso639="swh", name="swh"))
     db_session.add(IsoScript(iso15924="Latn", name="latin"))
     db_session.commit()
 
@@ -157,11 +159,16 @@ def setup_references_and_isos(db_session):
 def load_revision_data(db_session):
     """Load revision data into the database."""
     # Add version
+    # query the id for testuser1
+    user = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    user_id = user.id if user else None
+
     version = BibleVersion(
         name="loading_test",
         iso_language="eng",
         iso_script="Latn",
         abbreviation="BLTEST",
+        owner_id=user_id,
     )
     db_session.add(version)
 

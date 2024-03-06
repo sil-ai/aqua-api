@@ -125,6 +125,7 @@ def process_and_upload_revision(file_content: bytes, revision_id: int, db: Sessi
             # Assuming upload_bible function exists
             upload_bible(verses, [revision_id] * len(verses))
 
+
 @router.post("/revision", response_model=RevisionOut)
 async def upload_revision(
     revision: RevisionIn = Depends(),
@@ -162,10 +163,10 @@ async def upload_revision(
         machine_translation=revision.machineTranslation,
     )
     db.add(new_revision)
-    db.flush() 
+    db.flush()
     db.refresh(new_revision)
     db.commit()
-    
+
     try:
         # Read file and process revision
         contents = await file.read()
@@ -185,6 +186,7 @@ async def upload_revision(
 
     return revision_out
 
+
 @router.delete("/revision")
 async def delete_revision(
     id: int,
@@ -200,13 +202,13 @@ async def delete_revision(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Revision id is invalid or does not exist.",
         )
-
-    if not is_user_authorized_for_revision(current_user.id, id, db):
+    # check for owner of the version that correspond to this revision or if the user is admin
+    if not current_user.is_admin and revision.bible_version.owner_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to delete this revision.",
         )
-
+    
     # Delete related verses and the revision
     try:
         db.delete(revision)
@@ -225,3 +227,34 @@ async def delete_revision(
     )
 
     return {"detail": f"Revision {id} deleted successfully."}
+
+
+# rename a revision endpoint
+@router.put("/revision")
+async def rename_revision(
+    id: int,
+    new_name: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Rename a revision.
+    """
+    # Check if the revision exists
+    revision = db.query(BibleRevisionModel).filter(BibleRevisionModel.id == id).first()
+    if not revision:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found."
+        )
+
+    # Check if the user is authorized to rename the revision
+    if not current_user.is_admin and revision.bible_version.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to delete this revision.",
+        )
+        # Perform the rename
+    revision.name = new_name
+    db.commit()
+
+    return {"detail": f"Revision {id} successfully renamed."}

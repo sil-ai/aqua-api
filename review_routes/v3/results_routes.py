@@ -1,20 +1,21 @@
-__version__ = 'v2'
+__version__ = "v3"
 
-import os
-from typing import Optional, Dict, Union, List
+from fastapi import Depends, HTTPException, status, APIRouter
+from typing import Optional, Dict, List, Union, Tuple
+from sqlalchemy.orm import Session
+
 from enum import Enum
-import re
+from database.dependencies import get_db
+from sqlalchemy.orm import aliased
+from sqlalchemy import func
+from sqlalchemy.sql import and_
+from database.models import AssessmentResult, Assessment, AlignmentTopSourceScores, VerseText, UserDB as UserModel
+from security_routes.utilities import is_user_authorized_for_assessement
+from security_routes.auth_routes import get_current_user
+from models import Result_v2 as Result, WordAlignment
 import ast
 
-import fastapi
-from fastapi import Depends, HTTPException, status, Query
-from fastapi.security.api_key import APIKeyHeader
-import asyncpg
-
-import queries
-from key_fetch import get_secret
-from models import Result_v2 as Result
-from models import WordAlignment, MultipleResult, AssessmentType
+router = APIRouter()
 
 
 class aggType(Enum):
@@ -22,49 +23,208 @@ class aggType(Enum):
     book = "book"
     text = "text"
 
-router = fastapi.APIRouter()
 
-api_keys = get_secret(
-        os.getenv("KEY_VAULT"),
-        os.getenv("AWS_ACCESS_KEY"),
-        os.getenv("AWS_SECRET_KEY")
-        )
-
-api_key_header = APIKeyHeader(name="api_key", auto_error=False)
-
-def api_key_auth(api_key: str = Depends(api_key_header)):
-    if api_key not in api_keys:
+async def validate_parameters(
+    book: Optional[str],
+    chapter: Optional[int],
+    verse: Optional[int],
+    aggregate: Optional[aggType] = None,
+    include_text: Optional[bool] = False,
+):
+    if chapter is not None and book is None:
         raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Forbidden"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If chapter is set, book must also be set.",
+        )
+    if verse is not None and chapter is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If verse is set, chapter must also be set.",
+        )
+    if aggregate is not None and include_text:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results.",
         )
 
-    return True
 
+async def build_results_query(
+    assessment_id: int,
+    book: Optional[str],
+    chapter: Optional[int],
+    verse: Optional[int],
+    page: Optional[int],
+    page_size: Optional[int],
+    aggregate: Optional[aggType],
+    include_text: Optional[bool],
+    reverse: Optional[bool],
+    db: Session,
+) -> Tuple:
+    # Initialize the base query
+    base_query = db.query(AssessmentResult).filter(
+        AssessmentResult.assessment_id == assessment_id
+    )
 
-async def postgres_conn():
-    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
-    connection = await asyncpg.connect(
-            host=conn_list[3],
-            database=conn_list[4],
-            user=conn_list[1],
-            password=conn_list[2],
+    # Apply filters based on optional parameters
+    if book:
+        base_query = base_query.filter(
+            func.upper(AssessmentResult.book) == book.upper()
+        )
+    if chapter:
+        base_query = base_query.filter(AssessmentResult.chapter == chapter)
+    if verse:
+        base_query = base_query.filter(AssessmentResult.verse == verse)
+
+    # Apply 'source_null' logic to filter results
+    assessment_type = (
+        db.query(Assessment.type).filter(Assessment.id == assessment_id).scalar()
+    )
+    # For missing words, if not reverse, we only want the non-null source results
+    only_non_null = (
+        assessment_type in ["missing-words", "question-answering", "word-tests"]
+        and not reverse
+    )
+    if only_non_null:
+        base_query = base_query.filter(AssessmentResult.source.isnot(None))
+
+    # Modify query based on aggregation and include_text
+    if aggregate == aggType.chapter:
+        base_query = base_query.with_entities(
+            AssessmentResult.id,
+            AssessmentResult.assessment_id,
+            AssessmentResult.book,
+            AssessmentResult.chapter,
+            func.avg(AssessmentResult.score).label("score"),
+            func.bool_or(AssessmentResult.flag).label("flag"),
+            func.bool_or(AssessmentResult.hide).label("hide"),
+        ).group_by(
+            AssessmentResult.id,
+            AssessmentResult.assessment_id,
+            AssessmentResult.book,
+            AssessmentResult.chapter,
+        )
+    elif aggregate == aggType.book:
+        base_query = base_query.with_entities(
+            AssessmentResult.id,
+            AssessmentResult.assessment_id,
+            AssessmentResult.book,
+            func.avg(AssessmentResult.score).label("score"),
+            func.bool_or(AssessmentResult.flag).label("flag"),
+            func.bool_or(AssessmentResult.hide).label("hide"),
+        ).group_by(
+            AssessmentResult.id, AssessmentResult.assessment_id, AssessmentResult.book
+        )
+    elif aggregate == aggType.text:
+        base_query = base_query.with_entities(
+            AssessmentResult.id,
+            AssessmentResult.assessment_id,
+            AssessmentResult.book,
+            AssessmentResult.chapter,
+            AssessmentResult.verse,
+            func.avg(AssessmentResult.score).label("score"),
+            func.bool_or(AssessmentResult.flag).label("flag"),
+            func.bool_or(AssessmentResult.hide).label("hide"),
+        ).group_by(
+            AssessmentResult.id,
+            AssessmentResult.assessment_id,
+        )
+
+    elif include_text:
+        # Aliasing VerseText for revision and reference texts
+        RevisionText = aliased(VerseText)
+        ReferenceText = aliased(VerseText)
+
+        # Adjusting the base query to include text joins and selections
+        base_query = (
+            db.query(
+                AssessmentResult.id,
+                AssessmentResult.assessment_id,
+                AssessmentResult.book,
+                AssessmentResult.chapter,
+                AssessmentResult.verse,
+                func.avg(AssessmentResult.score).label("score"),
+                AssessmentResult.source,
+                AssessmentResult.target,
+                AssessmentResult.flag,
+                AssessmentResult.note,
+                RevisionText.text.label("revision_text"),
+                ReferenceText.text.label("reference_text"),
+                AssessmentResult.hide,
             )
+            .join(Assessment, Assessment.id == AssessmentResult.assessment_id)
+            .outerjoin(
+                RevisionText,
+                and_(
+                    RevisionText.verse_reference == AssessmentResult.vref,
+                    RevisionText.revision_id == Assessment.revision_id,
+                ),
+            )
+            .outerjoin(
+                ReferenceText,
+                and_(
+                    ReferenceText.verse_reference == AssessmentResult.vref,
+                    ReferenceText.revision_id == Assessment.reference_id,
+                ),
+            )
+        )
+    else:
+        # No specific aggregation or text inclusion, use the base query
+        # This is typically the default scenario
+        base_query = base_query.with_entities(
+            AssessmentResult.id,
+            AssessmentResult.assessment_id,
+            AssessmentResult.book,
+            AssessmentResult.chapter,
+            AssessmentResult.verse,
+            func.avg(AssessmentResult.score).label("score"),
+            AssessmentResult.source,
+            AssessmentResult.target,
+            AssessmentResult.flag,
+            AssessmentResult.note,
+            AssessmentResult.hide,
+        )
 
-    return connection
+    # Handling pagination for the base query (applies in non-aggregated scenarios or when explicitly required)
+    if page is not None and page_size is not None:
+        base_query = base_query.offset((page - 1) * page_size).limit(page_size)
+
+    count_query = (
+        db.query(func.count())
+        .select_from(AssessmentResult)
+        .filter(AssessmentResult.assessment_id == assessment_id)
+    )
+    if book:
+        count_query = count_query.filter(
+            func.upper(AssessmentResult.book) == book.upper()
+        )
+    if chapter:
+        count_query = count_query.filter(AssessmentResult.chapter == chapter)
+    if verse:
+        count_query = count_query.filter(AssessmentResult.verse == verse)
+    # Note: For aggregated results, the count might need to be derived differently
+
+    return (
+        base_query,
+        count_query,
+    )
 
 
-@router.get("/result", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[Result], int]])
+@router.get(
+    "/result",
+    response_model=Dict[str, Union[List[Result], int]],
+)
 async def get_result(
     assessment_id: int,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
-    page: Optional[int] = None, 
+    page: Optional[int] = None,
     page_size: Optional[int] = None,
-    aggregate: Optional[aggType] = None, 
+    aggregate: Optional[aggType] = None,
     include_text: Optional[bool] = False,
     reverse: Optional[bool] = False,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
 ):
     """
     Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
@@ -98,831 +258,77 @@ async def get_result(
     missing word appears in the baseline reference texts, and so there is a higher likelihood that it is a word that should
     be included in the text being assessed.
     """
-    if chapter is not None and book is None:
+    await validate_parameters(book, chapter, verse, aggregate, include_text)
+
+    if not is_user_authorized_for_assessement(current_user.id, assessment_id, db):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If chapter is set, book must also be set."
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
         )
 
-    if verse is not None and chapter is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If verse is set, chapter must also be set."
-        )
+    query, count_query = await build_results_query(
+        assessment_id,
+        book,
+        chapter,
+        verse,
+        page,
+        page_size,
+        aggregate,
+        include_text,
+        reverse,
+        db,
+    )
 
-    if aggregate is not None and include_text:
-        raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results."
-        )
-    
-    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
-    connection = await asyncpg.connect(
-            host=conn_list[3],
-            database=conn_list[4],
-            user=conn_list[1],
-            password=conn_list[2],
-            )
+    # Execute the query and fetch results
+    result_data = query.all()
+    result_agg_data = db.execute(count_query)
 
-    list_assessments = queries.list_assessments_query()
-
-    if page is not None and page_size is not None:
-            offset = (page - 1) * page_size
-            limit = page_size
-    else:
-        offset = 0
-        limit = None
-
-    query_limit = limit
-    query_offset = offset
-
-    assessment_response = await connection.fetch(list_assessments)
-    assessment_ids = []
-    for assessment in assessment_response:
-        if assessment['id'] not in assessment_ids:
-            assessment_ids.append(assessment['id'])
-
-    if assessment_id not in assessment_ids:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Assessment not found."
-            )
-    assessment_type = assessment_response[assessment_ids.index(assessment_id)]['type']
-
-    source_null = not(assessment_type in ["missing-words", "question-answering", "word-tests"] and not reverse)  # For missing words, if not reverse, we only want the non-null source results
-
-
-    if aggregate == aggType['chapter']:
-        query_select = """
-                (row_number() OVER ())::integer AS id,
-                assessment,
-                book,
-                chapter,
-                NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
-                NULL::text AS source,
-                NULL::text AS target,
-                false AS flag,
-                NULL::text AS note,
-                NULL::text AS revision_text,
-                NULL::text AS reference_text,
-                false AS hide
-        """
-        query_from = '"assessment_result"'
-        query_where = {
-                'assessment': assessment_id,
-                '(source IS NULL)': source_null,
-                'book': f"'{book.upper()}'" if book is not None else None,
-                'chapter': chapter if chapter is not None else None,
-        }
-        query_group_by = [
-                'assessment',
-                'book',
-                'chapter',
-        ]
-        query_order_by = None
-    
-    elif aggregate == aggType['book']:
-        query_select = """
-                (row_number() OVER ())::integer AS id,
-                assessment,
-                book,
-                NULL::integer AS chapter,
-                NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
-                NULL::text AS source,
-                NULL::text AS target,
-                false AS flag,
-                NULL::text AS note,
-                NULL::text AS revision_text,
-                NULL::text AS reference_text,
-                false AS hide
-        """
-        query_from = '"assessment_result"'
-        query_where = {
-                'assessment': assessment_id,
-                '(source IS NULL)': source_null,
-                'book': f"'{book.upper()}'" if book is not None else None,
-        }
-        query_group_by = [
-                'assessment',
-                'book',
-        ]
-        query_order_by = None
-
-    elif aggregate == aggType['text']:
-        query_select = """
-                (row_number() OVER ())::integer AS id,
-                assessment,
-                NULL::text AS book,
-                NULL::integer AS chapter,
-                NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
-                NULL::text AS source,
-                NULL::text AS target,
-                false AS flag,
-                NULL::text AS note,
-                NULL::text AS revision_text,
-                NULL::text AS reference_text,
-                false AS hide
-        """
-        query_from = '"assessment_result"'
-        query_where = {
-                'assessment': assessment_id,
-                '(source IS NULL)': source_null,
-        }
-        query_group_by = [
-                'assessment',
-        ]
-        query_order_by = None
-
-    elif include_text:
-        query_select = """
-                ar.id,
-                ar.assessment,
-                ar.book,
-                ar.chapter,
-                ar.verse,
-                ar.score,
-                ar.source,
-                ar.target,
-                ar.flag,
-                ar.note,
-                vt1.text AS revisiontext,
-                vt2.text AS referencetext,
-                ar.hide
-                """
-        query_from = """
-        ((("assessment_result" ar
-        JOIN assessment a
-        ON ((ar.assessment = a.id)))
-        JOIN "verse_text" vt1
-        ON (((ar.vref = vt1.verse_reference)
-        AND (vt1.bible_revision = a.revision))))
-        LEFT JOIN "verse_text" vt2
-        ON (((ar.vref = vt2.verse_reference)
-        AND (vt2.bible_revision = a.reference))))
-        """
-        query_where = {
-                'assessment': assessment_id,
-                '(source IS NULL)': source_null,
-                'ar.book': f"'{book.upper()}'" if book is not None else None,
-                'ar.chapter': chapter if chapter is not None else None,
-                'ar.verse': verse if verse is not None else None,
-        }
-        query_group_by = []
-        query_order_by = None
-
-    else:
-        query_select = """
-                id,
-                assessment,
-                book,
-                chapter,
-                verse,
-                score,
-                source,
-                target,
-                flag,
-                note,
-                NULL::text AS revision_text,
-                NULL::text AS reference_text,
-                hide
-        """
-        query_from = '"assessment_result"'
-        query_where = {
-                'assessment': assessment_id,
-                '(source IS NULL)': source_null,
-                'book': f"'{book.upper()}'" if book is not None else None,
-                'chapter': chapter if chapter is not None else None,
-                'verse': verse if verse is not None else None,
-        }
-        query_group_by = []
-        query_order_by = None
-
-
-    query = f"SELECT {query_select}\n"
-    if query_from:
-        query += f"FROM {query_from}\n"
-    if query_where:
-        query += f"WHERE {' AND '.join([f'{key} = {value}' for key, value in query_where.items() if value is not None])}\n"
-    if query_group_by:
-        query += f"GROUP BY {', '.join(query_group_by)}\n"
-    if query_order_by:
-        query += f"ORDER BY {query_order_by}\n"
-    else:
-        query += "ORDER BY id\n"
-    agg_query = 'SELECT COUNT(*) AS row_count FROM (' + query + ') AS sub;'
-    if query_limit:
-        query += f"LIMIT {query_limit}\n"
-    if query_offset:
-        query += f"OFFSET {query_offset}\n"
-    
-    result_data = await connection.fetch(query)
-    result_agg_data = await connection.fetch(agg_query)
-
+    # Process and format results
     result_list = []
-    for result in result_data:
-        vref = result[2]
-        if result[3] is not None:
-            vref = vref + ' ' + str(result[3])
-            if result[4] is not None:
-                vref = vref + ':' + str(result[4])
+    for row in result_data:
+        # Constructing the verse reference string
+        vref = f"{row.book}"
+        if hasattr(row, "chapter") and row.chapter is not None:
+            vref += f" {row.chapter}"
+            if hasattr(row, "verse") and row.verse is not None:
+                vref += f":{row.verse}"
 
-        results = Result(
-            id=result[0],
-            assessment_id=result[1],
+        # Building the Result object
+        result_obj = Result(
+            id=row.id if hasattr(row, "id") else None,
+            assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
             vref=vref,
-            score=result[5] if result[5] else 0,
-            source=result[6],
-            target=[{key: value} for key, value in ast.literal_eval(str(result[7])).items()] if ast.literal_eval(str(result[7])) and result[7] is not None else None,
-            flag=result[8] if result[8] else False,
-            note=result[9] if result[9] else None,
-            revision_text=result[10],
-            reference_text=result[11],
-            hide=result[12],
-            )
-        result_list.append(results)
-        
-    total_count = result_agg_data[0][0]
-
-    await connection.close()
-
-    return {'results': result_list, 'total_count': total_count}
-
-
-@router.get("/compareresults", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[MultipleResult], int, dict]])
-async def get_compare_results(
-    revision_id: Optional[int] = None,
-    reference_id: Optional[int] = None,
-    assessment_id: Optional[int] = None,
-    baseline_ids: List[int] = Query(None),
-    assessment_type: AssessmentType = AssessmentType('word-alignment'),
-    aggregate: Optional[str] = None,
-    book: Optional[str] = None,
-    chapter: Optional[int] = None,
-    verse: Optional[int] = None,
-    page: Optional[int] = None,
-    page_size: Optional[int] = None,
-    include_text: Optional[bool] = False,
-):
-    """
-    Get results for a given assessment_type for a revision_id and reference_id, optionally filtered by book, chapter, and verse.
-    Compares results from multiple baselines if baseline_ids is set, or from all assessments of assessment_type 
-    with reference reference_id if baseline_ids is not set.
-    Returns a list of results, with:
-
-    score: the score for the given assessment
-    mean_score: the mean score over the baseline assessments
-    stdev_score: the standard deviation of the scores over the baseline assessments
-    z_score: the z-score of the score compared to the baseline assessments
-    
-    """
-    if book and len(book) > 3:  # Important, to protect against SQL injection
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Book must be a valid three-letter book abbreviation."
+            score=row.score if hasattr(row, "score") else None,
+            source=row.source if hasattr(row, "source") else None,
+            target=ast.literal_eval(row.target)
+            if hasattr(row, "target") and row.target is not None
+            else None,
+            flag=row.flag if hasattr(row, "flag") else None,
+            note=row.note if hasattr(row, "note") else None,
+            revision_text=row.revision_text if hasattr(row, "revision_text") else None,
+            reference_text=row.reference_text
+            if hasattr(row, "reference_text")
+            else None,
+            hide=row.hide if hasattr(row, "hide") else None,
         )
-    if include_text and aggregate is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="include_text and aggregate cannot both be set. Text can only be included for verse-level results."
-        )
-    if assessment_id is None and (revision_id is None or reference_id is None):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either assessment_id or both revision_id and reference_id must be set."
-        )
-    if assessment_id is not None and (revision_id is not None or reference_id is not None):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only one of assessment_id or (both revision_id and reference_id) can be set."
-        )
-    if aggregate is not None and aggregate not in ['book', 'chapter']:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Aggregate must be either 'book' or 'chapter', or not set."
-        )
-    if aggregate == 'book' and chapter is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If aggregate is 'book', chapter must not be set."
-        )
-    if aggregate == 'chapter' and verse is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If aggregate is 'chapter', verse must not be set."
-        )
-    if chapter is not None and book is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If chapter is set, book must also be set."
-        )
-    if verse is not None and chapter is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If verse is set, chapter must also be set."
-        )
-    if page is not None and page_size is not None:
-        offset = (page - 1) * page_size
-        limit = page_size
-    else:
-        offset = 0
-        limit = None
+        # Add the Result object to the result list
+        result_list.append(result_obj)
+    total_count = (
+        result_agg_data.scalar()
+    )  # Get the total count from the aggregation query
 
-    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
-    connection = await asyncpg.connect(
-            host=conn_list[3],
-            database=conn_list[4],
-            user=conn_list[1],
-            password=conn_list[2],
-            statement_cache_size=0,
-            )
+    return {"results": result_list, "total_count": total_count}
 
-    list_versions = queries.list_versions_query()
-    version_response = await connection.fetch(list_versions)
-    list_revisions = queries.list_all_revisions_query()
-    revision_response = await connection.fetch(list_revisions)
-
-    if not baseline_ids:
-        # If no baseline ids are requested, use the first revision for each system_ version.
-        system_revisions = {}
-        for revision in revision_response[::-1]:  # Go backwards, so you end up with the first revision for each
-                                                    # version. These are more likely to be assessed, since they 
-                                                    # are used for Missing Words
-            if revision['abbreviation'][:7] == 'system_':
-                system_revisions[revision['abbreviation']] = revision['id']
-        baseline_ids = list(system_revisions.values())
-    
-    list_assessments = queries.list_assessments_query()
-    assessment_response = await connection.fetch(list_assessments)
-    
-    # Get the word alignment assessment ids for the given revision or reference, without duplicates
-    if assessment_id:
-        revision_id = [assessment['revision'] for assessment in assessment_response if assessment['id'] == assessment_id][0]
-        reference_id = [assessment['reference'] for assessment in assessment_response if assessment['id'] == assessment_id][0]
-        assessment_type = AssessmentType([assessment['type'] for assessment in assessment_response if assessment['id'] == assessment_id][0])
-    
-    baseline_revisions = {}
-    for assessment in assessment_response:
-        for baseline_id in baseline_ids:
-            if baseline_id not in baseline_revisions:
-                baseline_revisions[baseline_id] = {}
-                baseline_revisions[baseline_id]['revision_name'] = [revision['name'] for revision in revision_response if revision['id'] == baseline_id][0]
-                baseline_revisions[baseline_id]['version_id'] = [revision['bible_version'] for revision in revision_response if revision['id'] == baseline_id][0]
-
-                baseline_revisions[baseline_id]['version_name'] = [version['name'] for version in version_response if version['id'] == baseline_revisions[baseline_id]['version_id']][0]
-                baseline_revisions[baseline_id]['assessment_id'] = None
-            if assessment['revision'] == baseline_id and assessment['reference'] == reference_id and assessment['type'] == assessment_type.value:
-                baseline_revisions[baseline_id]['assessment_id'] = assessment['id']
-                baseline_revisions[baseline_id]['assessment_status'] = assessment['status']
-                continue
-
-        if not assessment_id and assessment['revision'] == revision_id and assessment['reference'] == reference_id and assessment['type'] == assessment_type.value:
-            assessment_id = assessment['id']
-
-    if not assessment_id:
-        raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"""
-                Assessment for {assessment_type.value} from {revision_id} to {reference_id} not found.
-                Please run this assessment first. 
-                """
-            )
-    baseline_assessment_ids = [baseline_assessments.get('assessment_id') for baseline_assessments in baseline_revisions.values()]
-    baseline_assessment_ids = [assessment_id for assessment_id in baseline_assessment_ids if assessment_id is not None]
-    
-    query_where = {}
-    if book is not None:
-        query_where['book'] = book.upper()
-        if chapter is not None:
-            query_where['chapter'] = chapter
-            if verse is not None:
-                query_where['verse'] = verse
-    query = ''
-
-
-    if len(baseline_assessment_ids) > 0:
-        query += f"""
-            SELECT
-                (row_number() OVER ())::integer AS id,
-                {'baseline.book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
-                {'baseline.chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
-                {'baseline.verse' if aggregate is None else 'NULL::integer AS verse'},
-                revision.score,
-                baseline.mean_score,
-                baseline.stdev_score,
-                CASE
-                    WHEN baseline.stdev_score = 0 THEN 0
-                    ELSE (revision.score - baseline.mean_score) / baseline.stdev_score
-                END AS z_score,
-                baseline.revision_text,
-                baseline.reference_text
-            FROM
-            (
-            SELECT
-                {'baseline_all.book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
-                {'baseline_all.chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
-                {'baseline_all.verse' if aggregate is None else 'NULL::integer AS verse'},
-                COALESCE(avg(NULLIF(baseline_all.score, 'NaN')::numeric), 0) AS mean_score,
-                COALESCE(stddev_pop(NULLIF(baseline_all.score, 'NaN')::numeric), 0) AS stdev_score,
-                baseline_all.revision_text,
-                baseline_all.reference_text
-            FROM (
-            SELECT
-                (row_number() OVER ())::integer AS id,
-                ar.assessment,
-                {'ar.book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
-                {'ar.chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
-                {'ar.verse' if aggregate is None else 'NULL::integer AS verse'},
-                {'vt1.text as revision_text' if include_text else 'NULL::text AS revision_text'},
-                {'vt2.text as reference_text' if include_text else 'NULL::text AS reference_text'},
-                COALESCE(avg(NULLIF(ar.score, 'NaN')::numeric), 0) AS score
-        FROM "assessment_result" ar
-        {f'''
-         JOIN "verse_text" vt1 ON vt1.book = ar.book AND vt1.chapter = ar.chapter AND vt1.verse = ar.verse
-        AND vt1.bible_revision = {revision_id}
-        JOIN "verse_text" vt2 ON vt2.book = ar.book AND vt2.chapter = ar.chapter AND vt2.verse = ar.verse
-        AND vt2.bible_revision = {reference_id}
-         ''' 
-         if include_text else ''}
-        WHERE assessment IN ({', '.join([str(assessment_id) for assessment_id in baseline_assessment_ids])})
-        {"AND ar.book = '" + book + "'" if book is not None else ''}
-        {'AND ar.chapter = ' + str(chapter) if chapter is not None else ''}
-        {'AND ar.verse = ' + str(verse) if verse is not None else ''}
-        GROUP BY ar.assessment, ar.book {', ar.chapter' if aggregate in ['chapter', None] else ''} {', ar.verse' if aggregate is None else ''} {', vt1.text' if include_text else ''} {', vt2.text' if include_text else ''}
-                ) AS baseline_all
-                GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''} , baseline_all.revision_text, baseline_all.reference_text
-                ) AS baseline
-                JOIN
-                (SELECT
-                    (row_number() OVER ())::integer AS id,
-                    {'book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
-                    {'chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
-                    {'verse' if aggregate is None else 'NULL::integer AS verse'},
-                    COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score
-                    FROM "assessment_result"
-                    WHERE assessment = {assessment_id}
-                    {"AND book = '" + book + "'" if book is not None else ''}
-                    {'AND chapter = ' + str(chapter) if chapter is not None else ''}
-                    {'AND verse = ' + str(verse) if verse is not None else ''}
-                GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
-                ) AS revision
-                ON baseline.book = revision.book {'and baseline.chapter = revision.chapter ' if aggregate in ['chapter', None] else ''} {'and baseline.verse = revision.verse ' if aggregate is None else ''}
-                
-        """
-    else:
-        query += f"""
-            SELECT 
-                (row_number() OVER ())::integer AS id,
-                {'book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
-                {'chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
-                {'verse' if aggregate is None else 'NULL::integer AS verse'},
-            COALESCE(avg(NULLIF(score, 'NaN')::numeric), 0) AS score, 
-            NULL::float as mean_score, 
-            0::float as stdev_score, 
-            0::float as z_score,
-            {'vt1.text as revision_text' if include_text else 'NULL::text AS revision_text'},
-            {'vt2.text as reference_text' if include_text else 'NULL::text AS reference_text'}
-            FROM
-            "assessment_result"
-            {f'''
-            JOIN "verse_text" vt1 ON vt1.book = ar.book AND vt1.chapter = ar.chapter AND vt1.verse = ar.verse
-            AND vt1.bible_revision = {revision_id}
-            JOIN "verse_text" vt2 ON vt2.book = ar.book AND vt2.chapter = ar.chapter AND vt2.verse = ar.verse
-            AND vt2.bible_revision = {reference_id}
-            ''' 
-         if include_text else ''}
-            WHERE assessment={assessment_id}
-                    {"AND book = '" + book + "'" if book is not None else ''}
-                    {'AND chapter = ' + str(chapter) if chapter is not None else ''}
-                    {'AND verse = ' + str(verse) if verse is not None else ''}
-            GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
-            """
-    
-    agg_query = 'SELECT COUNT(*) AS row_count FROM (' + query + ') AS sub;'
-    
-    query += f"LIMIT {str(limit)} " if limit is not None else ''
-    query += f"OFFSET {str(offset)}" if offset is not None else ''
-    result_data = await connection.fetch(query)
-    result_agg_data = await connection.fetch(agg_query)
-    await connection.close()
-
-    result_list = []
-
-    for result in result_data:
-        vref = result[1]
-        if result[2] is not None:
-            vref = vref + ' ' + str(result[2])
-            if result[3] is not None:
-                vref = vref + ':' + str(result[3])
-
-        results = MultipleResult(
-            id=result[0],
-            assessment_id=assessment_id,
-            revision_id=revision_id,
-            reference_id=reference_id,
-            vref=vref,
-            score=result[4] if result[4] else 0,
-            mean_score=result[5] if result[5] else 0,
-            stdev_score=result[6] if result[6] else 0,
-            z_score=result[7] if result[7] else 0,
-            revision_text=result[8],
-            reference_text=result[9],
-            )
-        result_list.append(results)
-    
-    total_count = result_agg_data[0][0]
-
-    return {'results': result_list, 'total_count': total_count, 'baseline_revisions': baseline_revisions}
-
-
-@router.get("/averageresults", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[Result], int]])
-async def get_average_results(
-    revision_id: Optional[int] = None,
-    reference_id: Optional[int] = None,
-    assessment_type: str = 'word-alignment',
-    book: Optional[str] = None,
-    chapter: Optional[int] = None,
-    verse: Optional[int] = None,
-    aggregate: Optional[aggType] = None, 
-    include_text: bool = False,
-    page: Optional[int] = None,
-    page_size: Optional[int] = None,
-):
-    if book is None and aggregate is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If book is not set, aggregate must be set."
-        )
-    if revision_id is None != reference_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Either revision_id or reference_id must be set."
-        )
-    
-    if chapter is not None and book is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If chapter is set, book must also be set."
-        )
-
-    if verse is not None and chapter is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If verse is set, chapter must also be set."
-        )
-    
-    if aggregate is not None and include_text:
-        raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results."
-        )
-    
-    if page is not None and page_size is not None:
-        offset = (page - 1) * page_size
-        limit = page_size
-    else:
-        offset = 0
-        limit = None
-
-    query_limit = limit
-    query_offset = offset
-
-    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
-    connection = await asyncpg.connect(
-            host=conn_list[3],
-            database=conn_list[4],
-            user=conn_list[1],
-            password=conn_list[2],
-            )
-
-    list_assessments = queries.list_assessments_query()
-
-    assessment_response = await connection.fetch(list_assessments)
-
-    # Get the word alignment assessment ids for the given revision or reference, without duplicates
-    filtered_assessments = {}
-    if revision_id:
-        for assessment in assessment_response:
-            if assessment['revision'] == revision_id and assessment['type'] == assessment_type:
-                filtered_assessments[assessment['reference']] = assessment['id']
-    else:
-        for assessment in assessment_response:
-            if assessment['reference'] == reference_id and assessment['type'] == assessment_type:
-                filtered_assessments[assessment['revision']] = assessment['id']
-    assessment_ids = list(filtered_assessments.values())
-    if len(assessment_ids) == 0:
-        return {'results': [], 'total_count': 0}
-    
-    if aggregate == aggType['chapter']:
-        query_select = """
-                (row_number() OVER ())::integer AS id,
-                NULL::INTEGER AS assessment,
-                book,
-                chapter,
-                NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
-                NULL::text AS source,
-                NULL::text AS target,
-                false AS flag,
-                NULL::text AS note,
-                NULL::text AS revision_text,
-                NULL::text AS reference_text,
-                false AS hide
-        """
-        query_from = '"assessment_result"'
-        query_where = {
-                'book': f"'{book.upper()}'" if book is not None else None,
-                'chapter': chapter if chapter is not None else None,
-        }
-        query_order_by = None
-    
-    elif aggregate == aggType['book']:
-        query_select = """
-                (row_number() OVER ())::integer AS id,
-                NULL::INTEGER AS assessment,
-                book,
-                NULL::integer AS chapter,
-                NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
-                NULL::text AS source,
-                NULL::text AS target,
-                false AS flag,
-                NULL::text AS note,
-                NULL::text AS revision_text,
-                NULL::text AS reference_text,
-                false AS hide
-        """
-        query_from = '"assessment_result"'
-        query_where = {
-                'book': f"'{book.upper()}'" if book is not None else None,
-        }
-        query_order_by = None
-
-    elif aggregate == aggType['text']:
-        query_select = """
-                (row_number() OVER ())::integer AS id,
-                NULL::INTEGER AS assessment,
-                NULL::text AS book,
-                NULL::integer AS chapter,
-                NULL::integer AS verse,
-                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
-                NULL::text AS source,
-                NULL::text AS target,
-                false AS flag,
-                NULL::text AS note,
-                NULL::text AS revision_text,
-                NULL::text AS reference_text,
-                false AS hide
-        """
-
-        query_from = '"assessment_result"'
-        query_where = {
-        }
-        query_order_by = None
-
-    elif include_text:
-        query_select = """
-                (row_number() OVER ())::integer AS id,
-                NULL::INTEGER AS assessment,
-                ar.book,
-                ar.chapter,
-                ar.verse,
-                COALESCE(avg(NULLIF(ar.score, 'NaN')::numeric), 0) AS score,
-                NULL::text AS source,
-                NULL::text AS target,
-                false AS flag,
-                NULL::text AS note,
-                """
-        if revision_id:
-            query_select += "vt.text AS revision_text,\n"
-        else:
-            query_select += "NULL::text AS revision_text,\n"
-        if reference_id:
-            query_select += "vt.text AS reference_text,\n"
-        else:
-            query_select += "NULL::text AS reference_text,\n"
-        query_select += """
-                false AS hide
-                """
-        query_from = """
-        "assessment_result" AS ar
-                            INNER JOIN "verse_text" AS vt ON ar.book = vt.book 
-                            AND ar.chapter = vt.chapter 
-                            AND ar.verse = vt.verse 
-                            """
-        if revision_id:
-            query_from += f"""
-                            AND vt.bible_revision = {revision_id}
-        """
-        else:
-            query_from += f"""
-                            AND vt.bible_revision = {reference_id}
-        """
-        query_where = {
-                'ar.book': f"'{book.upper()}'" if book is not None else None,
-                'ar.chapter': chapter if chapter is not None else None,
-                'ar.verse': verse if verse is not None else None,
-        }
-        query_order_by = None
-
-    else:
-        query_select = """
-                (row_number() OVER ())::integer AS id,
-                NULL::INTEGER AS assessment,
-                book,
-                chapter,
-                verse,
-                COALESCE(avg(NULLIF("assessment_result".score, 'NaN')::numeric), 0) AS score,
-                NULL::text AS source,
-                NULL::text AS target,
-                false AS flag,
-                NULL::text AS note,
-                NULL::text AS revision_text,
-                NULL::text AS reference_text,
-                false AS hide
-        """
-        query_from = '"assessment_result"'
-        query_where = {
-                'book': f"'{book.upper()}'" if book is not None else None,
-                'chapter': chapter if chapter is not None else None,
-                'verse': verse if verse is not None else None,
-        }
-        query_order_by = None
-
-    query = f"SELECT {query_select}\n"
-    if query_from:
-        query += f"FROM {query_from}\n"
-    if include_text:
-        query += f"WHERE ar.assessment IN ({', '.join([str(assessment_id) for assessment_id in assessment_ids])})"
-    else:
-        query += f"WHERE assessment IN ({', '.join([str(assessment_id) for assessment_id in assessment_ids])})"
-
-    if any(value is not None for value in query_where.values()):
-        query += f" AND {' AND '.join([f'{key} = {value}' for key, value in query_where.items() if value is not None])}\n"
-
-    if query_where:
-        query += f"""
-                GROUP BY {" ,".join([str(key) for key in query_where.keys()])}\n
-            """
-    if include_text:
-        query += """
-               , vt.text 
-            """
-    if query_order_by:
-        query += f"ORDER BY {query_order_by}\n"
-    else:
-        query += "ORDER BY id\n"
-    agg_query = 'SELECT COUNT(*) AS row_count FROM (' + query + ') AS sub;'
-    
-    if query_limit:
-        query += f"LIMIT {query_limit}\n"
-    if query_offset:
-        query += f"OFFSET {query_offset}\n"
-    
-    result_data = await connection.fetch(query)
-    result_agg_data = await connection.fetch(agg_query)
-
-    result_list = []
-    for result in result_data:
-        vref = result[2]
-        if result[3] is not None:
-            vref = vref + ' ' + str(result[3])
-            if result[4] is not None:
-                vref = vref + ':' + str(result[4])
-
-        results = Result(
-            id=result[0],
-            assessment_id=result[1],
-            vref=vref,
-            score=result[5] if result[5] else 0,
-            source=result[6],
-            target=[{key: value} for key, value in ast.literal_eval(str(result[7])).items()] if ast.literal_eval(str(result[7])) and result[7] is not None else None,
-            flag=result[8] if result[8] else False,
-            note=result[9] if result[9] else None,
-            revision_text=result[10],
-            reference_text=result[11],
-            hide=result[12],
-            )
-        result_list.append(results)
-        
-    total_count = result_agg_data[0][0]
-
-    await connection.close()
-
-    return {'results': result_list, 'total_count': total_count}
-    # return {}
-
-
-@router.get("/alignmentscores", dependencies=[Depends(api_key_auth)], response_model=Dict[str, Union[List[WordAlignment], int]])
+@router.get("/alignmentscores",  response_model=Dict[str, Union[List[WordAlignment], int]])
 async def get_alignment_scores(
     assessment_id: int,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
     page: Optional[int] = None, 
-    page_size: Optional[int] = None,
+    page_size: Optional[int] = None,  
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
 ):
     """
     Returns a list of all alignment scores between words for a given word alignment assessment.
@@ -942,102 +348,66 @@ async def get_alignment_scores(
     page_size : int, optional
         The number of results to return per page. If set, page must also be set.
     """
-    
-    if page is not None and page_size is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="If page is set, page_size must also be set."
-            )
+    await validate_parameters(book, chapter, verse )
 
-    if verse is not None and chapter is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="If verse is set, chapter must also be set."
-            )
-    
-    if chapter is not None and book is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="If chapter is set, book must also be set."
-            )
-
-    
-    conn_list = (re.sub("/|:|@", " ", os.getenv("AQUA_DB")).split())
-    connection = await asyncpg.connect(
-            host=conn_list[3],
-            database=conn_list[4],
-            user=conn_list[1],
-            password=conn_list[2],
-            )
-
-    list_assessments = queries.list_assessments_query()
-
-    if page is not None and page_size is not None:
-            offset = (page - 1) * page_size
-            limit = page_size
-    else:
-        offset = 0
-        limit = None
-    
-    if book is not None:
-        vref = book.upper() + ' '
-    else:
-        vref = ''
-
-    if chapter is not None:
-        vref = vref + str(chapter) + ':'
-    
-    if verse is not None:
-        vref = vref + str(verse)
-        fetch_results = queries.get_alignment_scores_exact_query()
-        fetch_results_agg = queries.get_alignment_scores_agg_exact_query()
-    
-    else:
-        fetch_results = queries.get_alignment_scores_like_query()
-        fetch_results_agg = queries.get_alignment_scores_agg_like_query()
-
-    hide_tag = None
-
-    assessment_tag = 1
-    vref_tag = 5
-    source_tag = 6
-    target_tag = 7
-    score_tag = 2
-    flag_tag = 3
-    note_tag = 4
-    hide_tag = 8
-
-    assessment_response = await connection.fetch(list_assessments)
-    assessment_data = []
-    for assessment in assessment_response:
-        if assessment['id'] not in assessment_data:
-            assessment_data.append(assessment['id'])
-
-    if assessment_id not in assessment_data:
+    if not is_user_authorized_for_assessement(current_user.id, assessment_id, db):
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Assessment not found."
-            )
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+    # Initialize base query
+    base_query = db.query(AlignmentTopSourceScores)
 
-    result_data = await connection.fetch(fetch_results, assessment_id, limit, offset, vref)
-    result_agg_data = await connection.fetch(fetch_results_agg, assessment_id, vref)
+    # Pagination logic
+    if page is not None and page_size is not None:
+        offset = (page - 1) * page_size
+        limit = page_size
+        base_query = base_query.offset(offset).limit(limit)
+    else:
+        limit = None  # No pagination applied
+
+    # Constructing the verse reference filter (vref)
+    vref_filter = ""
+    if book is not None:
+        vref_filter += func.upper(book) + ' '  
+    if chapter is not None:
+        vref_filter += str(chapter) + ':'  
+    if verse is not None:
+        vref_filter += str(verse)  
+
+    # Apply vref filter based on its construction
+    if vref_filter:
+        if verse is not None:  # Exact match
+            base_query = base_query.filter(AlignmentTopSourceScores.vref == vref_filter)
+        else:  # LIKE match
+            base_query = base_query.filter(AlignmentTopSourceScores.vref.like(vref_filter + '%'))
+
+    # Fetch results based on constructed filters
+    result_data = base_query.all()
 
     result_list = []
-    for result in result_data:
-        results = WordAlignment(
-            id=result[0],
-            assessment_id=result[assessment_tag],
-            vref=result[vref_tag] if vref_tag is not None else None,
-            source=str(result[source_tag]),
-            target=str(result[target_tag]),
-            score=result[score_tag],
-            flag=result[flag_tag] if result[flag_tag] else False,
-            note=result[note_tag] if result[note_tag] else None,
-            hide=result[hide_tag] if hide_tag and hide_tag in result else False
-            )
-        result_list.append(results)
-    total_count = result_agg_data[0][0]
+    for row in result_data:
+        # Constructing the verse reference string
+        vref = f"{row.book}"
+        if hasattr(row, "chapter") and row.chapter is not None:
+            vref += f" {row.chapter}"
+            if hasattr(row, "verse") and row.verse is not None:
+                vref += f":{row.verse}"
 
-    await connection.close()
-
-    return {'results': result_list, 'total_count': total_count}
+        # Building the Result object
+        result_obj = Result(
+            id=row.id if hasattr(row, "id") else None,
+            assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
+            vref=vref,
+            source=row.source if hasattr(row, "source") else None,
+            target=ast.literal_eval(row.target)
+            if hasattr(row, "target") and row.target is not None
+            else None,
+            flag=row.flag if hasattr(row, "flag") else None,
+            note=row.note if hasattr(row, "note") else None,
+            hide=row.hide if hasattr(row, "hide") else None,
+        )
+        # Add the Result object to the result list
+        result_list.append(result_obj)
+    total_count = len(result_list)
+    return {'results': result_data, 'total_count': total_count}

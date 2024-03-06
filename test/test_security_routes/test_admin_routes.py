@@ -43,6 +43,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
         "username": "new_user",
         "email": "new_user@example.com",
 
+
         "password": "password123",
 
         "is_admin": False,
@@ -78,7 +79,9 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     }
     response = client.post(
         f"{prefix}/change-password",
-        params=password_update ,
+
+        params=password_update,
+
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == 200
