@@ -30,6 +30,7 @@ jobs:
         REGISTRY: ${{ env.AWS_REGISTRY }}
       
     - name: Test API
+      env: OMIT_PREVIOUS_VERSIONS=true
       run: |
         pip install -r requirements.txt
         make test
