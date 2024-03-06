@@ -23,7 +23,30 @@ from database.models import (
 import bcrypt
 from datetime import date
 import pandas as pd
+from unittest.mock import Mock
+# Add the new fixture for mocking get_secret
+mock_router = Mock()
 
+modules_to_mock = [
+    'bible_routes.v1.language_routes',
+    'bible_routes.v2.language_routes',
+    'bible_routes.v1.version_routes',
+    'bible_routes.v2.version_routes',
+    'bible_routes.v1.revision_routes',
+    'bible_routes.v2.revision_routes',
+    'bible_routes.v1.verse_routes',
+    'bible_routes.v2.verse_routes',
+    'assessment_routes.v1.assessment_routes',
+    'assessment_routes.v2.assessment_routes',
+    'review_routes.v1.results_routes',
+    'review_routes.v2.results_routes'
+]
+
+
+@pytest.fixture(autouse=True)
+def mock_v1_v2_routes(monkeypatch):
+    for module_path in modules_to_mock:
+        monkeypatch.setattr(f"{module_path}.router", mock_router)
 engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
