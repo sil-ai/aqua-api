@@ -30,18 +30,6 @@ jobs:
       
     - name: Test API
       run: make test
-      env:
-        AWS_ACCESS_KEY: ${{ secrets.AWS_ACCESS_KEY }}
-        AWS_SECRET_KEY: ${{ secrets.AWS_SECRET_KEY }}
-        GRAPHQL_URL: ${{ secrets.GRAPHQL_URL }}
-        GRAPHQL_SECRET: ${{ secrets.GRAPHQL_SECRET }}
-        AQUA_DB: ${{ secrets.AQUA_DB }}
-        AQUA_URL: ${{ secrets.AQUA_URL }}
-        TEST_KEY: ${{ secrets.TEST_KEY }}
-        FAIL_KEY: ${{ secrets.FAIL_KEY }}
-        KEY_VAULT: ${{ secrets.KEY_VAULT }}
-        REGISTRY: ${{ env.AWS_REGISTRY }}
-        MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
