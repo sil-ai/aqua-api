@@ -63,41 +63,40 @@ def configure(app):
 
 
 def configure_routing(app):
-    app.include_router(language_router_v1, tags=["Version 1 / default"])
     #for now the / endpoint points to v1
     #TODO: change this when client changes software to match
 
     #!!!: send a deprecation notice but leave the v1 route for awhile
     #if v2 is introduced but change /latest and / to /v2/language_routes.router
+    omit_previous_versions = os.getenv('OMIT_PREVIOUS_VERSIONS', False)
 
-    app.include_router(language_router_v1, prefix="/v1", tags=["Version 1"])
-    app.include_router(language_router_v2, prefix="/v2", tags=["Version 2"])
+    if not omit_previous_versions:
+        app.include_router(language_router_v1, prefix="/v1", tags=["Version 1"])
+        app.include_router(revision_router_v1, prefix="/v1", tags=["Version 1"])
+        app.include_router(version_router_v1, prefix="/v1", tags=["Version 1"])
+        app.include_router(verse_router_v1, prefix="/v1", tags=["Version 1"])
+        app.include_router(assessment_router_v1, prefix="/v1", tags=["Version 1"])
+        app.include_router(results_router_v1, prefix="/v1", tags=["Version 1"])
+
+        app.include_router(language_router_v2, prefix="/v2", tags=["Version 2"])
+        app.include_router(revision_router_v2, prefix="/v2", tags=["Version 2"])
+        app.include_router(version_router_v2, prefix="/v2", tags=["Version 2"])
+        app.include_router(verse_router_v2, prefix="/v2", tags=["Version 2"])
+        app.include_router(assessment_router_v2, prefix="/v2", tags=["Version 2"])
+        app.include_router(results_router_v2, prefix="/v2", tags=["Version 2"])
+
     app.include_router(language_router_v3, prefix="/v3", tags=["Version 3"])
-    app.include_router(language_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
-
-    app.include_router(revision_router_v1, prefix="/v1", tags=["Version 1"])
-    app.include_router(revision_router_v2, prefix="/v2", tags=["Version 2"])
     app.include_router(revision_router_v3, prefix="/v3", tags=["Version 3"])
-    app.include_router(revision_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
-
-    app.include_router(version_router_v1, prefix="/v1", tags=["Version 1"])
-    app.include_router(version_router_v2, prefix="/v2", tags=["Version 2"])
     app.include_router(version_router_v3, prefix="/v3", tags=["Version 3"])
-    app.include_router(version_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
-
-    app.include_router(verse_router_v1, prefix="/v1", tags=["Version 1"])
-    app.include_router(verse_router_v2, prefix="/v2", tags=["Version 2"])
     app.include_router(verse_router_v3, prefix="/v3", tags=["Version 3"])
-    app.include_router(verse_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
-
-    app.include_router(assessment_router_v1, prefix="/v1", tags=["Version 1"])
-    app.include_router(assessment_router_v2, prefix="/v2", tags=["Version 2"])
     app.include_router(assessment_router_v3, prefix="/v3", tags=["Version 3"])
-    app.include_router(assessment_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
-
-    app.include_router(results_router_v1, prefix="/v1", tags=["Version 1"])
-    app.include_router(results_router_v2, prefix="/v2", tags=["Version 2"])
     app.include_router(results_router_v3, prefix="/v3", tags=["Version 3"])
+
+    app.include_router(language_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(revision_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(version_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(verse_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(assessment_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(results_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
 
     app.include_router(security_router, prefix="/latest", tags=["Latest"])
