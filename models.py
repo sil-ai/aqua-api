@@ -27,7 +27,7 @@ class VersionOut(BaseModel):
     forwardTranslation: Union[int, None] = None
     backTranslation: Union[int, None] = None
     machineTranslation: bool = False
-
+    owner_id : int
 
 class RevisionIn(BaseModel):
     version_id: int
