@@ -28,7 +28,7 @@ def create_bible_version(client, regular_token1):
     # Fetch a version ID for testing
     headers = {"Authorization": f"Bearer {regular_token1}"}
     create_response = client.post(
-        f"{prefix}/version", params=new_version_data, headers=headers
+        f"{prefix}/version", json=new_version_data, headers=headers
     )
     assert create_response.status_code == 200
     version_id = create_response.json().get("id")

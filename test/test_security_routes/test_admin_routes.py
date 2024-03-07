@@ -178,9 +178,9 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
 
     # send a post request to unlink the user from the group as an admin
     response = client.post(
-        "/unlink-user-group",
+        f"{prefix}/unlink-user-group",
         headers={"Authorization": f"Bearer {admin_token}"},
-        params={"username": "testuser1", "groupname": "testgroup1"},
+        params={"username": "testuser1", "groupname": "Group1"},
     )
     assert response.status_code == 204
 

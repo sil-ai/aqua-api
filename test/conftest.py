@@ -1,7 +1,5 @@
 # version_id conftest.py
 
-from app import app  # Import your FastAPI application instance
-import os
 import pytest
 import sqlalchemy as db
 from fastapi.testclient import TestClient
@@ -23,6 +21,7 @@ from database.models import (
 import bcrypt
 from datetime import date
 import pandas as pd
+from app import app  
 
 engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

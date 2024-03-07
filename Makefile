@@ -11,10 +11,12 @@ build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
 localdb-up:
-	export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
-	docker-compose  up -d db 
-	sleep 5 # too fast for db to start
-	cd alembic && alembic upgrade head
+	@export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
+	docker-compose up -d db && \
+	sleep 5 && \
+	cd alembic && AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" alembic upgrade head && \
+	cd ..
+
 
 up:
 	docker-compose up -d
@@ -22,11 +24,10 @@ up:
 down:
 	docker-compose down
 
-test: 
-	docker-compose run --rm api /bin/sh -c "cd /alembic && alembic upgrade head "
-	export AQUA_DB="postgresql://dbuser:dbpassword@db/dbname" && \
-	docker-compose run --rm api  pytest -v
-
+test: localdb-up
+	@export PYTHONPATH=${PWD} && \
+	export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
+	pytest test
 	
 push-branch:
 	docker push ${REGISTRY}/${IMAGENAME}:latest
