@@ -21,7 +21,6 @@ from database.models import (
 import bcrypt
 from datetime import date
 import pandas as pd
-from unittest.mock import Mock
 from app import app  
 
 engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
