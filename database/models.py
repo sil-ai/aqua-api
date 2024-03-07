@@ -131,7 +131,7 @@ class BibleVersion(Base):
     machine_translation = Column(Boolean)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
-    owner_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    owner_id = Column(Integer, ForeignKey('users.id'), nullable=True, default=None)
 
     owner = relationship("UserDB", backref=backref("bible_versions"))
     back_translation = relationship('BibleVersion', remote_side=[id])
