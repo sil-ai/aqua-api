@@ -40,8 +40,14 @@ class TestRegularUserFlow:
             f"{prefix}/version", json=new_version_data, headers=headers
         )
         assert create_response.status_code == 200
+        # confirm that the response has an owner_id field
+        assert create_response.json().get("owner_id") is not None
+        owner_id = create_response.json().get("owner_id")
+        # check owner_id in the db is the test user1 id
+        user = db_session.query(UserModel).filter_by(username="testuser1").first()
+        assert user.id == owner_id
+        
         version_id = create_response.json().get("id")
-
         # Verify creation in DB
         access_entries = (
             db_session.query(BibleVersionAccess, UserModel, Group)
@@ -75,7 +81,7 @@ class TestRegularUserFlow:
         assert version["forwardTranslation"] is None  # or compare as needed
         assert version["backTranslation"] is None  # or compare as needed
         assert version["machineTranslation"] is False
-
+        assert version["owner_id"] == user.id
         # Check that user 2 does not get anything back
         headers2 = {"Authorization": f"Bearer {regular_token2}"}
         list_response = client.get(f"{prefix}/version", headers=headers2)
