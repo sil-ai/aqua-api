@@ -87,7 +87,11 @@ async def list_revisions(
         )
     else:
         # List all revisions, but filter based on user authorization and filter based on deleted status
-        revisions = db.query(BibleRevisionModel).filter(BibleRevisionModel.deleted.is_(False)).all()
+        revisions = (
+            db.query(BibleRevisionModel)
+            .filter(BibleRevisionModel.deleted.is_(False))
+            .all()
+        )
         revisions = [
             revision
             for revision in revisions
@@ -158,7 +162,7 @@ async def upload_revision(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Version is deleted"
         )
-        
+
     new_revision = BibleRevisionModel(
         bible_version_id=revision.version_id,
         name=revision.name,
@@ -213,7 +217,7 @@ async def delete_revision(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to delete this revision.",
         )
-    
+
     # delete the revision by updating the boolean field deleted to True and the deletedAt field to the current time
     revision.deleted = True
     revision.deletedAt = date.today()

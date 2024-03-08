@@ -46,7 +46,7 @@ async def list_version(
             .join(
                 BibleVersionAccess,
                 BibleVersionModel.id == BibleVersionAccess.bible_version_id,
-            ) # filter versions that are not deleted
+            )  # filter versions that are not deleted
             .filter(BibleVersionModel.deleted.is_(False))
             .filter(BibleVersionAccess.group_id.in_(user_group_ids))
             .all()

@@ -128,16 +128,19 @@ def count_verses_in_revision(db_session, revision_id):
     return (
         db_session.query(VerseText)
         .join(BibleRevisionModel, BibleRevisionModel.id == VerseText.revision_id)
-        .filter(BibleRevisionModel.deleted.is_(False), VerseText.revision_id == revision_id)
+        .filter(
+            BibleRevisionModel.deleted.is_(False), VerseText.revision_id == revision_id
+        )
         .count()
     )
- 
+
 
 def revision_exists(db_session, revision_id):
     return (
         db_session.query(BibleRevisionModel)
         .filter(
-            BibleRevisionModel.deleted.is_(False) & (BibleRevisionModel.id == revision_id)
+            BibleRevisionModel.deleted.is_(False)
+            & (BibleRevisionModel.id == revision_id)
         )
         .count()
         > 0
