@@ -69,6 +69,7 @@ class AssessmentType(Enum):
 
 
 class AssessmentIn(BaseModel):
+    id: Optional[int] = None
     revision_id: int
     reference_id: Optional[int] = None
     type: AssessmentType

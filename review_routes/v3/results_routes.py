@@ -90,7 +90,7 @@ async def build_results_query(
     # Modify query based on aggregation and include_text
     if aggregate == aggType.chapter:
         base_query = base_query.with_entities(
-            AssessmentResult.id,
+            func.min(AssessmentResult.id).label("id"),
             AssessmentResult.assessment_id,
             AssessmentResult.book,
             AssessmentResult.chapter,
@@ -98,25 +98,26 @@ async def build_results_query(
             func.bool_or(AssessmentResult.flag).label("flag"),
             func.bool_or(AssessmentResult.hide).label("hide"),
         ).group_by(
-            AssessmentResult.id,
             AssessmentResult.assessment_id,
             AssessmentResult.book,
             AssessmentResult.chapter,
-        )
+        ).order_by("id")
+
     elif aggregate == aggType.book:
         base_query = base_query.with_entities(
-            AssessmentResult.id,
+            func.min(AssessmentResult.id).label("id"),
             AssessmentResult.assessment_id,
             AssessmentResult.book,
             func.avg(AssessmentResult.score).label("score"),
             func.bool_or(AssessmentResult.flag).label("flag"),
             func.bool_or(AssessmentResult.hide).label("hide"),
         ).group_by(
-            AssessmentResult.id, AssessmentResult.assessment_id, AssessmentResult.book
-        )
+            AssessmentResult.assessment_id, AssessmentResult.book
+        ).order_by("id")
+
     elif aggregate == aggType.text:
         base_query = base_query.with_entities(
-            AssessmentResult.id,
+            func.min(AssessmentResult.id).label("id"),
             AssessmentResult.assessment_id,
             AssessmentResult.book,
             AssessmentResult.chapter,
@@ -125,9 +126,8 @@ async def build_results_query(
             func.bool_or(AssessmentResult.flag).label("flag"),
             func.bool_or(AssessmentResult.hide).label("hide"),
         ).group_by(
-            AssessmentResult.id,
             AssessmentResult.assessment_id,
-        )
+        ).order_by("id")
 
     elif include_text:
         # Aliasing VerseText for revision and reference texts
