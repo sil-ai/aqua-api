@@ -12,6 +12,8 @@ from sqlalchemy.sql import and_, select
 from database.models import (
     AssessmentResult,
     Assessment,
+    BibleVersion,
+    BibleRevision,
     AlignmentTopSourceScores,
     VerseText,
     UserDB as UserModel,
@@ -232,6 +234,120 @@ async def build_results_query(
     )
 
 
+async def build_compare_results_query(
+    revision_id: Optional[int],
+    reference_id: Optional[int],
+    baseline_ids: Optional[List[int]],
+    aggregate: Optional[str],
+    book: Optional[str],
+    chapter: Optional[int],
+    verse: Optional[int],
+    page: Optional[int],
+    page_size: Optional[int],
+    include_text: Optional[bool],
+    db: Session,
+) -> Tuple:
+    # Initialize the base query
+    if book and len(book) > 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Book must be a valid three-letter book abbreviation."
+        )
+    if include_text and aggregate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="include_text and aggregate cannot both be set. Text can only be included for verse-level results."
+        )
+    if aggregate is not None and aggregate not in ['book', 'chapter']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aggregate must be either 'book' or 'chapter', or not set."
+        )
+    if aggregate == 'book' and chapter is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If aggregate is 'book', chapter must not be set."
+        )
+    if aggregate == 'chapter' and verse is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If aggregate is 'chapter', verse must not be set."
+        )
+    if chapter is not None and book is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If chapter is set, book must also be set."
+        )
+    if verse is not None and chapter is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If verse is set, chapter must also be set."
+        )
+    if page is not None and page_size is not None:
+        offset = (page - 1) * page_size
+        limit = page_size
+
+    if not baseline_ids:
+        baseline_ids = []
+
+    else:
+        offset = 0
+        limit = None
+
+    # Subquery to find the latest end_time for each combination
+    subq = (db.query(
+        Assessment.revision_id,
+        Assessment.reference_id,
+        Assessment.type,
+        func.max(Assessment.end_time).label('max_end_time')
+    )
+    .filter(Assessment.revision_id.in_([revision_id, *baseline_ids]),
+            Assessment.reference_id == reference_id,
+            Assessment.type == 'word-alignment')
+    .group_by(Assessment.revision_id, Assessment.reference_id, Assessment.type)
+    .subquery())
+    latest_assessments = (db.query(Assessment)
+    .join(subq, and_(
+        Assessment.revision_id == subq.c.revision_id,
+        Assessment.reference_id == subq.c.reference_id,
+        Assessment.type == subq.c.type,
+        Assessment.end_time == subq.c.max_end_time))
+    .all())
+    baseline_assessment_ids = [assessment for assessment in latest_assessments if assessment.revision_id in baseline_ids]
+
+    baseline_all_query =  db.query(
+        AssessmentResult.book.label('book'),
+        AssessmentResult.chapter.label('chapter'),
+        AssessmentResult.verse.label('verse'),
+        func.coalesce(func.avg(func.nullif(AssessmentResult.score, 'NaN')), 0).label('score'),
+        # Add other necessary fields and conditions
+    )
+    if book:
+        baseline_all_query = baseline_all_query.filter(AssessmentResult.book == book)
+    if chapter:
+        baseline_all_query = baseline_all_query.filter(AssessmentResult.chapter == chapter)
+    if verse:
+        baseline_all_query = baseline_all_query.filter(AssessmentResult.verse == verse)
+    baseline_all_subq = baseline_all_query.group_by(AssessmentResult.book, AssessmentResult.chapter, AssessmentResult.verse).subquery()
+
+    
+
+
+    results_query = db.query(AssessmentResult).filter()
+
+
+    revisions = db.query(BibleRevision).filter(
+        BibleRevision.id in [revision_id, *baseline_ids]
+    )
+    versions = db.query(BibleVersion).filter(
+        BibleVersion.id in [r.bible_version_id for r in revisions]
+    )
+
+    return baseline_all_query, None
+    
+
+
+
 @router.get(
     "/result",
     response_model=Dict[str, Union[List[Result], int]],
@@ -341,6 +457,43 @@ async def get_result(
     )  # Get the total count from the aggregation query
 
     return {"results": result_list, "total_count": total_count}
+
+
+@router.get("/compareresults", response_model=Dict[str, Union[List[Result], int]])
+async def get_compare_results(
+    revision_id: int,
+    reference_id: int,
+    baseline_ids: Optional[List[int]] = None,
+    aggregate: Optional[str] = None,
+    book: Optional[str] = None,
+    chapter: Optional[int] = None,
+    verse: Optional[int] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    include_text: Optional[bool] = False,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+    
+):
+    """
+    """
+    query, _ = await build_compare_results_query(
+        revision_id,
+        reference_id,
+        baseline_ids,
+        aggregate,
+        book,
+        chapter,
+        verse,
+        page,
+        page_size,
+        include_text,
+        db,
+    )
+
+    print(f'{str(query)=}')
+
+    return {"results": [], "total_count": 0}
 
 
 @router.get(
