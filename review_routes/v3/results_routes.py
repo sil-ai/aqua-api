@@ -202,7 +202,22 @@ async def build_results_query(
     if verse:
         count_query = count_query.filter(AssessmentResult.verse == verse)
     # Note: For aggregated results, the count might need to be derived differently
-
+        
+    if aggregate == aggType.chapter:
+        count_query = count_query.group_by(
+                AssessmentResult.assessment_id,
+                AssessmentResult.book,
+                AssessmentResult.chapter,
+            )
+    elif aggregate == aggType.book:
+        count_query = count_query.group_by(
+                AssessmentResult.assessment_id, AssessmentResult.book
+            )
+    elif aggregate == aggType.text:
+        count_query = count_query.group_by(
+                AssessmentResult.assessment_id,
+            )
+        
     return (
         base_query,
         count_query,
