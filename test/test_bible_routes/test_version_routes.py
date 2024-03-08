@@ -78,8 +78,8 @@ class TestRegularUserFlow:
         assert version["iso_script"] == new_version_data["iso_script"]
         assert version["abbreviation"] == new_version_data["abbreviation"]
         assert version["rights"] == new_version_data["rights"]
-        assert version["forwardTranslation"] is None  # or compare as needed
-        assert version["backTranslation"] is None  # or compare as needed
+        assert version["forward_translation_id"] is None  # or compare as needed
+        assert version["back_translation_id"] is None  # or compare as needed
         assert version["machineTranslation"] is False
         assert version["owner_id"] == user.id
         # Check that user 2 does not get anything back
