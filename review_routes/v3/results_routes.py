@@ -8,7 +8,7 @@ from enum import Enum
 from database.dependencies import get_db
 from sqlalchemy.orm import aliased
 from sqlalchemy import func
-from sqlalchemy.sql import and_
+from sqlalchemy.sql import and_, select
 from database.models import AssessmentResult, Assessment, AlignmentTopSourceScores, VerseText, UserDB as UserModel
 from security_routes.utilities import is_user_authorized_for_assessement
 from security_routes.auth_routes import get_current_user
@@ -218,6 +218,8 @@ async def build_results_query(
                 AssessmentResult.assessment_id,
             )
         
+    count_query = select([func.count()]).select_from(count_query)
+
     return (
         base_query,
         count_query,
