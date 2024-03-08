@@ -60,14 +60,8 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
 
 # Helper function to call assessment runner
 def call_assessment_runner(assessment: AssessmentIn, modal_suffix: str, return_all_results: bool):
-    dash_modal_suffix = f'-{modal_suffix}' if modal_suffix else ''
-    runner_url = f"https://sil-ai--runner{dash_modal_suffix}-assessment-runner.modal.run/"
-
-    AQUA_DB = os.getenv("AQUA_DB")
-    AQUA_DB_BYTES = AQUA_DB.encode('utf-8')
-    AQUA_DB_ENCODED = base64.b64encode(AQUA_DB_BYTES).decode('utf-8')
+    runner_url = f"https://sil-ai--runner-{modal_suffix.replace('_', '')}-assessment-runner.modal.run/"
     params = {
-        'AQUA_DB_ENCODED': AQUA_DB_ENCODED,
         'modal_suffix': modal_suffix,
         'return_all_results': return_all_results,
     }
@@ -123,6 +117,7 @@ async def add_assessment(
     db.add(assessment)
     db.commit()
     db.refresh(assessment)
+    a.id = assessment.id
 
     # If the user is not an admin, link the assessment to their groups
     if not current_user.is_admin:
