@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from security_routes.utilities import verify_password
@@ -11,6 +10,7 @@ from database.models import (
 
 
 prefix = "/latest"
+
 
 def user_exists(db_session, username):
     return db_session.query(UserDB).filter(UserDB.username == username).count() > 0
@@ -42,10 +42,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     new_user_data = {
         "username": "new_user",
         "email": "new_user@example.com",
-
-
         "password": "password123",
-
         "is_admin": False,
     }
 
@@ -79,16 +76,13 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     }
     response = client.post(
         f"{prefix}/change-password",
-
         params=password_update,
-
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == 200
     # verify the password change in the database
     user = test_db_session.query(UserDB).filter(UserDB.username == "new_user").first()
     assert verify_password("newpassword", user.hashed_password)
-
 
     # Send a POST request to created a new user with the same username
     response = client.post(
@@ -121,14 +115,15 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.json()["description"] == group_data["description"]
     assert group_exists(test_db_session, group_data["name"])
 
-    #Send a GET request to get all the groups
+    # Send a GET request to get all the groups
     response = client.get(
         f"{prefix}/groups",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == status.HTTP_200_OK
     assert any(
-        d.get("name") == group_data["name"] and d.get("description") == group_data["description"]
+        d.get("name") == group_data["name"]
+        and d.get("description") == group_data["description"]
         for d in response.json()
     )
 

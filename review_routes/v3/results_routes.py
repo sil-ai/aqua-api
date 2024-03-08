@@ -9,7 +9,13 @@ from database.dependencies import get_db
 from sqlalchemy.orm import aliased
 from sqlalchemy import func
 from sqlalchemy.sql import and_
-from database.models import AssessmentResult, Assessment, AlignmentTopSourceScores, VerseText, UserDB as UserModel
+from database.models import (
+    AssessmentResult,
+    Assessment,
+    AlignmentTopSourceScores,
+    VerseText,
+    UserDB as UserModel,
+)
 from security_routes.utilities import is_user_authorized_for_assessement
 from security_routes.auth_routes import get_current_user
 from models import Result_v2 as Result, WordAlignment
@@ -319,14 +325,17 @@ async def get_result(
 
     return {"results": result_list, "total_count": total_count}
 
-@router.get("/alignmentscores",  response_model=Dict[str, Union[List[WordAlignment], int]])
+
+@router.get(
+    "/alignmentscores", response_model=Dict[str, Union[List[WordAlignment], int]]
+)
 async def get_alignment_scores(
     assessment_id: int,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
-    page: Optional[int] = None, 
-    page_size: Optional[int] = None,  
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -348,7 +357,7 @@ async def get_alignment_scores(
     page_size : int, optional
         The number of results to return per page. If set, page must also be set.
     """
-    await validate_parameters(book, chapter, verse )
+    await validate_parameters(book, chapter, verse)
 
     if not is_user_authorized_for_assessement(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -369,18 +378,20 @@ async def get_alignment_scores(
     # Constructing the verse reference filter (vref)
     vref_filter = ""
     if book is not None:
-        vref_filter += func.upper(book) + ' '  
+        vref_filter += func.upper(book) + " "
     if chapter is not None:
-        vref_filter += str(chapter) + ':'  
+        vref_filter += str(chapter) + ":"
     if verse is not None:
-        vref_filter += str(verse)  
+        vref_filter += str(verse)
 
     # Apply vref filter based on its construction
     if vref_filter:
         if verse is not None:  # Exact match
             base_query = base_query.filter(AlignmentTopSourceScores.vref == vref_filter)
         else:  # LIKE match
-            base_query = base_query.filter(AlignmentTopSourceScores.vref.like(vref_filter + '%'))
+            base_query = base_query.filter(
+                AlignmentTopSourceScores.vref.like(vref_filter + "%")
+            )
 
     # Fetch results based on constructed filters
     result_data = base_query.all()
@@ -410,4 +421,4 @@ async def get_alignment_scores(
         # Add the Result object to the result list
         result_list.append(result_obj)
     total_count = len(result_list)
-    return {'results': result_data, 'total_count': total_count}
+    return {"results": result_data, "total_count": total_count}

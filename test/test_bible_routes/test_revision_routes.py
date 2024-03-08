@@ -124,15 +124,24 @@ def delete_revision(client, token, revision_id):
 
 
 def count_verses_in_revision(db_session, revision_id):
+    # Count the number of verses in a revision that is not deleted
     return (
-        db_session.query(VerseText).filter(VerseText.revision_id == revision_id).count()
+        db_session.query(VerseText)
+        .join(BibleRevisionModel, BibleRevisionModel.id == VerseText.revision_id)
+        .filter(
+            BibleRevisionModel.deleted.is_(False), VerseText.revision_id == revision_id
+        )
+        .count()
     )
 
 
 def revision_exists(db_session, revision_id):
     return (
         db_session.query(BibleRevisionModel)
-        .filter(BibleRevisionModel.id == revision_id)
+        .filter(
+            BibleRevisionModel.deleted.is_(False)
+            & (BibleRevisionModel.id == revision_id)
+        )
         .count()
         > 0
     )
