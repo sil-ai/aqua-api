@@ -21,7 +21,7 @@ from database.models import (
 import bcrypt
 from datetime import date
 import pandas as pd
-from app import app  
+from app import app
 
 engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
