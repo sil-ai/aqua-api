@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from pydantic import Field
 
 from key_fetch import get_secret
-from models import VersionIn, VersionOut
+from models import VersionIn, VersionOut_v3 as VersionOut
 from database.models import (
     UserDB as UserModel,
     UserGroup,

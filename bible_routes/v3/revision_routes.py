@@ -9,7 +9,7 @@ import logging
 from datetime import date
 
 from bible_loading import upload_bible
-from models import RevisionOut, RevisionIn
+from models import RevisionOut_v3 as RevisionOut, RevisionIn
 from database.models import (
     BibleRevision as BibleRevisionModel,
     BibleVersion as BibleVersionModel,

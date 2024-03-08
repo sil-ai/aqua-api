@@ -24,6 +24,19 @@ class VersionOut(BaseModel):
     iso_script: str
     abbreviation: str
     rights: Union[str, None] = None
+    forwardTranslation: Union[int, None] = None
+    backTranslation: Union[int, None] = None
+    machineTranslation: bool = False
+    owner_id : int
+
+class VersionOut_v3(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    iso_language: str
+    iso_script: str
+    abbreviation: str
+    rights: Union[str, None] = None
     forward_translation_id: Union[int, None] = None
     back_translation_id: Union[int, None] = None
     machineTranslation: bool = False
@@ -37,6 +50,18 @@ class RevisionIn(BaseModel):
     machineTranslation: Optional[bool] = False
 
 class RevisionOut(BaseModel):
+    id: int
+    bible_version_id: int
+    version_abbreviation: Optional[str] = None
+    date: Optional[datetime.date] = None
+    name: Optional[str] = None
+    published: Optional[bool] = False
+    backTranslation: Optional[int] = None
+    machineTranslation: Optional[bool] = False
+    iso_language: Optional[str] = None
+
+
+class RevisionOut_v3(BaseModel):
     id: int
     bible_version_id: int
     version_abbreviation: Optional[str] = None
