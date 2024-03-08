@@ -46,7 +46,7 @@ class TestRegularUserFlow:
         # check owner_id in the db is the test user1 id
         user = db_session.query(UserModel).filter_by(username="testuser1").first()
         assert user.id == owner_id
-
+        
         version_id = create_response.json().get("id")
         # Verify creation in DB
         access_entries = (
