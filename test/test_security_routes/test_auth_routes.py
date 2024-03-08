@@ -51,4 +51,4 @@ def test_read_current_user_groups(test_db_session):
     )
     assert response.status_code == 200
     groups = response.json()
-    assert groups[0].get('name') == "Group1"
+    assert groups[0].get("name") == "Group1"

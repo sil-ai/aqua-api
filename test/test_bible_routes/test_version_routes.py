@@ -46,7 +46,7 @@ class TestRegularUserFlow:
         # check owner_id in the db is the test user1 id
         user = db_session.query(UserModel).filter_by(username="testuser1").first()
         assert user.id == owner_id
-        
+
         version_id = create_response.json().get("id")
         # Verify creation in DB
         access_entries = (
@@ -115,10 +115,14 @@ class TestRegularUserFlow:
         )
         assert delete_response.status_code == 200
 
-        # Verify deletion in DB
+        # Verify deletion in DB by checking the deleted field
         version_in_db = (
-            db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+            db_session.query(BibleVersionModel)
+            .filter(BibleVersionModel.deleted.is_(False))
+            .filter_by(id=version_id)
+            .first()
         )
+
         assert version_in_db is None
 
 
@@ -185,7 +189,7 @@ class TestAdminFlow:
             **new_version_data,
             "add_to_groups": [group_1.id],
         }
-        
+
         create_response_2 = client.post(
             f"{prefix}/version", json=params, headers=headers
         )
@@ -238,11 +242,17 @@ class TestAdminFlow:
 
         # Verify deletion in DB
         version_in_db_1 = (
-            db_session.query(BibleVersionModel).filter_by(id=version_id_1).first()
+            db_session.query(BibleVersionModel)
+            .filter(BibleVersionModel.deleted.is_(False))
+            .filter_by(id=version_id_1)
+            .first()
         )
         assert version_in_db_1 is None
+
         version_in_db_2 = (
-            db_session.query(BibleVersionModel).filter_by(id=version_id_2).first()
+            db_session.query(BibleVersionModel)
+            .filter(BibleVersionModel.deleted.is_(False))
+            .filter_by(id=version_id_2)
+            .first()
         )
         assert version_in_db_2 is None
-

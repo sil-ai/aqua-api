@@ -1,6 +1,7 @@
 __version__ = "v3"
 
 from typing import List, Optional
+from datetime import date
 
 import fastapi
 from fastapi import Depends, HTTPException, status, Query
@@ -45,7 +46,8 @@ async def list_version(
             .join(
                 BibleVersionAccess,
                 BibleVersionModel.id == BibleVersionAccess.bible_version_id,
-            )
+            )  # filter versions that are not deleted
+            .filter(BibleVersionModel.deleted.is_(False))
             .filter(BibleVersionAccess.group_id.in_(user_group_ids))
             .all()
         )
@@ -58,7 +60,7 @@ async def add_version(
     v: VersionIn,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
-    ):
+):
     """
     Create a new version.
     Optionally only add the version to specific groups, specified by their IDs.
@@ -116,10 +118,11 @@ async def delete_version(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to delete this version.",
         )
-    # Perform the deletion
-    db.delete(version)
+    # Perform the deletion by updating the boolean field deleted to True and the deletedAt field to the current time
+    version.deleted = True
+    version.deletedAt = date.today()
     db.commit()
-      
+
     return {"detail": f"Version {version.name} successfully deleted."}
 
 
