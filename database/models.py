@@ -29,7 +29,9 @@ class AlignmentThresholdScores(Base):
     source = Column(Text)
     target = Column(Text)
     hide = Column(Boolean)
-
+    book = Column(Text)
+    chapter = Column(Integer)
+    verse = Column(Integer)
 
 class AlignmentTopSourceScores(Base):
     __tablename__ = "alignment_top_source_scores"
@@ -43,7 +45,9 @@ class AlignmentTopSourceScores(Base):
     source = Column(Text)
     target = Column(Text)
     hide = Column(Boolean)
-
+    book = Column(Text)
+    chapter = Column(Integer)
+    verse = Column(Integer)
 
 class Assessment(Base):
     __tablename__ = "assessment"
