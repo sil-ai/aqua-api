@@ -1,13 +1,14 @@
 __version__ = "v3"
 
-from fastapi import Depends, HTTPException, status, APIRouter
+from fastapi import Depends, HTTPException, status, APIRouter, Query
 from typing import Optional, Dict, List, Union, Tuple
 from sqlalchemy.orm import Session
+import pandas as pd
 
 from enum import Enum
 from database.dependencies import get_db
 from sqlalchemy.orm import aliased
-from sqlalchemy import func
+from sqlalchemy import func, literal
 from sqlalchemy.sql import and_, select
 from database.models import (
     AssessmentResult,
@@ -20,7 +21,7 @@ from database.models import (
 )
 from security_routes.utilities import is_user_authorized_for_assessement
 from security_routes.auth_routes import get_current_user
-from models import Result_v2 as Result, WordAlignment
+from models import Result_v2 as Result, WordAlignment, MultipleResult
 import ast
 
 router = APIRouter()
@@ -64,7 +65,6 @@ async def build_results_query(
     page: Optional[int],
     page_size: Optional[int],
     aggregate: Optional[aggType],
-    include_text: Optional[bool],
     reverse: Optional[bool],
     db: Session,
 ) -> Tuple:
@@ -127,6 +127,20 @@ async def build_results_query(
         base_query = base_query.with_entities(
             func.min(AssessmentResult.id).label("id"),
             AssessmentResult.assessment_id,
+            func.min(AssessmentResult.book).label("book"),
+            func.min(AssessmentResult.chapter).label("chapter"),
+            func.min(AssessmentResult.verse).label("verse"),
+            func.avg(AssessmentResult.score).label("score"),
+            func.bool_or(AssessmentResult.flag).label("flag"),
+            func.bool_or(AssessmentResult.hide).label("hide"),
+        ).group_by(
+            AssessmentResult.assessment_id,
+        ).order_by("id")
+    
+    else:
+        base_query = base_query.with_entities(
+            func.min(AssessmentResult.id).label("id"),
+            AssessmentResult.assessment_id,
             AssessmentResult.book,
             AssessmentResult.chapter,
             AssessmentResult.verse,
@@ -135,62 +149,11 @@ async def build_results_query(
             func.bool_or(AssessmentResult.hide).label("hide"),
         ).group_by(
             AssessmentResult.assessment_id,
-        ).order_by("id")
-
-    elif include_text:
-        # Aliasing VerseText for revision and reference texts
-        RevisionText = aliased(VerseText)
-        ReferenceText = aliased(VerseText)
-
-        # Adjusting the base query to include text joins and selections
-        base_query = (
-            db.query(
-                AssessmentResult.id,
-                AssessmentResult.assessment_id,
-                AssessmentResult.book,
-                AssessmentResult.chapter,
-                AssessmentResult.verse,
-                func.avg(AssessmentResult.score).label("score"),
-                AssessmentResult.source,
-                AssessmentResult.target,
-                AssessmentResult.flag,
-                AssessmentResult.note,
-                RevisionText.text.label("revision_text"),
-                ReferenceText.text.label("reference_text"),
-                AssessmentResult.hide,
-            )
-            .join(Assessment, Assessment.id == AssessmentResult.assessment_id)
-            .outerjoin(
-                RevisionText,
-                and_(
-                    RevisionText.verse_reference == AssessmentResult.vref,
-                    RevisionText.revision_id == Assessment.revision_id,
-                ),
-            )
-            .outerjoin(
-                ReferenceText,
-                and_(
-                    ReferenceText.verse_reference == AssessmentResult.vref,
-                    ReferenceText.revision_id == Assessment.reference_id,
-                ),
-            )
-        )
-    else:
-        # No specific aggregation or text inclusion, use the base query
-        # This is typically the default scenario
-        base_query = base_query.with_entities(
-            AssessmentResult.id,
-            AssessmentResult.assessment_id,
             AssessmentResult.book,
             AssessmentResult.chapter,
             AssessmentResult.verse,
-            func.avg(AssessmentResult.score).label("score"),
-            AssessmentResult.source,
-            AssessmentResult.target,
-            AssessmentResult.flag,
-            AssessmentResult.note,
-            AssessmentResult.hide,
-        )
+        ).order_by("id")
+
 
     # Handling pagination for the base query (applies in non-aggregated scenarios or when explicitly required)
     if page is not None and page_size is not None:
@@ -234,120 +197,6 @@ async def build_results_query(
     )
 
 
-async def build_compare_results_query(
-    revision_id: Optional[int],
-    reference_id: Optional[int],
-    baseline_ids: Optional[List[int]],
-    aggregate: Optional[str],
-    book: Optional[str],
-    chapter: Optional[int],
-    verse: Optional[int],
-    page: Optional[int],
-    page_size: Optional[int],
-    include_text: Optional[bool],
-    db: Session,
-) -> Tuple:
-    # Initialize the base query
-    if book and len(book) > 3:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Book must be a valid three-letter book abbreviation."
-        )
-    if include_text and aggregate is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="include_text and aggregate cannot both be set. Text can only be included for verse-level results."
-        )
-    if aggregate is not None and aggregate not in ['book', 'chapter']:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Aggregate must be either 'book' or 'chapter', or not set."
-        )
-    if aggregate == 'book' and chapter is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If aggregate is 'book', chapter must not be set."
-        )
-    if aggregate == 'chapter' and verse is not None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If aggregate is 'chapter', verse must not be set."
-        )
-    if chapter is not None and book is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If chapter is set, book must also be set."
-        )
-    if verse is not None and chapter is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If verse is set, chapter must also be set."
-        )
-    if page is not None and page_size is not None:
-        offset = (page - 1) * page_size
-        limit = page_size
-
-    if not baseline_ids:
-        baseline_ids = []
-
-    else:
-        offset = 0
-        limit = None
-
-    # Subquery to find the latest end_time for each combination
-    subq = (db.query(
-        Assessment.revision_id,
-        Assessment.reference_id,
-        Assessment.type,
-        func.max(Assessment.end_time).label('max_end_time')
-    )
-    .filter(Assessment.revision_id.in_([revision_id, *baseline_ids]),
-            Assessment.reference_id == reference_id,
-            Assessment.type == 'word-alignment')
-    .group_by(Assessment.revision_id, Assessment.reference_id, Assessment.type)
-    .subquery())
-    latest_assessments = (db.query(Assessment)
-    .join(subq, and_(
-        Assessment.revision_id == subq.c.revision_id,
-        Assessment.reference_id == subq.c.reference_id,
-        Assessment.type == subq.c.type,
-        Assessment.end_time == subq.c.max_end_time))
-    .all())
-    baseline_assessment_ids = [assessment for assessment in latest_assessments if assessment.revision_id in baseline_ids]
-
-    baseline_all_query =  db.query(
-        AssessmentResult.book.label('book'),
-        AssessmentResult.chapter.label('chapter'),
-        AssessmentResult.verse.label('verse'),
-        func.coalesce(func.avg(func.nullif(AssessmentResult.score, 'NaN')), 0).label('score'),
-        # Add other necessary fields and conditions
-    )
-    if book:
-        baseline_all_query = baseline_all_query.filter(AssessmentResult.book == book)
-    if chapter:
-        baseline_all_query = baseline_all_query.filter(AssessmentResult.chapter == chapter)
-    if verse:
-        baseline_all_query = baseline_all_query.filter(AssessmentResult.verse == verse)
-    baseline_all_subq = baseline_all_query.group_by(AssessmentResult.book, AssessmentResult.chapter, AssessmentResult.verse).subquery()
-
-    
-
-
-    results_query = db.query(AssessmentResult).filter()
-
-
-    revisions = db.query(BibleRevision).filter(
-        BibleRevision.id in [revision_id, *baseline_ids]
-    )
-    versions = db.query(BibleVersion).filter(
-        BibleVersion.id in [r.bible_version_id for r in revisions]
-    )
-
-    return baseline_all_query, None
-    
-
-
-
 @router.get(
     "/result",
     response_model=Dict[str, Union[List[Result], int]],
@@ -360,7 +209,6 @@ async def get_result(
     page: Optional[int] = None,
     page_size: Optional[int] = None,
     aggregate: Optional[aggType] = None,
-    include_text: Optional[bool] = False,
     reverse: Optional[bool] = False,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -384,8 +232,6 @@ async def get_result(
         The number of results to return per page. If set, page must also be set.
     aggregate : str, optional
         If set to "chapter", results will be aggregated by chapter. Otherwise results will be returned at the verse level.
-    include_text : bool, optional
-        If set to True, the revision (and if applicable, reference) text of the verse will be included in the results. This is only available for verse-level results.
 
     Notes
     -----
@@ -397,7 +243,7 @@ async def get_result(
     missing word appears in the baseline reference texts, and so there is a higher likelihood that it is a word that should
     be included in the text being assessed.
     """
-    await validate_parameters(book, chapter, verse, aggregate, include_text)
+    await validate_parameters(book, chapter, verse, aggregate)
 
     if not is_user_authorized_for_assessement(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -413,7 +259,6 @@ async def get_result(
         page,
         page_size,
         aggregate,
-        include_text,
         reverse,
         db,
     )
@@ -459,25 +304,275 @@ async def get_result(
     return {"results": result_list, "total_count": total_count}
 
 
-@router.get("/compareresults", response_model=Dict[str, Union[List[Result], int]])
+async def build_compare_results_query(
+    revision_id: Optional[int],
+    reference_id: Optional[int],
+    baseline_ids: Optional[List[int]],
+    aggregate: Optional[str],
+    book: Optional[str],
+    chapter: Optional[int],
+    verse: Optional[int],
+    page: Optional[int],
+    page_size: Optional[int],
+    db: Session,
+) -> Tuple:
+    if book and len(book) > 3:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Book must be a valid three-letter book abbreviation."
+        )
+    if aggregate is not None and aggregate not in ['text', 'book', 'chapter']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aggregate must be either 'book' or 'chapter', or not set."
+        )
+    if aggregate == 'book' and chapter is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If aggregate is 'book', chapter must not be set."
+        )
+    if aggregate == 'chapter' and verse is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If aggregate is 'chapter', verse must not be set."
+        )
+    if aggregate == 'text' and (book is not None or chapter is not None or verse is not None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If aggregate is 'text', book, chapter, and verse must not be set."
+        )
+    if chapter is not None and book is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If chapter is set, book must also be set."
+        )
+    if verse is not None and chapter is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="If verse is set, chapter must also be set."
+        )
+    if page is not None and page_size is not None:
+        offset = (page - 1) * page_size
+        limit = page_size
+
+    else:
+        offset = 0
+        limit = None
+
+    if not baseline_ids:
+        baseline_ids = []
+
+    main_assessment = (db.query(Assessment).filter(
+        Assessment.revision_id == revision_id,
+        Assessment.reference_id == reference_id,
+        Assessment.type == 'word-alignment',
+    ).order_by(Assessment.end_time.desc()).first())
+    baseline_assessments = (db.query(
+        Assessment.revision_id,
+        func.max(Assessment.id).label('id') # I think we can assume the highest id assessment is always the latest
+    )
+    .filter(
+        Assessment.revision_id.in_(baseline_ids),
+        Assessment.reference_id == reference_id,
+        Assessment.type == 'word-alignment',
+    )
+    .group_by(Assessment.revision_id)
+    .all())
+
+    baseline_assessment_ids = [assessment.id for assessment in baseline_assessments]
+    main_assessment_id = main_assessment.id
+
+    main_assessment_query =  db.query(
+        AssessmentResult.id.label('id'),
+        AssessmentResult.book.label('book'),
+        AssessmentResult.chapter.label('chapter'),
+        AssessmentResult.verse.label('verse'),
+        AssessmentResult.score.label('score'),
+    ).filter(
+        AssessmentResult.assessment_id == main_assessment_id,
+        ).order_by('id')
+    if book:
+        main_assessment_query = main_assessment_query.filter(AssessmentResult.book == book)
+    if chapter:
+        main_assessment_query = main_assessment_query.filter(AssessmentResult.chapter == chapter)
+    if verse:
+        main_assessment_query = main_assessment_query.filter(AssessmentResult.verse == verse)
+
+    if aggregate == 'chapter':
+        main_assessment_query = (main_assessment_query
+        .with_entities(
+            func.min(AssessmentResult.id).label('id'),
+            AssessmentResult.book,
+            AssessmentResult.chapter,
+            literal(None).label('verse'),
+            func.avg(AssessmentResult.score).label('score'),
+        )
+        .group_by(AssessmentResult.book, AssessmentResult.chapter)
+        .order_by('id')
+        )
+
+    elif aggregate == 'book':
+        main_assessment_query = (main_assessment_query
+        .with_entities(
+            func.min(AssessmentResult.id).label('id'),
+            AssessmentResult.book,
+            literal(None).label('chapter'),
+            literal(None).label('verse'),
+            func.avg(AssessmentResult.score).label('score'),
+        )
+        .group_by(AssessmentResult.book)
+        .order_by('id')
+        )
+
+    elif aggregate == 'text':
+        main_assessment_query = (main_assessment_query
+        .with_entities(
+            func.min(AssessmentResult.id).label('id'),
+            literal(None).label('book'),
+            literal(None).label('chapter'),
+            literal(None).label('verse'),
+            func.avg(AssessmentResult.score).label('score'),
+        )
+        .order_by('id')
+        )
+
+    baseline_assessments_query = (db.query(
+        AssessmentResult.id.label('id'),
+        AssessmentResult.assessment_id.label('assessment_id'),
+        AssessmentResult.book.label('book'),
+        AssessmentResult.chapter.label('chapter'),
+        AssessmentResult.verse.label('verse'),
+        AssessmentResult.score.label('score'),
+    ).filter(
+        AssessmentResult.assessment_id.in_(baseline_assessment_ids),
+        )
+    )
+
+    if book:
+        baseline_assessments_query = baseline_assessments_query.filter(AssessmentResult.book == book)
+    if chapter:
+        baseline_assessments_query = baseline_assessments_query.filter(AssessmentResult.chapter == chapter)
+    if verse:
+        baseline_assessments_query = baseline_assessments_query.filter(AssessmentResult.verse == verse)
+    
+    if aggregate == 'chapter':
+        baseline_assessments_subquery = (baseline_assessments_query
+        .with_entities(
+            func.min(AssessmentResult.id).label('id'),
+            AssessmentResult.book.label('book'), 
+            AssessmentResult.chapter.label('chapter'),
+            literal(None).label('verse'), 
+            func.avg(AssessmentResult.score).label('avg_score'),
+        )
+        .group_by('book', 'chapter', 'assessment_id')
+        ).subquery()
+        baseline_assessments_query = (db.query(
+            func.min(baseline_assessments_subquery.c.id).label('id'),
+             baseline_assessments_subquery.c.book.label('book'), 
+            baseline_assessments_subquery.c.chapter.label('chapter'),
+            func.avg(baseline_assessments_subquery.c.avg_score).label('average_of_avg_score'),
+            func.stddev(baseline_assessments_subquery.c.avg_score).label('stddev_of_avg_score')
+            )
+            .group_by('book', 'chapter')
+            .order_by('id')
+        )
+
+    elif aggregate == 'book':
+        baseline_assessments_subquery = (baseline_assessments_query
+        .with_entities(
+            func.min(AssessmentResult.id).label('id'),
+            AssessmentResult.book.label('book'), 
+            literal(None).label('chapter'), 
+            literal(None).label('verse'), 
+            func.avg(AssessmentResult.score).label('avg_score'),
+        )
+        .group_by('book', 'assessment_id')
+        ).subquery()
+        baseline_assessments_query = (db.query(
+            func.min(baseline_assessments_subquery.c.id).label('id'),
+             baseline_assessments_subquery.c.book.label('book'), 
+            func.min(baseline_assessments_subquery.c.chapter).label('chapter'),
+            func.avg(baseline_assessments_subquery.c.avg_score).label('average_of_avg_score'),
+            func.stddev(baseline_assessments_subquery.c.avg_score).label('stddev_of_avg_score')
+            )
+            .group_by('book')
+            .order_by('id')
+        )
+
+    elif aggregate == 'text':
+        baseline_assessments_subquery = (baseline_assessments_query
+        .with_entities(
+            func.min(AssessmentResult.id).label('id'),
+            literal(None).label('book'), 
+            literal(None).label('chapter'), 
+            literal(None).label('verse'), 
+            func.avg(AssessmentResult.score).label('avg_score'),
+        ).group_by('assessment_id')
+        ).subquery()
+        baseline_assessments_query = (db.query(
+            func.min(baseline_assessments_subquery.c.id).label('id'),
+            func.min(baseline_assessments_subquery.c.book).label('book'),
+            func.min(baseline_assessments_subquery.c.chapter).label('chapter'),
+            func.min(baseline_assessments_subquery.c.verse).label('verse'),
+            func.avg(baseline_assessments_subquery.c.avg_score).label('average_of_avg_score'),
+            func.stddev(baseline_assessments_subquery.c.avg_score).label('stddev_of_avg_score')
+            ).order_by('id')
+        )
+
+    else:
+        baseline_assessments_subquery = (baseline_assessments_query
+        .with_entities(
+            func.min(AssessmentResult.id).label('id'),
+            AssessmentResult.book.label('book'), 
+            AssessmentResult.chapter.label('chapter'),
+            AssessmentResult.verse.label('verse'),
+            func.avg(AssessmentResult.score).label('avg_score'),
+        )
+        .group_by('book', 'chapter', 'verse', 'assessment_id')
+        ).subquery()
+        baseline_assessments_query = (db.query(
+            func.min(baseline_assessments_subquery.c.id).label('id'),
+            baseline_assessments_subquery.c.book.label('book'),
+            baseline_assessments_subquery.c.chapter.label('chapter'),
+            baseline_assessments_subquery.c.verse.label('verse'),
+            func.avg(baseline_assessments_subquery.c.avg_score).label('average_of_avg_score'),
+            func.stddev(baseline_assessments_subquery.c.avg_score).label('stddev_of_avg_score')
+        ).group_by('book', 'chapter', 'verse')
+        .order_by('id')
+        )
+    
+    total_rows = main_assessment_query.count()
+    main_assessment_query = main_assessment_query.limit(limit).offset(offset)
+    baseline_assessments_query = baseline_assessments_query
+
+    return main_assessment_query, baseline_assessments_query, total_rows
+
+
+def calculate_z_score(row):
+    if row['stddev_of_avg_score'] and row['stddev_of_avg_score'] != 0:
+        return (row['score'] - row['average_of_avg_score']) / row['stddev_of_avg_score']
+    else:
+        return 0
+
+
+@router.get("/compareresults", response_model=Dict[str, Union[List[MultipleResult], int]])
 async def get_compare_results(
     revision_id: int,
     reference_id: int,
-    baseline_ids: Optional[List[int]] = None,
+    baseline_ids: List[int] = Query(None),
     aggregate: Optional[str] = None,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
     page: Optional[int] = None,
     page_size: Optional[int] = None,
-    include_text: Optional[bool] = False,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
     
 ):
     """
     """
-    query, _ = await build_compare_results_query(
+    main_assessments_query, baseline_assessments_query, total_count = await build_compare_results_query(
         revision_id,
         reference_id,
         baseline_ids,
@@ -487,13 +582,52 @@ async def get_compare_results(
         verse,
         page,
         page_size,
-        include_text,
         db,
     )
 
-    print(f'{str(query)=}')
+    main_assessment_results = db.execute(main_assessments_query).fetchall()
+    baseline_assessment_results = db.execute(baseline_assessments_query).fetchall()
+    
+    df_main = pd.DataFrame(main_assessment_results)
+    df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=['id'])
 
-    return {"results": [], "total_count": 0}
+    if aggregate == 'chapter':
+        joined_df = pd.merge(df_main, df_baseline, on=['book', 'chapter'])
+    elif aggregate == 'book':
+        joined_df = pd.merge(df_main, df_baseline, on=['book'])
+    elif aggregate == 'text':
+        joined_df = pd.concat([df_main.reset_index(drop=True), df_baseline.reset_index(drop=True)], axis=1)
+    else:
+        joined_df = pd.merge(df_main, df_baseline, on=['book', 'chapter', 'verse'])
+    
+    joined_df['z_score'] = joined_df.apply(calculate_z_score, axis=1)
+    
+    result_list = []
+
+    for index, row in joined_df.iterrows():
+        # Constructing the verse reference string
+        if aggregate == 'chapter':
+            vref = f"{row['book']} {row['chapter']}"
+        elif aggregate == 'book':
+            vref = f"{row['book']}"
+        elif aggregate == 'text':
+            vref = None
+        else:
+            vref = f"{row['book']} {row['chapter']}:{row['verse']}"
+
+        result_obj = MultipleResult(
+            id=row['id'],
+            revision_id=revision_id,
+            reference_id=reference_id,
+            vref=vref,
+            score=row['score'],
+            mean_score=row['average_of_avg_score'],
+            stdev_score=row['stddev_of_avg_score'],
+            z_score=row['z_score'],
+        )
+        result_list.append(result_obj)
+
+    return {"results": result_list, "total_count": total_count}
 
 
 @router.get(
