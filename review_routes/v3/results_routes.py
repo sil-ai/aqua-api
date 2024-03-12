@@ -38,7 +38,6 @@ async def validate_parameters(
     chapter: Optional[int],
     verse: Optional[int],
     aggregate: Optional[aggType] = None,
-    include_text: Optional[bool] = False,
 ):
     if book and len(book) > 3:
         raise HTTPException(
@@ -54,11 +53,6 @@ async def validate_parameters(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If verse is set, chapter must also be set.",
-        )
-    if aggregate is not None and include_text:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results.",
         )
     if aggregate is not None and aggregate not in [aggType.text, aggType.book, aggType.chapter]:
         raise HTTPException(
@@ -120,7 +114,6 @@ async def build_results_query(
     if only_non_null:
         base_query = base_query.filter(AssessmentResult.source.isnot(None))
 
-    # Modify query based on aggregation and include_text
     if aggregate == aggType.chapter:
         base_query = base_query.with_entities(
             func.min(AssessmentResult.id).label("id"),
@@ -330,10 +323,10 @@ async def get_result(
 
 
 async def build_compare_results_baseline_query(
-        revision_id: Optional[int],
+    revision_id: Optional[int],
     reference_id: Optional[int],
     baseline_ids: Optional[List[int]],
-    aggregate: Optional[str],
+    aggregate: Optional[aggType],
     book: Optional[str],
     chapter: Optional[int],
     verse: Optional[int],
@@ -355,7 +348,7 @@ async def build_compare_results_baseline_query(
     .group_by(Assessment.revision_id)
     .all())
 
-    baseline_assessments_dict = {assessment.revision_id: {'id': assessment.id} for assessment in baseline_assessments}
+    baseline_assessments_dict = {assessment.revision_id: assessment.id for assessment in baseline_assessments}
 
     baseline_assessments_query = (db.query(
         AssessmentResult.id.label('id'),
@@ -462,8 +455,6 @@ async def build_compare_results_baseline_query(
         .order_by('id')
         )
     
-    baseline_assessments_query = baseline_assessments_query
-
     return baseline_assessments_query, baseline_assessments_dict
 
 

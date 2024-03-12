@@ -50,7 +50,6 @@ def test_regular_user_flow(client, regular_token1, regular_token2, test_db_sessi
     params = {
         "assessment_id": first_assessment_id,
         "aggregate": "chapter",
-        "include_text": False,
         "reverse": False,
     }
     response = client.get(
@@ -81,21 +80,7 @@ def test_regular_user_flow(client, regular_token1, regular_token2, test_db_sessi
     )
     assert response.status_code == 403
 
-    # check parameters validation
-    params["include_text"] = True
-    response = client.get(
-        "/v3/result",
-        params=params,
-        headers={"Authorization": f"Bearer {regular_token1}"},
-    )
-    assert response.status_code == 400
-    assert (
-        response.json()["detail"]
-        == "Aggregate and include_text cannot both be set. Text can only be included for verse-level results."
-    )
-
     # check that user can access the result with reverse
-    params["include_text"] = False
     params["reverse"] = True
     response = client.get(
         "/v3/result",
@@ -110,7 +95,6 @@ def test_regular_user_flow(client, regular_token1, regular_token2, test_db_sessi
 
     # check that user can access the result with aggregate=book
     params["aggregate"] = "book"
-    params["include_text"] = False
     params["reverse"] = False
     response = client.get(
         "/v3/result",
@@ -127,7 +111,6 @@ def test_regular_user_flow(client, regular_token1, regular_token2, test_db_sessi
     # check that usec can access alignmentscores
     params = {
         "assessment_id": first_assessment_id,
-        "include_text": False,
         "reverse": False,
     }
 
