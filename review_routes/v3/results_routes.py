@@ -60,22 +60,22 @@ async def validate_parameters(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results.",
         )
-    if aggregate is not None and aggregate not in ['text', 'book', 'chapter']:
+    if aggregate is not None and aggregate not in [aggType.text, aggType.book, aggType.chapter]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Aggregate must be either 'book' or 'chapter', or not set."
         )
-    if aggregate == 'book' and chapter is not None:
+    if aggregate == aggType.book and chapter is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If aggregate is 'book', chapter must not be set."
         )
-    if aggregate == 'chapter' and verse is not None:
+    if aggregate == aggType.chapter and verse is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If aggregate is 'chapter', verse must not be set."
         )
-    if aggregate == 'text' and (book is not None or chapter is not None or verse is not None):
+    if aggregate == aggType.text and (book is not None or chapter is not None or verse is not None):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If aggregate is 'text', book, chapter, and verse must not be set."
@@ -341,13 +341,6 @@ async def build_compare_results_baseline_query(
     page_size: Optional[int],
     db: Session,
 ) -> Tuple:
-    if page is not None and page_size is not None:
-        offset = (page - 1) * page_size
-        limit = page_size
-
-    else:
-        offset = 0
-        limit = None
     if not baseline_ids:
         baseline_ids = []
     baseline_assessments = (db.query(
