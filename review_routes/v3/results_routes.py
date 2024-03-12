@@ -560,7 +560,7 @@ async def get_compare_results(
     revision_id: int,
     reference_id: int,
     baseline_ids: List[int] = Query(None),
-    aggregate: Optional[str] = None,
+    aggregate: Optional[aggType] = None,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
