@@ -349,7 +349,7 @@ async def build_compare_results_baseline_query(
     .group_by(Assessment.revision_id)
     .all())
 
-    baseline_assessments_dict = {assessment.revision_id: assessment.id for assessment in baseline_assessments}
+    baseline_assessment_ids = [assessment.id for assessment in baseline_assessments]
 
     baseline_assessments_query = (db.query(
         AssessmentResult.id.label('id'),
@@ -359,7 +359,7 @@ async def build_compare_results_baseline_query(
         AssessmentResult.verse.label('verse'),
         AssessmentResult.score.label('score'),
     ).filter(
-        AssessmentResult.assessment_id.in_(baseline_assessments_dict.values()),
+        AssessmentResult.assessment_id.in_(baseline_assessment_ids),
         )
     )
 
@@ -369,7 +369,7 @@ async def build_compare_results_baseline_query(
         baseline_assessments_query = baseline_assessments_query.filter(AssessmentResult.chapter == chapter)
     if verse:
         baseline_assessments_query = baseline_assessments_query.filter(AssessmentResult.verse == verse)
-    
+
     if aggregate == aggType.chapter:
         baseline_assessments_subquery = (baseline_assessments_query
         .with_entities(
@@ -456,7 +456,7 @@ async def build_compare_results_baseline_query(
         .order_by('id')
         )
     
-    return baseline_assessments_query, baseline_assessments_dict
+    return baseline_assessments_query
 
 
 async def build_compare_results_main_query(
@@ -592,7 +592,7 @@ async def get_compare_results(
         page_size,
         db,
     )
-    baseline_assessments_query, baseline_assessments_dict = await build_compare_results_baseline_query(
+    baseline_assessments_query = await build_compare_results_baseline_query(
         revision_id,
         reference_id,
         baseline_ids,
@@ -647,11 +647,7 @@ async def get_compare_results(
         )
         result_list.append(result_obj)
     
-    for baseline_id in baseline_ids:
-        if baseline_id not in baseline_assessments_dict:
-            baseline_assessments_dict[baseline_id] = None
-
-    return {"results": result_list, "total_count": total_count, "baseline_assessments": baseline_assessments_dict}
+    return {"results": result_list, "total_count": total_count}
 
 
 @router.get(
