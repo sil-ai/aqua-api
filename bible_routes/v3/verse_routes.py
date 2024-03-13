@@ -101,6 +101,7 @@ async def get_verse(
             VerseModel.chapter == chapter,
             VerseModel.verse == verse,
         )
+        .order_by(VerseModel.id)
         .all()
     )
     return result
@@ -125,6 +126,7 @@ async def get_book(
     result = (
         db.query(VerseModel)
         .filter(VerseModel.revision_id == revision_id, VerseModel.book == book)
+        .order_by(VerseModel.id)
         .all()
     )
     return result
@@ -145,5 +147,9 @@ async def get_text(
             detail="User not authorized to access this revision.",
         )
 
-    result = db.query(VerseModel).filter(VerseModel.revision_id == revision_id).all()
+    result = (
+        db.query(VerseModel).filter(VerseModel.revision_id == revision_id)
+        .order_by(VerseModel.id)
+        .all()
+    )
     return result
