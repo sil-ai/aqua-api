@@ -344,6 +344,7 @@ async def build_compare_results_baseline_query(
         Assessment.revision_id.in_(baseline_ids),
         Assessment.reference_id == reference_id,
         Assessment.type == 'word-alignment',
+        Assessment.status == 'finished',
     )
     .group_by(Assessment.revision_id)
     .all())
@@ -369,7 +370,7 @@ async def build_compare_results_baseline_query(
     if verse:
         baseline_assessments_query = baseline_assessments_query.filter(AssessmentResult.verse == verse)
     
-    if aggregate == 'chapter':
+    if aggregate == aggType.chapter:
         baseline_assessments_subquery = (baseline_assessments_query
         .with_entities(
             func.min(AssessmentResult.id).label('id'),
@@ -391,7 +392,7 @@ async def build_compare_results_baseline_query(
             .order_by('id')
         )
 
-    elif aggregate == 'book':
+    elif aggregate == aggType.book:
         baseline_assessments_subquery = (baseline_assessments_query
         .with_entities(
             func.min(AssessmentResult.id).label('id'),
@@ -413,7 +414,7 @@ async def build_compare_results_baseline_query(
             .order_by('id')
         )
 
-    elif aggregate == 'text':
+    elif aggregate == aggType.text:
         baseline_assessments_subquery = (baseline_assessments_query
         .with_entities(
             func.min(AssessmentResult.id).label('id'),
@@ -462,7 +463,7 @@ async def build_compare_results_main_query(
     revision_id: Optional[int],
     reference_id: Optional[int],
     baseline_ids: Optional[List[int]],
-    aggregate: Optional[str],
+    aggregate: Optional[aggType],
     book: Optional[str],
     chapter: Optional[int],
     verse: Optional[int],
@@ -484,8 +485,13 @@ async def build_compare_results_main_query(
         Assessment.revision_id == revision_id,
         Assessment.reference_id == reference_id,
         Assessment.type == 'word-alignment',
+        Assessment.status == 'finished',
     ).order_by(Assessment.end_time.desc()).first())
-    
+    if not main_assessment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed assessment found for the given revision_id and reference_id"
+        )
     main_assessment_id = main_assessment.id
     main_assessment_query =  db.query(
         AssessmentResult.id.label('id'),
@@ -503,7 +509,7 @@ async def build_compare_results_main_query(
     if verse:
         main_assessment_query = main_assessment_query.filter(AssessmentResult.verse == verse)
 
-    if aggregate == 'chapter':
+    if aggregate == aggType.chapter:
         main_assessment_query = (main_assessment_query
         .with_entities(
             func.min(AssessmentResult.id).label('id'),
@@ -516,7 +522,7 @@ async def build_compare_results_main_query(
         .order_by('id')
         )
 
-    elif aggregate == 'book':
+    elif aggregate == aggType.book:
         main_assessment_query = (main_assessment_query
         .with_entities(
             func.min(AssessmentResult.id).label('id'),
@@ -529,7 +535,7 @@ async def build_compare_results_main_query(
         .order_by('id')
         )
 
-    elif aggregate == 'text':
+    elif aggregate == aggType.text:
         main_assessment_query = (main_assessment_query
         .with_entities(
             func.min(AssessmentResult.id).label('id'),
@@ -605,11 +611,11 @@ async def get_compare_results(
         df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=['id'])
     else:
         df_baseline = pd.DataFrame(columns=['book', 'chapter', 'verse', 'average_of_avg_score', 'stddev_of_avg_score'])
-    if aggregate == 'chapter':
+    if aggregate == aggType.chapter:
         joined_df = pd.merge(df_main, df_baseline, on=['book', 'chapter'], how='left')
-    elif aggregate == 'book':
+    elif aggregate == aggType.book:
         joined_df = pd.merge(df_main, df_baseline, on=['book'], how='left')
-    elif aggregate == 'text':
+    elif aggregate == aggType.text:
         joined_df = pd.concat([df_main.reset_index(drop=True), df_baseline.reset_index(drop=True)], axis=1)
     else:
         joined_df = pd.merge(df_main, df_baseline, on=['book', 'chapter', 'verse'], how='left')
@@ -620,11 +626,11 @@ async def get_compare_results(
 
     for _, row in joined_df.iterrows():
         # Constructing the verse reference string
-        if aggregate == 'chapter':
+        if aggregate == aggType.chapter:
             vref = f"{row['book']} {row['chapter']}"
-        elif aggregate == 'book':
+        elif aggregate == aggType.book:
             vref = f"{row['book']}"
-        elif aggregate == 'text':
+        elif aggregate == aggType.text:
             vref = None
         else:
             vref = f"{row['book']} {row['chapter']}:{row['verse']}"
