@@ -42,7 +42,7 @@ async def validate_parameters(
     if book and len(book) > 3:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Book must be a valid three-letter book abbreviation."
+            detail="Book must be a valid three-letter book abbreviation.",
         )
     if chapter is not None and book is None:
         raise HTTPException(
@@ -54,25 +54,31 @@ async def validate_parameters(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If verse is set, chapter must also be set.",
         )
-    if aggregate is not None and aggregate not in [aggType.text, aggType.book, aggType.chapter]:
+    if aggregate is not None and aggregate not in [
+        aggType.text,
+        aggType.book,
+        aggType.chapter,
+    ]:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Aggregate must be either 'book' or 'chapter', or not set."
+            detail="Aggregate must be either 'book' or 'chapter', or not set.",
         )
     if aggregate == aggType.book and chapter is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If aggregate is 'book', chapter must not be set."
+            detail="If aggregate is 'book', chapter must not be set.",
         )
     if aggregate == aggType.chapter and verse is not None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If aggregate is 'chapter', verse must not be set."
+            detail="If aggregate is 'chapter', verse must not be set.",
         )
-    if aggregate == aggType.text and (book is not None or chapter is not None or verse is not None):
+    if aggregate == aggType.text and (
+        book is not None or chapter is not None or verse is not None
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="If aggregate is 'text', book, chapter, and verse must not be set."
+            detail="If aggregate is 'text', book, chapter, and verse must not be set.",
         )
 
 
@@ -115,63 +121,76 @@ async def build_results_query(
         base_query = base_query.filter(AssessmentResult.source.isnot(None))
 
     if aggregate == aggType.chapter:
-        base_query = base_query.with_entities(
-            func.min(AssessmentResult.id).label("id"),
-            AssessmentResult.assessment_id,
-            AssessmentResult.book,
-            AssessmentResult.chapter,
-            func.avg(AssessmentResult.score).label("score"),
-            func.bool_or(AssessmentResult.flag).label("flag"),
-            func.bool_or(AssessmentResult.hide).label("hide"),
-        ).group_by(
-            AssessmentResult.assessment_id,
-            AssessmentResult.book,
-            AssessmentResult.chapter,
-        ).order_by("id")
+        base_query = (
+            base_query.with_entities(
+                func.min(AssessmentResult.id).label("id"),
+                AssessmentResult.assessment_id,
+                AssessmentResult.book,
+                AssessmentResult.chapter,
+                func.avg(AssessmentResult.score).label("score"),
+                func.bool_or(AssessmentResult.flag).label("flag"),
+                func.bool_or(AssessmentResult.hide).label("hide"),
+            )
+            .group_by(
+                AssessmentResult.assessment_id,
+                AssessmentResult.book,
+                AssessmentResult.chapter,
+            )
+            .order_by("id")
+        )
 
     elif aggregate == aggType.book:
-        base_query = base_query.with_entities(
-            func.min(AssessmentResult.id).label("id"),
-            AssessmentResult.assessment_id,
-            AssessmentResult.book,
-            func.avg(AssessmentResult.score).label("score"),
-            func.bool_or(AssessmentResult.flag).label("flag"),
-            func.bool_or(AssessmentResult.hide).label("hide"),
-        ).group_by(
-            AssessmentResult.assessment_id, AssessmentResult.book
-        ).order_by("id")
+        base_query = (
+            base_query.with_entities(
+                func.min(AssessmentResult.id).label("id"),
+                AssessmentResult.assessment_id,
+                AssessmentResult.book,
+                func.avg(AssessmentResult.score).label("score"),
+                func.bool_or(AssessmentResult.flag).label("flag"),
+                func.bool_or(AssessmentResult.hide).label("hide"),
+            )
+            .group_by(AssessmentResult.assessment_id, AssessmentResult.book)
+            .order_by("id")
+        )
 
     elif aggregate == aggType.text:
-        base_query = base_query.with_entities(
-            func.min(AssessmentResult.id).label("id"),
-            AssessmentResult.assessment_id,
-            func.min(AssessmentResult.book).label("book"),
-            func.min(AssessmentResult.chapter).label("chapter"),
-            func.min(AssessmentResult.verse).label("verse"),
-            func.avg(AssessmentResult.score).label("score"),
-            func.bool_or(AssessmentResult.flag).label("flag"),
-            func.bool_or(AssessmentResult.hide).label("hide"),
-        ).group_by(
-            AssessmentResult.assessment_id,
-        ).order_by("id")
-    
-    else:
-        base_query = base_query.with_entities(
-            func.min(AssessmentResult.id).label("id"),
-            AssessmentResult.assessment_id,
-            AssessmentResult.book,
-            AssessmentResult.chapter,
-            AssessmentResult.verse,
-            func.avg(AssessmentResult.score).label("score"),
-            func.bool_or(AssessmentResult.flag).label("flag"),
-            func.bool_or(AssessmentResult.hide).label("hide"),
-        ).group_by(
-            AssessmentResult.assessment_id,
-            AssessmentResult.book,
-            AssessmentResult.chapter,
-            AssessmentResult.verse,
-        ).order_by("id")
+        base_query = (
+            base_query.with_entities(
+                func.min(AssessmentResult.id).label("id"),
+                AssessmentResult.assessment_id,
+                func.min(AssessmentResult.book).label("book"),
+                func.min(AssessmentResult.chapter).label("chapter"),
+                func.min(AssessmentResult.verse).label("verse"),
+                func.avg(AssessmentResult.score).label("score"),
+                func.bool_or(AssessmentResult.flag).label("flag"),
+                func.bool_or(AssessmentResult.hide).label("hide"),
+            )
+            .group_by(
+                AssessmentResult.assessment_id,
+            )
+            .order_by("id")
+        )
 
+    else:
+        base_query = (
+            base_query.with_entities(
+                func.min(AssessmentResult.id).label("id"),
+                AssessmentResult.assessment_id,
+                AssessmentResult.book,
+                AssessmentResult.chapter,
+                AssessmentResult.verse,
+                func.avg(AssessmentResult.score).label("score"),
+                func.bool_or(AssessmentResult.flag).label("flag"),
+                func.bool_or(AssessmentResult.hide).label("hide"),
+            )
+            .group_by(
+                AssessmentResult.assessment_id,
+                AssessmentResult.book,
+                AssessmentResult.chapter,
+                AssessmentResult.verse,
+            )
+            .order_by("id")
+        )
 
     # Handling pagination for the base query (applies in non-aggregated scenarios or when explicitly required)
     if page is not None and page_size is not None:
@@ -191,22 +210,22 @@ async def build_results_query(
     if verse:
         count_query = count_query.filter(AssessmentResult.verse == verse)
     # Note: For aggregated results, the count might need to be derived differently
-        
+
     if aggregate == aggType.chapter:
         count_query = count_query.group_by(
-                AssessmentResult.assessment_id,
-                AssessmentResult.book,
-                AssessmentResult.chapter,
-            )
+            AssessmentResult.assessment_id,
+            AssessmentResult.book,
+            AssessmentResult.chapter,
+        )
     elif aggregate == aggType.book:
         count_query = count_query.group_by(
-                AssessmentResult.assessment_id, AssessmentResult.book
-            )
+            AssessmentResult.assessment_id, AssessmentResult.book
+        )
     elif aggregate == aggType.text:
         count_query = count_query.group_by(
-                AssessmentResult.assessment_id,
-            )
-        
+            AssessmentResult.assessment_id,
+        )
+
     count_query = select([func.count()]).select_from(count_query)
 
     return (
@@ -336,126 +355,151 @@ async def build_compare_results_baseline_query(
 ) -> Tuple:
     if not baseline_ids:
         baseline_ids = []
-    baseline_assessments = (db.query(
-        Assessment.revision_id,
-        func.max(Assessment.id).label('id') # I think we can assume the highest id assessment is always the latest
+    baseline_assessments = (
+        db.query(
+            Assessment.revision_id,
+            func.max(Assessment.id).label(
+                "id"
+            ),  # I think we can assume the highest id assessment is always the latest
+        )
+        .filter(
+            Assessment.revision_id.in_(baseline_ids),
+            Assessment.reference_id == reference_id,
+            Assessment.type == "word-alignment",
+            Assessment.status == "finished",
+        )
+        .group_by(Assessment.revision_id)
+        .all()
     )
-    .filter(
-        Assessment.revision_id.in_(baseline_ids),
-        Assessment.reference_id == reference_id,
-        Assessment.type == 'word-alignment',
-        Assessment.status == 'finished',
-    )
-    .group_by(Assessment.revision_id)
-    .all())
 
     baseline_assessment_ids = [assessment.id for assessment in baseline_assessments]
 
-    baseline_assessments_query = (db.query(
-        AssessmentResult.id.label('id'),
-        AssessmentResult.assessment_id.label('assessment_id'),
-        AssessmentResult.book.label('book'),
-        AssessmentResult.chapter.label('chapter'),
-        AssessmentResult.verse.label('verse'),
-        AssessmentResult.score.label('score'),
+    baseline_assessments_query = db.query(
+        AssessmentResult.id.label("id"),
+        AssessmentResult.assessment_id.label("assessment_id"),
+        AssessmentResult.book.label("book"),
+        AssessmentResult.chapter.label("chapter"),
+        AssessmentResult.verse.label("verse"),
+        AssessmentResult.score.label("score"),
     ).filter(
         AssessmentResult.assessment_id.in_(baseline_assessment_ids),
-        )
     )
 
     if book:
-        baseline_assessments_query = baseline_assessments_query.filter(AssessmentResult.book == book)
+        baseline_assessments_query = baseline_assessments_query.filter(
+            AssessmentResult.book == book
+        )
     if chapter:
-        baseline_assessments_query = baseline_assessments_query.filter(AssessmentResult.chapter == chapter)
+        baseline_assessments_query = baseline_assessments_query.filter(
+            AssessmentResult.chapter == chapter
+        )
     if verse:
-        baseline_assessments_query = baseline_assessments_query.filter(AssessmentResult.verse == verse)
+        baseline_assessments_query = baseline_assessments_query.filter(
+            AssessmentResult.verse == verse
+        )
 
     if aggregate == aggType.chapter:
-        baseline_assessments_subquery = (baseline_assessments_query
-        .with_entities(
-            func.min(AssessmentResult.id).label('id'),
-            AssessmentResult.book.label('book'), 
-            AssessmentResult.chapter.label('chapter'),
-            literal(None).label('verse'), 
-            func.avg(AssessmentResult.score).label('avg_score'),
-        )
-        .group_by('book', 'chapter', 'assessment_id')
+        baseline_assessments_subquery = (
+            baseline_assessments_query.with_entities(
+                func.min(AssessmentResult.id).label("id"),
+                AssessmentResult.book.label("book"),
+                AssessmentResult.chapter.label("chapter"),
+                literal(None).label("verse"),
+                func.avg(AssessmentResult.score).label("avg_score"),
+            ).group_by("book", "chapter", "assessment_id")
         ).subquery()
-        baseline_assessments_query = (db.query(
-            func.min(baseline_assessments_subquery.c.id).label('id'),
-             baseline_assessments_subquery.c.book.label('book'), 
-            baseline_assessments_subquery.c.chapter.label('chapter'),
-            func.avg(baseline_assessments_subquery.c.avg_score).label('average_of_avg_score'),
-            func.stddev(baseline_assessments_subquery.c.avg_score).label('stddev_of_avg_score')
+        baseline_assessments_query = (
+            db.query(
+                func.min(baseline_assessments_subquery.c.id).label("id"),
+                baseline_assessments_subquery.c.book.label("book"),
+                baseline_assessments_subquery.c.chapter.label("chapter"),
+                func.avg(baseline_assessments_subquery.c.avg_score).label(
+                    "average_of_avg_score"
+                ),
+                func.stddev(baseline_assessments_subquery.c.avg_score).label(
+                    "stddev_of_avg_score"
+                ),
             )
-            .group_by('book', 'chapter')
-            .order_by('id')
+            .group_by("book", "chapter")
+            .order_by("id")
         )
 
     elif aggregate == aggType.book:
-        baseline_assessments_subquery = (baseline_assessments_query
-        .with_entities(
-            func.min(AssessmentResult.id).label('id'),
-            AssessmentResult.book.label('book'), 
-            literal(None).label('chapter'), 
-            literal(None).label('verse'), 
-            func.avg(AssessmentResult.score).label('avg_score'),
-        )
-        .group_by('book', 'assessment_id')
+        baseline_assessments_subquery = (
+            baseline_assessments_query.with_entities(
+                func.min(AssessmentResult.id).label("id"),
+                AssessmentResult.book.label("book"),
+                literal(None).label("chapter"),
+                literal(None).label("verse"),
+                func.avg(AssessmentResult.score).label("avg_score"),
+            ).group_by("book", "assessment_id")
         ).subquery()
-        baseline_assessments_query = (db.query(
-            func.min(baseline_assessments_subquery.c.id).label('id'),
-             baseline_assessments_subquery.c.book.label('book'), 
-            func.min(baseline_assessments_subquery.c.chapter).label('chapter'),
-            func.avg(baseline_assessments_subquery.c.avg_score).label('average_of_avg_score'),
-            func.stddev(baseline_assessments_subquery.c.avg_score).label('stddev_of_avg_score')
+        baseline_assessments_query = (
+            db.query(
+                func.min(baseline_assessments_subquery.c.id).label("id"),
+                baseline_assessments_subquery.c.book.label("book"),
+                func.min(baseline_assessments_subquery.c.chapter).label("chapter"),
+                func.avg(baseline_assessments_subquery.c.avg_score).label(
+                    "average_of_avg_score"
+                ),
+                func.stddev(baseline_assessments_subquery.c.avg_score).label(
+                    "stddev_of_avg_score"
+                ),
             )
-            .group_by('book')
-            .order_by('id')
+            .group_by("book")
+            .order_by("id")
         )
 
     elif aggregate == aggType.text:
-        baseline_assessments_subquery = (baseline_assessments_query
-        .with_entities(
-            func.min(AssessmentResult.id).label('id'),
-            literal(None).label('book'), 
-            literal(None).label('chapter'), 
-            literal(None).label('verse'), 
-            func.avg(AssessmentResult.score).label('avg_score'),
-        ).group_by('assessment_id')
+        baseline_assessments_subquery = (
+            baseline_assessments_query.with_entities(
+                func.min(AssessmentResult.id).label("id"),
+                literal(None).label("book"),
+                literal(None).label("chapter"),
+                literal(None).label("verse"),
+                func.avg(AssessmentResult.score).label("avg_score"),
+            ).group_by("assessment_id")
         ).subquery()
-        baseline_assessments_query = (db.query(
-            func.min(baseline_assessments_subquery.c.id).label('id'),
-            func.min(baseline_assessments_subquery.c.book).label('book'),
-            func.min(baseline_assessments_subquery.c.chapter).label('chapter'),
-            func.min(baseline_assessments_subquery.c.verse).label('verse'),
-            func.avg(baseline_assessments_subquery.c.avg_score).label('average_of_avg_score'),
-            func.stddev(baseline_assessments_subquery.c.avg_score).label('stddev_of_avg_score')
-            ).order_by('id')
-        )
+        baseline_assessments_query = db.query(
+            func.min(baseline_assessments_subquery.c.id).label("id"),
+            func.min(baseline_assessments_subquery.c.book).label("book"),
+            func.min(baseline_assessments_subquery.c.chapter).label("chapter"),
+            func.min(baseline_assessments_subquery.c.verse).label("verse"),
+            func.avg(baseline_assessments_subquery.c.avg_score).label(
+                "average_of_avg_score"
+            ),
+            func.stddev(baseline_assessments_subquery.c.avg_score).label(
+                "stddev_of_avg_score"
+            ),
+        ).order_by("id")
 
     else:
-        baseline_assessments_subquery = (baseline_assessments_query
-        .with_entities(
-            func.min(AssessmentResult.id).label('id'),
-            AssessmentResult.book.label('book'), 
-            AssessmentResult.chapter.label('chapter'),
-            AssessmentResult.verse.label('verse'),
-            func.avg(AssessmentResult.score).label('avg_score'),
-        )
-        .group_by('book', 'chapter', 'verse', 'assessment_id')
+        baseline_assessments_subquery = (
+            baseline_assessments_query.with_entities(
+                func.min(AssessmentResult.id).label("id"),
+                AssessmentResult.book.label("book"),
+                AssessmentResult.chapter.label("chapter"),
+                AssessmentResult.verse.label("verse"),
+                func.avg(AssessmentResult.score).label("avg_score"),
+            ).group_by("book", "chapter", "verse", "assessment_id")
         ).subquery()
-        baseline_assessments_query = (db.query(
-            func.min(baseline_assessments_subquery.c.id).label('id'),
-            baseline_assessments_subquery.c.book.label('book'),
-            baseline_assessments_subquery.c.chapter.label('chapter'),
-            baseline_assessments_subquery.c.verse.label('verse'),
-            func.avg(baseline_assessments_subquery.c.avg_score).label('average_of_avg_score'),
-            func.stddev(baseline_assessments_subquery.c.avg_score).label('stddev_of_avg_score')
-        ).group_by('book', 'chapter', 'verse')
-        .order_by('id')
+        baseline_assessments_query = (
+            db.query(
+                func.min(baseline_assessments_subquery.c.id).label("id"),
+                baseline_assessments_subquery.c.book.label("book"),
+                baseline_assessments_subquery.c.chapter.label("chapter"),
+                baseline_assessments_subquery.c.verse.label("verse"),
+                func.avg(baseline_assessments_subquery.c.avg_score).label(
+                    "average_of_avg_score"
+                ),
+                func.stddev(baseline_assessments_subquery.c.avg_score).label(
+                    "stddev_of_avg_score"
+                ),
+            )
+            .group_by("book", "chapter", "verse")
+            .order_by("id")
         )
-    
+
     return baseline_assessments_query
 
 
@@ -471,7 +515,6 @@ async def build_compare_results_main_query(
     page_size: Optional[int],
     db: Session,
 ) -> Tuple:
-    
     if page is not None and page_size is not None:
         offset = (page - 1) * page_size
         limit = page_size
@@ -480,74 +523,84 @@ async def build_compare_results_main_query(
         offset = 0
         limit = None
 
-    
-    main_assessment = (db.query(Assessment).filter(
-        Assessment.revision_id == revision_id,
-        Assessment.reference_id == reference_id,
-        Assessment.type == 'word-alignment',
-        Assessment.status == 'finished',
-    ).order_by(Assessment.end_time.desc()).first())
+    main_assessment = (
+        db.query(Assessment)
+        .filter(
+            Assessment.revision_id == revision_id,
+            Assessment.reference_id == reference_id,
+            Assessment.type == "word-alignment",
+            Assessment.status == "finished",
+        )
+        .order_by(Assessment.end_time.desc())
+        .first()
+    )
     if not main_assessment:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No completed assessment found for the given revision_id and reference_id"
+            detail="No completed assessment found for the given revision_id and reference_id",
         )
     main_assessment_id = main_assessment.id
-    main_assessment_query =  db.query(
-        AssessmentResult.id.label('id'),
-        AssessmentResult.book.label('book'),
-        AssessmentResult.chapter.label('chapter'),
-        AssessmentResult.verse.label('verse'),
-        AssessmentResult.score.label('score'),
-    ).filter(
-        AssessmentResult.assessment_id == main_assessment_id,
-        ).order_by('id')
+    main_assessment_query = (
+        db.query(
+            AssessmentResult.id.label("id"),
+            AssessmentResult.book.label("book"),
+            AssessmentResult.chapter.label("chapter"),
+            AssessmentResult.verse.label("verse"),
+            AssessmentResult.score.label("score"),
+        )
+        .filter(
+            AssessmentResult.assessment_id == main_assessment_id,
+        )
+        .order_by("id")
+    )
     if book:
-        main_assessment_query = main_assessment_query.filter(AssessmentResult.book == book)
+        main_assessment_query = main_assessment_query.filter(
+            AssessmentResult.book == book
+        )
     if chapter:
-        main_assessment_query = main_assessment_query.filter(AssessmentResult.chapter == chapter)
+        main_assessment_query = main_assessment_query.filter(
+            AssessmentResult.chapter == chapter
+        )
     if verse:
-        main_assessment_query = main_assessment_query.filter(AssessmentResult.verse == verse)
+        main_assessment_query = main_assessment_query.filter(
+            AssessmentResult.verse == verse
+        )
 
     if aggregate == aggType.chapter:
-        main_assessment_query = (main_assessment_query
-        .with_entities(
-            func.min(AssessmentResult.id).label('id'),
-            AssessmentResult.book,
-            AssessmentResult.chapter,
-            literal(None).label('verse'),
-            func.avg(AssessmentResult.score).label('score'),
-        )
-        .group_by(AssessmentResult.book, AssessmentResult.chapter)
-        .order_by('id')
+        main_assessment_query = (
+            main_assessment_query.with_entities(
+                func.min(AssessmentResult.id).label("id"),
+                AssessmentResult.book,
+                AssessmentResult.chapter,
+                literal(None).label("verse"),
+                func.avg(AssessmentResult.score).label("score"),
+            )
+            .group_by(AssessmentResult.book, AssessmentResult.chapter)
+            .order_by("id")
         )
 
     elif aggregate == aggType.book:
-        main_assessment_query = (main_assessment_query
-        .with_entities(
-            func.min(AssessmentResult.id).label('id'),
-            AssessmentResult.book,
-            literal(None).label('chapter'),
-            literal(None).label('verse'),
-            func.avg(AssessmentResult.score).label('score'),
-        )
-        .group_by(AssessmentResult.book)
-        .order_by('id')
+        main_assessment_query = (
+            main_assessment_query.with_entities(
+                func.min(AssessmentResult.id).label("id"),
+                AssessmentResult.book,
+                literal(None).label("chapter"),
+                literal(None).label("verse"),
+                func.avg(AssessmentResult.score).label("score"),
+            )
+            .group_by(AssessmentResult.book)
+            .order_by("id")
         )
 
     elif aggregate == aggType.text:
-        main_assessment_query = (main_assessment_query
-        .with_entities(
-            func.min(AssessmentResult.id).label('id'),
-            literal(None).label('book'),
-            literal(None).label('chapter'),
-            literal(None).label('verse'),
-            func.avg(AssessmentResult.score).label('score'),
-        )
-        .order_by('id')
-        )
+        main_assessment_query = main_assessment_query.with_entities(
+            func.min(AssessmentResult.id).label("id"),
+            literal(None).label("book"),
+            literal(None).label("chapter"),
+            literal(None).label("verse"),
+            func.avg(AssessmentResult.score).label("score"),
+        ).order_by("id")
 
-    
     total_rows = main_assessment_query.count()
     main_assessment_query = main_assessment_query.limit(limit).offset(offset)
 
@@ -555,13 +608,20 @@ async def build_compare_results_main_query(
 
 
 def calculate_z_score(row):
-    if row['stddev_of_avg_score'] and row['stddev_of_avg_score'] != 0 and not pd.isna(row['average_of_avg_score']) and not pd.isna(row['score']):
-        return (row['score'] - row['average_of_avg_score']) / row['stddev_of_avg_score']
+    if (
+        row["stddev_of_avg_score"]
+        and row["stddev_of_avg_score"] != 0
+        and not pd.isna(row["average_of_avg_score"])
+        and not pd.isna(row["score"])
+    ):
+        return (row["score"] - row["average_of_avg_score"]) / row["stddev_of_avg_score"]
     else:
         return None
 
 
-@router.get("/compareresults", response_model=Dict[str, Union[List[MultipleResult], int, dict]])
+@router.get(
+    "/compareresults", response_model=Dict[str, Union[List[MultipleResult], int, dict]]
+)
 async def get_compare_results(
     revision_id: int,
     reference_id: int,
@@ -574,10 +634,8 @@ async def get_compare_results(
     page_size: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
-    
 ):
-    """
-    """
+    """ """
     await validate_parameters(book, chapter, verse, aggregate)
 
     main_assessments_query, total_count = await build_compare_results_main_query(
@@ -608,20 +666,32 @@ async def get_compare_results(
     baseline_assessment_results = db.execute(baseline_assessments_query).fetchall()
     df_main = pd.DataFrame(main_assessment_results)
     if baseline_assessment_results:
-        df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=['id'])
+        df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=["id"])
     else:
-        df_baseline = pd.DataFrame(columns=['book', 'chapter', 'verse', 'average_of_avg_score', 'stddev_of_avg_score'])
+        df_baseline = pd.DataFrame(
+            columns=[
+                "book",
+                "chapter",
+                "verse",
+                "average_of_avg_score",
+                "stddev_of_avg_score",
+            ]
+        )
     if aggregate == aggType.chapter:
-        joined_df = pd.merge(df_main, df_baseline, on=['book', 'chapter'], how='left')
+        joined_df = pd.merge(df_main, df_baseline, on=["book", "chapter"], how="left")
     elif aggregate == aggType.book:
-        joined_df = pd.merge(df_main, df_baseline, on=['book'], how='left')
+        joined_df = pd.merge(df_main, df_baseline, on=["book"], how="left")
     elif aggregate == aggType.text:
-        joined_df = pd.concat([df_main.reset_index(drop=True), df_baseline.reset_index(drop=True)], axis=1)
+        joined_df = pd.concat(
+            [df_main.reset_index(drop=True), df_baseline.reset_index(drop=True)], axis=1
+        )
     else:
-        joined_df = pd.merge(df_main, df_baseline, on=['book', 'chapter', 'verse'], how='left')
-    joined_df['z_score'] = joined_df.apply(calculate_z_score, axis=1)
+        joined_df = pd.merge(
+            df_main, df_baseline, on=["book", "chapter", "verse"], how="left"
+        )
+    joined_df["z_score"] = joined_df.apply(calculate_z_score, axis=1)
     joined_df = joined_df.where(pd.notna(joined_df), None)
-    
+
     result_list = []
 
     for _, row in joined_df.iterrows():
@@ -636,17 +706,17 @@ async def get_compare_results(
             vref = f"{row['book']} {row['chapter']}:{row['verse']}"
 
         result_obj = MultipleResult(
-            id=row['id'],
+            id=row["id"],
             revision_id=revision_id,
             reference_id=reference_id,
             vref=vref,
-            score=row['score'],
-            mean_score=row['average_of_avg_score'],
-            stdev_score=row['stddev_of_avg_score'],
-            z_score=row['z_score'],
+            score=row["score"],
+            mean_score=row["average_of_avg_score"],
+            stdev_score=row["stddev_of_avg_score"],
+            z_score=row["z_score"],
         )
         result_list.append(result_obj)
-    
+
     return {"results": result_list, "total_count": total_count}
 
 
@@ -691,6 +761,20 @@ async def get_alignment_scores(
     # Initialize base query
     base_query = db.query(AlignmentTopSourceScores)
 
+    if book and not chapter:
+        base_query = base_query.filter(AlignmentTopSourceScores.book == book)
+    elif book and chapter and not verse:
+        base_query = base_query.filter(
+            AlignmentTopSourceScores.book == book,
+            AlignmentTopSourceScores.chapter == chapter,
+        )
+    elif book and chapter and verse:
+        base_query = base_query.filter(
+            AlignmentTopSourceScores.book == book,
+            AlignmentTopSourceScores.chapter == chapter,
+            AlignmentTopSourceScores.verse == verse,
+        )
+
     # Pagination logic
     if page is not None and page_size is not None:
         offset = (page - 1) * page_size
@@ -698,25 +782,6 @@ async def get_alignment_scores(
         base_query = base_query.offset(offset).limit(limit)
     else:
         limit = None  # No pagination applied
-
-    # Constructing the verse reference filter (vref)
-    vref_filter = ""
-    if book is not None:
-        vref_filter += func.upper(book) + " "
-    if chapter is not None:
-        vref_filter += str(chapter) + ":"
-    if verse is not None:
-        vref_filter += str(verse)
-
-    # Apply vref filter based on its construction
-    if vref_filter:
-        if verse is not None:  # Exact match
-            base_query = base_query.filter(AlignmentTopSourceScores.vref == vref_filter)
-        else:  # LIKE match
-            base_query = base_query.filter(
-                AlignmentTopSourceScores.vref.like(vref_filter + "%")
-            )
-
     # Fetch results based on constructed filters
     result_data = base_query.all()
 
@@ -728,16 +793,14 @@ async def get_alignment_scores(
             vref += f" {row.chapter}"
             if hasattr(row, "verse") and row.verse is not None:
                 vref += f":{row.verse}"
-
         # Building the Result object
-        result_obj = Result(
+        result_obj = WordAlignment(
             id=row.id if hasattr(row, "id") else None,
             assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
             vref=vref,
-            source=row.source if hasattr(row, "source") else None,
-            target=ast.literal_eval(row.target)
-            if hasattr(row, "target") and row.target is not None
-            else None,
+            source=str(row.source) if hasattr(row, "source") else None,
+            target=str(row.target) if hasattr(row, "target") else None,
+            score=row.score,
             flag=row.flag if hasattr(row, "flag") else None,
             note=row.note if hasattr(row, "note") else None,
             hide=row.hide if hasattr(row, "hide") else None,
