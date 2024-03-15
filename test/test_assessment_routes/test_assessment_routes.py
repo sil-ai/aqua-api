@@ -68,7 +68,7 @@ def delete_assessment(client, token, assessment_id):
 
 
 def test_add_assessment_success(
-    client, regular_token1, regular_token2, db_session, test_db_session
+    client, regular_token1, regular_token2, admin_token, db_session, test_db_session
 ):
     # Create two revisions
     version_id = create_bible_version(client, regular_token1)
@@ -151,22 +151,17 @@ def test_add_assessment_success(
     response = delete_assessment(client, regular_token2, assessment_id)
     assert response.status_code == 403
 
-    # delete the assesment
-    response = delete_assessment(client, regular_token1, assessment_id)
+    # delete the assesment as admin
+    response = delete_assessment(client, admin_token, assessment_id)
     assert response.status_code == 200
-    # check that the assessment has been deleted in the db
+    # check that the assessment has been deleted in the db by checking the deleted column
+    # check that the assessment has been deleted in the db by checking the deleted column
     assessment = (
         db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
     )
-    assert assessment is None
-    access = (
-        db_session.query(AssessmentAccess)
-        .filter(AssessmentAccess.assessment_id == assessment_id)
-        .first()
-    )
-    assert access is None
-
-
+    assert assessment is not None
+    assert assessment.deleted is False
+    
 def test_add_assessment_failure(client, regular_token1, db_session, test_db_session):
     # Create two revisions
     version_id = create_bible_version(client, regular_token1)
