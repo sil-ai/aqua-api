@@ -114,7 +114,7 @@ def test_add_assessment_success(
         assert assessment.type == "missing-words"
         assert (
             assessment.status == "queued"
-        )  # Or whatever status you expect immediately after creation
+        ) 
         user = (
             db_session.query(UserDB.id).filter(UserDB.username == "testuser1").first()
         )
@@ -151,6 +151,16 @@ def test_add_assessment_success(
     response = delete_assessment(client, regular_token2, assessment_id)
     assert response.status_code == 403
 
+    # confirm that admin can access the assessment
+    response = list_assessment(client, admin_token)
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["status"] == "queued"
+    assert response.json()[0]["type"] == "missing-words"
+    assert response.json()[0]["revision_id"] == revision_id
+    assert response.json()[0]["reference_id"] == reference_revision_id
+    assert response.json()[0]["id"] == assessment_id
+    
     # delete the assesment as admin
     response = delete_assessment(client, admin_token, assessment_id)
     assert response.status_code == 200
