@@ -8,7 +8,7 @@ import pandas as pd
 from enum import Enum
 from database.dependencies import get_db
 from sqlalchemy.orm import aliased
-from sqlalchemy import func, literal
+from sqlalchemy import func, literal, or_, and_
 from sqlalchemy.sql import and_, select
 from database.models import (
     AssessmentResult,
@@ -1082,3 +1082,84 @@ async def get_missing_words(
         result_list.append(result_obj)
 
     return {"results": result_list, "total_count": total_count}
+
+
+@router.get("/alignmentmatches", response_model=Dict[str, Union[List[WordAlignment], int]])
+async def get_word_alignments(
+    revision_id: int,
+    reference_id: int,
+    word: str,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Returns a list of all word alignments for a given word in a word alignment assessment.
+
+    Parameters
+    ----------
+    assessment_id : int
+        The ID of the assessment to get results for.
+    word : str
+        The word to get alignments for.
+    """
+    if page is not None and page_size is not None:
+        offset = (page - 1) * page_size
+        limit = page_size
+
+    else:
+        offset = 0
+        limit = None
+
+    main_assessment = (
+        db.query(Assessment)
+        .filter(
+            Assessment.revision_id == revision_id,
+            Assessment.reference_id == reference_id,
+            Assessment.type == "word-alignment",
+            Assessment.status == "finished",
+        )
+        .order_by(Assessment.end_time.desc())
+        .first()
+    )
+    if not main_assessment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed assessment found for the given revision_id and reference_id",
+        )
+    main_assessment_id = main_assessment.id
+    word_with_boundaries = f'(^|\s|\W){word.lower()}($|\s|\W)'
+    capitalized_word_with_boundaries = f'(^|\s|\W){word.capitalize()}($|\s|\W)'
+    query = (
+        db.query(VerseText, AlignmentTopSourceScores.target, AlignmentTopSourceScores.score)
+        .join(AlignmentTopSourceScores, VerseText.verse_reference == AlignmentTopSourceScores.vref)
+        .filter(VerseText.bible_revision == revision_id)
+        .filter(AlignmentTopSourceScores.assessment == main_assessment_id)
+        .filter(AlignmentTopSourceScores.source == word)
+        .filter(or_(
+            VerseText.text.op('~*')(word_with_boundaries),
+            VerseText.text.op('~*')(capitalized_word_with_boundaries)
+        ))
+        .order_by(VerseText.id)
+    )
+    print(str(query))
+    # To get the results
+    results = query.all()
+    
+
+    result_list = []
+
+    for result in results:
+        results = WordAlignment(
+            id=result[0],
+            assessment_id=assessment_id,
+            reference_text=result[1],
+            vref=result[3],
+            revision_text=result[7],
+            source=word,
+            target=result[8],
+            score=result[9],
+            )
+        result_list.append(results)
+
+    return {'results': result_list, 'total_count': len(result_list)}
