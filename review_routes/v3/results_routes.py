@@ -1,8 +1,9 @@
 __version__ = "v3"
 
+import os
 from fastapi import Depends, HTTPException, status, APIRouter, Query
 from typing import Optional, Dict, List, Union, Tuple
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 import pandas as pd
 
 from enum import Enum
@@ -1089,8 +1090,7 @@ async def get_word_alignments(
     revision_id: int,
     reference_id: int,
     word: str,
-    page: Optional[int] = None,
-    page_size: Optional[int] = None,
+    threshold: Optional[float] = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -1098,18 +1098,18 @@ async def get_word_alignments(
 
     Parameters
     ----------
-    assessment_id : int
-        The ID of the assessment to get results for.
+    revision_id : int
+        The ID of the revision to get results for.
+    reference_id : int
+        The ID of the reference to get results for.
     word : str
-        The word to get alignments for.
+        The word from the reference text to get alignments for.
+    threshold : float, optional
+        The minimum score for an alignment to be included in the results.
+        If not set, the value of the ALIGNMENT_THRESHOLD environment variable will be used, if set, or 0.2.
     """
-    if page is not None and page_size is not None:
-        offset = (page - 1) * page_size
-        limit = page_size
-
-    else:
-        offset = 0
-        limit = None
+    if threshold is None:
+        threshold = os.getenv("ALIGNMENT_THRESHOLD", 0.2)
 
     main_assessment = (
         db.query(Assessment)
@@ -1128,37 +1128,40 @@ async def get_word_alignments(
             detail="No completed assessment found for the given revision_id and reference_id",
         )
     main_assessment_id = main_assessment.id
-    word_with_boundaries = f'(^|\s|\W){word.lower()}($|\s|\W)'
-    capitalized_word_with_boundaries = f'(^|\s|\W){word.capitalize()}($|\s|\W)'
+
+    vt1 = aliased(VerseText)
+    vt2 = aliased(VerseText)
     query = (
-        db.query(VerseText, AlignmentTopSourceScores.target, AlignmentTopSourceScores.score)
-        .join(AlignmentTopSourceScores, VerseText.verse_reference == AlignmentTopSourceScores.vref)
-        .filter(VerseText.bible_revision == revision_id)
-        .filter(AlignmentTopSourceScores.assessment == main_assessment_id)
-        .filter(AlignmentTopSourceScores.source == word)
-        .filter(or_(
-            VerseText.text.op('~*')(word_with_boundaries),
-            VerseText.text.op('~*')(capitalized_word_with_boundaries)
-        ))
-        .order_by(VerseText.id)
+         db.query(
+             vt1.id.label("id"),
+             vt1.verse_reference.label("vref"),
+                vt1.text.label("revision_text"),
+             )
+        .add_columns(vt2.text.label("reference_text"), AlignmentTopSourceScores.target.label("target"), AlignmentTopSourceScores.score.label("score"))
+        .join(vt2, vt1.verse_reference == vt2.verse_reference)
+        .join(AlignmentTopSourceScores, vt1.verse_reference == AlignmentTopSourceScores.vref)
+        .filter(vt1.revision_id == revision_id)
+        .filter(vt2.revision_id == reference_id)
+        .filter(AlignmentTopSourceScores.assessment_id == main_assessment_id)
+        .filter(AlignmentTopSourceScores.source == word.lower())
+        .filter(AlignmentTopSourceScores.score > threshold)
+        .order_by(vt1.id)
     )
-    print(str(query))
-    # To get the results
+    
     results = query.all()
     
-
     result_list = []
 
     for result in results:
         results = WordAlignment(
-            id=result[0],
-            assessment_id=assessment_id,
-            reference_text=result[1],
-            vref=result[3],
-            revision_text=result[7],
+            id=result['id'],
+            assessment_id=main_assessment_id,
+            reference_text=result['reference_text'],
+            vref=result['vref'],
+            revision_text=result['revision_text'],
             source=word,
-            target=result[8],
-            score=result[9],
+            target=result['target'],
+            score=result['score'],
             )
         result_list.append(results)
 
