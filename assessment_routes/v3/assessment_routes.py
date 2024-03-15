@@ -2,20 +2,17 @@ __version__ = 'v3'
 # Standard library imports
 import os
 from datetime import datetime
-import base64
-import re
 from typing import List
+from datetime import date
 
 # Third party imports
 import requests
 from fastapi import Depends, HTTPException, status
-from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 import fastapi
 
 # Local application imports
-from key_fetch import get_secret
 from models import AssessmentIn, AssessmentOut
 from database.models import (
     Assessment as AssessmentModel, 
@@ -25,9 +22,6 @@ from database.models import (
     Assessment
 )
 from database.dependencies import get_db
-from security_routes.utilities import (
-    is_user_authorized_for_bible_version
-)
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -44,14 +38,15 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
 
     # Fetch the groups the user belongs to
     if current_user.is_admin:
-        assessments = db.query(AssessmentModel).all()
+        assessments = db.query(AssessmentModel).filter(AssessmentAccess.deleted.is_(False)).all()
     else:
         user_group_ids = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id).subquery()
         assessments = db.query(Assessment).join(
             AssessmentAccess, Assessment.id == AssessmentAccess.assessment_id
         ).filter(
             AssessmentAccess.group_id.in_(user_group_ids)
-        ).all()
+        ).filter(Assessment.deleted.is_(False)).all()
+
 
     assessment_data = [AssessmentOut.model_validate(assessment) for assessment in assessments]
     assessment_data = sorted(assessment_data, key=lambda x: x.requested_time, reverse=True)
@@ -163,24 +158,15 @@ async def delete_assessment(
         raise HTTPException(
             detail="Assessment not found."
         )
-
-    if current_user.is_admin:
-        is_authorized = True
-    else:
-        user_group_ids = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id).subquery()
-        is_authorized = db.query(AssessmentAccess).filter(
-            AssessmentAccess.assessment_id == assessment_id,
-            AssessmentAccess.group_id.in_(user_group_ids)
-        ).first() is not None
-
-    if not is_authorized:
+    if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to delete this assessment."
         )
 
     # Delete the assessment
-    db.delete(assessment)
+    assessment.deleted = True
+    assessment.deletedAt = date.today()
     db.commit()
 
     return {"detail": f"Assessment {assessment_id} deleted successfully"}
