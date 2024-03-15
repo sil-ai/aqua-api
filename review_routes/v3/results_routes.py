@@ -9,8 +9,8 @@ import pandas as pd
 from enum import Enum
 from database.dependencies import get_db
 from sqlalchemy.orm import aliased
-from sqlalchemy import func, literal, or_, and_
-from sqlalchemy.sql import and_, select
+from sqlalchemy import func, literal
+from sqlalchemy.sql import select
 from database.models import (
     AssessmentResult,
     Assessment,
