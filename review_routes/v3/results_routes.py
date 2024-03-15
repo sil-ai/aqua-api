@@ -605,9 +605,9 @@ async def build_compare_results_main_query(
 
 
 async def build_missing_words_main_query(
-    revision_id: Optional[int],
-    reference_id: Optional[int],
-    threshold: Optional[float],
+    revision_id: int,
+    reference_id: int,
+    threshold: float,
     book: Optional[str],
     chapter: Optional[int],
     verse: Optional[int],
@@ -619,10 +619,9 @@ async def build_missing_words_main_query(
     Asynchronously builds the main query for fetching words missing from a text alignment assessment, applying pagination and filtering.
 
     Args:
-        revision_id (Optional[int]): The ID of the revision to filter the assessment by. Default is None.
-        reference_id (Optional[int]): The ID of the reference to filter the assessment by. Default is None.
-        threshold (Optional[float]): The threshold score to determine if a word is missing. Default is None, which will default 
-        to environmental variable, if set, or 0.15.
+        revision_id (int): The ID of the revision to filter the assessment by.
+        reference_id (int): The ID of the reference to filter the assessment by.
+        threshold (float): The threshold score to determine if a word is missing.
         book (Optional[str]): The book name to filter the results by. Default is None.
         chapter (Optional[int]): The chapter number to filter the results by. Default is None.
         verse (Optional[int]): The verse number to filter the results by. Default is None.
@@ -645,9 +644,6 @@ async def build_missing_words_main_query(
         offset = 0
         limit = None
     
-    if threshold is None:
-        threshold = os.getenv("MISSING_WORDS_MISSING_THRESHOLD", 0.15)
-
     main_assessment = (
         db.query(Assessment)
         .filter(
