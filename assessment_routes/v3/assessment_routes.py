@@ -15,7 +15,6 @@ import fastapi
 # Local application imports
 from models import AssessmentIn, AssessmentOut
 from database.models import (
-    Assessment as AssessmentModel, 
     UserDB as UserModel, 
     UserGroup,
     AssessmentAccess,
@@ -38,7 +37,7 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
 
     # Fetch the groups the user belongs to
     if current_user.is_admin:
-        assessments = db.query(AssessmentModel).filter(AssessmentAccess.deleted.is_(False)).all()
+        assessments = db.query(Assessment).filter(Assessment.deleted.is_(False)).all()
     else:
         user_group_ids = db.query(UserGroup.group_id).filter(UserGroup.user_id == current_user.id).subquery()
         assessments = db.query(Assessment).join(
@@ -101,7 +100,7 @@ async def add_assessment(
             detail=f"Assessment type {a.type} requires a reference_id."
         )
 
-    assessment = AssessmentModel(
+    assessment = Assessment(
         revision_id=a.revision_id,
         reference_id=a.reference_id,
         type=a.type,
@@ -153,7 +152,7 @@ async def delete_assessment(
     """
 
     # Check if the assessment exists
-    assessment = db.query(AssessmentModel).filter(AssessmentModel.id == assessment_id).first()
+    assessment = db.query(Assessment).filter(Assessment.id == assessment_id).first()
     if not assessment:
         raise HTTPException(
             detail="Assessment not found."
