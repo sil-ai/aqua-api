@@ -3,14 +3,14 @@ __version__ = "v3"
 import os
 from fastapi import Depends, HTTPException, status, APIRouter, Query
 from typing import Optional, Dict, List, Union, Tuple
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 import pandas as pd
 
 from enum import Enum
 from database.dependencies import get_db
 from sqlalchemy.orm import aliased
 from sqlalchemy import func, literal
-from sqlalchemy.sql import and_, select
+from sqlalchemy.sql import select
 from database.models import (
     AssessmentResult,
     Assessment,
@@ -1192,3 +1192,86 @@ async def get_missing_words(
         result_list.append(result_obj)
 
     return {"results": result_list, "total_count": total_count}
+
+
+@router.get("/alignmentmatches", response_model=Dict[str, Union[List[WordAlignment], int]])
+async def get_word_alignments(
+    revision_id: int,
+    reference_id: int,
+    word: str,
+    threshold: Optional[float] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Returns a list of all word alignments for a given word in a word alignment assessment.
+
+    Parameters
+    ----------
+    revision_id : int
+        The ID of the revision to get results for.
+    reference_id : int
+        The ID of the reference to get results for.
+    word : str
+        The word from the reference text to get alignments for.
+    threshold : float, optional
+        The minimum score for an alignment to be included in the results.
+        If not set, the value of the ALIGNMENT_THRESHOLD environment variable will be used, if set, or 0.2.
+    """
+    if threshold is None:
+        threshold = os.getenv("ALIGNMENT_THRESHOLD", 0.2)
+
+    main_assessment = (
+        db.query(Assessment)
+        .filter(
+            Assessment.revision_id == revision_id,
+            Assessment.reference_id == reference_id,
+            Assessment.type == "word-alignment",
+            Assessment.status == "finished",
+        )
+        .order_by(Assessment.end_time.desc())
+        .first()
+    )
+    if not main_assessment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed assessment found for the given revision_id and reference_id",
+        )
+    main_assessment_id = main_assessment.id
+
+    vt1 = aliased(VerseText)
+    vt2 = aliased(VerseText)
+    query = (
+         db.query(
+             vt1.id.label("id"),
+             vt1.verse_reference.label("vref"),
+                vt1.text.label("revision_text"),
+             )
+        .add_columns(vt2.text.label("reference_text"), AlignmentTopSourceScores.target.label("target"), AlignmentTopSourceScores.score.label("score"))
+        .join(vt2, vt1.verse_reference == vt2.verse_reference)
+        .join(AlignmentTopSourceScores, vt1.verse_reference == AlignmentTopSourceScores.vref)
+        .filter(vt1.revision_id == revision_id)
+        .filter(vt2.revision_id == reference_id)
+        .filter(AlignmentTopSourceScores.assessment_id == main_assessment_id)
+        .filter(AlignmentTopSourceScores.source == word.lower())
+        .filter(AlignmentTopSourceScores.score > threshold)
+        .order_by(vt1.id)
+    )
+    
+    results = query.all()
+    
+    result_list = []
+
+    for result in results:
+        results = WordAlignment(
+            id=result['id'],
+            assessment_id=main_assessment_id,
+            reference_text=result['reference_text'],
+            vref=result['vref'],
+            revision_text=result['revision_text'],
+            source=word,
+            target=result['target'],
+            score=result['score'],
+            )
+        result_list.append(results)
+
+    return {'results': result_list, 'total_count': len(result_list)}
