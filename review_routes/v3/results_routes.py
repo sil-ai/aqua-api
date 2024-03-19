@@ -1137,6 +1137,8 @@ async def get_missing_words(
                     "verse",
                     "source",
                     "target",
+                    "assessment_id",
+                    "baseline_score",
                 ]
             )
         df_baseline.loc[:, "baseline_id"] = df_baseline["assessment_id"].apply(
