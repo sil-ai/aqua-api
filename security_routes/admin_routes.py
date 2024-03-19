@@ -1,7 +1,7 @@
 from fastapi.security import OAuth2PasswordBearer
 from fastapi import FastAPI, Depends, HTTPException, status, APIRouter
 from jose import jwt
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from .utilities import hash_password
 from models import User, Group
 from database.models import (
@@ -17,8 +17,8 @@ router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 
-def get_current_admin(
-    token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
+async def get_current_admin(
+    token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)
 ):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -32,7 +32,7 @@ def get_current_admin(
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        user = db.query(UserDB).filter(UserDB.username == username).first()
+        user = await db.query(UserDB).filter(UserDB.username == username).first()
         if user is None or not user.is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -46,10 +46,10 @@ def get_current_admin(
 @router.post("/users", response_model=User)
 async def create_user(
     user: User = Depends(),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
 ):
-    db_user = db.query(UserDB).filter(UserDB.username == user.username).first()
+    db_user = await db.query(UserDB).filter(UserDB.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
     if user.password is None:
@@ -61,9 +61,9 @@ async def create_user(
         hashed_password=hashed_password,
         is_admin=user.is_admin,
     )
-    db.add(db_user)
-    db.commit()
-    db.refresh(db_user)
+    await db.add(db_user)
+    await db.commit()
+    await db.refresh(db_user)
     # Convert SQLAlchemy model instance to Pydantic model instance for the response
     return_user = User(
         id=db_user.id,
@@ -79,16 +79,16 @@ async def create_user(
 @router.post("/groups", response_model=Group)
 async def create_group(
     group: Group = Depends(),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
 ):
-    db_group = db.query(GroupDB).filter(GroupDB.name == group.name).first()
+    db_group = await db.query(GroupDB).filter(GroupDB.name == group.name).first()
     if db_group:
         raise HTTPException(status_code=400, detail="Group already exists")
     db_group = GroupDB(name=group.name, description=group.description)
-    db.add(db_group)
-    db.commit()
-    db.refresh(db_group)
+    await db.add(db_group)
+    await db.commit()
+    await db.refresh(db_group)
     return_group = Group(
         id=db_group.id, name=db_group.name, description=db_group.description
     )
@@ -97,9 +97,9 @@ async def create_group(
 
 @router.get("/groups", response_model=list[Group])
 async def get_groups(
-    db: Session = Depends(get_db), _: UserDB = Depends(get_current_admin)
+    db: AsyncSession = Depends(get_db), _: UserDB = Depends(get_current_admin)
 ):
-    groups = db.query(GroupDB).all()
+    groups = await db.query(GroupDB).all()
     return [
         Group(id=group.id, name=group.name, description=group.description)
         for group in groups
@@ -110,7 +110,7 @@ async def get_groups(
 async def link_user_to_group(
     username=str,
     groupname=str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(
         get_current_admin
     ),  # Ensuring only admin can link users to groups
@@ -120,8 +120,8 @@ async def link_user_to_group(
             status_code=400, detail="Username and group name are required"
         )
 
-    user = db.query(UserDB).filter(UserDB.username == username).first()
-    group = db.query(GroupDB).filter(GroupDB.name == groupname).first()
+    user = await db.query(UserDB).filter(UserDB.username == username).first()
+    group = await db.query(GroupDB).filter(GroupDB.name == groupname).first()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -130,7 +130,7 @@ async def link_user_to_group(
 
     # Check if the link already exists
     existing_link = (
-        db.query(UserGroup).filter_by(user_id=user.id, group_id=group.id).first()
+        await db.query(UserGroup).filter_by(user_id=user.id, group_id=group.id).first()
     )
     if existing_link:
         raise HTTPException(
@@ -138,8 +138,8 @@ async def link_user_to_group(
         )
 
     new_link = UserGroup(user_id=user.id, group_id=group.id)
-    db.add(new_link)
-    db.commit()
+    await db.add(new_link)
+    await db.commit()
     return {"message": f"User {username} successfully linked to group {groupname}"}
 
 
@@ -147,7 +147,7 @@ async def link_user_to_group(
 async def unlink_user_from_group(
     username=str,
     groupname=str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(
         get_current_admin
     ),  # Ensuring only admin can unlink users from groups
@@ -157,61 +157,61 @@ async def unlink_user_from_group(
             status_code=400, detail="Username and group name are required"
         )
 
-    user = db.query(UserDB).filter(UserDB.username == username).first()
-    group = db.query(GroupDB).filter(GroupDB.name == groupname).first()
+    user = await db.query(UserDB).filter(UserDB.username == username).first()
+    group = await db.query(GroupDB).filter(GroupDB.name == groupname).first()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    link = db.query(UserGroup).filter_by(user_id=user.id, group_id=group.id).first()
+    link = await db.query(UserGroup).filter_by(user_id=user.id, group_id=group.id).first()
     if not link:
         raise HTTPException(
             status_code=404, detail="User is not linked to this group"
         )
 
-    db.delete(link)
-    db.commit()
+    await db.delete(link)
+    await db.commit()
     return {"message": f"User {username} successfully unlinked from group {groupname}"}
 
 
 @router.delete("/groups", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_group(
     groupname: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),  # Ensuring only admin can delete groups
 ):
-    group = db.query(GroupDB).filter(GroupDB.name == groupname).first()
+    group = await db.query(GroupDB).filter(GroupDB.name == groupname).first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
     # Check if the group is linked to any user
-    linked_users = db.query(UserGroup).filter(UserGroup.group_id == group.id).first()
+    linked_users = await db.query(UserGroup).filter(UserGroup.group_id == group.id).first()
     if linked_users:
         raise HTTPException(
             status_code=400, detail="Group is linked to users and cannot be deleted"
         )
 
-    db.delete(group)
-    db.commit()
+    await db.delete(group)
+    await db.commit()
     return {"message": f"Group '{groupname}' successfully deleted"}
 
 
 @router.delete("/users", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     username: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),  # Ensuring only admin can delete users
 ):
-    user = db.query(UserDB).filter(UserDB.username == username).first()
+    user = await db.query(UserDB).filter(UserDB.username == username).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     # Optional: Perform any cleanup or checks before deleting the user
 
-    db.delete(user)
-    db.commit()
+    await db.delete(user)
+    await db.commit()
     return {"message": f"User '{username}' successfully deleted"}
 
 
@@ -220,12 +220,12 @@ async def delete_user(
 async def change_password(
     username: str,
     new_password: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
 ):
-    user = db.query(UserDB).filter(UserDB.username == username).first()
+    user = await db.query(UserDB).filter(UserDB.username == username).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.hashed_password = hash_password(new_password)
-    db.commit()
+    await db.commit()
     return {"message": f"Password for user '{username}' successfully changed"}

@@ -10,6 +10,7 @@ from enum import Enum
 from database.dependencies import get_db
 from sqlalchemy.orm import aliased
 from sqlalchemy import func, literal
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import select
 from database.models import (
     AssessmentResult,
@@ -24,6 +25,7 @@ from security_routes.utilities import is_user_authorized_for_assessement
 from security_routes.auth_routes import get_current_user
 from models import Result_v2 as Result, WordAlignment, MultipleResult
 import ast
+
 
 router = APIRouter()
 
@@ -92,10 +94,10 @@ async def build_results_query(
     page_size: Optional[int],
     aggregate: Optional[aggType],
     reverse: Optional[bool],
-    db: Session,
+    db: AsyncSession,
 ) -> Tuple:
     # Initialize the base query
-    base_query = db.query(AssessmentResult).filter(
+    base_query = await db.query(AssessmentResult).filter(
         AssessmentResult.assessment_id == assessment_id
     )
 
@@ -111,7 +113,7 @@ async def build_results_query(
 
     # Apply 'source_null' logic to filter results
     assessment_type = (
-        db.query(Assessment.type).filter(Assessment.id == assessment_id).scalar()
+        await db.query(Assessment.type).filter(Assessment.id == assessment_id).scalar()
     )
     # For missing words, if not reverse, we only want the non-null source results
     only_non_null = (
@@ -198,7 +200,7 @@ async def build_results_query(
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
     count_query = (
-        db.query(func.count())
+        await db.query(func.count())
         .select_from(AssessmentResult)
         .filter(AssessmentResult.assessment_id == assessment_id)
     )
@@ -248,7 +250,7 @@ async def get_result(
     page_size: Optional[int] = None,
     aggregate: Optional[aggType] = None,
     reverse: Optional[bool] = False,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -303,7 +305,7 @@ async def get_result(
 
     # Execute the query and fetch results
     result_data = query.all()
-    result_agg_data = db.execute(count_query)
+    result_agg_data = await db.execute(count_query)
 
     # Process and format results
     result_list = []
@@ -349,12 +351,12 @@ async def build_compare_results_baseline_query(
     book: Optional[str],
     chapter: Optional[int],
     verse: Optional[int],
-    db: Session,
+    db: AsyncSession,
 ) -> Tuple:
     if not baseline_ids:
         baseline_ids = []
     baseline_assessments = (
-        db.query(
+        await db.query(
             Assessment.revision_id,
             func.max(Assessment.id).label(
                 "id"
@@ -372,7 +374,7 @@ async def build_compare_results_baseline_query(
 
     baseline_assessment_ids = [assessment.id for assessment in baseline_assessments]
 
-    baseline_assessments_query = db.query(
+    baseline_assessments_query = await db.query(
         AssessmentResult.id.label("id"),
         AssessmentResult.assessment_id.label("assessment_id"),
         AssessmentResult.book.label("book"),
@@ -407,7 +409,7 @@ async def build_compare_results_baseline_query(
             ).group_by("book", "chapter", "assessment_id")
         ).subquery()
         baseline_assessments_query = (
-            db.query(
+            await db.query(
                 func.min(baseline_assessments_subquery.c.id).label("id"),
                 baseline_assessments_subquery.c.book.label("book"),
                 baseline_assessments_subquery.c.chapter.label("chapter"),
@@ -433,7 +435,7 @@ async def build_compare_results_baseline_query(
             ).group_by("book", "assessment_id")
         ).subquery()
         baseline_assessments_query = (
-            db.query(
+            await db.query(
                 func.min(baseline_assessments_subquery.c.id).label("id"),
                 baseline_assessments_subquery.c.book.label("book"),
                 func.min(baseline_assessments_subquery.c.chapter).label("chapter"),
@@ -458,7 +460,7 @@ async def build_compare_results_baseline_query(
                 func.avg(AssessmentResult.score).label("avg_score"),
             ).group_by("assessment_id")
         ).subquery()
-        baseline_assessments_query = db.query(
+        baseline_assessments_query = await db.query(
             func.min(baseline_assessments_subquery.c.id).label("id"),
             func.min(baseline_assessments_subquery.c.book).label("book"),
             func.min(baseline_assessments_subquery.c.chapter).label("chapter"),
@@ -482,7 +484,7 @@ async def build_compare_results_baseline_query(
             ).group_by("book", "chapter", "verse", "assessment_id")
         ).subquery()
         baseline_assessments_query = (
-            db.query(
+            await db.query(
                 func.min(baseline_assessments_subquery.c.id).label("id"),
                 baseline_assessments_subquery.c.book.label("book"),
                 baseline_assessments_subquery.c.chapter.label("chapter"),
@@ -510,7 +512,7 @@ async def build_compare_results_main_query(
     verse: Optional[int],
     page: Optional[int],
     page_size: Optional[int],
-    db: Session,
+    db: AsyncSession,
 ) -> Tuple:
     if page is not None and page_size is not None:
         offset = (page - 1) * page_size
@@ -521,7 +523,7 @@ async def build_compare_results_main_query(
         limit = None
 
     main_assessment = (
-        db.query(Assessment)
+        await db.query(Assessment)
         .filter(
             Assessment.revision_id == revision_id,
             Assessment.reference_id == reference_id,
@@ -538,7 +540,7 @@ async def build_compare_results_main_query(
         )
     main_assessment_id = main_assessment.id
     main_assessment_query = (
-        db.query(
+        await db.query(
             AssessmentResult.id.label("id"),
             AssessmentResult.book.label("book"),
             AssessmentResult.chapter.label("chapter"),
@@ -613,7 +615,7 @@ async def build_missing_words_main_query(
     verse: Optional[int],
     page: Optional[int],
     page_size: Optional[int],
-    db: Session,
+    db: AsyncSession,
 ) -> Tuple:
     """
     Asynchronously builds the main query for fetching words missing from a text alignment assessment, applying pagination and filtering.
@@ -645,7 +647,7 @@ async def build_missing_words_main_query(
         limit = None
     
     main_assessment = (
-        db.query(Assessment)
+        await db.query(Assessment)
         .filter(
             Assessment.revision_id == revision_id,
             Assessment.reference_id == reference_id,
@@ -662,7 +664,7 @@ async def build_missing_words_main_query(
         )
     main_assessment_id = main_assessment.id
     main_assessment_query = (
-        db.query(
+        await db.query(
             AlignmentTopSourceScores.id.label("id"),
             AlignmentTopSourceScores.book.label("book"),
             AlignmentTopSourceScores.chapter.label("chapter"),
@@ -701,7 +703,7 @@ async def build_missing_words_baseline_query(
     book: Optional[str],
     chapter: Optional[int],
     verse: Optional[int],
-    db: Session,
+    db: AsyncSession,
 ) -> Tuple:
     """
     Asynchronously builds the query for fetching baseline words from a set of alignment assessments, with optional filtering.
@@ -726,7 +728,7 @@ async def build_missing_words_baseline_query(
     if not baseline_ids:
         baseline_ids = []
     baseline_assessments = (
-        db.query(
+        await db.query(
             Assessment.revision_id,
             func.max(Assessment.id).label(
                 "id"
@@ -748,7 +750,7 @@ async def build_missing_words_baseline_query(
         assessment.id: assessment.revision_id for assessment in baseline_assessments
     }
 
-    baseline_assessments_query = db.query(
+    baseline_assessments_query = await db.query(
         AlignmentTopSourceScores.id.label("id"),
         AlignmentTopSourceScores.assessment_id.label("assessment_id"),
         AlignmentTopSourceScores.book.label("book"),
@@ -802,7 +804,7 @@ async def get_compare_results(
     verse: Optional[int] = None,
     page: Optional[int] = None,
     page_size: Optional[int] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """ 
@@ -866,8 +868,8 @@ async def get_compare_results(
         verse,
         db,
     )
-    main_assessment_results = db.execute(main_assessments_query).fetchall()
-    baseline_assessment_results = db.execute(baseline_assessments_query).fetchall()
+    main_assessment_results = await db.execute(main_assessments_query).fetchall()
+    baseline_assessment_results = await db.execute(baseline_assessments_query).fetchall()
     df_main = pd.DataFrame(main_assessment_results)
     if baseline_assessment_results:
         df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=["id"])
@@ -934,7 +936,7 @@ async def get_alignment_scores(
     verse: Optional[int] = None,
     page: Optional[int] = None,
     page_size: Optional[int] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -968,7 +970,7 @@ async def get_alignment_scores(
             detail="User not authorized to see this assessment",
         )
     # Initialize base query
-    base_query = db.query(AlignmentTopSourceScores)
+    base_query = await db.query(AlignmentTopSourceScores)
 
     if book and not chapter:
         base_query = base_query.filter(AlignmentTopSourceScores.book == book)
@@ -1042,7 +1044,7 @@ async def get_missing_words(
     verse: Optional[int] = None,
     page: Optional[int] = None,
     page_size: Optional[int] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -1086,9 +1088,9 @@ async def get_missing_words(
     match_threshold = os.getenv("MISSING_WORDS_MATCH_THRESHOLD", 0.2)
 
     # Remove baseline ids for revisions belonging to the same version as the revision or reference
-    revision_version_subquery = db.query(BibleRevision.bible_version_id).filter(BibleRevision.id == revision_id).subquery()
-    reference_version_subquery = db.query(BibleRevision.bible_version_id).filter(BibleRevision.id == reference_id).subquery()
-    revisions_with_same_version = db.query(BibleRevision.id).filter(
+    revision_version_subquery = await db.query(BibleRevision.bible_version_id).filter(BibleRevision.id == revision_id).subquery()
+    reference_version_subquery = await db.query(BibleRevision.bible_version_id).filter(BibleRevision.id == reference_id).subquery()
+    revisions_with_same_version = await db.query(BibleRevision.id).filter(
         BibleRevision.bible_version_id.in_([revision_version_subquery.as_scalar(), reference_version_subquery.as_scalar()])
     ).all()
     ids_with_same_version = [result.id for result in revisions_with_same_version]
@@ -1111,7 +1113,7 @@ async def get_missing_words(
         db,
     )
 
-    main_assessment_results = db.execute(main_assessment_query).fetchall()
+    main_assessment_results = await db.execute(main_assessment_query).fetchall()
     df_main = pd.DataFrame(main_assessment_results)
 
     if baseline_ids:
@@ -1126,7 +1128,7 @@ async def get_missing_words(
             verse,
             db,
         )
-        baseline_assessment_results = db.execute(baseline_assessment_query).fetchall()
+        baseline_assessment_results = await db.execute(baseline_assessment_query).fetchall()
         if baseline_assessment_results:
             df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=["id"])
         else:
@@ -1202,7 +1204,7 @@ async def get_word_alignments(
     reference_id: int,
     word: str,
     threshold: Optional[float] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Returns a list of all word alignments for a given word in a word alignment assessment.
@@ -1223,7 +1225,7 @@ async def get_word_alignments(
         threshold = os.getenv("ALIGNMENT_THRESHOLD", 0.2)
 
     main_assessment = (
-        db.query(Assessment)
+        await db.query(Assessment)
         .filter(
             Assessment.revision_id == revision_id,
             Assessment.reference_id == reference_id,
@@ -1243,7 +1245,7 @@ async def get_word_alignments(
     vt1 = aliased(VerseText)
     vt2 = aliased(VerseText)
     query = (
-         db.query(
+         await db.query(
              vt1.id.label("id"),
              vt1.verse_reference.label("vref"),
                 vt1.text.label("revision_text"),

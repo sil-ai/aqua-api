@@ -10,6 +10,7 @@ import requests
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 import fastapi
 
 # Local application imports
@@ -30,7 +31,7 @@ from security_routes.auth_routes import get_current_user
 router = fastapi.APIRouter()
 
 @router.get("/assessment", response_model=List[AssessmentOut])
-async def get_assessments(current_user: UserModel = Depends(get_current_user), db: Session = Depends(get_db)):
+async def get_assessments(current_user: UserModel = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Returns a list of all assessments the current user is authorized to access.
     """
@@ -73,7 +74,7 @@ async def add_assessment(
     a: AssessmentIn = Depends(),
     modal_suffix: str = '',
     return_all_results: bool = False,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user)  # Adjusted to get the current user model
 ):
     """
@@ -144,7 +145,7 @@ async def add_assessment(
 @router.delete("/assessment")
 async def delete_assessment(
     assessment_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """

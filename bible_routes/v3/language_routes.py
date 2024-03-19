@@ -6,6 +6,7 @@ import fastapi
 from fastapi import Depends
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import Script, Language
 from database.models import (
@@ -21,21 +22,21 @@ router = fastapi.APIRouter()
 
 @router.get("/language", response_model=List[Language])
 async def list_languages(
-    db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db), current_user: UserModel = Depends(get_current_user)
 ):
     """
     Get a list of ISO 639-2 language codes and their English names.
     """
-    languages = db.query(IsoLanguage).all()
+    languages = await db.query(IsoLanguage).all()
     return languages
 
 
 @router.get("/script", response_model=List[Script])
 async def list_scripts(
-    db: Session = Depends(get_db), current_user: UserModel = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db), current_user: UserModel = Depends(get_current_user)
 ):
     """
     Get a list of ISO 15924 script codes and their English names.
     """
-    scripts = db.query(IsoScript).all()
+    scripts = await db.query(IsoScript).all()
     return scripts

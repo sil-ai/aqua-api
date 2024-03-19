@@ -3,7 +3,7 @@ __version__ = "v3"
 from typing import List
 import fastapi
 from fastapi import Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import VerseText
 from database.models import (
@@ -23,7 +23,7 @@ async def get_chapter(
     revision_id: int,
     book: str,
     chapter: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -36,7 +36,7 @@ async def get_chapter(
         )
 
     result = (
-        db.query(
+        await db.query(
             VerseModel.id,
             VerseModel.text,
             VerseModel.verse_reference,
@@ -81,7 +81,7 @@ async def get_verse(
     book: str,
     chapter: int,
     verse: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -94,7 +94,7 @@ async def get_verse(
         )
 
     result = (
-        db.query(VerseModel)
+        await db.query(VerseModel)
         .filter(
             VerseModel.revision_id == revision_id,
             VerseModel.book == book,
@@ -111,7 +111,7 @@ async def get_verse(
 async def get_book(
     revision_id: int,
     book: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -124,7 +124,7 @@ async def get_book(
         )
 
     result = (
-        db.query(VerseModel)
+        await db.query(VerseModel)
         .filter(VerseModel.revision_id == revision_id, VerseModel.book == book)
         .order_by(VerseModel.id)
         .all()
@@ -135,7 +135,7 @@ async def get_book(
 @router.get("/text", response_model=List[VerseText])
 async def get_text(
     revision_id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -148,7 +148,7 @@ async def get_text(
         )
 
     result = (
-        db.query(VerseModel).filter(VerseModel.revision_id == revision_id)
+        await db.query(VerseModel).filter(VerseModel.revision_id == revision_id)
         .order_by(VerseModel.id)
         .all()
     )

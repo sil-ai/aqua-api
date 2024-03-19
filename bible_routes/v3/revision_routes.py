@@ -1,7 +1,7 @@
 from typing import List, Optional
 from fastapi import Depends, HTTPException, status, APIRouter, UploadFile, File
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError, NoResultFound
+from sqlalchemy.ext.asyncio import AsyncSession
 from tempfile import NamedTemporaryFile
 import numpy as np
 import time
@@ -25,10 +25,10 @@ from database.dependencies import get_db
 router = APIRouter()
 
 
-def create_revision_out(revision: BibleVersionModel, db: Session) -> RevisionOut:
+async def create_revision_out(revision: BibleVersionModel, db: AsyncSession) -> RevisionOut:
     # Fetch related BibleVersionModel data
     version = (
-        db.query(BibleVersionModel)
+        await db.query(BibleVersionModel)
         .filter(BibleVersionModel.id == revision.bible_version_id)
         .first()
     )
@@ -48,7 +48,7 @@ def create_revision_out(revision: BibleVersionModel, db: Session) -> RevisionOut
 @router.get("/revision", response_model=List[RevisionOut])
 async def list_revisions(
     version_id: Optional[int] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -64,7 +64,7 @@ async def list_revisions(
     if version_id:
         # Check if version exists
         version = (
-            db.query(BibleVersionModel)
+            await db.query(BibleVersionModel)
             .filter(BibleVersionModel.id == version_id)
             .first()
         )
@@ -81,14 +81,14 @@ async def list_revisions(
             )
 
         revisions = (
-            db.query(BibleRevisionModel)
+            await db.query(BibleRevisionModel)
             .filter(BibleRevisionModel.bible_version_id == version_id)
             .all()
         )
     else:
         # List all revisions, but filter based on user authorization and filter based on deleted status
         revisions = (
-            db.query(BibleRevisionModel)
+            await db.query(BibleRevisionModel)
             .filter(BibleRevisionModel.deleted.is_(False))
             .all()
         )
@@ -103,11 +103,7 @@ async def list_revisions(
     logging.info(
         f"Listed revisions for User {current_user.id} in {processing_time:.2f} seconds."
     )
-
-    return revision_out_list
-
-
-def process_and_upload_revision(file_content: bytes, revision_id: int, db: Session):
+def process_and_upload_revision(file_content: bytes, revision_id: int, db: AsyncSession):
     with NamedTemporaryFile() as temp_file:
         temp_file.write(file_content)
         temp_file.seek(0)
@@ -134,14 +130,14 @@ def process_and_upload_revision(file_content: bytes, revision_id: int, db: Sessi
 async def upload_revision(
     revision: RevisionIn = Depends(),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     start_time = time.time()
 
     logging.info(f"Uploading new revision: {revision.model_dump()}")
     version = (
-        db.query(BibleVersionModel)
+        await db.query(BibleVersionModel)
         .filter(BibleVersionModel.id == revision.version_id)
         .first()
     )
@@ -171,20 +167,20 @@ async def upload_revision(
         back_translation_id=revision.backTranslation,
         machine_translation=revision.machineTranslation,
     )
-    db.add(new_revision)
-    db.flush()
-    db.refresh(new_revision)
-    db.commit()
+    await db.add(new_revision)
+    await db.flush()
+    await db.refresh(new_revision)
+    await db.commit()
 
     try:
         # Read file and process revision
         contents = await file.read()
         process_and_upload_revision(contents, new_revision.id, db)
-        db.commit()  # Commit if processing is successful
+        await db.commit()  # Commit if processing is successful
     except Exception as e:  # Catching a broader exception
         # Delete the previously committed revision
-        db.delete(new_revision)
-        db.commit()
+        await db.delete(new_revision)
+        await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     revision_out = create_revision_out(new_revision, db)
@@ -199,13 +195,13 @@ async def upload_revision(
 @router.delete("/revision")
 async def delete_revision(
     id: int,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     start_time = time.time()  # Start timer
 
     # Check if the revision exists and if the user is authorized
-    revision = db.query(BibleRevisionModel).filter(BibleRevisionModel.id == id).first()
+    revision = await db.query(BibleRevisionModel).filter(BibleRevisionModel.id == id).first()
     if not revision:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -221,7 +217,7 @@ async def delete_revision(
     # delete the revision by updating the boolean field deleted to True and the deletedAt field to the current time
     revision.deleted = True
     revision.deletedAt = date.today()
-    db.commit()
+    await db.commit()
     end_time = time.time()  # End timer
     processing_time = end_time - start_time
     logging.info(
@@ -236,14 +232,14 @@ async def delete_revision(
 async def rename_revision(
     id: int,
     new_name: str,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
     Rename a revision.
     """
     # Check if the revision exists
-    revision = db.query(BibleRevisionModel).filter(BibleRevisionModel.id == id).first()
+    revision = await db.query(BibleRevisionModel).filter(BibleRevisionModel.id == id).first()
     if not revision:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found."
@@ -257,6 +253,6 @@ async def rename_revision(
         )
         # Perform the rename
     revision.name = new_name
-    db.commit()
+    await db.commit()
 
     return {"detail": f"Revision {id} successfully renamed."}
