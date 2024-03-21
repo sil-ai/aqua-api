@@ -22,11 +22,16 @@ import bcrypt
 from datetime import date
 import pandas as pd
 from app import app
-
+import asyncio
 engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-
+@pytest.yield_fixture(scope="session")
+def event_loop(request):
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+    
 @pytest.fixture(scope="module")
 def db_session():
     return TestingSessionLocal()
