@@ -805,7 +805,43 @@ async def get_compare_results(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """ """
+    """ 
+    Returns word alignment assessment results for a given revision and reference, but also
+    returns the average score and standard deviation of the average score for the baseline
+    assessments when run against the same reference. Finally, a z-score is calculated for each
+    result, which is a measure of how many standard deviations the result is from the mean of the
+    baseline assessments.
+    Parameters
+    ----------
+    revision_id : int
+        The ID of the revision to get results for.
+    reference_id : int
+        The ID of the reference to get results for.
+    baseline_ids : List[int], optional
+        A list of revision IDs to compare against. If not set, this route will essentially return 
+        the same results as the /result route.
+    aggregate : str, optional
+        If set to "chapter", results will be aggregated by chapter.
+        If set to "book", results will be aggregated by book.
+        If set to "text", a single result will be returned, for the whole text.
+        Otherwise results will be returned at the verse level.
+    book : str, optional
+        Restrict results to one book.
+    chapter : int, optional
+        Restrict results to one chapter. If set, book must also be set.
+    verse : int, optional
+        Restrict results to one verse. If set, book and chapter must also be set.
+    page : int, optional
+        The page of results to return. If set, page_size must also be set.
+    page_size : int, optional
+        The number of results to return per page. If set, page must also be set.
+    Returns
+    -------
+    Dict[str, Union[List[MultipleResult], int, dict]]
+        A dictionary containing the list of results, the total count of results, and a dictionary
+        containing the score, average score and standard deviation for the baseline
+        assessments, and z-score of the score with respect to this baseline average and standard deviation.
+    """
     await validate_parameters(book, chapter, verse, aggregate)
 
     main_assessments_query, total_count = await build_compare_results_main_query(
@@ -916,6 +952,11 @@ async def get_alignment_scores(
         The page of results to return. If set, page_size must also be set.
     page_size : int, optional
         The number of results to return per page. If set, page must also be set.
+
+    Returns
+    -------
+    Dict[str, Union[List[WordAlignment], int]]
+        A dictionary containing the list of results and the total count of results.
     """
     await validate_parameters(book, chapter, verse)
 
