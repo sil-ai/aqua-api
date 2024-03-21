@@ -693,6 +693,7 @@ async def build_missing_words_baseline_query(
 ) -> Tuple:
     """
     Asynchronously builds the query for fetching baseline words from a set of alignment assessments, with optional filtering.
+
     Args:
         reference_id (Optional[int]): The ID of the reference to filter the assessments by. Default is None.
         baseline_ids (Optional[List[int]]): A list of revision IDs to consider as baseline assessments. Default is None.
@@ -700,9 +701,11 @@ async def build_missing_words_baseline_query(
         chapter (Optional[int]): The chapter number to filter the results by. Default is None.
         verse (Optional[int]): The verse number to filter the results by. Default is None.
         db (Session): The database session object to execute queries against.
+
     Returns:
         Tuple: A tuple containing the baseline assessments query object and a mapping of assessment IDs to baseline IDs.
         The query object is configured to fetch data according to the specified filters.
+    
     This function constructs a query to retrieve alignment scores from baseline assessments. These baselines are determined by the provided
     `baseline_ids`. The function supports filtering results by book, chapter, and verse. It assumes that the highest ID
     assessment for each revision is the latest and therefore relevant for the baseline comparison.
@@ -811,6 +814,7 @@ async def get_compare_results(
     assessments when run against the same reference. Finally, a z-score is calculated for each
     result, which is a measure of how many standard deviations the result is from the mean of the
     baseline assessments.
+
     Parameters
     ----------
     revision_id : int
@@ -835,6 +839,7 @@ async def get_compare_results(
         The page of results to return. If set, page_size must also be set.
     page_size : int, optional
         The number of results to return per page. If set, page must also be set.
+
     Returns
     -------
     Dict[str, Union[List[MultipleResult], int, dict]]
@@ -1065,7 +1070,7 @@ async def get_missing_words(
         threshold = os.getenv("MISSING_WORDS_MISSING_THRESHOLD", 0.15)
 
     match_threshold = os.getenv("MISSING_WORDS_MATCH_THRESHOLD", 0.2)
-    
+
     # Remove baseline ids for revisions belonging to the same version as the revision or reference
     revision_version_subquery = db.query(BibleRevision.bible_version_id).filter(BibleRevision.id == revision_id).subquery()
     reference_version_subquery = db.query(BibleRevision.bible_version_id).filter(BibleRevision.id == reference_id).subquery()
@@ -1094,50 +1099,56 @@ async def get_missing_words(
     # print(f'Initialized base query, time: {time.time() - start}')
 
     main_assessment_results = db.execute(main_assessment_query).fetchall()
-    # print(f'Executed main assessment query, time: {time.time() - start}')
-    (
-        baseline_assessment_query,
-        assessment_to_baseline_id,
-    ) = await build_missing_words_baseline_query(
-        reference_id,
-        baseline_ids,
-        match_threshold,
-        book,
-        chapter,
-        verse,
-        db,
-    )
-    # print(f'Initialized baseline assessment query, time: {time.time() - start}')
-    baseline_assessment_results = db.execute(baseline_assessment_query).fetchall()
-    # print(f'Executed baseline assessment query, time: {time.time() - start}')
     df_main = pd.DataFrame(main_assessment_results)
-    if baseline_assessment_results:
-        df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=["id"])
-    else:
-        df_baseline = pd.DataFrame(
-            columns=[
-                "book",
-                "chapter",
-                "verse",
-                "source",
-                "target",
-                "assessment_id",
-                "baseline_score",
-            ]
+
+    # print(f'Executed main assessment query, time: {time.time() - start}')
+
+    if baseline_ids:
+        (
+            baseline_assessment_query,
+            assessment_to_baseline_id,
+        ) = await build_missing_words_baseline_query(
+            reference_id,
+            baseline_ids,
+            match_threshold,
+            book,
+            chapter,
+            verse,
+            db,
         )
-    df_baseline.loc[:, "baseline_id"] = df_baseline["assessment_id"].apply(
-        lambda x: assessment_to_baseline_id[x]
-    )
-    df_baseline = df_baseline.drop(columns=["assessment_id"])
-    joined_df = pd.merge(
-        df_main, df_baseline, on=["book", "chapter", "verse", "source"], how="left"
-    )
-    # print(f'Merged dataframes, time: {time.time() - start}')
-
-    joined_df['flag'] = (joined_df['baseline_score'] > 0.35) & (joined_df['baseline_score'] > 5 * joined_df['score'])
-
-    # Reset index if needed
-    df = joined_df.reset_index()
+        # print(f'Initialized baseline assessment query, time: {time.time() - start}')
+        baseline_assessment_results = db.execute(baseline_assessment_query).fetchall()
+        # print(f'Executed baseline assessment query, time: {time.time() - start}')
+        if baseline_assessment_results:
+            df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=["id"])
+        else:
+            df_baseline = pd.DataFrame(
+                columns=[
+                    "book",
+                    "chapter",
+                    "verse",
+                    "source",
+                    "target",
+                    "assessment_id",
+                    "baseline_score",
+                ]
+            )
+        df_baseline.loc[:, "baseline_id"] = df_baseline["assessment_id"].apply(
+            lambda x: assessment_to_baseline_id[x]
+        )
+        df_baseline = df_baseline.drop(columns=["assessment_id"])
+        joined_df = pd.merge(
+            df_main, df_baseline, on=["book", "chapter", "verse", "source"], how="left"
+        )
+        # print(f'Merged dataframes, time: {time.time() - start}')
+        joined_df['flag'] = (joined_df['baseline_score'] > 0.35) & (joined_df['baseline_score'] > 5 * joined_df['score'])
+        df = joined_df.reset_index()
+    
+    else:
+        df = df_main
+        df.loc[:, "flag"] = False
+        df['target'] = df.apply(lambda x: [], axis=1)
+    
     result_list = []
     # print(f'Flagged data, time: {time.time() - start}')
 
