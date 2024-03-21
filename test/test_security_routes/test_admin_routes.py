@@ -1,7 +1,8 @@
 from fastapi import FastAPI, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from security_routes.utilities import verify_password
-
+import pytest
+import pytest_asyncio
 from database.models import (
     UserDB,
     UserGroup,
@@ -14,7 +15,6 @@ prefix = "/latest"
 
 def user_exists(db_session, username):
     return db_session.query(UserDB).filter(UserDB.username == username).count() > 0
-
 
 # def group exists and link exists
 def group_exists(db_session, groupname):
@@ -36,8 +36,7 @@ def link_exists(db_session, username, groupname):
         > 0
     )
 
-
-def test_admin_flow(client, regular_token1, admin_token, test_db_session):
+async def test_admin_flow(regular_token1, admin_token, test_db_session, client, ):
     # Define the data for creating a new user
     new_user_data = {
         "username": "new_user",
@@ -47,7 +46,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     }
 
     # Send a POST as regular user to get a 400 error
-    response = client.post(
+    response = await client.post(
         f"{prefix}/users",
         params=new_user_data,
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -55,7 +54,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.status_code == status.HTTP_403_FORBIDDEN
 
     # Send a POST request to created a new user
-    response = client.post(
+    response = await client.post(
         f"{prefix}/users",
         params=new_user_data,
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -74,7 +73,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
         "username": "new_user",
         "new_password": "newpassword",
     }
-    response = client.post(
+    response = await client.post(
         f"{prefix}/change-password",
         params=password_update,
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -85,7 +84,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert verify_password("newpassword", user.hashed_password)
 
     # Send a POST request to created a new user with the same username
-    response = client.post(
+    response = await client.post(
         f"{prefix}/users",
         params=new_user_data,
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -97,7 +96,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
         "name": "new_group",
         "description": "A new group",
     }
-    response = client.post(
+    response = await client.post(
         f"{prefix}/groups",
         params=group_data,
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -105,7 +104,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.status_code == status.HTTP_403_FORBIDDEN
 
     # Send a post request to create a group
-    response = client.post(
+    response = await client.post(
         f"{prefix}/groups",
         params=group_data,
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -116,7 +115,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert group_exists(test_db_session, group_data["name"])
 
     # Send a GET request to get all the groups
-    response = client.get(
+    response = await client.get(
         f"{prefix}/groups",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
@@ -133,7 +132,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
         "username": "new_user",
         "groupname": "new_group",
     }
-    response = client.post(
+    response = await client.post(
         f"{prefix}/link-user-group",
         params=link_data,
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -147,7 +146,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
 
     # Send a POST request to link the user to the group with the same data
 
-    response = client.post(
+    response = await client.post(
         f"{prefix}/link-user-group",
         params=link_data,
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -155,7 +154,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     # send a post request to delete a group as a regular user
-    response = client.delete(
+    response = await client.delete(
         f"{prefix}/groups",
         params={"groupname": "new_group"},
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -163,7 +162,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.status_code == status.HTTP_403_FORBIDDEN
 
     # send a post request to delete a group as an admin but the group is linked to a user
-    response = client.delete(
+    response = await client.delete(
         f"{prefix}/groups",
         params={"groupname": "new_group"},
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -172,7 +171,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.json()["detail"] == "Group is linked to users and cannot be deleted"
 
     # send a post request to unlink the user from the group as an admin
-    response = client.post(
+    response = await client.post(
         f"{prefix}/unlink-user-group",
         headers={"Authorization": f"Bearer {admin_token}"},
         params={"username": "testuser1", "groupname": "Group1"},
@@ -180,7 +179,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.status_code == 204
 
     # send a post request to delete the user as a regular user
-    response = client.delete(
+    response = await client.delete(
         f"{prefix}/users",
         params={"username": "new_user"},
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -188,7 +187,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.status_code == status.HTTP_403_FORBIDDEN
 
     # send a post request to delete the user as an admin
-    response = client.delete(
+    response = await client.delete(
         f"{prefix}/users",
         params={"username": "new_user"},
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -199,7 +198,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
         test_db_session, link_data["username"], link_data["groupname"]
     )
     # send a post request to delete a group as an admin
-    response = client.delete(
+    response = await client.delete(
         f"{prefix}/groups",
         params={"groupname": "new_group"},
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -211,7 +210,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     )
     assert not user_exists(test_db_session, new_user_data["username"])
     # send a post request to delete a group that does not exist
-    response = client.delete(
+    response = await client.delete(
         f"{prefix}/groups",
         params={"groupname": "new_group"},
         headers={"Authorization": f"Bearer {admin_token}"},

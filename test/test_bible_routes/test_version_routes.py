@@ -1,13 +1,3 @@
-from conftest import (
-    test_db_session,
-    TestingSessionLocal,
-    regular_token1,
-    regular_token2,
-    admin_token,
-    client,
-    db_session,
-)
-
 from database.models import (
     UserDB as UserModel,
     UserGroup,

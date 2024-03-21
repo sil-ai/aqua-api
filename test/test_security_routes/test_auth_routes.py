@@ -1,14 +1,13 @@
-# test_auth_routes.py
+# test_autclient, event_loop)h_routes.py
 
 from fastapi.testclient import TestClient
 from app import app  # Import your FastAPI application instance
-from conftest import test_db_session  # Import the fixture
+from conftest import test_db_session, client # Import the fixture
 
-client = TestClient(app)
 prefix = "/latest"
 
 
-def test_token_generation(test_db_session):
+def test_token_generation(test_db_session, client):
     response = client.post(
         f"{prefix}/token", data={"username": "testuser1", "password": "password1"}
     )
@@ -16,14 +15,14 @@ def test_token_generation(test_db_session):
     assert "access_token" in response.json()
 
 
-def test_unauthorized_token_generation(test_db_session):
+def test_unauthorized_token_generation(test_db_session, client):
     response = client.post(
         f"{prefix}/token", data={"username": "testuser1", "password": "wrongpassword"}
     )
     assert response.status_code == 401
 
 
-def test_read_current_user(test_db_session):
+def test_read_current_user(test_db_session, client):
     # Generate a test token for the existing user
     response = client.post(
         f"{prefix}/token", data={"username": "testuser1", "password": "password1"}
@@ -39,7 +38,7 @@ def test_read_current_user(test_db_session):
     assert not user_data.get("is_admin")  # Ensure it's a regular user, not an admin
 
 
-def test_read_current_user_groups(test_db_session):
+def test_read_current_user_groups(test_db_session,client):
     # Generate a test token for the existing user
     response = client.post(
         f"{prefix}/token", data={"username": "testuser1", "password": "password1"}

@@ -23,59 +23,55 @@ from datetime import date
 import pandas as pd
 from app import app
 import asyncio
-engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+import httpx
+from sqlalchemy.pool import NullPool
 
-@pytest.yield_fixture(scope="session")
-def event_loop(request):
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
-    
 @pytest.fixture(scope="module")
 def db_session():
-    return TestingSessionLocal()
-
+    # Create a new database session
+    engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname", echo=True,  poolclass=NullPool,)
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    session = TestingSessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
 
 @pytest.fixture(scope="module")
-def client():
-    return TestClient(app)
+async def client():
+    async with httpx.AsyncClient(app=app, base_url="http://") as async_client:
+        yield async_client
 
-
+@pytest.mark.asyncio
 @pytest.fixture(scope="module")
-def regular_token1(client, test_db_session):
-    response = client.post(
+async def regular_token1(client, test_db_session):
+    response = await client.post(
         "/latest/token", data={"username": "testuser1", "password": "password1"}
     )
     return response.json().get("access_token")
 
-
+@pytest.mark.asyncio
 @pytest.fixture(scope="module")
-def regular_token2(client, test_db_session):
-    response = client.post(
+async def regular_token2(client, test_db_session):
+    response = await client.post(
         "/latest/token", data={"username": "testuser2", "password": "password2"}
     )
     return response.json().get("access_token")
 
-
+@pytest.mark.asyncio
 @pytest.fixture(scope="module")
-def admin_token(client, test_db_session):
-    response = client.post(
+async def admin_token(client, test_db_session):
+    response = await client.post(
         "/latest/token", data={"username": "admin", "password": "adminpassword"}
     )
     return response.json().get("access_token")
 
 
 @pytest.fixture(scope="module")
-def test_db_session():
-    Base.metadata.create_all(bind=engine)
-    db_session = TestingSessionLocal()
-
-    # Add your test data setup here
+def test_db_session(db_session):
     setup_database(db_session)
     try:
         yield db_session
-
     # Teardown test data
     finally:
         teardown_database(db_session)
