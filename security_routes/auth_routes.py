@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from models import Token, User, Group
-from database.models import UserDB
+from database.models import UserDB, Group as GroupDB, UserGroup
+
 
 from database.dependencies import get_db  # Function to get the database session
 from .utilities import (
@@ -93,6 +94,10 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
 
 @router.get("/groups/me", response_model=List[Group])
 async def get_groups(
-        current_user: User = Depends(get_current_user)
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
 ):
-    return [user_group.group for user_group in current_user.groups]
+    stmt = select(GroupDB).join(UserGroup).where(UserGroup.user_id == current_user.id)
+    result = await db.execute(stmt)
+    groups = result.scalars().all()
+    return groups

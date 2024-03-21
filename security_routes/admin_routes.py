@@ -2,6 +2,7 @@ from fastapi.security import OAuth2PasswordBearer
 from fastapi import FastAPI, Depends, HTTPException, status, APIRouter
 from jose import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from .utilities import hash_password
 from models import User, Group
 from database.models import (
@@ -32,7 +33,8 @@ async def get_current_admin(
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        user = await db.query(UserDB).filter(UserDB.username == username).first()
+        result = await db.execute(select(UserDB).filter_by(username=username))
+        user = result.scalars().first()
         if user is None or not user.is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -49,7 +51,9 @@ async def create_user(
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
 ):
-    db_user = await db.query(UserDB).filter(UserDB.username == user.username).first()
+    result = await db.execute(select(UserDB).where(UserDB.username == user.username))
+    db_user = result.scalars().first()
+
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
     if user.password is None:
@@ -61,7 +65,7 @@ async def create_user(
         hashed_password=hashed_password,
         is_admin=user.is_admin,
     )
-    await db.add(db_user)
+    db.add(db_user)
     await db.commit()
     await db.refresh(db_user)
     # Convert SQLAlchemy model instance to Pydantic model instance for the response
@@ -82,11 +86,12 @@ async def create_group(
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
 ):
-    db_group = await db.query(GroupDB).filter(GroupDB.name == group.name).first()
+    result = await db.execute(select(GroupDB).where(GroupDB.name == group.name))
+    db_group = result.scalars().first()
     if db_group:
         raise HTTPException(status_code=400, detail="Group already exists")
     db_group = GroupDB(name=group.name, description=group.description)
-    await db.add(db_group)
+    db.add(db_group)
     await db.commit()
     await db.refresh(db_group)
     return_group = Group(
@@ -99,7 +104,8 @@ async def create_group(
 async def get_groups(
     db: AsyncSession = Depends(get_db), _: UserDB = Depends(get_current_admin)
 ):
-    groups = await db.query(GroupDB).all()
+    result = await db.execute(select(GroupDB))
+    groups = result.scalars().all()
     return [
         Group(id=group.id, name=group.name, description=group.description)
         for group in groups
@@ -120,8 +126,11 @@ async def link_user_to_group(
             status_code=400, detail="Username and group name are required"
         )
 
-    user = await db.query(UserDB).filter(UserDB.username == username).first()
-    group = await db.query(GroupDB).filter(GroupDB.name == groupname).first()
+    result = await db.execute(select(UserDB).where(UserDB.username == username))
+    user = result.scalars().first()
+
+    result = await db.execute(select(GroupDB).where(GroupDB.name == groupname))
+    group = result.scalars().first()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -129,16 +138,19 @@ async def link_user_to_group(
         raise HTTPException(status_code=404, detail="Group not found")
 
     # Check if the link already exists
-    existing_link = (
-        await db.query(UserGroup).filter_by(user_id=user.id, group_id=group.id).first()
+    result = await db.execute(
+        select(UserGroup).where(
+            (UserGroup.user_id == user.id) & (UserGroup.group_id == group.id)
+        )
     )
+    existing_link = result.scalars().first()
     if existing_link:
         raise HTTPException(
             status_code=400, detail="User is already linked to this group"
         )
 
     new_link = UserGroup(user_id=user.id, group_id=group.id)
-    await db.add(new_link)
+    db.add(new_link)
     await db.commit()
     return {"message": f"User {username} successfully linked to group {groupname}"}
 
@@ -157,19 +169,25 @@ async def unlink_user_from_group(
             status_code=400, detail="Username and group name are required"
         )
 
-    user = await db.query(UserDB).filter(UserDB.username == username).first()
-    group = await db.query(GroupDB).filter(GroupDB.name == groupname).first()
+    result = await db.execute(select(UserDB).where(UserDB.username == username))
+    user = result.scalars().first()
+
+    result = await db.execute(select(GroupDB).where(GroupDB.name == groupname))
+    group = result.scalars().first()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
-    link = await db.query(UserGroup).filter_by(user_id=user.id, group_id=group.id).first()
-    if not link:
-        raise HTTPException(
-            status_code=404, detail="User is not linked to this group"
+    result = await db.execute(
+        select(UserGroup).where(
+            (UserGroup.user_id == user.id) & (UserGroup.group_id == group.id)
         )
+    )
+    link = result.scalars().first()
+    if not link:
+        raise HTTPException(status_code=404, detail="User is not linked to this group")
 
     await db.delete(link)
     await db.commit()
@@ -182,12 +200,14 @@ async def delete_group(
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),  # Ensuring only admin can delete groups
 ):
-    group = await db.query(GroupDB).filter(GroupDB.name == groupname).first()
+    result = await db.execute(select(GroupDB).where(GroupDB.name == groupname))
+    group = result.scalars().first()
     if not group:
         raise HTTPException(status_code=404, detail="Group not found")
 
     # Check if the group is linked to any user
-    linked_users = await db.query(UserGroup).filter(UserGroup.group_id == group.id).first()
+    result = await db.execute(select(UserGroup).where(UserGroup.group_id == group.id))
+    linked_users = result.scalars().first()
     if linked_users:
         raise HTTPException(
             status_code=400, detail="Group is linked to users and cannot be deleted"
@@ -204,7 +224,9 @@ async def delete_user(
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),  # Ensuring only admin can delete users
 ):
-    user = await db.query(UserDB).filter(UserDB.username == username).first()
+    result = await db.execute(select(UserDB).where(UserDB.username == username))
+    user = result.scalars().first()
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -223,7 +245,9 @@ async def change_password(
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
 ):
-    user = await db.query(UserDB).filter(UserDB.username == username).first()
+    result = await db.execute(select(UserDB).where(UserDB.username == username))
+    user = result.scalars().first()
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     user.hashed_password = hash_password(new_password)
