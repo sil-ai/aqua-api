@@ -1148,7 +1148,7 @@ async def get_missing_words(
         df = df_main
         df.loc[:, "flag"] = False
         df['target'] = df.apply(lambda x: [], axis=1)
-    
+
     result_list = []
     # print(f'Flagged data, time: {time.time() - start}')
 
