@@ -608,12 +608,30 @@ async def build_compare_results_main_query(
 async def build_missing_words_main_query(
     revision_id: Optional[int],
     reference_id: Optional[int],
+    threshold: float,
     book: Optional[str],
     chapter: Optional[int],
     verse: Optional[int],
     db: Session,
 ) -> Tuple:
-
+    """
+    Asynchronously builds the main query for fetching words missing from a text alignment assessment, applying filtering.
+    Args:
+        revision_id (int): The ID of the revision to filter the assessment by.
+        reference_id (int): The ID of the reference to filter the assessment by.
+        threshold (float): The threshold score to determine if a word is missing.
+        book (Optional[str]): The book name to filter the results by. Default is None.
+        chapter (Optional[int]): The chapter number to filter the results by. Default is None.
+        verse (Optional[int]): The verse number to filter the results by. Default is None.
+        page (Optional[int]): The page number for pagination. Default is None.
+        page_size (Optional[int]): The number of items to display per page for pagination. Default is None.
+        db (Session): The database session object to execute queries against.
+    Returns:
+        Tuple: A tuple containing the main query object, the total number of rows matching the query, and the main assessment ID.
+        The main query object is configured to fetch data according to the specified filters and pagination settings.
+    Raises:
+        HTTPException: If no completed assessment is found for the provided revision_id and reference_id.
+    """
     main_assessment = (
         db.query(Assessment)
         .filter(
@@ -642,7 +660,7 @@ async def build_missing_words_main_query(
         )
         .filter(
             AlignmentTopSourceScores.assessment_id == main_assessment_id,
-            AlignmentTopSourceScores.score < 0.15,
+            AlignmentTopSourceScores.score < threshold,
         )
         .order_by("id")
     )
@@ -667,11 +685,28 @@ async def build_missing_words_main_query(
 async def build_missing_words_baseline_query(
     reference_id: Optional[int],
     baseline_ids: Optional[List[int]],
+    threshold: float,
     book: Optional[str],
     chapter: Optional[int],
     verse: Optional[int],
     db: Session,
 ) -> Tuple:
+    """
+    Asynchronously builds the query for fetching baseline words from a set of alignment assessments, with optional filtering.
+    Args:
+        reference_id (Optional[int]): The ID of the reference to filter the assessments by. Default is None.
+        baseline_ids (Optional[List[int]]): A list of revision IDs to consider as baseline assessments. Default is None.
+        book (Optional[str]): The book name to filter the results by. Default is None.
+        chapter (Optional[int]): The chapter number to filter the results by. Default is None.
+        verse (Optional[int]): The verse number to filter the results by. Default is None.
+        db (Session): The database session object to execute queries against.
+    Returns:
+        Tuple: A tuple containing the baseline assessments query object and a mapping of assessment IDs to baseline IDs.
+        The query object is configured to fetch data according to the specified filters.
+    This function constructs a query to retrieve alignment scores from baseline assessments. These baselines are determined by the provided
+    `baseline_ids`. The function supports filtering results by book, chapter, and verse. It assumes that the highest ID
+    assessment for each revision is the latest and therefore relevant for the baseline comparison.
+    """
     if not baseline_ids:
         baseline_ids = []
     baseline_assessments = (
@@ -710,7 +745,7 @@ async def build_missing_words_baseline_query(
             func.jsonb_object_agg(
                 Assessment.revision_id.cast(Text),
                 case(
-                    [(AlignmentTopSourceScores.score < 0.2, None)],
+                    [(AlignmentTopSourceScores.score < threshold, None)],
                     else_=AlignmentTopSourceScores.target
                 )
             ).label("target")
@@ -947,6 +982,7 @@ async def get_missing_words(
     revision_id: int,
     reference_id: int,
     baseline_ids: Optional[List[int]] = Query(None),
+    threshold: Optional[float] = None,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
@@ -964,15 +1000,30 @@ async def get_missing_words(
         The ID of the reference to get results for.
     baseline_ids : list, optional
         A list of baseline revision ids to compare against.
+    threshold : float, optional
+        The threshold score for the a word to be considered missing. Default is None, which will default to environmental variable, if set, or 0.15.
     book : str, optional
         Restrict results to one book.
     chapter : int, optional
         Restrict results to one chapter. If set, book must also be set.
     verse : int, optional
         Restrict results to one verse. If set, book and chapter must also be set.
+
+    Returns
+    -------
+    Dict[str, Union[List[Result], int]]
+        A dictionary containing the list of results and the total count of results.
     """
     # start = time.time()
     await validate_parameters(book, chapter, verse)
+
+    if baseline_ids is None:
+        baseline_ids = []
+
+    if threshold is None:
+        threshold = os.getenv("MISSING_WORDS_MISSING_THRESHOLD", 0.15)
+
+    match_threshold = os.getenv("MISSING_WORDS_MATCH_THRESHOLD", 0.2)
     
     # Remove baseline ids for revisions belonging to the same version as the revision or reference
     revision_version_subquery = db.query(BibleRevision.bible_version_id).filter(BibleRevision.id == revision_id).subquery()
@@ -993,6 +1044,7 @@ async def get_missing_words(
     ) = await build_missing_words_main_query(
         revision_id,
         reference_id,
+        threshold,
         book,
         chapter,
         verse,
@@ -1008,6 +1060,7 @@ async def get_missing_words(
     ) = await build_missing_words_baseline_query(
         reference_id,
         baseline_ids,
+        match_threshold,
         book,
         chapter,
         verse,
@@ -1027,6 +1080,8 @@ async def get_missing_words(
                 "verse",
                 "source",
                 "target",
+                "assessment_id",
+                "baseline_score",
             ]
         )
     df_baseline.loc[:, "baseline_id"] = df_baseline["assessment_id"].apply(
