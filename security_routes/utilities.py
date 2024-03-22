@@ -6,7 +6,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 
 import bcrypt
-
+from sqlalchemy.sql import select
 from database.models import (
     UserGroup,
     BibleVersion,
@@ -30,76 +30,86 @@ def hash_password(password: str) -> str:
 
 
 ## Authorization utilities
-def is_user_authorized_for_bible_version(user_id, bible_version_id, session):
+async def is_user_authorized_for_bible_version(user_id, bible_version_id, db):
     # Admins have access to all versions
-    user = session.query(UserDB).filter(UserDB.id == user_id).first()
+    result = await db.execute(stmt = select(UserDB).where(UserDB.id == user_id))
+    user = result.scalars().first()
     if user and user.is_admin:
         return True
     # Fetch the groups the user belongs to
     user_groups = (
-        session.query(UserGroup.group_id)
-        .filter(UserGroup.user_id == user_id)
-        .subquery()
-    )
+        select(UserGroup.group_id)
+        .where(UserGroup.user_id == user_id)
+    ).subquery()
+    
 
     # Check if the Bible version is accessible by one of the user's groups
-    accessible = (
-        session.query(BibleVersion)
+    
+    stmt = (
+        select(BibleVersion)
         .join(
-            BibleVersionAccess, BibleVersion.id == BibleVersionAccess.bible_version_id
+            BibleVersionAccess, 
+            BibleVersion.id == BibleVersionAccess.bible_version_id
         )
-        .filter(
+        .where(
             BibleVersion.id == bible_version_id,
-            BibleVersionAccess.group_id.in_(user_groups),
+            BibleVersionAccess.group_id.in_(user_groups)
         )
-        .first()
     )
+    result = await db.execute(stmt)
+    accessible = result.scalars().first()
 
     return accessible is not None
 
 
-def is_user_authorized_for_revision(user_id, revision_id, session):
+async def is_user_authorized_for_revision(user_id, revision_id, db):
     # Admins have access to all revisions
-    user = session.query(UserDB).filter(UserDB.id == user_id).first()
+    result = await db.execute(stmt = select(UserDB).where(UserDB.id == user_id))
+    user = result.scalars().first()
     if user and user.is_admin:
         return True
 
     # Fetch the groups the user belongs to
     user_groups = (
-        session.query(UserGroup.group_id)
-        .filter(UserGroup.user_id == user_id)
-        .subquery()
-    )
+        select(UserGroup.group_id)
+        .where(UserGroup.user_id == user_id)
+    ).subquery()
+    
 
     # Check if the revision's Bible version is accessible by one of the user's groups
-    accessible = (
-        session.query(BibleVersion)
-        .join(BibleRevision, BibleVersion.id == BibleRevision.bible_version_id)
-        .filter(
-            BibleRevision.id == revision_id,
-            BibleVersionAccess.group_id.in_(user_groups),
+    
+    stmt = (
+        select(BibleVersion)
+        .join(
+            BibleRevision, 
+            BibleVersion.id == BibleRevision.bible_version_id
         )
-        .first()
+        .where(
+            BibleRevision.id == revision_id,
+            BibleVersionAccess.group_id.in_(user_groups)
+        )
     )
+    result = await db.execute(stmt)
+    accessible = result.scalars().first()
 
     return accessible is not None
 
-def is_user_authorized_for_assessement(user_id, assessment_id, session):
+async def is_user_authorized_for_assessement(user_id, assessment_id, db):
     # Admins have access to all assessments
-    user = session.query(UserDB).filter(UserDB.id == user_id).first()
+    result = await db.execute(stmt = select(UserDB).where(UserDB.id == user_id))
+    user = result.scalars().first()
     if user and user.is_admin:
         return True
 
     # Fetch the groups the user belongs to
     user_groups = (
-        session.query(UserGroup.group_id)
-        .filter(UserGroup.user_id == user_id)
-        .subquery()
-    )
+        select(UserGroup.group_id)
+        .where(UserGroup.user_id == user_id)
+    ).subquery()
 
     # Check if the assessment is accessible by one of the user's groups
     accessible = (
-        session.query(Assessment)
+        db.query(Assessment)
         .join(AssessmentAccess, Assessment.id == AssessmentAccess.assessment_id)
         .filter(
             Assessment.id == assessment_id,

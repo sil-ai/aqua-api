@@ -1,6 +1,7 @@
 import os
 import sqlalchemy as db
 import pandas as pd
+from database.models import VerseText
 
 
 # Parse the revision verses into a dataframe.
@@ -31,25 +32,17 @@ def text_dataframe(verses, bible_revision):
 
 
 # Direct upload to the SQL database.
-def text_loading(verse_text, db_engine):
-    
-    #TODO - what happens when the upload fails?
-    # Do we need to have a negative test for trying
-    # to upload bad data.
-    verse_text.to_sql(
-            "verse_text",
-            db_engine,
-            index=False,
-            if_exists="append",
-            chunksize=200
-            )
+async def text_loading(verse_text, db):
+    async with db.begin():
+        for index, row in verse_text.iterrows():
+            verse = VerseText(**row.to_dict())
+            db.add(verse)
+    await db.commit()
     return True
 
-
-def upload_bible(verses, bible_revision):
+async def upload_bible(verses, bible_revision, db):
     # initialize SQL engine
-    db_engine = db.create_engine(os.getenv("AQUA_DB"))
     verse_text = text_dataframe(verses, bible_revision)
-    text_loading(verse_text, db_engine)
+    await text_loading(verse_text, db)
 
     return True

@@ -14,7 +14,7 @@ from database.models import (
 )
 
 
-def test_process_and_upload_revision(test_db_session: Session):
+async def test_process_and_upload_revision(test_db_session: Session):
     # Create a test Bible version in the database
     user = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
     user_id = user.id if user else None
@@ -50,7 +50,7 @@ def test_process_and_upload_revision(test_db_session: Session):
     non_empty_line_count = sum(1 for line in file_content.splitlines() if line.strip())
 
     # Call the function with the test data
-    process_and_upload_revision(file_content, test_revision.id, test_db_session)
+    await process_and_upload_revision(file_content, test_revision.id, test_db_session)
 
     # Verify that verses were correctly uploaded
     uploaded_verses = (

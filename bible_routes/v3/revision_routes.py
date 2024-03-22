@@ -1,11 +1,12 @@
 from typing import List, Optional
 from fastapi import Depends, HTTPException, status, APIRouter, UploadFile, File
-from sqlalchemy.orm import Session
+from sqlalchemy import select   
 from sqlalchemy.ext.asyncio import AsyncSession
 from tempfile import NamedTemporaryFile
 import numpy as np
 import time
 import logging
+import asyncio
 from datetime import date
 
 from bible_loading import upload_bible
@@ -27,11 +28,9 @@ router = APIRouter()
 
 async def create_revision_out(revision: BibleVersionModel, db: AsyncSession) -> RevisionOut:
     # Fetch related BibleVersionModel data
-    version = (
-        await db.query(BibleVersionModel)
-        .filter(BibleVersionModel.id == revision.bible_version_id)
-        .first()
-    )
+    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == revision.bible_version_id))
+    version = result.scalars().first()
+    
     version_abbreviation = version.abbreviation if version else None
     iso_language = version.iso_language if version else None
 
@@ -63,11 +62,9 @@ async def list_revisions(
 
     if version_id:
         # Check if version exists
-        version = (
-            await db.query(BibleVersionModel)
-            .filter(BibleVersionModel.id == version_id)
-            .first()
-        )
+        result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == version_id))
+        version = result.scalars().first()
+        
         if not version:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Version id is invalid"
@@ -80,30 +77,29 @@ async def list_revisions(
                 detail="User not authorized to access this bible version.",
             )
 
-        revisions = (
-            await db.query(BibleRevisionModel)
-            .filter(BibleRevisionModel.bible_version_id == version_id)
-            .all()
-        )
+        result = await db.execute(select(BibleRevisionModel).where(BibleRevisionModel.bible_version_id == version_id))
+        revisions = result.scalars().all()
+        
     else:
         # List all revisions, but filter based on user authorization and filter based on deleted status
-        revisions = (
-            await db.query(BibleRevisionModel)
-            .filter(BibleRevisionModel.deleted.is_(False))
-            .all()
-        )
+        result = await db.execute(select(BibleRevisionModel).where(BibleRevisionModel.deleted.is_(False)))
+        revisions = result.scalars().all()
+        
         revisions = [
             revision
             for revision in revisions
             if is_user_authorized_for_revision(current_user.id, revision.id, db)
         ]
-    revision_out_list = [create_revision_out(revision, db) for revision in revisions]
+    revision_out_list = await asyncio.gather(*[create_revision_out(revision, db) for revision in revisions])
 
     processing_time = time.time() - start_time
     logging.info(
         f"Listed revisions for User {current_user.id} in {processing_time:.2f} seconds."
     )
-def process_and_upload_revision(file_content: bytes, revision_id: int, db: AsyncSession):
+    return revision_out_list
+    
+    
+async def process_and_upload_revision(file_content: bytes, revision_id: int, db: AsyncSession):
     with NamedTemporaryFile() as temp_file:
         temp_file.write(file_content)
         temp_file.seek(0)
@@ -123,7 +119,7 @@ def process_and_upload_revision(file_content: bytes, revision_id: int, db: Async
                 raise ValueError("File has no text.")
 
             # Assuming upload_bible function exists
-            upload_bible(verses, [revision_id] * len(verses))
+            await upload_bible(verses, [revision_id] * len(verses), db)
 
 
 @router.post("/revision", response_model=RevisionOut)
@@ -136,11 +132,9 @@ async def upload_revision(
     start_time = time.time()
 
     logging.info(f"Uploading new revision: {revision.model_dump()}")
-    version = (
-        await db.query(BibleVersionModel)
-        .filter(BibleVersionModel.id == revision.version_id)
-        .first()
-    )
+    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == revision.version_id))
+    version = result.scalars().first()
+    
     if not version:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Version id is invalid"
@@ -167,7 +161,7 @@ async def upload_revision(
         back_translation_id=revision.backTranslation,
         machine_translation=revision.machineTranslation,
     )
-    await db.add(new_revision)
+    db.add(new_revision)
     await db.flush()
     await db.refresh(new_revision)
     await db.commit()
@@ -175,7 +169,7 @@ async def upload_revision(
     try:
         # Read file and process revision
         contents = await file.read()
-        process_and_upload_revision(contents, new_revision.id, db)
+        await process_and_upload_revision(contents, new_revision.id, db)
         await db.commit()  # Commit if processing is successful
     except Exception as e:  # Catching a broader exception
         # Delete the previously committed revision
@@ -183,7 +177,7 @@ async def upload_revision(
         await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    revision_out = create_revision_out(new_revision, db)
+    revision_out = await create_revision_out(new_revision, db)
 
     end_time = time.time()
     processing_time = end_time - start_time
@@ -201,7 +195,8 @@ async def delete_revision(
     start_time = time.time()  # Start timer
 
     # Check if the revision exists and if the user is authorized
-    revision = await db.query(BibleRevisionModel).filter(BibleRevisionModel.id == id).first()
+    result = await db.execute(select(BibleRevisionModel).where(BibleRevisionModel.id == id))
+    revision = result.scalars().first()
     if not revision:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -239,7 +234,8 @@ async def rename_revision(
     Rename a revision.
     """
     # Check if the revision exists
-    revision = await db.query(BibleRevisionModel).filter(BibleRevisionModel.id == id).first()
+    result = await db.execute(select(BibleRevisionModel).where(BibleRevisionModel.id == id))
+    revision = result.scalars().first()
     if not revision:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Revision not found."
