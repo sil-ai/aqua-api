@@ -5,6 +5,8 @@ import pytest
 from pathlib import Path
 from bible_routes.v3.revision_routes import process_and_upload_revision
 import asyncio
+import aiofiles
+from datetime import datetime
 
 
 from database.models import (
@@ -20,56 +22,56 @@ from pathlib import Path
 
 @pytest.mark.asyncio
 async def test_process_and_upload_revision(async_test_db_session, test_db_session):
-    db = await async_test_db_session.__anext__()
-        # Create a test Bible version in the database
-    result = await db.execute(select(UserDB).where(UserDB.username == "testuser1"))
-    user = result.scalars().first()
-    user_id = user.id if user else None
+    async for db in async_test_db_session:
+            # Create a test Bible version in the database
+        result = await db.execute(select(UserDB).where(UserDB.username == "testuser1"))
+        user = result.scalars().first()
+        user_id = user.id if user else None
 
-    test_version = BibleVersionModel(
-        name="Test Version",
-        iso_language="eng",
-        iso_script="Latn",
-        abbreviation="TV",
-        rights="Some Rights",
-        owner_id=user_id,
-    )
-    db.add(test_version)
-    await db.commit()
-    await db.refresh(test_version)
+        test_version = BibleVersionModel(
+            name="Test Version",
+            iso_language="eng",
+            iso_script="Latn",
+            abbreviation="TV",
+            rights="Some Rights",
+            owner_id=user_id,
+        )
+        db.add(test_version)
+        await db.commit()
+        await db.refresh(test_version)
 
-    # Create a test revision associated with the test version
-    test_revision = BibleRevisionModel(
-        bible_version_id=test_version.id,
-        name="Test Revision",
-        date="2023-01-01",  # Use appropriate date format
-        published=True,
-        back_translation_id=None,
-        machine_translation=False,
-    )
-    db.add(test_revision)
-    await db.commit()
-    await db.refresh(test_revision)
+        # Create a test revision associated with the test version
+        test_revision = BibleRevisionModel(
+            bible_version_id=test_version.id,
+            name="Test Revision",
+            date=datetime(2023, 1, 1),
+            published=True,
+            back_translation_id=None,
+            machine_translation=False,
+        )
+        db.add(test_revision)
+        await db.commit()
+        await db.refresh(test_revision)
 
-    # Read the contents of the test file
-    test_file_path = Path("fixtures/uploadtest.txt")
-    with open(test_file_path, "rb") as file:
-        file_content = file.read()
-    non_empty_line_count = sum(1 for line in file_content.splitlines() if line.strip())
+        # Read the contents of the test file
+        test_file_path = Path("fixtures/uploadtest.txt")
+        async with aiofiles.open(test_file_path, "rb") as file:
+            file_content = await file.read()
+        non_empty_line_count = sum(1 for line in file_content.splitlines() if line.strip())
 
-    # Process and upload revision using the async database session
-    await process_and_upload_revision(file_content, test_revision.id, db)
+        # Process and upload revision using the async database session
+        await process_and_upload_revision(file_content, test_revision.id, db)
 
-    # Verify that verses were correctly uploaded
-    result = await db.execute(select(VerseText).where(VerseText.revision_id == test_revision.id))
-    uploaded_verses = result.scalars().all()
-    assert len(uploaded_verses) == non_empty_line_count
+        # Verify that verses were correctly uploaded
+        result = await db.execute(select(VerseText).where(VerseText.revision_id == test_revision.id))
+        uploaded_verses = result.scalars().all()
+        assert len(uploaded_verses) == non_empty_line_count
 
-    # Clean up: delete the test revision, its verses, and the test version
-    await db.execute(delete(VerseText).where(VerseText.revision_id == test_revision.id))
-    await db.delete(test_revision)
-    await db.delete(test_version)
-    await db.commit()
+        # Clean up: delete the test revision, its verses, and the test version
+        await db.execute(delete(VerseText).where(VerseText.revision_id == test_revision.id))
+        await db.delete(test_revision)
+        await db.delete(test_version)
+        await db.commit()
 
 
 

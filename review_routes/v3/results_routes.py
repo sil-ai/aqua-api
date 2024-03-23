@@ -285,7 +285,7 @@ async def get_result(
     """
     await validate_parameters(book, chapter, verse, aggregate)
 
-    if not is_user_authorized_for_assessement(current_user.id, assessment_id, db):
+    if not await is_user_authorized_for_assessement(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to see this assessment",
@@ -964,7 +964,7 @@ async def get_alignment_scores(
     """
     await validate_parameters(book, chapter, verse)
 
-    if not is_user_authorized_for_assessement(current_user.id, assessment_id, db):
+    if not await is_user_authorized_for_assessement(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to see this assessment",

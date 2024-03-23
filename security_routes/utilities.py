@@ -32,7 +32,7 @@ def hash_password(password: str) -> str:
 ## Authorization utilities
 async def is_user_authorized_for_bible_version(user_id, bible_version_id, db):
     # Admins have access to all versions
-    result = await db.execute(stmt = select(UserDB).where(UserDB.id == user_id))
+    result = await db.execute(select(UserDB).where(UserDB.id == user_id))
     user = result.scalars().first()
     if user and user.is_admin:
         return True
@@ -64,7 +64,7 @@ async def is_user_authorized_for_bible_version(user_id, bible_version_id, db):
 
 async def is_user_authorized_for_revision(user_id, revision_id, db):
     # Admins have access to all revisions
-    result = await db.execute(stmt = select(UserDB).where(UserDB.id == user_id))
+    result = await db.execute(select(UserDB).where(UserDB.id == user_id))
     user = result.scalars().first()
     if user and user.is_admin:
         return True
@@ -96,7 +96,7 @@ async def is_user_authorized_for_revision(user_id, revision_id, db):
 
 async def is_user_authorized_for_assessement(user_id, assessment_id, db):
     # Admins have access to all assessments
-    result = await db.execute(stmt = select(UserDB).where(UserDB.id == user_id))
+    result = await db.execute(select(UserDB).where(UserDB.id == user_id))
     user = result.scalars().first()
     if user and user.is_admin:
         return True
