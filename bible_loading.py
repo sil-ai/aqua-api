@@ -33,10 +33,9 @@ def text_dataframe(verses, bible_revision):
 
 # Direct upload to the SQL database.
 async def text_loading(verse_text, db):
-    async with db.begin():
-        for index, row in verse_text.iterrows():
-            verse = VerseText(**row.to_dict())
-            db.add(verse)
+    for index, row in verse_text.iterrows():
+        verse = VerseText(**row.to_dict())
+        db.add(verse)
     await db.commit()
     return True
 

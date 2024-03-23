@@ -23,8 +23,18 @@ from datetime import date
 import pandas as pd
 from app import app
 import asyncio
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+
 engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Asynchronous session fixture
+@pytest.fixture(scope="module")
+async def async_test_db_session():
+    async_engine = create_async_engine("postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname")
+    AsyncSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession)
+    async with AsyncSessionLocal() as async_session:
+        yield async_session
 
 @pytest.yield_fixture(scope="session")
 def event_loop(request):
