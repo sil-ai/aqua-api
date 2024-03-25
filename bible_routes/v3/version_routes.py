@@ -42,7 +42,7 @@ async def list_version(
         user_group_ids = stmt.subquery()
         # Get versions that the user has access to through their groups
         stmt = (
-            select(BibleVersionModel)
+            select(BibleVersionModel).distinct(BibleVersionModel.id)
             .join(
                 BibleVersionAccess,
                 BibleVersionModel.id == BibleVersionAccess.bible_version_id,
@@ -112,7 +112,8 @@ async def delete_version(
     """
 
     # Check if the version exists
-    version = await db.query(BibleVersionModel).filter(BibleVersionModel.id == id).first()
+    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == id))
+    version = result.scalars().first()
     if not version:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Version not found."
