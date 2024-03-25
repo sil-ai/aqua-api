@@ -94,10 +94,10 @@ async def is_user_authorized_for_revision(user_id, revision_id, db):
 
     return accessible is not None
 
-async def is_user_authorized_for_assessement(user_id, assessment_id, db):
+async def is_user_authorized_for_assessment(user_id, assessment_id, db):
     # Admins have access to all assessments
-    result = await db.execute(select(UserDB).where(UserDB.id == user_id))
-    user = result.scalars().first()
+    user_result = await db.execute(select(UserDB).where(UserDB.id == user_id))
+    user = user_result.scalars().first()
     if user and user.is_admin:
         return True
 
@@ -108,14 +108,15 @@ async def is_user_authorized_for_assessement(user_id, assessment_id, db):
     ).subquery()
 
     # Check if the assessment is accessible by one of the user's groups
-    accessible = (
-        db.query(Assessment)
+    assessment_query = (
+        select(Assessment)
         .join(AssessmentAccess, Assessment.id == AssessmentAccess.assessment_id)
-        .filter(
+        .where(
             Assessment.id == assessment_id,
             AssessmentAccess.group_id.in_(user_groups),
         )
-        .first()
     )
+    assessment_result = await db.execute(assessment_query)
+    accessible = assessment_result.scalars().first()
 
-    return accessible is not None   
+    return accessible is not None

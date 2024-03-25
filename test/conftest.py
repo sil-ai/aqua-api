@@ -1,7 +1,6 @@
 # version_id conftest.py
 
 import pytest
-import sqlalchemy as db
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -25,7 +24,7 @@ from app import app
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 
-engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
+engine = create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Asynchronous session fixture
@@ -36,11 +35,11 @@ async def async_test_db_session():
     async with AsyncSessionLocal() as async_session:
         yield async_session
 
-@pytest.yield_fixture(scope="session")
-def event_loop(request):
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+# @pytest.yield_fixture(scope="session")
+# def event_loop(request):
+#     loop = asyncio.get_event_loop_policy().new_event_loop()
+#     yield loop
+#     loop.close()
     
 @pytest.fixture(scope="module")
 def db_session():
