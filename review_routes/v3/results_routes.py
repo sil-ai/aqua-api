@@ -5,12 +5,15 @@ from fastapi import Depends, HTTPException, status, APIRouter, Query
 from typing import Optional, Dict, List, Union, Tuple
 from sqlalchemy.orm import Session, aliased
 import pandas as pd
+import time
 
 from enum import Enum
 from database.dependencies import get_db
 from sqlalchemy.orm import aliased
+
 from sqlalchemy import func, literal
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from sqlalchemy.sql import select
 from database.models import (
     AssessmentResult,
@@ -520,19 +523,20 @@ async def build_compare_results_main_query(
 
 
 async def build_missing_words_main_query(
-    revision_id: int,
-    reference_id: int,
+    revision_id: Optional[int],
+    reference_id: Optional[int],
     threshold: float,
     book: Optional[str],
     chapter: Optional[int],
     verse: Optional[int],
+
     page: Optional[int],
     page_size: Optional[int],
     db: AsyncSession,
+
 ) -> Tuple:
     """
-    Asynchronously builds the main query for fetching words missing from a text alignment assessment, applying pagination and filtering.
-
+    Asynchronously builds the main query for fetching words missing from a text alignment assessment, applying filtering.
     Args:
         revision_id (int): The ID of the revision to filter the assessment by.
         reference_id (int): The ID of the reference to filter the assessment by.
@@ -543,14 +547,13 @@ async def build_missing_words_main_query(
         page (Optional[int]): The page number for pagination. Default is None.
         page_size (Optional[int]): The number of items to display per page for pagination. Default is None.
         db (Session): The database session object to execute queries against.
-
     Returns:
         Tuple: A tuple containing the main query object, the total number of rows matching the query, and the main assessment ID.
         The main query object is configured to fetch data according to the specified filters and pagination settings.
-
     Raises:
         HTTPException: If no completed assessment is found for the provided revision_id and reference_id.
     """
+
     if page is not None and page_size is not None:
         offset = (page - 1) * page_size
         limit = page_size
@@ -561,6 +564,7 @@ async def build_missing_words_main_query(
     
     main_assessment = await db.execute(
         select(Assessment)
+
         .filter(
             Assessment.revision_id == revision_id,
             Assessment.reference_id == reference_id,
@@ -597,8 +601,10 @@ async def build_missing_words_main_query(
     if verse:
         main_assessment_query = main_assessment_query.where(AlignmentTopSourceScores.verse == verse)
 
+
     # Count total matching rows before applying pagination limits
     total_rows = await db.scalar(select(func.count()).select_from(main_assessment_query.subquery()))
+
 
     # Apply pagination
     main_assessment_query = main_assessment_query.order_by(AlignmentTopSourceScores.id).offset(offset).limit(limit)
@@ -609,6 +615,7 @@ async def build_missing_words_main_query(
 async def build_missing_words_baseline_query(
     reference_id: Optional[int],
     baseline_ids: Optional[List[int]],
+    threshold: float,
     book: Optional[str],
     chapter: Optional[int],
     verse: Optional[int],
@@ -628,12 +635,11 @@ async def build_missing_words_baseline_query(
     Returns:
         Tuple: A tuple containing the baseline assessments query object and a mapping of assessment IDs to baseline IDs.
         The query object is configured to fetch data according to the specified filters.
-
+    
     This function constructs a query to retrieve alignment scores from baseline assessments. These baselines are determined by the provided
     `baseline_ids`. The function supports filtering results by book, chapter, and verse. It assumes that the highest ID
     assessment for each revision is the latest and therefore relevant for the baseline comparison.
     """
-
     if not baseline_ids:
         baseline_ids = []
     baseline_assessments = await db.execute(
@@ -649,6 +655,7 @@ async def build_missing_words_baseline_query(
         )
         .group_by(Assessment.revision_id)
     )
+
     baseline_assessments = baseline_assessments.all()
 
     # Create mappings from assessments to baseline_ids
@@ -670,6 +677,7 @@ async def build_missing_words_baseline_query(
     )
 
     # Apply filtering based on provided parameters
+
     if book:
         baseline_assessments_query = baseline_assessments_query.where(
             AlignmentTopSourceScores.book == book
@@ -930,17 +938,6 @@ async def get_alignment_scores(
     return {"results": result_data, "total_count": total_count}
 
 
-def agg_dicts(df, threshold=0.2):
-    # Extract relevant rows and create dictionaries for non-NaN 'assessment_id' and 'target'
-    filtered = df.dropna(subset=["baseline_id", "target"])
-    return [
-        {"revision_id": int(row["baseline_id"]), "target": row["target"]}
-        if row["baseline_score"] > threshold
-        else {"revision_id": int(row["baseline_id"]), "target": None}
-        for _, row in filtered.iterrows()
-    ]
-
-
 @router.get("/missingwords", response_model=Dict[str, Union[List[Result], int]])
 async def get_missing_words(
     revision_id: int,
@@ -950,9 +947,11 @@ async def get_missing_words(
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
+
     page: Optional[int] = None,
     page_size: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
+
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -974,17 +973,13 @@ async def get_missing_words(
         Restrict results to one chapter. If set, book must also be set.
     verse : int, optional
         Restrict results to one verse. If set, book and chapter must also be set.
-    page : int, optional
-        The page of results to return. If set, page_size must also be set.
-    page_size : int, optional
-        The number of results to return per page. If set, page must also be set.
 
     Returns
     -------
     Dict[str, Union[List[Result], int]]
         A dictionary containing the list of results and the total count of results.
     """
-
+    # start = time.time()
     await validate_parameters(book, chapter, verse)
 
     if baseline_ids is None:
@@ -1006,6 +1001,9 @@ async def get_missing_words(
     baseline_ids = [id for id in baseline_ids if id not in ids_with_same_version]
 
 
+    # print(f'Filtered baseline ids, time: {time.time() - start}')
+
+
     # Initialize base query
     (
         main_assessment_query,
@@ -1018,13 +1016,14 @@ async def get_missing_words(
         book,
         chapter,
         verse,
-        page,
-        page_size,
         db,
     )
+    # print(f'Initialized base query, time: {time.time() - start}')
 
     main_assessment_results = await db.execute(main_assessment_query)
     df_main = pd.DataFrame(main_assessment_results.scalars().all())
+
+    # print(f'Executed main assessment query, time: {time.time() - start}')
 
     if baseline_ids:
         (
@@ -1033,13 +1032,16 @@ async def get_missing_words(
         ) = await build_missing_words_baseline_query(
             reference_id,
             baseline_ids,
+            match_threshold,
             book,
             chapter,
             verse,
             db,
         )
+
         baseline_assessment_results = await db.execute(baseline_assessment_query)
         if baseline_assessment_results.scalars().all():
+
             df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=["id"])
         else:
             df_baseline = pd.DataFrame(
@@ -1060,37 +1062,25 @@ async def get_missing_words(
         joined_df = pd.merge(
             df_main, df_baseline, on=["book", "chapter", "verse", "source"], how="left"
         )
-
-        df = (
-            joined_df.groupby(["book", "chapter", "verse", "source"])
-            .apply(
-                lambda x: pd.Series(
-                    {
-                        "id": x["id"].min(),
-                        "score": x["score"].min(),
-                        "baseline_score": x["baseline_score"].mean(),
-                        "target": agg_dicts(x, threshold=match_threshold),
-                    }
-                )
-            )
-            .reset_index()
-        )
-        df.loc[:, "flag"] = df.apply(
-            lambda row: row["baseline_score"] > 0.35
-            and row["baseline_score"] > 5 * row["score"],
-            axis=1,
-        )
-
+        # print(f'Merged dataframes, time: {time.time() - start}')
+        joined_df['flag'] = (joined_df['baseline_score'] > 0.35) & (joined_df['baseline_score'] > 5 * joined_df['score'])
+        df = joined_df.reset_index()
+    
     else:
         df = df_main
         df.loc[:, "flag"] = False
         df['target'] = df.apply(lambda x: [], axis=1)
 
     result_list = []
+    # print(f'Flagged data, time: {time.time() - start}')
 
     for _, row in df.iterrows():
         # Constructing the verse reference string
         vref = f"{row['book']} {row['chapter']}:{row['verse']}"
+        target_list=[{'revision_id': int(id), 'target': target} for id, target in row["target"].items()] if isinstance(row["target"], dict) else []
+        for id in baseline_ids:
+            if id not in [target.get('revision_id') for target in target_list]:
+                target_list.append({'revision_id': id, 'target': None})
 
         result_obj = Result(
             id=row["id"],
@@ -1099,11 +1089,13 @@ async def get_missing_words(
             reference_id=reference_id,
             vref=vref,
             source=row["source"],
-            target=row["target"],
+            target=target_list,
             score=row["score"],
             flag=row["flag"],
         )
         result_list.append(result_obj)
+
+    # print(f'Constructed results, time: {time.time() - start}')
 
     return {"results": result_list, "total_count": total_count}
 
