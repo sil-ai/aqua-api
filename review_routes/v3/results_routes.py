@@ -418,7 +418,7 @@ async def build_compare_results_baseline_query(
     else:  # Default case, aggregate by verse
         group_by_columns = [AssessmentResult.book, AssessmentResult.chapter, AssessmentResult.verse]
         select_columns.extend([AssessmentResult.book, AssessmentResult.chapter, AssessmentResult.verse])
-
+    print(f'{select_columns=}')
     # Finalize the query based on aggregation type
     if aggregate:
         baseline_assessments_query = (
@@ -789,10 +789,11 @@ async def get_compare_results(
         verse,
         db,
     )
+    print(f'{str(baseline_assessments_query)=}')
     main_assessment_results = await db.execute(main_assessments_query)
-    main_assessment_results = main_assessment_results.scalars().all()
+    main_assessment_results = main_assessment_results.all()
     baseline_assessment_results = await db.execute(baseline_assessments_query)
-    baseline_assessment_results = baseline_assessment_results.scalars().all()
+    baseline_assessment_results = baseline_assessment_results.all()
 
     df_main = pd.DataFrame(main_assessment_results)
     if baseline_assessment_results:
