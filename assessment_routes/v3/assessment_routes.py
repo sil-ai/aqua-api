@@ -129,7 +129,7 @@ async def add_assessment(
     db.add(assessment)
     await db.commit()
     await db.refresh(assessment)
-    a.id = assessment.id  # Note: You should not mutate input Pydantic models in real-world applications
+    a.id = assessment.id  
 
     # If the user is not an admin, link the assessment to their groups
     if not current_user.is_admin:
