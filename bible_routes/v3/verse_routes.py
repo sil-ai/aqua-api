@@ -4,6 +4,7 @@ from typing import List
 import fastapi
 from fastapi import Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from models import VerseText
 from database.models import (
@@ -29,14 +30,15 @@ async def get_chapter(
     """
     Gets a list of verse texts for a revision for a given chapter.
     """
-    if not is_user_authorized_for_revision(current_user.id, revision_id, db):
+    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to access this revision.",
         )
 
-    result = (
-        await db.query(
+    
+    stmt = (
+        select(
             VerseModel.id,
             VerseModel.text,
             VerseModel.verse_reference,
@@ -50,14 +52,14 @@ async def get_chapter(
             VerseReferenceModel,
             VerseModel.verse_reference == VerseReferenceModel.full_verse_id,
         )
-        .filter(
+        .where(
             VerseModel.revision_id == revision_id,
             VerseModel.book == book,
             VerseModel.chapter == chapter,
         )
         .order_by(VerseModel.id)
-        .all()
     )
+    result = await db.execute(stmt)
 
     chapter_data = [
         VerseText(
@@ -71,7 +73,7 @@ async def get_chapter(
         )
         for verse in result
     ]
-
+     
     return chapter_data
 
 
@@ -87,24 +89,26 @@ async def get_verse(
     """
     Gets a single verse text for a revision for a given book, chapter, and verse.
     """
-    if not is_user_authorized_for_revision(current_user.id, revision_id, db):
+    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to access this revision.",
         )
 
-    result = (
-        await db.query(VerseModel)
-        .filter(
+    stmt = (
+        select(VerseModel)
+        .where(
             VerseModel.revision_id == revision_id,
             VerseModel.book == book,
             VerseModel.chapter == chapter,
             VerseModel.verse == verse,
         )
         .order_by(VerseModel.id)
-        .all()
     )
-    return result
+    result = await db.execute(stmt)
+    verses = result.scalars().all()
+    
+    return verses
 
 
 @router.get("/book", response_model=List[VerseText])
@@ -117,19 +121,22 @@ async def get_book(
     """
     Gets a list of verse texts for a revision for a given book.
     """
-    if not is_user_authorized_for_revision(current_user.id, revision_id, db):
+    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to access this revision.",
         )
-
-    result = (
-        await db.query(VerseModel)
-        .filter(VerseModel.revision_id == revision_id, VerseModel.book == book)
+    stmt = (
+        select(VerseModel)
+        .where(
+            VerseModel.revision_id == revision_id,
+            VerseModel.book == book,
+        )
         .order_by(VerseModel.id)
-        .all()
     )
-    return result
+    result = await db.execute(stmt)
+    verses = result.scalars().all()
+    return verses
 
 
 @router.get("/text", response_model=List[VerseText])
@@ -141,15 +148,16 @@ async def get_text(
     """
     Gets a list of verse texts for a whole revision.
     """
-    if not is_user_authorized_for_revision(current_user.id, revision_id, db):
+    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to access this revision.",
         )
-
-    result = (
-        await db.query(VerseModel).filter(VerseModel.revision_id == revision_id)
+    stmt = (
+        select(VerseModel)
+        .where(VerseModel.revision_id == revision_id)
         .order_by(VerseModel.id)
-        .all()
     )
-    return result
+    result = await db.execute(stmt)
+    verses = result.scalars().all()
+    return verses

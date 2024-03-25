@@ -1,7 +1,6 @@
 # version_id conftest.py
 
 import pytest
-import sqlalchemy as db
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -24,7 +23,9 @@ from datetime import date
 import pandas as pd
 from app import app
 import asyncio
-engine = db.create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+
+engine = create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 async_engine = create_async_engine('your_async_database_url')
 AsyncSessionLocal = sessionmaker(
@@ -33,11 +34,19 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False
 )
 
-@pytest.yield_fixture(scope="session")
-def event_loop(request):
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+# Asynchronous session fixture
+@pytest.fixture(scope="module")
+async def async_test_db_session():
+    async_engine = create_async_engine("postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname")
+    AsyncSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession)
+    async with AsyncSessionLocal() as async_session:
+        yield async_session
+
+# @pytest.yield_fixture(scope="session")
+# def event_loop(request):
+#     loop = asyncio.get_event_loop_policy().new_event_loop()
+#     yield loop
+#     loop.close()
     
 @pytest.fixture(scope="module")
 def db_session():

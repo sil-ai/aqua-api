@@ -6,9 +6,8 @@ from datetime import date
 import fastapi
 from fastapi import Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from pydantic import Field
+from sqlalchemy import select
 
-from key_fetch import get_secret
 from models import VersionIn, VersionOut_v3 as VersionOut
 from database.models import (
     UserDB as UserModel,
@@ -31,26 +30,30 @@ async def list_version(
     """
     if current_user.is_admin:
         # Admin users can access all versions
-        versions = await db.query(BibleVersionModel).all()
+        result = await db.execute(select(BibleVersionModel))
+        versions = result.scalars().all()
     else:
         # Fetch the groups the user belongs to
-        user_group_ids = (
-            await db.query(UserGroup.group_id)
-            .filter(UserGroup.user_id == current_user.id)
-            .subquery()
+        
+        stmt = (
+            select(UserGroup.group_id)
+            .where(UserGroup.user_id == current_user.id)
         )
-
+        user_group_ids = stmt.subquery()
         # Get versions that the user has access to through their groups
-        versions = (
-            await db.query(BibleVersionModel)
+        stmt = (
+            select(BibleVersionModel).distinct(BibleVersionModel.id)
             .join(
                 BibleVersionAccess,
                 BibleVersionModel.id == BibleVersionAccess.bible_version_id,
-            )  # filter versions that are not deleted
-            .filter(BibleVersionModel.deleted.is_(False))
-            .filter(BibleVersionAccess.group_id.in_(user_group_ids))
-            .all()
+            )
+            .where(
+                BibleVersionModel.deleted.is_(False),
+                BibleVersionAccess.group_id.in_(user_group_ids)
+            )
         )
+        result = await db.execute(stmt)
+        versions = result.scalars().all()
 
     return [VersionOut.model_validate(version) for version in versions]
 
@@ -77,20 +80,22 @@ async def add_version(
         owner_id=current_user.id,
     )
 
-    await db.add(new_version)
+    db.add(new_version)
     await db.commit()
     await db.refresh(new_version)
-
-    user_group_ids_query = await db.query(UserGroup.group_id).filter(
-        UserGroup.user_id == current_user.id
+    
+    stmt = (
+        select(UserGroup.group_id)
+        .where(UserGroup.user_id == current_user.id)
     )
-    user_group_ids = [group_id[0] for group_id in user_group_ids_query.all()]
+    result = await db.execute(stmt)
+    user_group_ids = [group_id for group_id in result.scalars().all()]
 
     for group_id in user_group_ids:
         if v.add_to_groups and group_id not in v.add_to_groups:
             continue
         access = BibleVersionAccess(bible_version_id=new_version.id, group_id=group_id)
-        await db.add(access)
+        db.add(access)
     await db.commit()
 
     return VersionOut.model_validate(new_version)
@@ -107,7 +112,8 @@ async def delete_version(
     """
 
     # Check if the version exists
-    version = await db.query(BibleVersionModel).filter(BibleVersionModel.id == id).first()
+    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == id))
+    version = result.scalars().first()
     if not version:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Version not found."
@@ -138,7 +144,8 @@ async def rename_version(
     Rename a version.
     """
     # Check if the version exists
-    version = await db.query(BibleVersionModel).filter(BibleVersionModel.id == id).first()
+    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == id))
+    version = result.scalars().first()
     if not version:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Version not found."
