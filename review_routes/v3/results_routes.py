@@ -376,7 +376,7 @@ async def build_compare_results_baseline_query(
             .group_by(Assessment.revision_id)
         )
     )
-    baseline_assessment_ids = [assessment.id for assessment in baseline_assessment_ids.scalars().all()]
+    baseline_assessment_ids = [assessment.id for assessment in baseline_assessment_ids.all()]
 
     # Construct the base query for assessment results
     baseline_assessments_query = select(
@@ -428,7 +428,7 @@ async def build_compare_results_baseline_query(
             .order_by(func.min(AssessmentResult.id))
         )
 
-    return await db.execute(baseline_assessments_query)
+    return baseline_assessments_query
 
 
 async def build_compare_results_main_query(
@@ -509,7 +509,7 @@ async def build_compare_results_main_query(
         )
 
     # Add order, limit, and offset for pagination
-    main_assessment_query = main_assessment_query.order_by(AssessmentResult.id).offset(offset).limit(limit)
+    main_assessment_query = main_assessment_query.order_by('id').offset(offset).limit(limit)
 
     # Execute the main assessment query to count total rows if needed
     total_rows = None
@@ -789,11 +789,14 @@ async def get_compare_results(
         verse,
         db,
     )
-    main_assessment_results = await db.execute(main_assessments_query).scalars().all()
-    baseline_assessment_results = await db.execute(baseline_assessments_query).scalars().all()
+    main_assessment_results = await db.execute(main_assessments_query)
+    main_assessment_results = main_assessment_results.scalars().all()
+    baseline_assessment_results = await db.execute(baseline_assessments_query)
+    baseline_assessment_results = baseline_assessment_results.scalars().all()
 
     df_main = pd.DataFrame(main_assessment_results)
     if baseline_assessment_results:
+        print(f'{baseline_assessment_results=}')
         df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=["id"])
     else:
         df_baseline = pd.DataFrame(
