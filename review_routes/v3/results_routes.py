@@ -4,6 +4,7 @@ import os
 from fastapi import Depends, HTTPException, status, APIRouter, Query
 from typing import Optional, Dict, List, Union, Tuple
 from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, literal, case, Text
 import pandas as pd
 import time
 
@@ -663,19 +664,32 @@ async def build_missing_words_baseline_query(
     assessment_to_baseline_id = {assessment: revision_id for revision_id, assessment in baseline_assessments}
 
     # Build the query for fetching alignment scores from these baseline assessments
-    baseline_assessments_query = select(
+    baseline_assessments_query = (select(
         AlignmentTopSourceScores.id,
         AlignmentTopSourceScores.assessment_id,
         AlignmentTopSourceScores.book,
         AlignmentTopSourceScores.chapter,
         AlignmentTopSourceScores.verse,
         AlignmentTopSourceScores.source,
-        AlignmentTopSourceScores.target,
-        AlignmentTopSourceScores.score.label("baseline_score"),
-    ).where(
-        AlignmentTopSourceScores.assessment_id.in_(baseline_assessment_ids),
+        func.avg(AlignmentTopSourceScores.score).label("baseline_score"),
+        func.jsonb_object_agg(
+                Assessment.revision_id.cast(Text),
+                case(
+                    [(AlignmentTopSourceScores.score < threshold, None)],
+                    else_=AlignmentTopSourceScores.target
+                )
+        ).label("target")
     )
-
+    .join(Assessment, AlignmentTopSourceScores.assessment_id == Assessment.id)
+    .group_by(
+            AlignmentTopSourceScores.book,
+            AlignmentTopSourceScores.chapter,
+            AlignmentTopSourceScores.verse,
+            AlignmentTopSourceScores.source
+    )
+    .where(
+        AlignmentTopSourceScores.assessment_id.in_(baseline_assessment_ids)
+    ))
     # Apply filtering based on provided parameters
 
     if book:
