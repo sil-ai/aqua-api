@@ -5,10 +5,13 @@ from typing import Optional, List
 from fastapi import Depends, HTTPException, status, APIRouter
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
-from sqlalchemy.orm import Session
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, selectinload
 
 from models import Token, User, Group
-from database.models import UserDB
+from database.models import UserDB, Group as GroupDB, UserGroup
+
 
 from database.dependencies import get_db  # Function to get the database session
 from .utilities import (
@@ -23,11 +26,12 @@ router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 
-def authenticate_user(username: str, password: str, db: Session):
-    user = db.query(UserDB).filter(UserDB.username == username).first()
-    if not user:
-        return False
-    if not verify_password(password, user.hashed_password):
+
+async def authenticate_user(username: str, password: str, db: AsyncSession):
+    stmt = select(UserDB).where(UserDB.username == username)
+    result = await db.execute(stmt)
+    user = result.scalars().first()
+    if not user or not verify_password(password, user.hashed_password):
         return False
     return user
 
@@ -43,9 +47,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
-async def get_current_user(
-    db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)
-):
+async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -56,7 +58,8 @@ async def get_current_user(
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        user = db.query(UserDB).filter(UserDB.username == username).first()
+        result = await db.execute(select(UserDB).options(selectinload(UserDB.groups)).where(UserDB.username == username))
+        user = result.scalars().first()
         if user is None:
             raise credentials_exception
         return user
@@ -64,11 +67,12 @@ async def get_current_user(
         raise credentials_exception
 
 
+
 @router.post("/token", response_model=Token)
 async def login_for_access_token(
-    form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
+    form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)
 ):
-    user = authenticate_user(form_data.username, form_data.password, db)
+    user = await authenticate_user(form_data.username, form_data.password, db)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -90,6 +94,10 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
 
 @router.get("/groups/me", response_model=List[Group])
 async def get_groups(
-        current_user: User = Depends(get_current_user)
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
 ):
-    return [user_group.group for user_group in current_user.groups]
+    stmt = select(GroupDB).join(UserGroup).where(UserGroup.user_id == current_user.id)
+    result = await db.execute(stmt)
+    groups = result.scalars().all()
+    return groups
