@@ -27,12 +27,6 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 
 engine = create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-async_engine = create_async_engine('your_async_database_url')
-AsyncSessionLocal = sessionmaker(
-    bind=async_engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
 
 # Asynchronous session fixture
 @pytest.fixture(scope="module")
@@ -41,13 +35,7 @@ async def async_test_db_session():
     AsyncSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession)
     async with AsyncSessionLocal() as async_session:
         yield async_session
-
-# @pytest.yield_fixture(scope="session")
-# def event_loop(request):
-#     loop = asyncio.get_event_loop_policy().new_event_loop()
-#     yield loop
-#     loop.close()
-    
+   
 @pytest.fixture(scope="module")
 def db_session():
     return TestingSessionLocal()
@@ -97,24 +85,6 @@ def test_db_session():
         teardown_database(db_session)
         db_session.close()
 
-
-@pytest.fixture(scope="module")
-async def async_test_db_session():
-    # Create all tables asynchronously
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    # Create a session for the test
-    async with AsyncSessionLocal() as session:
-        # Add your test data setup here
-        await setup_database_async(session)
-        
-        yield session
-
-        # Teardown test data
-        await teardown_database_async(session)
-
-
 def setup_database(db_session):
     """Set up the database for testing with distinct sections for different data types."""
 
@@ -126,21 +96,6 @@ def setup_database(db_session):
 
     # Section 3: Loading Revision
     load_revision_data(db_session)
-
-
-async def setup_database_async(session):
-    """
-    Set up the database for testing with distinct sections for different data types, 
-    using async operations.
-    """
-    # Section 1: Setting up Users and Groups
-    await setup_users_and_groups_async(session)
-
-    # Section 2: Setting up References and ISOs
-    await setup_references_and_isos_async(session)
-
-    # Section 3: Loading Revision Data
-    await load_revision_data_async(session)
 
 
 def setup_users_and_groups(db_session):
