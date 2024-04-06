@@ -877,7 +877,6 @@ async def get_missing_words(
     Dict[str, Union[List[Result], int]]
         A dictionary containing the list of results and the total count of results.
     """
-    start = time.time()
     await validate_parameters(book, chapter, verse)
 
     if baseline_ids is None:
