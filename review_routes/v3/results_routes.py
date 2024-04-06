@@ -339,17 +339,27 @@ async def build_compare_results_baseline_query(
         group_by_columns = []
     else:  # Default case, aggregate by verse
         group_by_columns = ['book', 'chapter', 'verse']
-    
+
     select_columns.extend([getattr(AssessmentResult, col) for col in group_by_columns])
-    
+
     # Finalize the query based on aggregation type
     baseline_assessments_subquery = (
         select(*select_columns)
         .where(AssessmentResult.assessment_id.in_(baseline_assessment_ids))
+    )
+    if book is not None:
+        baseline_assessments_subquery = baseline_assessments_subquery.where(AssessmentResult.book == book)
+    if chapter is not None:
+        baseline_assessments_subquery = baseline_assessments_subquery.where(AssessmentResult.chapter == chapter)
+    if verse is not None:
+        baseline_assessments_subquery = baseline_assessments_subquery.where(AssessmentResult.verse == verse)
+
+    baseline_assessments_subquery = (
+        baseline_assessments_subquery
         .group_by(AssessmentResult.assessment_id, *[getattr(AssessmentResult, col) for col in group_by_columns])
         .order_by(func.min(AssessmentResult.id))
     ).subquery()
-    
+
     baseline_assessments_query = (
     select(
         func.min(baseline_assessments_subquery.c.id).label("id"),
@@ -419,9 +429,17 @@ async def build_compare_results_main_query(
             func.avg(AssessmentResult.score).label("score"),
         )
         .where(AssessmentResult.assessment_id == main_assessment_id)
-        .group_by(*[getattr(AssessmentResult, col) for col in group_by_columns])
-        .order_by('id').offset(offset).limit(limit)
     )
+    if book is not None:
+        main_assessment_query = main_assessment_query.where(AssessmentResult.book == book)
+    if chapter is not None:
+        main_assessment_query = main_assessment_query.where(AssessmentResult.chapter == chapter)
+    if verse is not None:
+        main_assessment_query = main_assessment_query.where(AssessmentResult.verse == verse)
+    main_assessment_query = main_assessment_query.group_by(
+        *[getattr(AssessmentResult, col) for col in group_by_columns]
+    ).order_by('id')
+    main_assessment_query_paginated = main_assessment_query.offset(offset).limit(limit)
 
     # Execute the main assessment query to count total rows
     total_rows_result = await db.execute(
@@ -429,7 +447,7 @@ async def build_compare_results_main_query(
     )
     total_rows = total_rows_result.scalar()
 
-    return main_assessment_query, total_rows
+    return main_assessment_query_paginated, total_rows, main_assessment_id
 
 
 async def build_missing_words_main_query(
@@ -664,13 +682,7 @@ async def get_compare_results(
     """
     await validate_parameters(book, chapter, verse, aggregate)
 
-    if not await is_user_authorized_for_assessment(current_user.id, revision_id, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to see this assessment",
-        )
-
-    main_assessments_query, total_count = await build_compare_results_main_query(
+    main_assessments_query, total_count, main_assessment_id = await build_compare_results_main_query(
         revision_id,
         reference_id,
         aggregate,
@@ -681,6 +693,13 @@ async def get_compare_results(
         page_size,
         db,
     )
+
+    if not await is_user_authorized_for_assessment(current_user.id, main_assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+
     baseline_assessments_query = await build_compare_results_baseline_query(
         reference_id,
         baseline_ids,
@@ -807,11 +826,16 @@ async def get_alignment_scores(
     if page is not None and page_size is not None:
         offset = (page - 1) * page_size
         limit = page_size
-        base_query = base_query.offset(offset).limit(limit)
+        base_query_paginated = base_query.offset(offset).limit(limit)
     else:
-        limit = None  # No pagination applied
+        base_query_paginated = base_query
     # Fetch results based on constructed filters
-    result_data = await db.execute(base_query)
+    total_rows_result = await db.execute(
+        select(func.count()).select_from(base_query.subquery())
+    )
+    total_count = total_rows_result.scalars().first()
+
+    result_data = await db.execute(base_query_paginated)
     result_data = result_data.scalars().all()
 
     result_list = []
@@ -836,7 +860,7 @@ async def get_alignment_scores(
         )
         # Add the Result object to the result list
         result_list.append(result_obj)
-    total_count = len(result_list)
+
     return {"results": result_data, "total_count": total_count}
 
 
