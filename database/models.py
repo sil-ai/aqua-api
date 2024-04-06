@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Numeric,
     TIMESTAMP,
+    Index,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
@@ -33,11 +34,12 @@ class AlignmentThresholdScores(Base):
     chapter = Column(Integer)
     verse = Column(Integer)
 
+
 class AlignmentTopSourceScores(Base):
     __tablename__ = "alignment_top_source_scores"
 
     id = Column(Integer, primary_key=True)
-    assessment_id = Column(Integer, ForeignKey("assessment.id"))
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
     score = Column(Numeric)
     flag = Column(Boolean)
     vref = Column(Text, ForeignKey('verse_reference.full_verse_id'))
@@ -48,6 +50,8 @@ class AlignmentTopSourceScores(Base):
     book = Column(Text)
     chapter = Column(Integer)
     verse = Column(Integer)
+
+    book_score_idx = Index('book_score_idx', book, score)
 
 class Assessment(Base):
     __tablename__ = "assessment"
