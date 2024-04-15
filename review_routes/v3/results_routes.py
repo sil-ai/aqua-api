@@ -476,7 +476,6 @@ async def build_missing_words_main_query(
     Raises:
         HTTPException: If no completed assessment is found for the provided revision_id and reference_id.
     """
-
     main_assessment = await db.execute(
         select(Assessment)
         .filter(
@@ -493,19 +492,6 @@ async def build_missing_words_main_query(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No completed assessment found for the given revision_id and reference_id",
         )
-    
-    # Configure the main query for missing words
-    main_assessment_query = select(
-        AlignmentTopSourceScores.id,
-        AlignmentTopSourceScores.book,
-        AlignmentTopSourceScores.chapter,
-        AlignmentTopSourceScores.verse,
-        AlignmentTopSourceScores.source,
-        AlignmentTopSourceScores.score,
-    ).where(
-        AlignmentTopSourceScores.assessment_id == main_assessment.id,
-        AlignmentTopSourceScores.score < threshold,
-    )
 
     main_assessment_query = (
         select(
@@ -531,11 +517,7 @@ async def build_missing_words_main_query(
     if verse:
         main_assessment_query = main_assessment_query.where(AlignmentTopSourceScores.verse == verse)
 
-
-    # Count total matching rows before applying pagination limits
-    total_rows = await db.scalar(select(func.count()).select_from(main_assessment_query.subquery()))
-
-    return main_assessment_query, total_rows, main_assessment.id
+    return main_assessment_query, main_assessment.id
 
 
 async def build_missing_words_baseline_query(
@@ -891,10 +873,7 @@ async def get_missing_words(
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
-    page: Optional[int] = None,
-    page_size: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
-
     current_user: UserModel = Depends(get_current_user),
 ):
     """
@@ -922,7 +901,6 @@ async def get_missing_words(
     Dict[str, Union[List[Result], int]]
         A dictionary containing the list of results and the total count of results.
     """
-    # start = time.time()
     await validate_parameters(book, chapter, verse)
 
     if baseline_ids is None:
@@ -942,12 +920,10 @@ async def get_missing_words(
     same_version_results = await db.execute(same_version_query)
     ids_with_same_version = [result.id for result in same_version_results.all()]
     baseline_ids = [id for id in baseline_ids if id not in ids_with_same_version]
-    # print(f'Filtered baseline ids, time: {time.time() - start}')
 
     # Initialize base query
     (
         main_assessment_query,
-        total_count,
         assessment_id,
     ) = await build_missing_words_main_query(
         revision_id,
@@ -958,12 +934,11 @@ async def get_missing_words(
         verse,
         db,
     )
-    # print(f'Initialized base query, time: {time.time() - start}')
     main_assessment_results = await db.execute(main_assessment_query)
     main_assessment_results = main_assessment_results.all()
     df_main = pd.DataFrame(main_assessment_results)
+    total_count = len(df_main)
 
-    # print(f'Executed main assessment query, time: {time.time() - start}')
     if baseline_ids:
         baseline_assessment_query = await build_missing_words_baseline_query(
         reference_id,
@@ -993,7 +968,6 @@ async def get_missing_words(
         joined_df = pd.merge(
             df_main, df_baseline, on=["book", "chapter", "verse", "source"], how="left"
         )
-        # print(f'Merged dataframes, time: {time.time() - start}')
         joined_df['flag'] = (joined_df['baseline_score'] > 0.35) & (joined_df['baseline_score'] > 5 * joined_df['score'])
         df = joined_df.reset_index()
     
@@ -1003,7 +977,6 @@ async def get_missing_words(
         df['target'] = df.apply(lambda x: [], axis=1)
 
     result_list = []
-    # print(f'Flagged data, time: {time.time() - start}')
 
     for _, row in df.iterrows():
         # Constructing the verse reference string
@@ -1025,8 +998,6 @@ async def get_missing_words(
             flag=row["flag"],
         )
         result_list.append(result_obj)
-
-    # print(f'Constructed results, time: {time.time() - start}')
 
     return {"results": result_list, "total_count": total_count}
 
