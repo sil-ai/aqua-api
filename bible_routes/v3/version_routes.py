@@ -54,7 +54,15 @@ async def list_version(
         )
         result = await db.execute(stmt)
         versions = result.scalars().all()
+        # TODO 
+        stmt = select(BibleVersionAccess.group_id).where(BibleVersionAccess.bible_version_id == version.id)
+        result = await db.execute(stmt)
+        group_ids = result.scalars().all()
 
+        version_out = VersionOut(
+            # existing fields here...
+            groups=group_ids
+        )
     return [VersionOut.model_validate(version) for version in versions]
 
 
