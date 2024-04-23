@@ -55,16 +55,16 @@ async def list_version(
         result = await db.execute(stmt)
         versions = result.scalars().all()
         # TODO 
+        # Get the groups for each version and add them to the response
+    version_result = []
+    for version in versions:
         stmt = select(BibleVersionAccess.group_id).where(BibleVersionAccess.bible_version_id == version.id)
         result = await db.execute(stmt)
         group_ids = result.scalars().all()
+        version.group_ids = group_ids
+        version.append(VersionOut.model_validate(version))
 
-        version_out = VersionOut(
-            # existing fields here...
-            groups=group_ids
-        )
-    return [VersionOut.model_validate(version) for version in versions]
-
+    return version_result
 
 @router.post("/version", response_model=VersionOut)
 async def add_version(
