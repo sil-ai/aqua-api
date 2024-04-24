@@ -61,8 +61,9 @@ async def list_version(
         stmt = select(BibleVersionAccess.group_id).where(BibleVersionAccess.bible_version_id == version.id)
         result = await db.execute(stmt)
         group_ids = result.scalars().all()
-        version.group_ids = group_ids
-        version.append(VersionOut.model_validate(version))
+        version_out = VersionOut.model_validate(version)
+        version_out.group_ids = group_ids
+        version.append(version_out)
 
     return version_result
 
