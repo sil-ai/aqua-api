@@ -12,6 +12,7 @@ from models import VersionIn, VersionOut_v3 as VersionOut
 from database.models import (
     UserDB as UserModel,
     UserGroup,
+    Group,
     BibleVersion as BibleVersionModel,
     BibleVersionAccess,
 )
@@ -61,8 +62,17 @@ async def list_version(
         stmt = select(BibleVersionAccess.group_id).where(BibleVersionAccess.bible_version_id == version.id)
         result = await db.execute(stmt)
         group_ids = result.scalars().all()
+        
+        # Query the Group model to get the group names
+        stmt = select(Group).where(Group.id.in_(group_ids))
+        result = await db.execute(stmt)
+        groups = result.scalars().all()
+        group_names = [group.name for group in groups]
+
+        
         version_out = VersionOut.model_validate(version)
         version_out.group_ids = group_ids
+        version_out.group_names = group_names
         if version_out not in version_result:
             version_result.append(version_out)
 
