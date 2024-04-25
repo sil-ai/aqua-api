@@ -63,7 +63,8 @@ async def list_version(
         group_ids = result.scalars().all()
         version_out = VersionOut.model_validate(version)
         version_out.group_ids = group_ids
-        version.append(version_out)
+        if version_out not in version_result:
+            version_result.append(version_out)
 
     return version_result
 

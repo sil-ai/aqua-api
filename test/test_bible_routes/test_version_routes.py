@@ -65,6 +65,7 @@ class TestRegularUserFlow:
         assert user.username == "testuser1"
         assert group.name == "Group1"
 
+
         # Step 2: List versions as a regular user
         list_response = client.get(f"{prefix}/version", headers=headers)
         assert list_response.status_code == 200
@@ -82,6 +83,7 @@ class TestRegularUserFlow:
         assert version["back_translation_id"] is None  # or compare as needed
         assert version["machineTranslation"] is False
         assert version["owner_id"] == user.id
+        assert version["group_ids"] == [group.id]
         # Check that user 2 does not get anything back
         headers2 = {"Authorization": f"Bearer {regular_token2}"}
         list_response = client.get(f"{prefix}/version", headers=headers2)
@@ -205,7 +207,8 @@ class TestAdminFlow:
             db_session.query(BibleVersionModel).filter_by(id=version_id_2).first()
         )
         assert version_in_db_2 is not None
-
+        
+        
         # Verify user 1 can access both versions
         list_response = client.get(f"{prefix}/version", headers=headers)
         assert list_response.status_code == 200
@@ -213,7 +216,11 @@ class TestAdminFlow:
         assert len(versions) == 2, "User 1 should see two versions"
         assert versions[0]["id"] == version_id_1
         assert versions[1]["id"] == version_id_2
-
+        # Verify that version 1 is associated with group 1 and group 3
+        assert versions[0]["group_ids"] == [group_1.id, group_3.id]           
+        # Verify that version 2 is associated with group 1
+        assert versions[1]["group_ids"] == [group_1.id]
+        
         # Verify user 2 can access only the first version
         headers = {"Authorization": f"Bearer {regular_token2}"}
         list_response = client.get(f"{prefix}/version", headers=headers)
