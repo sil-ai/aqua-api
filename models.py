@@ -4,17 +4,17 @@ from typing import Union, Optional, List
 import datetime
 
 
+
 class VersionIn(BaseModel):
     name: str
     iso_language: str
     iso_script: str
     abbreviation: str
-    rights: Union[str, None] = None
-    forwardTranslation: Union[int, None] = None
-    backTranslation: Union[int, None] = None
-    machineTranslation: bool = False
+    rights: Optional[str] = None
+    forwardTranslation: Optional[int] = None
+    backTranslation: Optional[int] = None
+    machineTranslation: Optional[bool] = False
     add_to_groups: Optional[List[int]] = None
-
 
 class VersionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
