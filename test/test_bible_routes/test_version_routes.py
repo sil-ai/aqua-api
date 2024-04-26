@@ -90,21 +90,56 @@ class TestRegularUserFlow:
         assert len(versions) == 0  # Check that user 2 does not get anything back
 
         # rename the version as a regular user
+        attr_update = {
+            "name": "Updated Version",
+        }
+        
         update_response = client.put(
-            f"{prefix}/version",
-            params={"id": version_id, "new_name": "Updated Version"},
+            f"{prefix}/version/{version_id}",
+            json=attr_update,
             headers=headers,
         )
         assert update_response.status_code == 200
+        
+        # Add to a new group 3
+        # Create a second group for the first regular user
+        group_4 = Group(name="Group4", description="Test Group 4")
+        db_session.add(group_4)
+        db_session.commit()
+        
+        # Associate both regular users with the new group
+        user_1 = db_session.query(UserModel).filter_by(username="testuser1").first()
+        user_group4 = UserGroup(user_id=user_1.id, group_id=group_4.id)
+        db_session.add(user_group4)
+        db_session.commit()
+        
+        attr_update = { 
+            "add_to_groups": [group_4.id]
+        }
+        # Add the version to group 4
+        update_response = client.put(
+            f"{prefix}/version/{version_id}",
+            json=attr_update,
+            headers = headers
+        ) 
+        
+        assert update_response.status_code == 200
+        
+        
+        
         # check the db for the new name
         version_in_db = (
             db_session.query(BibleVersionModel).filter_by(id=version_id).first()
         )
         assert version_in_db.name == "Updated Version"
+        
+        attr_update = {
+            "name" : "Updated Version 2"
+        }
         # check that user 2 cannot update the version
         update_response = client.put(
-            f"{prefix}/version",
-            params={"id": version_id, "new_name": "Updated Version"},
+            f"{prefix}/version/{version_id}",
+            json=attr_update,
             headers=headers2,
         )
         assert update_response.status_code == 403

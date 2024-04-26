@@ -4,6 +4,17 @@ from typing import Union, Optional, List
 import datetime
 
 
+class VersionUpdate(BaseModel):
+    name: str = None
+    iso_language: str = None
+    iso_script: str = None
+    abbreviation: str = None
+    rights: Union[str, None] = None
+    forwardTranslation: Union[int, None] = None
+    backTranslation: Union[int, None] = None
+    machineTranslation: bool = False
+    add_to_groups: Optional[List[int]] = None
+
 class VersionIn(BaseModel):
     name: str
     iso_language: str

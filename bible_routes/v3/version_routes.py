@@ -8,7 +8,7 @@ from fastapi import Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from models import VersionIn, VersionOut_v3 as VersionOut
+from models import VersionIn, VersionUpdate, VersionOut_v3 as VersionOut
 from database.models import (
     UserDB as UserModel,
     UserGroup,
@@ -133,15 +133,15 @@ async def delete_version(
 
 
 # route to rename a version
-@router.put("/version")
+@router.put("/version/{id}")
 async def rename_version(
     id: int,
-    new_name: str,
+    version_update: VersionUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Rename a version.
+    Update any parameter in a version.
     """
     # Check if the version exists
     result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == id))
@@ -156,7 +156,25 @@ async def rename_version(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to rename this version.",
         )
-    # Perform the renaming
-    version.name = new_name
-    await db.commit()
-    return {"detail": f"Version {version.name} successfully renamed."}
+    # Perform the updates
+    version_data = version_update.model_dump(exclude_unset=True)
+    for key, value in version_data.items():
+        setattr(version, key, value)
+        await db.commit()
+        await db.refresh(version)
+        if key == "add_to_groups":
+            stmt = (
+                select(UserGroup.group_id)
+                .where(UserGroup.user_id == current_user.id)
+            )
+            result = await db.execute(stmt)
+            user_group_ids = [group_id for group_id in result.scalars().all()]
+
+            for group_id in user_group_ids:
+                if version_update.add_to_groups and group_id not in version_update.add_to_groups:
+                    continue
+                access = BibleVersionAccess(bible_version_id=id, group_id=group_id)
+                db.add(access)
+            await db.commit()
+        
+    return version
