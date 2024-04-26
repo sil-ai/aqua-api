@@ -55,7 +55,6 @@ async def list_version(
         )
         result = await db.execute(stmt)
         versions = result.scalars().all()
-        # TODO 
         # Get the groups for each version and add them to the response
     version_result = []
     for version in versions:

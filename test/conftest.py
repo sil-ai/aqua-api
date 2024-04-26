@@ -320,3 +320,5 @@ async def teardown_database_async(session):
         session.execute("SET session_replication_role = DEFAULT;")
         
         
+if __name__ == "__main__":
+    setup_database(TestingSessionLocal())
