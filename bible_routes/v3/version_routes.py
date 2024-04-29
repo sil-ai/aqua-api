@@ -149,6 +149,26 @@ async def modify_version(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Version not found."
         )
+    
+    stmt = (
+        select(UserGroup.group_id)
+        .where(UserGroup.user_id == current_user.id)
+            )
+    result = await db.execute(stmt)
+    user_group_ids = [group_id for group_id in result.scalars().all()]    
+    
+    if "add_to_groups" in version_update.model_dump():
+        for group_id in version_update["add_to_groups"]:
+            if group_id not in user_group_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User not authorized to add version to this group.",
+                )
+            else: 
+                access = BibleVersionAccess(bible_version_id=version_update.id, group_id=group_id)
+                db.add(access)
+        await db.commit()
+    
     # check if is admin or version owner
     if not current_user.is_admin and version.owner_id != current_user.id:
         raise HTTPException(
@@ -161,20 +181,6 @@ async def modify_version(
         if key != "add_to_groups":
             setattr(version, key, value)
             await db.commit()
-            await db.refresh(version)
-        else:
-            stmt = (
-                select(UserGroup.group_id)
-                .where(UserGroup.user_id == current_user.id)
-            )
-            result = await db.execute(stmt)
-            user_group_ids = [group_id for group_id in result.scalars().all()]
-
-            for group_id in user_group_ids:
-                if version_update.add_to_groups and group_id not in version_update.add_to_groups:
-                    continue
-                access = BibleVersionAccess(bible_version_id=id, group_id=group_id)
-                db.add(access)
-            await db.commit()
+            await db.refresh(version)   
         
     return version
