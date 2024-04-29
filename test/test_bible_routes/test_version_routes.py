@@ -108,7 +108,7 @@ class TestRegularUserFlow:
         )
         assert version_in_db.name == "Updated Version"
         
-        # Add to a new group 3
+        # Add to a new group 4
         # Create a second group for the first regular user
         group_4 = Group(name="Group4", description="Test Group 4")
         db_session.add(group_4)
@@ -134,17 +134,16 @@ class TestRegularUserFlow:
         assert update_response.status_code == 200
         
         
-        # Check that the version is in group 4
-        access_entries = (
-            db_session.query(BibleVersionAccess, UserModel, Group)
-            .join(Group, BibleVersionAccess.group_id == Group.id)
-            .join(UserGroup, Group.id == UserGroup.group_id)
-            .join(UserModel, UserGroup.user_id == UserModel.id)
-            .filter(BibleVersionAccess.bible_version_id == version_id)
-            .all()
+        # Assert that the version is part of group 4
+        bible_access = (
+            db_session.query(BibleVersionAccess)
+            .filter(BibleVersionAccess.bible_version_id ==version_id, BibleVersionAccess.group_id == group_4.id).first()
         )
         
-        assert len(access_entries) == 2
+        assert bible_access is not None
+        
+        
+       
         
         
         attr_update = {
@@ -175,6 +174,9 @@ class TestRegularUserFlow:
 
         assert version_in_db is None
 
+       
+        
+        
 
 class TestAdminFlow:
     def test_admin_create_list_and_delete_version(
@@ -306,3 +308,5 @@ class TestAdminFlow:
             .first()
         )
         assert version_in_db_2 is None
+        
+       
