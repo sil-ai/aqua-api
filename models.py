@@ -5,6 +5,7 @@ import datetime
 
 
 class VersionUpdate(BaseModel):
+    id: int
     name: str = None
     iso_language: str = None
     iso_script: str = None

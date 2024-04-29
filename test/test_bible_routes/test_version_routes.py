@@ -91,15 +91,22 @@ class TestRegularUserFlow:
 
         # rename the version as a regular user
         attr_update = {
+            "id": version_id,
             "name": "Updated Version",
         }
         
         update_response = client.put(
-            f"{prefix}/version/{version_id}",
+            f"{prefix}/version",
             json=attr_update,
             headers=headers,
         )
         assert update_response.status_code == 200
+        
+        # Checking the name change in the db
+        version_in_db = (
+            db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+        )
+        assert version_in_db.name == "Updated Version"
         
         # Add to a new group 3
         # Create a second group for the first regular user
@@ -114,11 +121,12 @@ class TestRegularUserFlow:
         db_session.commit()
         
         attr_update = { 
+            "id": version_id,
             "add_to_groups": [group_4.id]
         }
         # Add the version to group 4
         update_response = client.put(
-            f"{prefix}/version/{version_id}",
+            f"{prefix}/version",
             json=attr_update,
             headers = headers
         ) 
@@ -126,19 +134,26 @@ class TestRegularUserFlow:
         assert update_response.status_code == 200
         
         
-        
-        # check the db for the new name
-        version_in_db = (
-            db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+        # Check that the version is in group 4
+        access_entries = (
+            db_session.query(BibleVersionAccess, UserModel, Group)
+            .join(Group, BibleVersionAccess.group_id == Group.id)
+            .join(UserGroup, Group.id == UserGroup.group_id)
+            .join(UserModel, UserGroup.user_id == UserModel.id)
+            .filter(BibleVersionAccess.bible_version_id == version_id)
+            .all()
         )
-        assert version_in_db.name == "Updated Version"
+        
+        assert len(access_entries) == 2
+        
         
         attr_update = {
+            "id": version_id,
             "name" : "Updated Version 2"
         }
         # check that user 2 cannot update the version
         update_response = client.put(
-            f"{prefix}/version/{version_id}",
+            f"{prefix}/version",
             json=attr_update,
             headers=headers2,
         )

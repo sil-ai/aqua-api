@@ -133,9 +133,8 @@ async def delete_version(
 
 
 # route to rename a version
-@router.put("/version/{id}")
-async def rename_version(
-    id: int,
+@router.put("/version")
+async def modify_version(
     version_update: VersionUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -144,7 +143,7 @@ async def rename_version(
     Update any parameter in a version.
     """
     # Check if the version exists
-    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == id))
+    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == version_update.id))
     version = result.scalars().first()
     if not version:
         raise HTTPException(
@@ -154,15 +153,16 @@ async def rename_version(
     if not current_user.is_admin and version.owner_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to rename this version.",
+            detail="User not authorized to modify this version.",
         )
     # Perform the updates
     version_data = version_update.model_dump(exclude_unset=True)
     for key, value in version_data.items():
-        setattr(version, key, value)
-        await db.commit()
-        await db.refresh(version)
-        if key == "add_to_groups":
+        if key != "add_to_groups":
+            setattr(version, key, value)
+            await db.commit()
+            await db.refresh(version)
+        else:
             stmt = (
                 select(UserGroup.group_id)
                 .where(UserGroup.user_id == current_user.id)
