@@ -84,6 +84,7 @@ class TestRegularUserFlow:
         assert version["machineTranslation"] is False
         assert version["owner_id"] == user.id
         assert version["group_ids"] == [group.id]
+        assert version["group_names"] == [group.name]
         # Check that user 2 does not get anything back
         headers2 = {"Authorization": f"Bearer {regular_token2}"}
         list_response = client.get(f"{prefix}/version", headers=headers2)
