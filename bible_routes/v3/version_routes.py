@@ -160,14 +160,7 @@ async def modify_version(
     version_data = version_update.model_dump(exclude_unset=True)
     add_groups = version_data.get("add_to_groups")
     
-    # Verificar que el usuario tiene acceso a todos los grupos
-    if add_groups:
-        for group_id in add_groups:
-            if group_id not in user_group_ids:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"User not authorized to add verison to group {group_id}.",
-                )      
+    
     # check if is admin or version owner
     if not current_user.is_admin and version.owner_id != current_user.id:
         raise HTTPException(
@@ -176,9 +169,15 @@ async def modify_version(
         )
     # Perform the updates
     if add_groups:
-        for group_id in add_groups:      
-            access = BibleVersionAccess(bible_version_id=version_update.id, group_id=group_id)
-            db.add(access)
+        for group_id in add_groups:
+            if group_id not in user_group_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User not authorized to add version to this group.",
+                )
+            else: 
+                access = BibleVersionAccess(bible_version_id=version_update.id, group_id=group_id)
+                db.add(access)
         await db.commit()
         del version_data["add_to_groups"]
     

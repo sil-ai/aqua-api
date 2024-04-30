@@ -142,13 +142,42 @@ class TestRegularUserFlow:
         
         assert bible_access is not None
         
+        # Test: Adding to a group the user do not belong to
+        # Add to a new group 5
+        # Create a second group for the first regular user
+        group_5 = Group(name="Group5", description="Test Group 5")
+        db_session.add(group_5)
+        db_session.commit()
+        
+        
+        attr_update = { 
+            "id": version_id,
+            "add_to_groups": [group_5.id]
+        }
+        # Add the version to group 5
+        update_response = client.put(
+            f"{prefix}/version",
+            json=attr_update,
+            headers = headers
+        ) 
+        
+        assert update_response.status_code == 403
+        
+        # Check in database that the version is not part of group 5
+        bible_access = (
+            db_session.query(BibleVersionAccess)
+            .filter(BibleVersionAccess.bible_version_id ==version_id, BibleVersionAccess.group_id == group_5.id).first()
+        )
+        assert bible_access is None
+        
+        #Assert user 2 has no right to modify the version 
         
         attr_update = { 
             "id": version_id,
             "name": "New Version 2"
         }
         
-        #Assert user 2 has no right to modify the version 
+        
         list_response = client.put(
             f"{prefix}/version", 
             headers=headers2,
