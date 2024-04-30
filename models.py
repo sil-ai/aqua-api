@@ -42,7 +42,6 @@ class VersionOut_v3(BaseModel):
     machineTranslation: bool = False
     owner_id : int
     group_ids : List[int] = []
-    group_names : List[str] = []
 
 class RevisionIn(BaseModel):
     version_id: int

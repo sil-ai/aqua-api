@@ -84,7 +84,6 @@ class TestRegularUserFlow:
         assert version["machineTranslation"] is False
         assert version["owner_id"] == user.id
         assert version["group_ids"] == [group.id]
-        assert version["group_names"] == [group.name]
         # Check that user 2 does not get anything back
         headers2 = {"Authorization": f"Bearer {regular_token2}"}
         list_response = client.get(f"{prefix}/version", headers=headers2)
@@ -218,11 +217,9 @@ class TestAdminFlow:
         assert versions[0]["id"] == version_id_1
         assert versions[1]["id"] == version_id_2
         # Verify that version 1 is associated with group 1 and group 3
-        assert versions[0]["group_ids"] == [group_1.id, group_3.id]           
-        assert versions[0]["group_names"] == [group_1.name, group_3.name]           
+        assert versions[0]["group_ids"] == [group_1.id, group_3.id]                    
         # Verify that version 2 is associated with group 1
         assert versions[1]["group_ids"] == [group_1.id]
-        assert versions[1]["group_names"] == [group_1.name]
         
         # Verify user 2 can access only the first version
         headers = {"Authorization": f"Bearer {regular_token2}"}
