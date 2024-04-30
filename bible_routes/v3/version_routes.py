@@ -6,7 +6,7 @@ from datetime import date
 import fastapi
 from fastapi import Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from models import VersionIn, VersionUpdate, VersionOut_v3 as VersionOut
 from database.models import (
@@ -157,7 +157,17 @@ async def modify_version(
     result = await db.execute(stmt)
     user_group_ids = [group_id for group_id in result.scalars().all()]    
     
+    version_data = version_update.model_dump(exclude_unset=True)
+    add_groups = version_data.get("add_to_groups")
     
+    # Verificar que el usuario tiene acceso a todos los grupos
+    if add_groups:
+        for group_id in add_groups:
+            if group_id not in user_group_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"User not authorized to add verison to group {group_id}.",
+                )      
     # check if is admin or version owner
     if not current_user.is_admin and version.owner_id != current_user.id:
         raise HTTPException(
@@ -165,22 +175,19 @@ async def modify_version(
             detail="User not authorized to modify this version.",
         )
     # Perform the updates
-    version_data = version_update.model_dump(exclude_unset=True)
-    for key, value in version_data.items():
-        if key != "add_to_groups":
-            setattr(version, key, value)
-            await db.commit()
-            await db.refresh(version) 
-        else: 
-            for group_id in value:
-                if group_id not in user_group_ids:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail="User not authorized to add version to this group.",
-                    )
-                else: 
-                    access = BibleVersionAccess(bible_version_id=version_update.id, group_id=group_id)
-                    db.add(access)
-        await db.commit()  
+    if add_groups:
+        for group_id in add_groups:      
+            access = BibleVersionAccess(bible_version_id=version_update.id, group_id=group_id)
+            db.add(access)
+        await db.commit()
+        del version_data["add_to_groups"]
+    
+    # Method to replace the parameters in version with the parameters in version_data
+    # update
+    update_version = update(BibleVersionModel).where(BibleVersionModel.id == version_update.id).values(**version_data)
+    await db.execute(update_version)
+    await db.commit()
+    
+       
         
     return version

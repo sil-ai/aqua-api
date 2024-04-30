@@ -143,6 +143,22 @@ class TestRegularUserFlow:
         assert bible_access is not None
         
         
+        attr_update = { 
+            "id": version_id,
+            "name": "New Version 2"
+        }
+        
+        #Assert user 2 has no right to modify the version 
+        list_response = client.put(
+            f"{prefix}/version", 
+            headers=headers2,
+            json=attr_update
+        )
+        assert list_response.status_code == 403
+        
+        
+      
+        
        
         
         
