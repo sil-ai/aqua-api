@@ -120,6 +120,45 @@ class TestRegularUserFlow:
         db_session.add(user_group4)
         db_session.commit()
         
+        # Test: Adding to a group the user do not belong to(5), and other it belongs(4)
+        # It shouldn't add neither
+        # Create a group user does not belong to
+        group_5 = Group(name="Group5", description="Test Group 5")
+        db_session.add(group_5)
+        db_session.commit()
+        
+        
+        attr_update = { 
+            "id": version_id,
+            "add_to_groups": [group_5.id, group_4.id]
+        }
+        # Add the version to group 5
+        update_response = client.put(
+            f"{prefix}/version",
+            json=attr_update,
+            headers = headers
+        ) 
+        
+        assert update_response.status_code == 403
+        assert update_response.json().get("detail") == "User not authorized to add version to this group."
+        
+        # Check in database that the version is not part of group 5
+        bible_access = (
+            db_session.query(BibleVersionAccess)
+            .filter(BibleVersionAccess.bible_version_id ==version_id, BibleVersionAccess.group_id == group_5.id).first()
+        )
+        assert bible_access is None
+        
+        # Check in database that the version is not part of group 4
+        bible_access = (
+            db_session.query(BibleVersionAccess)
+            .filter(BibleVersionAccess.bible_version_id ==version_id, BibleVersionAccess.group_id == group_4.id).first()
+        )
+        assert bible_access is None
+        
+        # Now, adding it correctly to a group it does belong to
+        
+        
         attr_update = { 
             "id": version_id,
             "add_to_groups": [group_4.id]
@@ -142,33 +181,6 @@ class TestRegularUserFlow:
         
         assert bible_access is not None
         
-        # Test: Adding to a group the user do not belong to
-        # Add to a new group 5
-        # Create a second group for the first regular user
-        group_5 = Group(name="Group5", description="Test Group 5")
-        db_session.add(group_5)
-        db_session.commit()
-        
-        
-        attr_update = { 
-            "id": version_id,
-            "add_to_groups": [group_5.id]
-        }
-        # Add the version to group 5
-        update_response = client.put(
-            f"{prefix}/version",
-            json=attr_update,
-            headers = headers
-        ) 
-        
-        assert update_response.status_code == 403
-        
-        # Check in database that the version is not part of group 5
-        bible_access = (
-            db_session.query(BibleVersionAccess)
-            .filter(BibleVersionAccess.bible_version_id ==version_id, BibleVersionAccess.group_id == group_5.id).first()
-        )
-        assert bible_access is None
         
         #Assert user 2 has no right to modify the version 
         
@@ -184,13 +196,9 @@ class TestRegularUserFlow:
             json=attr_update
         )
         assert list_response.status_code == 403
-        
+        assert list_response.json().get("detail") == "User not authorized to modify this version."
         
       
-        
-       
-        
-        
         attr_update = {
             "id": version_id,
             "name" : "Updated Version 2"

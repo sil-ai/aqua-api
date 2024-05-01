@@ -187,6 +187,8 @@ async def modify_version(
     await db.execute(update_version)
     await db.commit()
     
-       
-        
-    return version
+    # Fetch the updated version from the database
+    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == version_update.id))
+    updated_version = result.scalars().first()
+
+    return updated_version
