@@ -318,3 +318,7 @@ async def teardown_database_async(session):
         for table in reversed(Base.metadata.sorted_tables):
             await session.execute(table.delete())
         session.execute("SET session_replication_role = DEFAULT;")
+        
+        
+if __name__ == "__main__":
+    setup_database(TestingSessionLocal())
