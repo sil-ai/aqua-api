@@ -4,6 +4,7 @@ from typing import Union, Optional, List
 import datetime
 
 
+
 class VersionUpdate(BaseModel):
     id: int
     name: str = None
@@ -21,12 +22,11 @@ class VersionIn(BaseModel):
     iso_language: str
     iso_script: str
     abbreviation: str
-    rights: Union[str, None] = None
-    forwardTranslation: Union[int, None] = None
-    backTranslation: Union[int, None] = None
-    machineTranslation: bool = False
+    rights: Optional[str] = None
+    forwardTranslation: Optional[int] = None
+    backTranslation: Optional[int] = None
+    machineTranslation: Optional[bool] = False
     add_to_groups: Optional[List[int]] = None
-
 
 class VersionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -53,6 +53,7 @@ class VersionOut_v3(BaseModel):
     back_translation_id: Union[int, None] = None
     machineTranslation: bool = False
     owner_id : int
+    group_ids : List[int] = []
 
 class RevisionIn(BaseModel):
     version_id: int
