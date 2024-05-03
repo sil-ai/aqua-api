@@ -6,9 +6,9 @@ from datetime import date
 import fastapi
 from fastapi import Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from models import VersionIn, VersionOut_v3 as VersionOut
+from models import VersionIn, VersionUpdate, VersionOut_v3 as VersionOut
 from database.models import (
     UserDB as UserModel,
     UserGroup,
@@ -144,29 +144,61 @@ async def delete_version(
 
 # route to rename a version
 @router.put("/version")
-async def rename_version(
-    id: int,
-    new_name: str,
+async def modify_version(
+    version_update: VersionUpdate,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Rename a version.
+    Update any parameter in a version.
     """
     # Check if the version exists
-    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == id))
+    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == version_update.id))
     version = result.scalars().first()
     if not version:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Version not found."
         )
+    
+    stmt = (
+        select(UserGroup.group_id)
+        .where(UserGroup.user_id == current_user.id)
+            )
+    result = await db.execute(stmt)
+    user_group_ids = [group_id for group_id in result.scalars().all()]    
+    
+    version_data = version_update.model_dump(exclude_unset=True)
+    add_groups = version_data.get("add_to_groups")
+    
+    
     # check if is admin or version owner
     if not current_user.is_admin and version.owner_id != current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to rename this version.",
+            detail="User not authorized to modify this version.",
         )
-    # Perform the renaming
-    version.name = new_name
+    # Perform the updates
+    if add_groups:
+        for group_id in add_groups:
+            if group_id not in user_group_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User not authorized to add version to this group.",
+                )
+            else: 
+                access = BibleVersionAccess(bible_version_id=version_update.id, group_id=group_id)
+                db.add(access)
+        await db.commit()
+        del version_data["add_to_groups"]
+    
+    # Method to replace the parameters in version with the parameters in version_data
+    # update
+    update_version = update(BibleVersionModel).where(BibleVersionModel.id == version_update.id).values(**version_data)
+    await db.execute(update_version)
     await db.commit()
-    return {"detail": f"Version {version.name} successfully renamed."}
+    
+    # Fetch the updated version from the database
+    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == version_update.id))
+    updated_version = result.scalars().first()
+
+    return updated_version
