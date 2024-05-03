@@ -228,6 +228,18 @@ class TestRegularUserFlow:
         )
 
         assert version_in_db is None
+        
+        
+        # Delete association between user and group 4
+        user_group4 = (
+            db_session.query(UserGroup)
+            .filter(UserGroup.user_id == user_1.id, UserGroup.group_id == group_4.id)
+            .first()
+        )
+        db_session.delete(user_group4)
+        db_session.commit()
+        
+        
 
        
         
@@ -368,5 +380,7 @@ class TestAdminFlow:
             .first()
         )
         assert version_in_db_2 is None
+        
+        
         
        
