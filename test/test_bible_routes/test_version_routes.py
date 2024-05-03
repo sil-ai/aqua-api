@@ -24,6 +24,7 @@ new_version_data = {
     "abbreviation": "NV",
     "rights": "Some Rights",
     "machineTranslation": False,
+    "is_reference": True
 }
 
 
@@ -82,6 +83,7 @@ class TestRegularUserFlow:
         assert version["forward_translation_id"] is None  # or compare as needed
         assert version["back_translation_id"] is None  # or compare as needed
         assert version["machineTranslation"] is False
+        assert version["is_reference"] is True
         assert version["owner_id"] == user.id
         assert version["group_ids"] == [group.id]
         # Check that user 2 does not get anything back

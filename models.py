@@ -26,6 +26,7 @@ class VersionIn(BaseModel):
     forwardTranslation: Optional[int] = None
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
+    is_reference: Optional[bool] = False
     add_to_groups: Optional[List[int]] = None
 
 class VersionOut(BaseModel):
@@ -54,7 +55,7 @@ class VersionOut_v3(BaseModel):
     machineTranslation: bool = False
     owner_id : int
     group_ids : List[int] = []
-    
+    is_reference: bool = False
 
 class RevisionIn(BaseModel):
     version_id: int
@@ -85,7 +86,7 @@ class RevisionOut_v3(BaseModel):
     back_translation_id: Optional[int] = None
     machineTranslation: Optional[bool] = False
     iso_language: Optional[str] = None
-
+    is_reference: Optional[bool] = False
 
 class VerseText(BaseModel):
     id: Optional[int] = None

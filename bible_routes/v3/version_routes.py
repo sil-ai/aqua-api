@@ -88,6 +88,7 @@ async def add_version(
         back_translation_id=v.backTranslation,
         machine_translation=v.machineTranslation,
         owner_id=current_user.id,
+        is_reference=v.is_reference,
     )
 
     db.add(new_version)
