@@ -65,7 +65,6 @@ def upgrade() -> None:
     sa.Column('forward_translation_id', sa.Integer(), nullable=True),
     sa.Column('back_translation_id', sa.Integer(), nullable=True),
     sa.Column('machine_translation', sa.Boolean(), nullable=True),
-    sa.Column('is_reference', sa.Boolean(), nullable=True),
     sa.Column('deleted', sa.Boolean(), nullable=True),
     sa.Column('deletedAt', sa.TIMESTAMP(), nullable=True),
     sa.ForeignKeyConstraint(['back_translation_id'], ['bible_version.id'], ),
