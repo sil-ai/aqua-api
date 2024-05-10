@@ -174,7 +174,6 @@ async def modify_version(
     current_bible_version_access_ids = [access.group_id for access in current_bible_version_access]
     group_ids_to_add = [group_id for group_id in add_groups if group_id not in current_bible_version_access_ids]
     group_ids_to_remove = [group_id for group_id in current_bible_version_access_ids if group_id not in add_groups]
-
     
     # check if is admin or version owner
     if not current_user.is_admin and version.owner_id != current_user.id:
@@ -182,6 +181,7 @@ async def modify_version(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to modify this version.",
         )
+    print(f'{group_ids_to_add=} {group_ids_to_remove=}')
     # Perform the updates
     if add_groups:
         for group_id in group_ids_to_add:
@@ -201,8 +201,11 @@ async def modify_version(
                     detail="User not authorized to remove version from this group.",
                 )
             else:
-                access = BibleVersionAccess(bible_version_id=version_update.id, group_id=group_id)
-                db.delete(access)
+                stmt = select(BibleVersionAccess).where(BibleVersionAccess.bible_version_id == version_update.id, BibleVersionAccess.group_id == group_id)
+                existing_access = await db.execute(stmt)
+                existing_access = existing_access.scalars().all()
+                for access in existing_access:
+                    await db.delete(access)
 
         await db.commit()
         del version_data["add_to_groups"]
