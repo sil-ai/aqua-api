@@ -181,7 +181,7 @@ async def modify_version(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to modify this version.",
         )
-    print(f'{group_ids_to_add=} {group_ids_to_remove=}')
+    
     # Perform the updates
     if add_groups:
         for group_id in group_ids_to_add:
