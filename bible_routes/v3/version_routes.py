@@ -88,6 +88,7 @@ async def add_version(
         back_translation_id=v.backTranslation,
         machine_translation=v.machineTranslation,
         owner_id=current_user.id,
+        is_reference=v.is_reference,
     )
 
     db.add(new_version)
@@ -172,8 +173,9 @@ async def modify_version(
     current_bible_version_access_result = await db.execute(select(BibleVersionAccess).where(BibleVersionAccess.bible_version_id == version_update.id))
     current_bible_version_access = current_bible_version_access_result.scalars().all()
     current_bible_version_access_ids = [access.group_id for access in current_bible_version_access]
-    group_ids_to_add = [group_id for group_id in add_groups if group_id not in current_bible_version_access_ids]
-    group_ids_to_remove = [group_id for group_id in current_bible_version_access_ids if group_id not in add_groups]
+    if add_groups:
+        group_ids_to_add = [group_id for group_id in add_groups if group_id not in current_bible_version_access_ids]
+        group_ids_to_remove = [group_id for group_id in current_bible_version_access_ids if group_id not in add_groups]
     
     # check if is admin or version owner
     if not current_user.is_admin and version.owner_id != current_user.id:
