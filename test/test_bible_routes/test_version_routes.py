@@ -184,6 +184,27 @@ class TestRegularUserFlow:
         )
         
         assert bible_access is not None
+
+        attr_update = {
+            "id": version_id,
+            "remove_from_groups": [group_4.id]
+        }
+        # Remove the version from group 4
+        update_response = client.put(
+            f"{prefix}/version",
+            json=attr_update,
+            headers = headers
+        )
+
+        assert update_response.status_code == 200
+
+        # Assert that the version is not part of group 4
+        bible_access = (
+            db_session.query(BibleVersionAccess)
+            .filter(BibleVersionAccess.bible_version_id ==version_id, BibleVersionAccess.group_id == group_4.id).first()
+        )
+
+        assert bible_access is None
         
         
         #Assert user 2 has no right to modify the version 
