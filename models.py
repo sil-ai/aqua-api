@@ -16,6 +16,7 @@ class VersionUpdate(BaseModel):
     backTranslation: Union[int, None] = None
     machineTranslation: bool = False
     add_to_groups: Optional[List[int]] = None
+    remove_from_groups: Optional[List[int]] = None
 
 class VersionIn(BaseModel):
     name: str

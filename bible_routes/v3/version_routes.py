@@ -170,6 +170,7 @@ async def modify_version(
     
     version_data = version_update.model_dump(exclude_unset=True)
     add_groups = version_data.get("add_to_groups")
+    remove_groups = version_data.get("remove_from_groups")
     
     
     # check if is admin or version owner
@@ -190,7 +191,27 @@ async def modify_version(
                 access = BibleVersionAccess(bible_version_id=version_update.id, group_id=group_id)
                 db.add(access)
         await db.commit()
-        del version_data["add_to_groups"]
+    del version_data["add_to_groups"]
+
+    if remove_groups:
+        for group_id in remove_groups:
+            if group_id not in user_group_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User not authorized to remove version from this group.",
+                )
+            else:
+                stmt = (
+                    select(BibleVersionAccess)
+                    .where(BibleVersionAccess.bible_version_id == version_update.id)
+                    .where(BibleVersionAccess.group_id == group_id)
+                )
+                result = await db.execute(stmt)
+                access_rows = result.scalars().all()
+                for access in access_rows:
+                    await db.delete(access)
+        await db.commit()
+    del version_data["remove_from_groups"]
     
     # Method to replace the parameters in version with the parameters in version_data
     # update
