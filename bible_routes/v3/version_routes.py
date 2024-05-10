@@ -205,7 +205,8 @@ async def modify_version(
                     await db.delete(access)
 
         await db.commit()
-    del version_data["add_to_groups"]
+    if "add_to_groups" in version_data:
+        del version_data["add_to_groups"]
 
     if remove_groups:
         for group_id in remove_groups:
@@ -225,7 +226,8 @@ async def modify_version(
                 for access in access_rows:
                     await db.delete(access)
         await db.commit()
-    del version_data["remove_from_groups"]
+    if "remove_from_groups" in version_data:
+        del version_data["remove_from_groups"]
     
     # Method to replace the parameters in version with the parameters in version_data
     # update
