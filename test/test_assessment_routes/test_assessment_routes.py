@@ -177,6 +177,12 @@ def test_add_assessment_success(
     response = delete_assessment(client, regular_token1, assessment_id)
     assert response.status_code == 200
 
+    # check that the assessment has been deleted in the db by checking the deleted column
+    assessment = (
+        db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
+    )
+    assert assessment is not None
+    
     # Create again the assessment
     response = client.post(
         f"{prefix}/assessment",
