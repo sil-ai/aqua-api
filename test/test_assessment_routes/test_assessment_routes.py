@@ -176,8 +176,18 @@ def test_add_assessment_success(
     # delete the assesment as the user that created it
     response = delete_assessment(client, regular_token1, assessment_id)
     assert response.status_code == 200
+
+    # Create again the assessment
+    response = client.post(
+        f"{prefix}/assessment",
+        params=assessment_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    # Delete as an admin
+    response = delete_assessment(client, admin_token, assessment_id)
+    assert response.status_code == 200
+
     
-    # check that the assessment has been deleted in the db by checking the deleted column
     # check that the assessment has been deleted in the db by checking the deleted column
     assessment = (
         db_session.query(Assessment).filter(Assessment.id == assessment_id).first()

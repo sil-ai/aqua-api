@@ -176,17 +176,21 @@ async def delete_assessment(
         
         
     # Check if the user is owner of the assesment or if it is admin
+    is_owner = assessment.owner_id == current_user.id
     
-    if assessment.owner_id != current_user.id and not current_user.is_admin:
+    if is_owner or current_user.is_admin:
+        # Mark the assessment as deleted instead of actually removing it
+        assessment.deleted = True
+        assessment.deletedAt = date.today()
+        await db.commit()
+        return {"detail": f"Assessment {assessment_id} deleted successfully"}
+    
+    else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to delete this assessment."
         )
     
 
-    # Mark the assessment as deleted instead of actually removing it
-    assessment.deleted = True
-    assessment.deletedAt = date.today()
-    await db.commit()
+    
 
-    return {"detail": f"Assessment {assessment_id} deleted successfully"}
