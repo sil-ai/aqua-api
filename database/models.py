@@ -67,6 +67,7 @@ class Assessment(Base):
     assessment_version = Column(String, default="1")
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
+    owner_id = Column(Integer, ForeignKey('users.id'), nullable=True, default=None)
     
     results = relationship("AssessmentResult", cascade="all, delete", back_populates="assessment")
     accessible_by = relationship("AssessmentAccess", cascade="all, delete", back_populates="assessment")
