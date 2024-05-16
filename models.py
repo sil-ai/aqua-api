@@ -129,7 +129,7 @@ class AssessmentOut(BaseModel):
     requested_time: Optional[datetime.datetime] = None
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
-    
+    owner_id: Optional[int] = None
     # class Config: 
     #     use_enum_values = True
 
