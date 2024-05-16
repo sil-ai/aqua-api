@@ -124,7 +124,6 @@ async def add_assessment(
         type=a.type,
         status="queued",
         requested_time=datetime.now(),
-        owner_id=current_user.id
     )
 
     db.add(assessment)
@@ -173,24 +172,15 @@ async def delete_assessment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Assessment not found."
         )
-        
-        
-    # Check if the user is owner of the assesment or if it is admin
-    is_owner = assessment.owner_id == current_user.id
-    
-    if is_owner or current_user.is_admin:
-        # Mark the assessment as deleted instead of actually removing it
-        assessment.deleted = True
-        assessment.deletedAt = date.today()
-        await db.commit()
-        return {"detail": f"Assessment {assessment_id} deleted successfully"}
-    
-    else:
+    if not current_user.is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to delete this assessment."
         )
-    
 
-    
+    # Mark the assessment as deleted instead of actually removing it
+    assessment.deleted = True
+    assessment.deletedAt = date.today()
+    await db.commit()
 
+    return {"detail": f"Assessment {assessment_id} deleted successfully"}
