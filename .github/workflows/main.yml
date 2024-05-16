@@ -31,7 +31,7 @@ jobs:
     - name: Test API
       env: 
         OMIT_PREVIOUS_VERSIONS: true
-        MODAL_WEBHOOK_URL: ${{ secrets.MODAL_WEBHOOK_URL }}
+        MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
       run: |
         pip install -r requirements.txt
         make test
