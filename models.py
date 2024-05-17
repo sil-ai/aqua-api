@@ -54,7 +54,7 @@ class VersionOut_v3(BaseModel):
     forward_translation_id: Union[int, None] = None
     back_translation_id: Union[int, None] = None
     machineTranslation: bool = False
-    owner_id : int
+    owner_id : Union[int, None] = None
     group_ids : List[int] = []
     is_reference: bool = False
 
