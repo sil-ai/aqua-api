@@ -1,3 +1,4 @@
+from io import StringIO
 from typing import List, Optional
 from fastapi import Depends, HTTPException, status, APIRouter, UploadFile, File
 from sqlalchemy import select   
@@ -11,7 +12,7 @@ from datetime import date
 import aiofiles
 import os
 
-from bible_loading import upload_bible
+from bible_loading import async_text_dataframe, text_loading, upload_bible
 from models import RevisionOut_v3 as RevisionOut, RevisionIn
 from database.models import (
     BibleRevision as BibleRevisionModel,
@@ -101,32 +102,26 @@ async def list_revisions(
     return revision_out_list
     
     
-
 async def process_and_upload_revision(file_content: bytes, revision_id: int, db: AsyncSession):
-    with NamedTemporaryFile(delete=False) as temp_file:
-        temp_file_name = temp_file.name
-        temp_file.write(file_content)
-        temp_file.seek(0)
-    
-    verses = []
-    has_text = False
+    text_content = file_content.decode("utf-8")
 
-    async with aiofiles.open(temp_file_name, "r") as bible_data:
-        async for line in bible_data:
-            if line in ["\n", "", " "]:
-                verses.append(np.nan)
-            else:
-                has_text = True
-                verses.append(line.replace("\n", ""))
-    
+    has_text = False
+    verses = []
+    for line in text_content.splitlines():
+        if line not in ["\n", "", " "]:
+            verses.append(line.replace("\n", ""))
+            has_text = True
+        else:
+            verses.append(np.nan)
+
     if not has_text:
         raise ValueError("File has no text.")
 
-    # Clean up the temporary file asynchronously
-    os.remove(temp_file_name)
+    bible_revision = [revision_id] * len(verses)
+    verse_text = await async_text_dataframe(verses, bible_revision)
+    await text_loading(verse_text, db)
 
-    # Assuming upload_bible function exists and is properly set for async operation
-    await upload_bible(verses, [revision_id] * len(verses), db)
+
 
 
 @router.post("/revision", response_model=RevisionOut)
