@@ -6,6 +6,8 @@ from pathlib import Path
 from bible_routes.v3.revision_routes import process_and_upload_revision
 import asyncio
 import aiofiles
+import time
+import logging
 from datetime import datetime
 
 
@@ -230,3 +232,31 @@ def test_admin_flow(client, regular_token1, admin_token, db_session):
 
     assert not revision_exists(db_session, revision_id)
     assert version_exists(db_session, version_id)
+    
+    
+def test_performance_revision_upload(client, regular_token1, db_session):
+    # Create a test Bible version in the database
+    version_id = create_bible_version(client, regular_token1)
+    
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    test_revision = {
+        "version_id": version_id,
+        "name": "Test Revision",
+    }
+    test_upload_file = Path("fixtures/eng-eng-kjv.txt")
+    #test_upload_file = Path("fixtures/uploadtest.txt")
+    # start timer
+    start_time = time.time()
+    with open(test_upload_file, "rb") as file:
+        files = {"file": file}
+        response = client.post(
+            f"{prefix}/revision", params=test_revision, files=files, headers=headers
+        )
+        # end timer
+        end_time = time.time()
+        total_time = end_time - start_time
+        logging.info(f"Uploaded revision in {total_time:.2f} seconds.") 
+        assert total_time <= 5
+        revision_id = response.json()["id"]  # Return the ID of the uploaded revision
+        assert response.status_code == 200
