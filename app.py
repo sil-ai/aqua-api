@@ -4,6 +4,7 @@ import fastapi
 from fastapi.openapi.utils import get_openapi
 import os
 
+from middleware import log_request_middleware
 from security_routes.auth_routes import router as security_router 
 from security_routes.admin_routes import router as admin_router
 
@@ -30,7 +31,66 @@ from bible_routes.v3.revision_routes import router as revision_router_v3
 from bible_routes.v3.verse_routes import router as verse_router_v3
 from assessment_routes.v3.assessment_routes import router as assessment_router_v3
 from review_routes.v3.results_routes import router as results_router_v3
+import logging
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+import time
+import http
+from starlette.types import Message
+
+
 app = fastapi.FastAPI()
+
+
+class LoggingMiddleware(BaseHTTPMiddleware):
+
+    def __init__(self, app):
+        super().__init__(app)
+
+    async def set_body(self, request: Request):
+        receive_ = await request._receive()
+
+        async def receive() -> Message:
+            return receive_
+
+        request._receive = receive
+
+    async def dispatch(self, request, call_next):
+        # Create a logger
+        logger = logging.getLogger('uvicorn')
+        logger.setLevel(logging.INFO)
+       
+        
+        url = f"{request.url.path}?{request.query_params}" if request.query_params else request.url.path
+        start_time = time.time()
+        if request.url.path == "/latest/token":
+            body_str = "No Body"
+
+        else:
+            await self.set_body(request)
+            body = await request.body()
+            body_str = body.decode() if body else "No Body"
+        
+        
+        response = await call_next(request)
+        process_time = (time.time() - start_time) * 1000
+        formatted_process_time = "{0:.2f}".format(process_time)
+        host = getattr(getattr(request, "client", None), "host", None)
+        port = getattr(getattr(request, "client", None), "port", None)
+        try:
+            status_phrase = http.HTTPStatus(response.status_code).phrase
+        except ValueError:
+            status_phrase=""
+            
+        
+        logger.info(f'{host}:{port} - "{request.method} {url}" {response.status_code} {status_phrase} {formatted_process_time}ms Body:{body_str}')
+        return response
+        
+        
+
+
+
+
 
 def my_schema():
     DOCS_TITLE = "AQuA API"
@@ -59,6 +119,7 @@ def my_schema():
 
 
 def configure(app):
+    app.add_middleware(LoggingMiddleware)
     configure_routing(app)
 
 

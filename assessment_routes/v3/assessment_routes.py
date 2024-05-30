@@ -37,6 +37,7 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
     """
     Returns a list of all assessments the current user is authorized to access.
     """
+    
 
     if current_user.is_admin:
         # Admin users can access all assessments
