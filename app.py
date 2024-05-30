@@ -4,7 +4,6 @@ import fastapi
 from fastapi.openapi.utils import get_openapi
 import os
 
-from middleware import log_request_middleware
 from security_routes.auth_routes import router as security_router 
 from security_routes.admin_routes import router as admin_router
 
