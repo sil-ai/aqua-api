@@ -57,14 +57,15 @@ class LoggingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         # Create a logger
-        logger = logging.getLogger('uvicorn')
+        logger = logging.getLogger()
         logger.setLevel(logging.INFO)
        
         
         url = f"{request.url.path}?{request.query_params}" if request.query_params else request.url.path
         start_time = time.time()
-        if request.url.path == "/latest/token":
-            body_str = "No Body"
+        # check if token string is in request.url.path
+        if "token" in url:
+            body_str = "Token"
 
         else:
             await self.set_body(request)
