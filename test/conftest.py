@@ -247,6 +247,7 @@ def load_revision_data(db_session):
         iso_script="Latn",
         abbreviation="BLTEST",
         owner_id=user_id,
+        is_reference=False
     )
     db_session.add(version)
 

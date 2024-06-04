@@ -15,7 +15,7 @@ from database.dependencies import get_db
 from .utilities import SECRET_KEY, ALGORITHM
 
 router = APIRouter()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="latest/token")
 
 
 async def get_current_admin(
