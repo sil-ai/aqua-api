@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, EmailStr 
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from enum import Enum
 from typing import Union, Optional, List
 import datetime
@@ -29,10 +29,12 @@ class VersionIn(BaseModel):
     machineTranslation: Optional[bool] = False
     is_reference: Optional[bool] = False
     add_to_groups: Optional[List[int]] = None
+    
+    
 
 class VersionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: int
+    id: int 
     name: str
     iso_language: str
     iso_script: str
@@ -58,12 +60,15 @@ class VersionOut_v3(BaseModel):
     group_ids : List[int] = []
     is_reference: bool = False
 
+    
 class RevisionIn(BaseModel):
     version_id: int
     name: Optional[str] = None
     published: Optional[bool] = False
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
+    
+   
 
 class RevisionOut(BaseModel):
     id: int
@@ -75,6 +80,8 @@ class RevisionOut(BaseModel):
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
     iso_language: Optional[str] = None
+    
+    
 
 
 class RevisionOut_v3(BaseModel):
@@ -132,7 +139,7 @@ class AssessmentOut(BaseModel):
     owner_id: Optional[int] = None
     # class Config: 
     #     use_enum_values = True
-
+    
 
 # Results model to record in the DB.
 
@@ -243,4 +250,3 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
-

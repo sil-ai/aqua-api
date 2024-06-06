@@ -29,6 +29,31 @@ async def get_chapter(
 ):
     """
     Gets a list of verse texts for a revision for a given chapter.
+    
+    Input:
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - book: str
+    Description: The book of the Bible.
+    - chapter: int
+    Description: The chapter of the book.
+    
+    Returns:
+    Fields(VerseText):
+    - id: int
+    Description: The unique identifier for the verse.
+    - text: str
+    Description: The text of the verse.
+    - verse_reference: str
+    Description: The full verse reference.
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - book: str
+    Description: The book of the Bible.
+    - chapter: int
+    Description: The chapter of the book.
+    - verse: int
+    Description: The verse number.
     """
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
@@ -88,6 +113,34 @@ async def get_verse(
 ):
     """
     Gets a single verse text for a revision for a given book, chapter, and verse.
+    
+    Input:
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - book: str
+    Description: The book of the Bible.
+    - chapter: int
+    Description: The chapter of the book.
+    - verse: int
+    Description: The verse number.
+    
+    Returns:
+    Fields(VerseText):
+    - id: int
+    Description: The unique identifier for the verse.
+    - text: str
+    Description: The text of the verse.
+    - verse_reference: str
+    Description: The full verse reference.
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - book: str
+    Description: The book of the Bible.
+    - chapter: int
+    Description: The chapter of the book.
+    - verse: int
+    Description: The verse number.
+    
     """
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
@@ -120,6 +173,29 @@ async def get_book(
 ):
     """
     Gets a list of verse texts for a revision for a given book.
+    
+    Input:
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - book: str
+    Description: The book of the Bible.
+    
+    Returns:
+    Fields(VerseText):
+    - id: int
+    Description: The unique identifier for the verse.
+    - text: str
+    Description: The text of the verse.
+    - verse_reference: str
+    Description: The full verse reference.
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - book: str
+    Description: The book of the Bible.
+    - chapter: int
+    Description: The chapter of the book.
+    - verse: int
+    Description: The verse number.
     """
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
@@ -147,6 +223,27 @@ async def get_text(
 ):
     """
     Gets a list of verse texts for a whole revision.
+    
+    Input:
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    
+    Returns:
+    Fields(VerseText):
+    - id: int
+    Description: The unique identifier for the verse.
+    - text: str
+    Description: The text of the verse.
+    - verse_reference: str
+    Description: The full verse reference.
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - book: str
+    Description: The book of the Bible.
+    - chapter: int
+    Description: The chapter of the book.
+    - verse: int
+    Description: The verse number.
     """
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(

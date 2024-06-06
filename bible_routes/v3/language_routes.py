@@ -24,6 +24,13 @@ async def list_languages(
 ):
     """
     Get a list of ISO 639-2 language codes and their English names.
+    
+    Returns:
+    Fields(Language):
+    - iso639: str
+    Description: The ISO 639-2 language code.
+    - name: str
+    Description: The English name of the language.
     """
     result = await db.execute(select(IsoLanguage))
     languages = result.scalars().all()
@@ -36,6 +43,13 @@ async def list_scripts(
 ):
     """
     Get a list of ISO 15924 script codes and their English names.
+    
+    Returns:
+    Fields(Script):
+    - iso15924: str
+    Description: The ISO 15924 script code.
+    - name: str
+    Description: The English name of the script.
     """
     result = await db.execute(select(IsoScript))
     scripts = result.scalars().all()

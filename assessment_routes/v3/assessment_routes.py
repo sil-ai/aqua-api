@@ -36,6 +36,28 @@ router = fastapi.APIRouter()
 async def get_assessments(current_user: UserModel = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """
     Returns a list of all assessments the current user is authorized to access.
+    
+    Returns:
+    Fields(AssessmentOut):
+    - id: int
+    Description: The unique identifier for the assessment.
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - reference_id: Optional[int] = None
+    Description: The unique identifier for the reference revision.
+    - type: AssessmentType
+    Description: The type of assessment to be run.
+    - status: str
+    Description: The status of the assessment.
+    - requested_time: datetime.datetime
+    Description: The time the assessment was requested.
+    - start_time: datetime.datetime
+    Description: The time the assessment was started.
+    - end_time: datetime.datetime
+    Description: The time the assessment was completed.
+    - owner_id: int
+    Description: The unique identifier for the owner of the assessment.
+    
     """
 
     if current_user.is_admin:
@@ -109,6 +131,25 @@ async def add_assessment(
 
     Add an assessment entry. For regular users, an entry is added for each group they are part of.
     For admin users, the entry is not linked to any specific group.
+    
+    Input:
+    Fields(AssessmentIn):
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - reference_id: Optional[int] = None
+    Description: The unique identifier for the reference revision.
+    - type: AssessmentType
+    Description: The type of assessment to be run.
+    - status: str
+    Description: The status of the assessment.
+    - requested_time: datetime.datetime
+    Description: The time the assessment was requested.
+    - start_time: datetime.datetime
+    Description: The time the assessment was started.
+    - end_time: datetime.datetime
+    Description: The time the assessment was completed.
+    - owner_id: int
+    Description: The unique identifier for the owner of the assessment.
     """
     modal_suffix = modal_suffix or os.getenv('MODAL_SUFFIX', '')
 
@@ -163,6 +204,10 @@ async def delete_assessment(
 ):
     """
     Deletes an assessment if the user is authorized.
+    
+    Input:
+    - assessment_id: int
+    Description: The unique identifier for the assessment.
     """
 
     # Check if the assessment exists and fetch it asynchronously
