@@ -45,7 +45,7 @@ async def get_chapter(
     - text: str
     Description: The text of the verse.
     - verse_reference: str
-    Description: The full verse reference.
+    Description: The full verse reference, including book, chapter and text.
     - revision_id: int
     Description: The unique identifier for the revision.
     - book: str
@@ -131,7 +131,7 @@ async def get_verse(
     - text: str
     Description: The text of the verse.
     - verse_reference: str
-    Description: The full verse reference.
+    Description: The full verse reference, including book, chapter and text.
     - revision_id: int
     Description: The unique identifier for the revision.
     - book: str
@@ -187,7 +187,7 @@ async def get_book(
     - text: str
     Description: The text of the verse.
     - verse_reference: str
-    Description: The full verse reference.
+    Description: The full verse reference, including book, chapter and text.
     - revision_id: int
     Description: The unique identifier for the revision.
     - book: str
@@ -235,7 +235,7 @@ async def get_text(
     - text: str
     Description: The text of the verse.
     - verse_reference: str
-    Description: The full verse reference.
+    Description: The full verse reference, including book, chapter and text.
     - revision_id: int
     Description: The unique identifier for the revision.
     - book: str

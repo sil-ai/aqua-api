@@ -241,6 +241,16 @@ async def modify_version(
     - add_to_groups: Optional[List[int]]
     Description: The IDs of the groups to add the version to, 
     the version will only be added to this groups, not to all tha groups of the user as usual.
+    
+    Add groups functionality:
+    In case you want to add aversion to groups after it has been created, you can
+    specify in add_to_groups the IDs of the groups you want to add the version to.
+    
+    Remove groups functionality:
+    In case you want to remove a version from a group, you can specify in 
+    remove_from_groups, the IDs of the groups you want to remove the version from.
+    
+    
     """
     # Check if the version exists
     result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == version_update.id))
