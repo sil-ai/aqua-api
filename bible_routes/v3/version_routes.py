@@ -34,9 +34,9 @@ async def list_version(
     - name: str
     Description: The name of the version.
     - iso_language: str
-    Description: The ISO 639-3 language code of the version.
+    Description: The ISO 639-2 language code. e.g 'eng' for English. 'swa' for Swahili.
     - iso_script: str
-    Description: The ISO 15924 script code of the version.
+    Description: The ISO 15924 script code. e.g 'Latn' for Latin. 'Cyrl' for Cyrillic.
     - abbreviation: str
     Description: The abbreviation of the version.
     - rights: str
@@ -108,9 +108,9 @@ async def add_version(
     - name: str
     Description: The name of the version.
     - iso_language: str
-    Description: The ISO 639-3 language code of the version.
+    Description: The ISO 639-2 language code. e.g 'eng' for English. 'swa' for Swahili.
     - iso_script: str
-    Description: The ISO 15924 script code of the version.
+    Description: The ISO 15924 script code. e.g 'Latn' for Latin. 'Cyrl' for Cyrillic.
     - abbreviation: str
     Description: The abbreviation of the version.
     - rights: str
@@ -223,9 +223,9 @@ async def modify_version(
     - name: str
     Description: The name of the version.
     - iso_language: str
-    Description: The ISO 639-3 language code of the version.
+    Description: The ISO 639-2 language code. e.g 'eng' for English. 'swa' for Swahili.
     - iso_script: str
-    Description: The ISO 15924 script code of the version.
+    Description: The ISO 15924 script code. e.g 'Latn' for Latin. 'Cyrl' for Cyrillic.
     - abbreviation: str
     Description: The abbreviation of the version.
     - rights: str

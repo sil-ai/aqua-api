@@ -37,6 +37,14 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
     """
     Returns a list of all assessments the current user is authorized to access.
     
+    Currently supported assessment types are:
+
+    - missing-words (requires reference)
+    - semantic-similarity (requires reference)
+    - sentence-length
+    - word-alignment (requires reference)
+    
+    
     Returns:
     Fields(AssessmentOut):
     - id: int
@@ -48,7 +56,7 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
     - type: AssessmentType
     Description: The type of assessment to be run.
     - status: str
-    Description: The status of the assessment.
+    Description: The status of the assessment. (queued, failed, finished)
     - requested_time: datetime.datetime
     Description: The time the assessment was requested.
     - start_time: datetime.datetime
@@ -139,7 +147,7 @@ async def add_assessment(
     - reference_id: Optional[int] = None
     Description: The unique identifier for the reference revision.
     - type: AssessmentType
-    Description: The type of assessment to be run.
+    Description: The type of assessment to be run. (queued, failed, finished)
     - status: str
     Description: The status of the assessment.
     - requested_time: datetime.datetime

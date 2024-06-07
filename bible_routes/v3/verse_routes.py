@@ -34,9 +34,9 @@ async def get_chapter(
     - revision_id: int
     Description: The unique identifier for the revision.
     - book: str
-    Description: The book of the Bible.
+    Description: The book of the Bible. e.g GEN, EXO, PSA.
     - chapter: int
-    Description: The chapter of the book.
+    Description: The chapter of the book. e.g 1, 2, 3.
     
     Returns:
     Fields(VerseText):
@@ -118,11 +118,11 @@ async def get_verse(
     - revision_id: int
     Description: The unique identifier for the revision.
     - book: str
-    Description: The book of the Bible.
+    Description: The book of the Bible. e.g GEN, EXO, PSA.
     - chapter: int
-    Description: The chapter of the book.
+    Description: The chapter of the book. e.g 1, 2, 3.
     - verse: int
-    Description: The verse number.
+    Description: The verse number. e.g 1, 2, 3.
     
     Returns:
     Fields(VerseText):
@@ -176,9 +176,9 @@ async def get_book(
     
     Input:
     - revision_id: int
-    Description: The unique identifier for the revision.
+    Description: The unique identifier for the revision. 
     - book: str
-    Description: The book of the Bible.
+    Description: The book of the Bible. e.g GEN, EXO, PSA.
     
     Returns:
     Fields(VerseText):
