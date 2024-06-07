@@ -4,7 +4,7 @@ from typing import List, Optional
 from datetime import date
 
 import fastapi
-from fastapi import Body, Depends, HTTPException, status, Query
+from fastapi import Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 

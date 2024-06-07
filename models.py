@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr
 from enum import Enum
 from typing import Union, Optional, List
 import datetime
@@ -60,7 +60,7 @@ class VersionIn(BaseModel):
 
 class VersionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: int 
+    id: int
     name: str
     iso_language: str
     iso_script: str
