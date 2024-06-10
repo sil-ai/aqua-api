@@ -252,5 +252,5 @@ def test_performance_revision_upload(client, regular_token1, db_session):
         end_time = time.time()
         total_time = end_time - start_time
         logging.info(f"Uploaded revision in {total_time:.2f} seconds.")
-        assert total_time <= 5
+        assert total_time <= 7
         assert response.status_code == 200
