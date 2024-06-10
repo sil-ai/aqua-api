@@ -28,7 +28,7 @@ test: localdb-up
 	@export PYTHONPATH=${PWD} && \
 	export AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" && \
 	pytest test
-	
+
 push-branch:
 	docker push ${REGISTRY}/${IMAGENAME}:latest
 	docker tag ${REGISTRY}/${IMAGENAME}:latest ${REGISTRY}/${IMAGENAME}:${GITHUB_SHA}
@@ -37,3 +37,10 @@ push-branch:
 push-release:
 	docker tag ${REGISTRY}/${IMAGENAME}:latest ${REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
 	docker push ${REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
+
+
+linting:
+	@echo "Running linting"
+	@black --check .
+	@flake8 . --exclude='**/v1/**,**/v2/**,./venv,./alembic' --ignore=E501,W503,E203
+	@echo "Linting passed"

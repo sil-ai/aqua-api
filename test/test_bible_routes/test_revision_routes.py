@@ -54,9 +54,9 @@ async def test_process_and_upload_revision(async_test_db_session, test_db_sessio
         test_file_path = Path("fixtures/uploadtest.txt")
         async with aiofiles.open(test_file_path, "rb") as file:
             file_content = await file.read()
-        non_empty_line_count = sum(
+        _ = sum(
             1 for line in file_content.splitlines() if line.strip()
-        )
+        )  # Non empty line count
 
         # Process and upload revision using the async database session
         await process_and_upload_revision(file_content, test_revision.id, db)

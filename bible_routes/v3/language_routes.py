@@ -25,7 +25,7 @@ async def list_languages(
 ):
     """
     Get a list of ISO 639-2 language codes and their English names.
-    
+
     Returns:
     Fields(Language):
     - iso639: str
@@ -45,7 +45,7 @@ async def list_scripts(
 ):
     """
     Get a list of ISO 15924 script codes and their English names.
-    
+
     Returns:
     Fields(Script):
     - iso15924: str

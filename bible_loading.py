@@ -37,7 +37,7 @@ async def async_text_dataframe(verses, bible_revision):
 async def text_loading(verse_text, db):
     batch_size = 1000
     for start in range(0, len(verse_text), batch_size):
-        batch = verse_text[start:start + batch_size]
+        batch = verse_text[start : start + batch_size]
         await db.execute(insert(VerseText), batch.to_dict(orient="records"))
         await db.commit()
 

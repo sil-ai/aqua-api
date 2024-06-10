@@ -59,11 +59,11 @@ async def list_revisions(
     Returns a list of revisions.
 
     If version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.
-    
+
     Input:
     - version_id: Optional[int] = None
     Description: The id of the version to which the revision belongs. If not provided, returns all revisions.
-    
+
     Returns:
     Fields(Revision):
     - version_id: int
@@ -166,7 +166,7 @@ async def upload_revision(
 ):
     """
     Uploads a new revision.
-    
+
     Input:
     Fields(Revision):
     - version_id: int
@@ -249,7 +249,7 @@ async def delete_revision(
 ):
     """
     Deletes a revision.
-    
+
     Input:
     - id: int
     Description: The id of the revision to delete.
@@ -307,7 +307,7 @@ async def rename_revision(
 ):
     """
     Rename a revision.
-    
+
     Input:
     - id: int
     Description: The id of the revision to rename.

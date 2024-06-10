@@ -38,9 +38,9 @@ def setup_database():
             iso_language_query = queries.add_iso_language()
             iso_script_query = queries.add_iso_script()
             version_query = queries.add_version_query()
-            book_reference_query = queries.add_book_reference()
-            chapter_reference_query = queries.add_chapter_reference()
-            verse_reference_query = queries.add_verse_reference()
+            _ = queries.add_book_reference()  # book_reference_query
+            _ = queries.add_chapter_reference()  # chapter_reference_query
+            _ = queries.add_verse_reference()  # verse_reference_query
 
             cursor.execute(iso_language_query, ("eng", "english"))
             cursor.execute(iso_script_query, ("Latn", "latin"))
