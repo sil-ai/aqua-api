@@ -1,10 +1,7 @@
 # test_revision_flows.py
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 import pytest
 from pathlib import Path
 from bible_routes.v3.revision_routes import process_and_upload_revision
-import asyncio
 import aiofiles
 import time
 import logging
@@ -17,9 +14,7 @@ from database.models import (
     BibleVersion as BibleVersionModel,
     UserDB,
 )
-import asyncio
 from sqlalchemy.future import select
-from sqlalchemy import delete
 from pathlib import Path
 
 

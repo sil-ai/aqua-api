@@ -2,7 +2,6 @@
 
 from fastapi.testclient import TestClient
 from app import app  # Import your FastAPI application instance
-from conftest import test_db_session  # Import the fixture
 
 client = TestClient(app)
 prefix = "/latest"

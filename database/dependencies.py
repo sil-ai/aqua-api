@@ -1,6 +1,6 @@
 # dependencies.py
 
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession

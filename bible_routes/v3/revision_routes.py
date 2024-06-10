@@ -1,18 +1,14 @@
-from io import StringIO
 from typing import List, Optional
 from fastapi import Depends, HTTPException, status, APIRouter, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from tempfile import NamedTemporaryFile
 import numpy as np
 import time
 import logging
 import asyncio
 from datetime import date
-import aiofiles
-import os
 
-from bible_loading import async_text_dataframe, text_loading, upload_bible
+from bible_loading import async_text_dataframe, text_loading
 from models import RevisionOut_v3 as RevisionOut, RevisionIn
 from database.models import (
     BibleRevision as BibleRevisionModel,

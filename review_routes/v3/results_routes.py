@@ -14,7 +14,6 @@ from sqlalchemy.sql import select
 from database.models import (
     AssessmentResult,
     Assessment,
-    BibleVersion,
     BibleRevision,
     AlignmentTopSourceScores,
     VerseText,

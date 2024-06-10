@@ -1,7 +1,6 @@
 # Import necessary modules
 from conftest import teardown_database
 import sqlalchemy as db
-from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import os
 

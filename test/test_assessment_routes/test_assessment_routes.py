@@ -1,9 +1,6 @@
 # test_revision_flows.py
 from pathlib import Path
-import time
-import logging
 from database.models import (
-    VerseText as VerseText,
     Assessment,
     AssessmentAccess,
     UserGroup,

@@ -1,10 +1,6 @@
 import os
 import psycopg2
-import sqlalchemy as db
-import pandas as pd
 from datetime import date
-
-import bible_loading
 import queries
 
 
