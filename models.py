@@ -17,7 +17,7 @@ class VersionUpdate(BaseModel):
     machineTranslation: bool = False
     add_to_groups: Optional[List[int]] = None
     remove_from_groups: Optional[List[int]] = None
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -32,7 +32,7 @@ class VersionUpdate(BaseModel):
             }
         },
     }
-                
+
 
 class VersionIn(BaseModel):
     name: str
@@ -45,7 +45,7 @@ class VersionIn(BaseModel):
     machineTranslation: Optional[bool] = False
     is_reference: Optional[bool] = False
     add_to_groups: Optional[List[int]] = None
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -70,8 +70,8 @@ class VersionOut(BaseModel):
     backTranslation: Union[int, None] = None
     machineTranslation: bool = False
     owner_id : int
-    
-    
+
+
 
 class VersionOut_v3(BaseModel):
     id: int
@@ -103,14 +103,14 @@ class VersionOut_v3(BaseModel):
         },
         "from_attributes": True
     }
-    
+
 class RevisionIn(BaseModel):
     version_id: int
     name: Optional[str] = None
     published: Optional[bool] = False
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -133,11 +133,11 @@ class RevisionOut(BaseModel):
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
     iso_language: Optional[str] = None
-    
-    
-    
-                
-    
+
+
+
+
+
 
 
 class RevisionOut_v3(BaseModel):
@@ -176,7 +176,7 @@ class VerseText(BaseModel):
     book: Optional[str] = None
     chapter: Optional[int] = None
     verse: Optional[int] = None
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -189,14 +189,13 @@ class VerseText(BaseModel):
             }
         },
     }
-    
-    
+
+
 
 class AssessmentType(Enum):
     dummy = 'dummy'
     word_alignment = 'word-alignment'
     sentence_length = 'sentence-length'
-    missing_words = 'missing-words'
     semantic_similarity = 'semantic-similarity'
     model_config = ConfigDict(from_attributes=True)
     question_answering = 'question-answering'
@@ -207,8 +206,8 @@ class AssessmentIn(BaseModel):
     revision_id: int
     reference_id: Optional[int] = None
     type: AssessmentType
-    
-        
+
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -231,9 +230,9 @@ class AssessmentOut(BaseModel):
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
-    # class Config: 
+    # class Config:
     #     use_enum_values = True
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -250,8 +249,8 @@ class AssessmentOut(BaseModel):
         },
         "from_attributes": True
     }
-    
-    
+
+
 
 # Results model to record in the DB.
 
@@ -279,7 +278,7 @@ class Result_v2(BaseModel):
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
     hide: bool = False
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -292,9 +291,9 @@ class Result_v2(BaseModel):
             }
         },
     }
-            
-    
-    
+
+
+
 
 
 class MultipleResult(BaseModel):
@@ -312,8 +311,8 @@ class MultipleResult(BaseModel):
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
     hide: bool = False
-    
-   
+
+
 
 
 class WordAlignment(BaseModel):
@@ -328,8 +327,8 @@ class WordAlignment(BaseModel):
     hide: bool = False
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
-    
-    
+
+
 
 # # Results model to record in the DB.
 # class MissingWord(BaseModel):
@@ -354,7 +353,7 @@ class WordAlignment(BaseModel):
 class Language(BaseModel):
     iso639: str
     name: str
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -368,7 +367,7 @@ class Language(BaseModel):
 class Script(BaseModel):
     iso15924: str
     name: str
-    
+
     model_config = {
         "json_schema_extra": {
             "example": {
@@ -377,14 +376,14 @@ class Script(BaseModel):
             }
         },
     }
-    
-    
+
+
 class User(BaseModel):
-    id: Optional[int] = None 
+    id: Optional[int] = None
     username: str
     email: Optional[EmailStr] = None  # Assuming users have an email field
     is_admin: Optional[bool] = False
-    password: Optional[str] = None 
+    password: Optional[str] = None
     class Config:
         orm_mode = True
 # group pydantic model
