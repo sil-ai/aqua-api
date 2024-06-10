@@ -59,6 +59,25 @@ async def list_revisions(
     Returns a list of revisions.
 
     If version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.
+    
+    Input:
+    - version_id: Optional[int] = None
+    Description: The id of the version to which the revision belongs. If not provided, returns all revisions.
+    
+    Returns:
+    Fields(Revision):
+    - version_id: int
+    Description: The id of the version to which the revision belongs.
+    - name: str
+    Description: The name of the revision.
+    - published: bool
+    Description: Whether the revision is published.
+    - backTranslation: Optional[int] = None
+    Description: The id of the back translation revision.
+    - machineTranslation: Optional[int] = None
+    Description: The id of the machine translation revision.
+    - file: UploadFile
+    Description: The file containing the revision text.
     """
     start_time = time.time()  # Start timer
     logging.info(
@@ -145,6 +164,24 @@ async def upload_revision(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
+    """
+    Uploads a new revision.
+    
+    Input:
+    Fields(Revision):
+    - version_id: int
+    Description: The id of the version to which the revision belongs.
+    - name: str
+    Description: The name of the revision.
+    - published: bool
+    Description: Whether the revision is published.
+    - backTranslation: Optional[int] = None
+    Description: The id of the back translation revision.
+    - machineTranslation: Optional[int] = None
+    Description: The id of the machine translation revision.
+    - file: UploadFile
+    Description: The file containing the revision text.
+    """
     start_time = time.time()
 
     logging.info(f"Uploading new revision: {revision.model_dump()}")
@@ -210,6 +247,13 @@ async def delete_revision(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
+    """
+    Deletes a revision.
+    
+    Input:
+    - id: int
+    Description: The id of the revision to delete.
+    """
     start_time = time.time()  # Start timer
 
     # Check if the revision exists and if the user is authorized
@@ -263,6 +307,12 @@ async def rename_revision(
 ):
     """
     Rename a revision.
+    
+    Input:
+    - id: int
+    Description: The id of the revision to rename.
+    - new_name: str
+    Description: The new name for the revision.
     """
     # Check if the revision exists
     result = await db.execute(
