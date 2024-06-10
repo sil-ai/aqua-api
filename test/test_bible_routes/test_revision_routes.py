@@ -15,7 +15,6 @@ from database.models import (
     UserDB,
 )
 from sqlalchemy.future import select
-from pathlib import Path
 
 
 @pytest.mark.asyncio
@@ -254,5 +253,4 @@ def test_performance_revision_upload(client, regular_token1, db_session):
         total_time = end_time - start_time
         logging.info(f"Uploaded revision in {total_time:.2f} seconds.")
         assert total_time <= 5
-        revision_id = response.json()["id"]  # Return the ID of the uploaded revision
         assert response.status_code == 200
