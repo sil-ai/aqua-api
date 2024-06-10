@@ -120,9 +120,7 @@ def test_add_assessment_success(
         )
         assert assessment is not None
         assert assessment.type == "missing-words"
-        assert (
-            assessment.status == "queued"
-        ) 
+        assert assessment.status == "queued"
         user = (
             db_session.query(UserDB.id).filter(UserDB.username == "testuser1").first()
         )
@@ -156,7 +154,7 @@ def test_add_assessment_success(
     # check owner_id in the db is the test user1 id
     user = db_session.query(UserModel).filter_by(username="testuser1").first()
     assert user.id == owner_id
-    
+
     # confirm that regular_token2 cannot access the assessment
     response = list_assessment(client, regular_token2)
     assert response.status_code == 200
@@ -173,7 +171,7 @@ def test_add_assessment_success(
     assert response.json()[0]["revision_id"] == revision_id
     assert response.json()[0]["reference_id"] == reference_revision_id
     assert response.json()[0]["id"] == assessment_id
-    
+
     # delete the assesment as the user that created it
     response = delete_assessment(client, regular_token1, assessment_id)
     assert response.status_code == 200
@@ -183,7 +181,7 @@ def test_add_assessment_success(
         db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
     )
     assert assessment is not None
-    
+
     # Create again the assessment
     response = client.post(
         f"{prefix}/assessment",
@@ -194,14 +192,14 @@ def test_add_assessment_success(
     response = delete_assessment(client, admin_token, assessment_id)
     assert response.status_code == 200
 
-    
     # check that the assessment has been deleted in the db by checking the deleted column
     assessment = (
         db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
     )
     assert assessment is not None
     assert assessment.deleted is False
-    
+
+
 def test_add_assessment_failure(client, regular_token1, db_session, test_db_session):
     # Create two revisions
     version_id = create_bible_version(client, regular_token1)
@@ -234,4 +232,3 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
         )
 
         assert response.status_code == 500
-    

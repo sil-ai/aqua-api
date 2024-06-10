@@ -1,34 +1,36 @@
 def list_versions_query():
     list_version = 'SELECT * FROM "bible_version"'
     return list_version
-  
+
+
 def add_chapter_reference():
     chapter_reference_sql = """
                 INSERT INTO "chapter_reference" (
                     full_chapter_id, number, book_reference)
                   VALUES ((%s), (%s), (%s))
-                  RETURNING 
+                  RETURNING
                     full_chapter_id, number, book_reference
                 """
     return chapter_reference_sql
-   
-  
+
+
 def add_book_reference():
     book_reference_sql = """
                 INSERT INTO "book_reference" (
                     abbreviation, name, number)
                   VALUES ((%s), (%s), (%s))
-                  RETURNING 
+                  RETURNING
                     abbreviation, name, number
                 """
     return book_reference_sql
+
 
 def add_verse_reference():
     verse_reference_sql = """
                 INSERT INTO "verse_reference" (
                     full_verse_id, number, chapter, book_reference )
                   VALUES ((%s), (%s), (%s), (%s))
-                  RETURNING 
+                  RETURNING
                     full_verse_id, number, chapter, book_reference
                 """
     return verse_reference_sql
@@ -39,21 +41,21 @@ def add_iso_language():
                 INSERT INTO "iso_language" (
                     iso639, name )
                   VALUES ((%s), (%s))
-                  RETURNING 
+                  RETURNING
                     iso639, name
                 """
     return iso_language
+
 
 def add_iso_script():
     iso_script = """
                 INSERT INTO "iso_script" (
                     iso15924, name )
                   VALUES ((%s), (%s))
-                  RETURNING 
+                  RETURNING
                     iso15924, name
                 """
     return iso_script
-
 
 
 def add_version_query():
@@ -63,7 +65,7 @@ def add_version_query():
                     abbreviation, rights, forward_translation_id,
                     back_translation_id, machine_translation)
                   VALUES ((%s), (%s), (%s), (%s), (%s), (%s), (%s), (%s))
-                  RETURNING 
+                  RETURNING
                       id, name, iso_language, iso_script,
                       abbreviation, rights, forward_translation_id,
                       back_translation_id, machine_translation;
@@ -76,7 +78,7 @@ def delete_bible_version():
     delete_version = """
                     DELETE FROM  "bible_version"
                       WHERE id=(%s)
-                    RETURNING name; 
+                    RETURNING name;
                     """
 
     return delete_version
@@ -105,45 +107,47 @@ def delete_verses_mutation():
                     DELETE FROM "verse_text"
                       WHERE bible_revision=(%s);
                     """
-    
+
     return delete_verses
+
 
 def insert_bible_revision():
     bible_revise = """
                 INSERT INTO "bible_revision" (
-                  date, 
-                  bible_version_id, 
-                  published, 
-                  name, 
-                  back_translation_id, 
+                  date,
+                  bible_version_id,
+                  published,
+                  name,
+                  back_translation_id,
                   machine_translation
                 )
                 VALUES (
-                  (%s), 
-                  (%s), 
-                  (%s), 
-                  (%s), 
-                  (%s), 
+                  (%s),
+                  (%s),
+                  (%s),
+                  (%s),
+                  (%s),
                   (%s)
                 )
-                RETURNING 
-                  id, 
-                  date, 
-                  bible_version_id, 
-                  published, 
-                  name, 
-                  back_translation_id, 
+                RETURNING
+                  id,
+                  date,
+                  bible_version_id,
+                  published,
+                  name,
+                  back_translation_id,
                   machine_translation;
                 """
- 
+
     return bible_revise
+
 
 def fetch_bible_version_by_abbreviation():
     version_id = """
                 SELECT * FROM "bible_version"
                   WHERE abbreviation=(%s);
                 """
-        
+
     return version_id
 
 
@@ -193,7 +197,9 @@ def get_chapter_query(chapter_reference):
                   WHERE bible_revision=(%s)
                     AND vr.chapter = {}
                     ORDER BY vt.id;
-                """.format(chapter_reference)
+                """.format(
+        chapter_reference
+    )
 
     return get_chapter
 
@@ -203,8 +209,10 @@ def get_verses_query(verse_reference):
                 SELECT * FROM "verse_text"
                   WHERE bible_revision=(%s)
                     AND verse_reference={};
-                """.format(verse_reference)
-    
+                """.format(
+        verse_reference
+    )
+
     return get_verses
 
 
@@ -232,7 +240,7 @@ def list_assessments_query():
     list_assessment = """
                     SELECT * FROM "assessment";
                     """
-        
+
     return list_assessment
 
 
@@ -243,8 +251,8 @@ def add_assessment_query():
                         requested_time, status
                         )
                       VALUES ((%s), (%s), (%s), (%s), (%s))
-                    RETURNING 
-                      id, revision, reference, type, 
+                    RETURNING
+                      id, revision, reference, type,
                       requested_time, status;
                     """
 
@@ -314,9 +322,9 @@ def get_results_chapter_query():
                   LIMIT ($2)
                   OFFSET ($3);
                 """
-    
+
     return get_results_chapter
-    
+
 
 def get_results_chapter_agg_query():
     get_results_chapter_agg = """
@@ -385,7 +393,7 @@ def get_results_text_agg_query():
 def get_results_with_text_query():
     get_results_with_text = """
                 SELECT * FROM "assessment_result_with_text"
-                  WHERE assessment=($1) 
+                  WHERE assessment=($1)
                   and vref LIKE ($4) || '%'
                   AND (source IS NULL) = ($5)
                   ORDER BY id
@@ -411,16 +419,17 @@ def get_results_with_text_agg_query():
 
 def get_scripts_query():
     iso_scripts = 'SELECT * FROM "iso_script";'
-        
+
     return iso_scripts
 
 
 def get_languages_query():
     iso_languages = 'SELECT * FROM "iso_language";'
-         
+
     return iso_languages
 
-#delete when v1 is removed
+
+# delete when v1 is removed
 def get_results_query_v1():
     get_results = """
                 SELECT * FROM "assessment_result"
@@ -439,7 +448,7 @@ def get_results_chapter_query_v1():
                   AND (source IS NULL) = (%s)
                   ;
                 """
-    
+
     return get_results_chapter
 
 
@@ -457,7 +466,7 @@ def get_results_with_text_query_v1():
 def get_alignment_scores_like_query():
     get_alignment_scores = """
                 SELECT * FROM "alignment_top_source_scores"
-                  WHERE assessment=($1) 
+                  WHERE assessment=($1)
                   and vref LIKE ($4) || '%'
                   ORDER BY id
                   LIMIT ($2)
@@ -470,7 +479,7 @@ def get_alignment_scores_like_query():
 def get_alignment_scores_exact_query():
     get_alignment_scores = """
                 SELECT * FROM "alignment_top_source_scores"
-                  WHERE assessment=($1) 
+                  WHERE assessment=($1)
                   and vref = ($4)
                   ORDER BY id
                   LIMIT ($2)

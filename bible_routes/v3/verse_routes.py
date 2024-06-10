@@ -36,7 +36,6 @@ async def get_chapter(
             detail="User not authorized to access this revision.",
         )
 
-    
     stmt = (
         select(
             VerseModel.id,
@@ -73,7 +72,7 @@ async def get_chapter(
         )
         for verse in result
     ]
-     
+
     return chapter_data
 
 
@@ -107,7 +106,7 @@ async def get_verse(
     )
     result = await db.execute(stmt)
     verses = result.scalars().all()
-    
+
     return verses
 
 

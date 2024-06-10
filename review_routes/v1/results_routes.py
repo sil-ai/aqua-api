@@ -1,4 +1,4 @@
-__version__ = 'v1'
+__version__ = "v1"
 
 import os
 from typing import List, Optional
@@ -19,21 +19,20 @@ class aggType(Enum):
     chapter = "chapter"
     verse = "verse"
 
+
 router = fastapi.APIRouter()
 
 api_keys = get_secret(
-        os.getenv("KEY_VAULT"),
-        os.getenv("AWS_ACCESS_KEY"),
-        os.getenv("AWS_SECRET_KEY")
-        )
+    os.getenv("KEY_VAULT"), os.getenv("AWS_ACCESS_KEY"), os.getenv("AWS_SECRET_KEY")
+)
 
 api_key_header = APIKeyHeader(name="api_key", auto_error=False)
+
 
 def api_key_auth(api_key: str = Depends(api_key_header)):
     if api_key not in api_keys:
         raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Forbidden"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Forbidden"
         )
 
     return True
@@ -45,8 +44,15 @@ def postgres_conn():
     return connection
 
 
-@router.get("/result", dependencies=[Depends(api_key_auth)], response_model=List[Result])
-async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, include_text: Optional[bool] = False, reverse: Optional[bool] = False):
+@router.get(
+    "/result", dependencies=[Depends(api_key_auth)], response_model=List[Result]
+)
+async def get_result(
+    assessment_id: int,
+    aggregate: Optional[aggType] = None,
+    include_text: Optional[bool] = False,
+    reverse: Optional[bool] = False,
+):
     """
     Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
 
@@ -62,8 +68,8 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
     """
     if aggregate is not None and include_text:
         raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results."
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Aggregate and include_text cannot both be set. Text can only be included for verse-level results.",
         )
 
     connection = postgres_conn()
@@ -71,7 +77,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
 
     list_assessments = queries.list_assessments_query()
 
-    if aggregate == aggType['chapter']:
+    if aggregate == aggType["chapter"]:
         fetch_results = queries.get_results_chapter_query_v1()
         table_name = "group_results_chapter"
         assessment_tag = 2
@@ -81,7 +87,7 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
         score_tag = 3
         flag_tag = 6
         note_tag = 7
-    
+
     elif include_text:
         fetch_results = queries.get_results_with_text_query_v1()
         table_name = "assessment_result_with_text"
@@ -114,13 +120,14 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
 
     if assessment_id not in assessment_ids:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Assessment not found."
-            )
-    
+            status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found."
+        )
+
     assessment_type = assessment_response[assessment_ids.index(assessment_id)][3]
 
-    source_null = not(assessment_type == "missing-words" and not reverse)  # For missing words, if not reverse, we only want the non-null source results
+    source_null = not (
+        assessment_type == "missing-words" and not reverse
+    )  # For missing words, if not reverse, we only want the non-null source results
 
     if assessment_id in assessment_ids:
         cursor.execute(fetch_results, (assessment_id, source_null))
@@ -129,18 +136,24 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
         result_list = []
         for result in result_data:
             results = Result(
-                    id=result[0],
-                    assessment_id=result[assessment_tag],
-                    vref=result[vref_tag] if vref_tag is not None else None,
-                    source=result[source_tag],
-                    target=str(result[target_tag]) if result[target_tag] != 'null' else None,
-                    score=result[score_tag],
-                    flag=result[flag_tag] if result[flag_tag] else False,
-                    note=result[note_tag] if result[note_tag] else None,
-                    revision_text=result[10] if table_name == "assessment_result_with_text" else None,
-                    reference_text=result[11] if table_name == "assessment_result_with_text" else None,
-                    )    
-                
+                id=result[0],
+                assessment_id=result[assessment_tag],
+                vref=result[vref_tag] if vref_tag is not None else None,
+                source=result[source_tag],
+                target=str(result[target_tag])
+                if result[target_tag] != "null"
+                else None,
+                score=result[score_tag],
+                flag=result[flag_tag] if result[flag_tag] else False,
+                note=result[note_tag] if result[note_tag] else None,
+                revision_text=result[10]
+                if table_name == "assessment_result_with_text"
+                else None,
+                reference_text=result[11]
+                if table_name == "assessment_result_with_text"
+                else None,
+            )
+
             result_list.append(results)
 
     else:
@@ -148,9 +161,9 @@ async def get_result(assessment_id: int, aggregate: Optional[aggType] = None, in
         connection.close()
 
         raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Assessment Id invalid, this assessment does not exist"
-                )
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment Id invalid, this assessment does not exist",
+        )
 
     cursor.close()
     connection.close()

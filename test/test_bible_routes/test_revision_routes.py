@@ -22,10 +22,11 @@ from sqlalchemy.future import select
 from sqlalchemy import delete
 from pathlib import Path
 
+
 @pytest.mark.asyncio
 async def test_process_and_upload_revision(async_test_db_session, test_db_session):
     async for db in async_test_db_session:
-            # Create a test Bible version in the database
+        # Create a test Bible version in the database
         result = await db.execute(select(UserDB).where(UserDB.username == "testuser1"))
         user = result.scalars().first()
         user_id = user.id if user else None
@@ -59,11 +60,13 @@ async def test_process_and_upload_revision(async_test_db_session, test_db_sessio
         test_file_path = Path("fixtures/uploadtest.txt")
         async with aiofiles.open(test_file_path, "rb") as file:
             file_content = await file.read()
-        non_empty_line_count = sum(1 for line in file_content.splitlines() if line.strip())
+        non_empty_line_count = sum(
+            1 for line in file_content.splitlines() if line.strip()
+        )
 
         # Process and upload revision using the async database session
         await process_and_upload_revision(file_content, test_revision.id, db)
-        # TODO - Fix this test to work with async database session 
+        # TODO - Fix this test to work with async database session
         # Verify that verses were correctly uploaded
         # result = await db.execute(select(VerseText).where(VerseText.revision_id == test_revision.id))
         # uploaded_verses = result.scalars().all()
@@ -74,7 +77,6 @@ async def test_process_and_upload_revision(async_test_db_session, test_db_sessio
         # await db.delete(test_revision)
         # await db.delete(test_version)
         # await db.commit()
-
 
 
 prefix = "v3"
@@ -232,12 +234,11 @@ def test_admin_flow(client, regular_token1, admin_token, db_session):
 
     assert not revision_exists(db_session, revision_id)
     assert version_exists(db_session, version_id)
-    
-    
+
+
 def test_performance_revision_upload(client, regular_token1, db_session):
     # Create a test Bible version in the database
     version_id = create_bible_version(client, regular_token1)
-    
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
     test_revision = {
@@ -245,7 +246,7 @@ def test_performance_revision_upload(client, regular_token1, db_session):
         "name": "Test Revision",
     }
     test_upload_file = Path("fixtures/eng-eng-kjv.txt")
-    #test_upload_file = Path("fixtures/uploadtest.txt")
+    # test_upload_file = Path("fixtures/uploadtest.txt")
     # start timer
     start_time = time.time()
     with open(test_upload_file, "rb") as file:
@@ -256,7 +257,7 @@ def test_performance_revision_upload(client, regular_token1, db_session):
         # end timer
         end_time = time.time()
         total_time = end_time - start_time
-        logging.info(f"Uploaded revision in {total_time:.2f} seconds.") 
+        logging.info(f"Uploaded revision in {total_time:.2f} seconds.")
         assert total_time <= 5
         revision_id = response.json()["id"]  # Return the ID of the uploaded revision
         assert response.status_code == 200

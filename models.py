@@ -1,8 +1,7 @@
-from pydantic import BaseModel, ConfigDict, EmailStr 
+from pydantic import BaseModel, ConfigDict, EmailStr
 from enum import Enum
 from typing import Union, Optional, List
 import datetime
-
 
 
 class VersionUpdate(BaseModel):
@@ -18,6 +17,7 @@ class VersionUpdate(BaseModel):
     add_to_groups: Optional[List[int]] = None
     remove_from_groups: Optional[List[int]] = None
 
+
 class VersionIn(BaseModel):
     name: str
     iso_language: str
@@ -30,6 +30,7 @@ class VersionIn(BaseModel):
     is_reference: Optional[bool] = False
     add_to_groups: Optional[List[int]] = None
 
+
 class VersionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -41,7 +42,8 @@ class VersionOut(BaseModel):
     forwardTranslation: Union[int, None] = None
     backTranslation: Union[int, None] = None
     machineTranslation: bool = False
-    owner_id : int
+    owner_id: int
+
 
 class VersionOut_v3(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -54,9 +56,10 @@ class VersionOut_v3(BaseModel):
     forward_translation_id: Union[int, None] = None
     back_translation_id: Union[int, None] = None
     machineTranslation: bool = False
-    owner_id : Union[int, None] = None
-    group_ids : List[int] = []
+    owner_id: Union[int, None] = None
+    group_ids: List[int] = []
     is_reference: bool = False
+
 
 class RevisionIn(BaseModel):
     version_id: int
@@ -64,6 +67,7 @@ class RevisionIn(BaseModel):
     published: Optional[bool] = False
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
+
 
 class RevisionOut(BaseModel):
     id: int
@@ -89,6 +93,7 @@ class RevisionOut_v3(BaseModel):
     iso_language: Optional[str] = None
     is_reference: Optional[bool] = False
 
+
 class VerseText(BaseModel):
     id: Optional[int] = None
     text: str
@@ -100,13 +105,13 @@ class VerseText(BaseModel):
 
 
 class AssessmentType(Enum):
-    dummy = 'dummy'
-    word_alignment = 'word-alignment'
-    sentence_length = 'sentence-length'
-    missing_words = 'missing-words'
-    semantic_similarity = 'semantic-similarity'
+    dummy = "dummy"
+    word_alignment = "word-alignment"
+    sentence_length = "sentence-length"
+    missing_words = "missing-words"
+    semantic_similarity = "semantic-similarity"
     model_config = ConfigDict(from_attributes=True)
-    question_answering = 'question-answering'
+    question_answering = "question-answering"
 
 
 class AssessmentIn(BaseModel):
@@ -114,8 +119,8 @@ class AssessmentIn(BaseModel):
     revision_id: int
     reference_id: Optional[int] = None
     type: AssessmentType
-    
-    class Config: 
+
+    class Config:
         use_enum_values = True
 
 
@@ -130,11 +135,12 @@ class AssessmentOut(BaseModel):
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
-    # class Config: 
+    # class Config:
     #     use_enum_values = True
 
 
 # Results model to record in the DB.
+
 
 class Result_v1(BaseModel):
     id: Optional[int] = None
@@ -192,6 +198,7 @@ class WordAlignment(BaseModel):
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
 
+
 # # Results model to record in the DB.
 # class MissingWord(BaseModel):
 #     assessment_id: int
@@ -220,27 +227,33 @@ class Language(BaseModel):
 class Script(BaseModel):
     iso15924: str
     name: str
-    
-    
+
+
 class User(BaseModel):
-    id: Optional[int] = None 
+    id: Optional[int] = None
     username: str
     email: Optional[EmailStr] = None  # Assuming users have an email field
     is_admin: Optional[bool] = False
-    password: Optional[str] = None 
+    password: Optional[str] = None
+
     class Config:
         orm_mode = True
+
+
 # group pydantic model
 class Group(BaseModel):
     id: Optional[int] = None
     name: str
     description: Optional[str] = None
+
     class Config:
         orm_mode = True
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str
 
+
 class TokenData(BaseModel):
     username: Optional[str] = None
-

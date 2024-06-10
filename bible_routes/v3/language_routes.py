@@ -20,7 +20,8 @@ router = fastapi.APIRouter()
 
 @router.get("/language", response_model=List[Language])
 async def list_languages(
-    db: AsyncSession = Depends(get_db), current_user: UserModel = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
 ):
     """
     Get a list of ISO 639-2 language codes and their English names.
@@ -32,7 +33,8 @@ async def list_languages(
 
 @router.get("/script", response_model=List[Script])
 async def list_scripts(
-    db: AsyncSession = Depends(get_db), current_user: UserModel = Depends(get_current_user)
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
 ):
     """
     Get a list of ISO 15924 script codes and their English names.

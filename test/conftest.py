@@ -1,5 +1,4 @@
 # version_id conftest.py
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -22,20 +21,24 @@ import bcrypt
 from datetime import date
 import pandas as pd
 from app import app
-import asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 
 engine = create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
+
 # Asynchronous session fixture
 @pytest.fixture(scope="module")
 async def async_test_db_session():
-    async_engine = create_async_engine("postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname")
-    AsyncSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession)
+    async_engine = create_async_engine(
+        "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
+    )
+    AsyncSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
+    )
     async with AsyncSessionLocal() as async_session:
         yield async_session
-   
+
+
 @pytest.fixture(scope="module")
 def db_session():
     return TestingSessionLocal()
@@ -84,6 +87,7 @@ def test_db_session():
     finally:
         teardown_database(db_session)
         db_session.close()
+
 
 def setup_database(db_session):
     """Set up the database for testing with distinct sections for different data types."""
@@ -182,7 +186,6 @@ async def setup_users_and_groups_async(session):
     await session.commit()  # Use await for committing the transaction
 
 
-
 def setup_references_and_isos(db_session):
     """Setup reference data and ISO codes."""
     # Load data from CSV files
@@ -215,7 +218,9 @@ async def setup_references_and_isos_async(session):
 
     # Populate book_reference, chapter_reference, verse_reference tables
     book_refs = [BookReference(**row.to_dict()) for _, row in book_ref_df.iterrows()]
-    chapter_refs = [ChapterReference(**row.to_dict()) for _, row in chapter_ref_df.iterrows()]
+    chapter_refs = [
+        ChapterReference(**row.to_dict()) for _, row in chapter_ref_df.iterrows()
+    ]
     verse_refs = [VerseReference(**row.to_dict()) for _, row in verse_ref_df.iterrows()]
 
     session.add_all(book_refs + chapter_refs + verse_refs)
@@ -224,11 +229,9 @@ async def setup_references_and_isos_async(session):
     iso_languages = [
         IsoLanguage(iso639="eng", name="english"),
         IsoLanguage(iso639="ngq", name="ngq"),
-        IsoLanguage(iso639="swh", name="swh")
+        IsoLanguage(iso639="swh", name="swh"),
     ]
-    iso_scripts = [
-        IsoScript(iso15924="Latn", name="latin")
-    ]
+    iso_scripts = [IsoScript(iso15924="Latn", name="latin")]
 
     session.add_all(iso_languages + iso_scripts)
     await session.commit()  # Use await for committing the transaction
@@ -247,7 +250,7 @@ def load_revision_data(db_session):
         iso_script="Latn",
         abbreviation="BLTEST",
         owner_id=user_id,
-        is_reference=False
+        is_reference=False,
     )
     db_session.add(version)
 
@@ -270,7 +273,7 @@ async def load_revision_data_async(session):
     # Add version
     # Asynchronously query the id for testuser1
     result = await session.execute(
-        select(UserDB).where(UserDB.username == "testuser1")
+        select(UserDB).where(UserDB.username == "testuser1")  # noqa
     )
     user = result.scalars().first()
     user_id = user.id if user else None
@@ -311,7 +314,7 @@ def teardown_database(db_session):
 
 async def teardown_database_async(session):
     """
-    Tear down the database by deleting all data from tables asynchronously, 
+    Tear down the database by deleting all data from tables asynchronously,
     using session and engine from async ORM.
     """
     async with session.begin():
@@ -319,7 +322,7 @@ async def teardown_database_async(session):
         for table in reversed(Base.metadata.sorted_tables):
             await session.execute(table.delete())
         session.execute("SET session_replication_role = DEFAULT;")
-        
-        
+
+
 if __name__ == "__main__":
     setup_database(TestingSessionLocal())

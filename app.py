@@ -1,13 +1,19 @@
-__version__ = 'v1'
+__version__ = "v1"
 
 import fastapi
 from fastapi.openapi.utils import get_openapi
 import os
 
-from security_routes.auth_routes import router as security_router 
+from security_routes.auth_routes import router as security_router
 from security_routes.admin_routes import router as admin_router
+from bible_routes.v3.language_routes import router as language_router_v3
+from bible_routes.v3.version_routes import router as version_router_v3
+from bible_routes.v3.revision_routes import router as revision_router_v3
+from bible_routes.v3.verse_routes import router as verse_router_v3
+from assessment_routes.v3.assessment_routes import router as assessment_router_v3
+from review_routes.v3.results_routes import router as results_router_v3
 
-omit_previous_versions = os.getenv('OMIT_PREVIOUS_VERSIONS', False)
+omit_previous_versions = os.getenv("OMIT_PREVIOUS_VERSIONS", False)
 
 if not omit_previous_versions:
     from bible_routes.v1.language_routes import router as language_router_v1
@@ -24,36 +30,31 @@ if not omit_previous_versions:
     from assessment_routes.v2.assessment_routes import router as assessment_router_v2
     from review_routes.v2.results_routes import router as results_router_v2
 
-from bible_routes.v3.language_routes import router as language_router_v3
-from bible_routes.v3.version_routes import router as version_router_v3
-from bible_routes.v3.revision_routes import router as revision_router_v3
-from bible_routes.v3.verse_routes import router as verse_router_v3
-from assessment_routes.v3.assessment_routes import router as assessment_router_v3
-from review_routes.v3.results_routes import router as results_router_v3
 app = fastapi.FastAPI()
+
 
 def my_schema():
     DOCS_TITLE = "AQuA API"
     DOCS_VERSION = "0.2.0"
     openapi_schema = get_openapi(
-       title=DOCS_TITLE,
-       version=DOCS_VERSION,
-       routes=app.routes,
-   )
+        title=DOCS_TITLE,
+        version=DOCS_VERSION,
+        routes=app.routes,
+    )
     openapi_schema["info"] = {
-       "title" : DOCS_TITLE,
-       "version" : DOCS_VERSION,
-       "description" : "Augmented Quality Assessment API",
-       "contact": {
-           "name": "Get Help with this API",
-           "url": "http://ai.sil.org",
-           "email": "mark_woodwardsil.org"
-       },
-       "license": {
-           "name": "MIT License",
-           "url": "https://opensource.org/license/mit/"
-       },
-   }
+        "title": DOCS_TITLE,
+        "version": DOCS_VERSION,
+        "description": "Augmented Quality Assessment API",
+        "contact": {
+            "name": "Get Help with this API",
+            "url": "http://ai.sil.org",
+            "email": "mark_woodwardsil.org",
+        },
+        "license": {
+            "name": "MIT License",
+            "url": "https://opensource.org/license/mit/",
+        },
+    }
     app.openapi_schema = openapi_schema
     return app.openapi_schema
 
@@ -63,12 +64,12 @@ def configure(app):
 
 
 def configure_routing(app):
-    #for now the / endpoint points to v1
-    #TODO: change this when client changes software to match
+    # for now the / endpoint points to v1
+    # TODO: change this when client changes software to match
 
-    #!!!: send a deprecation notice but leave the v1 route for awhile
-    #if v2 is introduced but change /latest and / to /v2/language_routes.router
-    omit_previous_versions = os.getenv('OMIT_PREVIOUS_VERSIONS', False)
+    # !!!: send a deprecation notice but leave the v1 route for awhile
+    # if v2 is introduced but change /latest and / to /v2/language_routes.router
+    omit_previous_versions = os.getenv("OMIT_PREVIOUS_VERSIONS", False)
 
     if not omit_previous_versions:
         app.include_router(language_router_v1, prefix="/v1", tags=["Version 1"])
@@ -92,11 +93,17 @@ def configure_routing(app):
     app.include_router(assessment_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(results_router_v3, prefix="/v3", tags=["Version 3"])
 
-    app.include_router(language_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
-    app.include_router(revision_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(
+        language_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
+    )
+    app.include_router(
+        revision_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
+    )
     app.include_router(version_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(verse_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
-    app.include_router(assessment_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(
+        assessment_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
+    )
     app.include_router(results_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
 
     app.include_router(security_router, prefix="/latest", tags=["Latest"])
@@ -104,7 +111,6 @@ def configure_routing(app):
 
     @app.get("/")
     async def read_root():
-
         """
         Test docs"""
         return {"Hello": "World"}
@@ -112,6 +118,7 @@ def configure_routing(app):
 
 if __name__ == "__main__":
     import uvicorn
+
     configure(app)
     uvicorn.run(app, port=8000, host="0.0.0.0")
 else:
