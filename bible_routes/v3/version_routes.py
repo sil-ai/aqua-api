@@ -28,6 +28,30 @@ async def list_version(
 ):
     """
     Get a list of all versions that the current user is authorized to access.
+    
+    Returns:
+    Fields(Version):
+    - name: str
+    Description: The name of the version.
+    - iso_language: str
+    Description: The ISO 639-2 language code. e.g 'eng' for English. 'swa' for Swahili.
+    - iso_script: str
+    Description: The ISO 15924 script code. e.g 'Latn' for Latin. 'Cyrl' for Cyrillic.
+    - abbreviation: str
+    Description: The abbreviation of the version.
+    - rights: str
+    Description: The rights of the version.
+    - forwardTranslation: Optional[int]
+    Description: The ID of the forward translation version.
+    - backTranslation: Optional[int]
+    Description: The ID of the back translation version.
+    - machineTranslation: bool
+    Description: Whether the version is machine translated.
+    - is_reference: bool
+    Description: Whether the version is a reference version.
+    - add_to_groups: Optional[List[int]]
+    Description: The IDs of the groups to add the version to, 
+    the version will only be added to this groups, not to all tha groups of the user as usual.
     """
     if current_user.is_admin:
         # Admin users can access all versions
@@ -77,6 +101,42 @@ async def add_version(
     """
     Create a new version.
     Optionally only add the version to specific groups, specified by their IDs.
+    
+    
+    Input:
+    Fields(Version):
+    - name: str
+    Description: The name of the version.
+    - iso_language: str
+    Description: The ISO 639-2 language code. e.g 'eng' for English. 'swa' for Swahili.
+    - iso_script: str
+    Description: The ISO 15924 script code. e.g 'Latn' for Latin. 'Cyrl' for Cyrillic.
+    - abbreviation: str
+    Description: The abbreviation of the version.
+    - rights: str
+    Description: The rights of the version.
+    - forwardTranslation: Optional[int]
+    Description: The ID of the forward translation version.
+    - backTranslation: Optional[int]
+    Description: The ID of the back translation version.
+    - machineTranslation: bool
+    Description: Whether the version is machine translated.
+    - is_reference: bool
+    Description: Whether the version is a reference version.
+    - add_to_groups: Optional[List[int]]
+    Description: The IDs of the groups to add the version to, 
+    the version will only be added to this groups, not to all tha groups of the user as usual.
+    
+    Returns:
+    Fields(VersionOut):
+    Besides the data provided for the input of the version:
+    
+    - id: int
+    Description: The unique identifier for the version.
+    - owner_id : Union[int, None] = None
+    Description: The unique identifier for the owner of the version.
+    - group_ids : List[int] = []
+    Description: The IDs of the groups that have access to the version.
     """
     new_version = BibleVersionModel(
         name=v.name,
@@ -120,6 +180,11 @@ async def delete_version(
 ):
     """
     Delete a version and all associated revisions, text, and assessments.
+    
+    Input:
+    - id: int
+    Description: The unique identifier for the version.
+    
     """
 
     # Check if the version exists
@@ -152,6 +217,40 @@ async def modify_version(
 ):
     """
     Update any parameter in a version.
+    
+    Input:
+    Fields(Version):
+    - name: str
+    Description: The name of the version.
+    - iso_language: str
+    Description: The ISO 639-2 language code. e.g 'eng' for English. 'swa' for Swahili.
+    - iso_script: str
+    Description: The ISO 15924 script code. e.g 'Latn' for Latin. 'Cyrl' for Cyrillic.
+    - abbreviation: str
+    Description: The abbreviation of the version.
+    - rights: str
+    Description: The rights of the version.
+    - forwardTranslation: Optional[int]
+    Description: The ID of the forward translation version.
+    - backTranslation: Optional[int]
+    Description: The ID of the back translation version.
+    - machineTranslation: bool
+    Description: Whether the version is machine translated.
+    - is_reference: bool
+    Description: Whether the version is a reference version.
+    - add_to_groups: Optional[List[int]]
+    Description: The IDs of the groups to add the version to, 
+    the version will only be added to this groups, not to all tha groups of the user as usual.
+    
+    Add groups functionality:
+    In case you want to add aversion to groups after it has been created, you can
+    specify in add_to_groups the IDs of the groups you want to add the version to.
+    
+    Remove groups functionality:
+    In case you want to remove a version from a group, you can specify in 
+    remove_from_groups, the IDs of the groups you want to remove the version from.
+    
+    
     """
     # Check if the version exists
     result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == version_update.id))
