@@ -58,12 +58,21 @@ async def create_user(
         raise HTTPException(status_code=400, detail="Username already registered")
     if user.password is None:
         raise HTTPException(status_code=400, detail="Password is required")
+    if user.is_admin:
+        raise HTTPException(
+            status_code=400, detail="Admin users cannot be created using this endpoint"
+        )
+
     hashed_password = hash_password(user.password)
+
+
+
+    #  Ensure the user is not an admin
     db_user = UserDB(
         username=user.username,
         email=user.email,
         hashed_password=hashed_password,
-        is_admin=user.is_admin,
+        is_admin=False,
     )
     db.add(db_user)
     await db.commit()
@@ -73,7 +82,7 @@ async def create_user(
         id=db_user.id,
         username=db_user.username,
         email=db_user.email,
-        is_admin=db_user.is_admin,
+        is_admin=False,
     )
     return_user.password = None  # Ensure password is not included in the response
     return return_user
