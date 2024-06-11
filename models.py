@@ -4,7 +4,6 @@ from typing import Union, Optional, List
 import datetime
 
 
-
 class VersionUpdate(BaseModel):
     id: int
     name: str = None
@@ -28,7 +27,7 @@ class VersionUpdate(BaseModel):
                 "abbreviation": "english_-_king_james_version",
                 "machineTranslation": False,
                 "add_to_groups": [1, 2],
-                "remove_from_groups": [3, 4]
+                "remove_from_groups": [3, 4],
             }
         },
     }
@@ -53,10 +52,11 @@ class VersionIn(BaseModel):
                 "iso_language": "eng",
                 "iso_script": "Latn",
                 "abbreviation": "english_-_king_james_version",
-                "machineTranslation": False
+                "machineTranslation": False,
             }
         },
     }
+
 
 class VersionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -69,8 +69,7 @@ class VersionOut(BaseModel):
     forwardTranslation: Union[int, None] = None
     backTranslation: Union[int, None] = None
     machineTranslation: bool = False
-    owner_id : int
-
+    owner_id: int
 
 
 class VersionOut_v3(BaseModel):
@@ -83,8 +82,8 @@ class VersionOut_v3(BaseModel):
     forward_translation_id: Union[int, None] = None
     back_translation_id: Union[int, None] = None
     machineTranslation: bool = False
-    owner_id : Union[int, None] = None
-    group_ids : List[int] = []
+    owner_id: Union[int, None] = None
+    group_ids: List[int] = []
     is_reference: bool = False
 
     model_config = {
@@ -98,11 +97,12 @@ class VersionOut_v3(BaseModel):
                 "machineTranslation": False,
                 "is_reference": False,
                 "owner_id": 1,
-                "group_ids": [1, 2]
+                "group_ids": [1, 2],
             }
         },
-        "from_attributes": True
+        "from_attributes": True,
     }
+
 
 class RevisionIn(BaseModel):
     version_id: int
@@ -118,10 +118,11 @@ class RevisionIn(BaseModel):
                 "name": "June 2024",
                 "published": False,
                 "backTranslation": 1,
-                "machineTranslation": False
+                "machineTranslation": False,
             }
         },
     }
+
 
 class RevisionOut(BaseModel):
     id: int
@@ -133,11 +134,6 @@ class RevisionOut(BaseModel):
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
     iso_language: Optional[str] = None
-
-
-
-
-
 
 
 class RevisionOut_v3(BaseModel):
@@ -164,10 +160,12 @@ class RevisionOut_v3(BaseModel):
                 "back_translation_id": 1,
                 "machineTranslation": False,
                 "iso_language": "eng",
-                "is_reference": False
+                "is_reference": False,
             }
         },
     }
+
+
 class VerseText(BaseModel):
     id: Optional[int] = None
     text: str
@@ -185,21 +183,20 @@ class VerseText(BaseModel):
                 "revision_id": 1,
                 "book": "GEN",
                 "chapter": 1,
-                "verse": 1
+                "verse": 1,
             }
         },
     }
 
 
-
 class AssessmentType(Enum):
-    dummy = 'dummy'
-    word_alignment = 'word-alignment'
-    sentence_length = 'sentence-length'
-    missing_words = 'missing-words'
-    semantic_similarity = 'semantic-similarity'
+    dummy = "dummy"
+    word_alignment = "word-alignment"
+    sentence_length = "sentence-length"
+    missing_words = "missing-words"
+    semantic_similarity = "semantic-similarity"
     model_config = ConfigDict(from_attributes=True)
-    question_answering = 'question-answering'
+    question_answering = "question-answering"
 
 
 class AssessmentIn(BaseModel):
@@ -208,16 +205,11 @@ class AssessmentIn(BaseModel):
     reference_id: Optional[int] = None
     type: AssessmentType
 
-
     model_config = {
         "json_schema_extra": {
-            "example": {
-                "revision_id": 1,
-                "reference_id": 1,
-                "type": "word-alignment"
-            }
+            "example": {"revision_id": 1, "reference_id": 1, "type": "word-alignment"}
         },
-        "use_enum_values": True
+        "use_enum_values": True,
     }
 
 
@@ -245,15 +237,15 @@ class AssessmentOut(BaseModel):
                 "requested_time": "2024-06-01T12:00:00",
                 "start_time": "2024-06-01T12:00:00",
                 "end_time": "2024-06-01T12:00:00",
-                "owner_id": 1
+                "owner_id": 1,
             }
         },
-        "from_attributes": True
+        "from_attributes": True,
     }
 
 
-
 # Results model to record in the DB.
+
 
 class Result_v1(BaseModel):
     id: Optional[int] = None
@@ -288,13 +280,10 @@ class Result_v2(BaseModel):
                 "flag": False,
                 "vref": "GEN 1:1",
                 "hide": False,
-                "assessment_id": 1
+                "assessment_id": 1,
             }
         },
     }
-
-
-
 
 
 class MultipleResult(BaseModel):
@@ -314,8 +303,6 @@ class MultipleResult(BaseModel):
     hide: bool = False
 
 
-
-
 class WordAlignment(BaseModel):
     id: Optional[int] = None
     assessment_id: int
@@ -328,7 +315,6 @@ class WordAlignment(BaseModel):
     hide: bool = False
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
-
 
 
 # # Results model to record in the DB.
@@ -356,12 +342,7 @@ class Language(BaseModel):
     name: str
 
     model_config = {
-        "json_schema_extra": {
-            "example": {
-                "iso639": "eng",
-                "name": "English"
-            }
-        },
+        "json_schema_extra": {"example": {"iso639": "eng", "name": "English"}},
     }
 
 
@@ -370,12 +351,7 @@ class Script(BaseModel):
     name: str
 
     model_config = {
-        "json_schema_extra": {
-            "example": {
-                "iso15924": "Latn",
-                "name": "Latin"
-            }
-        },
+        "json_schema_extra": {"example": {"iso15924": "Latn", "name": "Latin"}},
     }
 
 
@@ -385,18 +361,25 @@ class User(BaseModel):
     email: Optional[EmailStr] = None  # Assuming users have an email field
     is_admin: Optional[bool] = False
     password: Optional[str] = None
+
     class Config:
         orm_mode = True
+
+
 # group pydantic model
 class Group(BaseModel):
     id: Optional[int] = None
     name: str
     description: Optional[str] = None
+
     class Config:
         orm_mode = True
+
+
 class Token(BaseModel):
     access_token: str
     token_type: str
+
 
 class TokenData(BaseModel):
     username: Optional[str] = None

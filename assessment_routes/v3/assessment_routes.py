@@ -1,4 +1,4 @@
-__version__ = 'v3'
+__version__ = "v3"
 # Standard library imports
 import os
 from datetime import datetime
@@ -7,9 +7,7 @@ from datetime import date
 import httpx
 
 # Third party imports
-import requests
 from fastapi import Depends, HTTPException, status
-from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -17,23 +15,23 @@ import fastapi
 
 # Local application imports
 from models import AssessmentIn, AssessmentOut
-from database.models import (
-    UserDB as UserModel,
-    UserGroup,
-    AssessmentAccess,
-    Assessment
-)
+from database.models import UserDB as UserModel, UserGroup, AssessmentAccess, Assessment
 from database.dependencies import get_db
+from security_routes.auth_routes import get_current_user
 import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-from security_routes.auth_routes import get_current_user
+
 router = fastapi.APIRouter()
 
+
 @router.get("/assessment", response_model=List[AssessmentOut])
-async def get_assessments(current_user: UserModel = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def get_assessments(
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """
     Returns a list of all assessments the current user is authorized to access.
 
@@ -69,7 +67,9 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
 
     if current_user.is_admin:
         # Admin users can access all assessments
-        result = await db.execute(select(Assessment).where(Assessment.deleted.is_(False)))
+        result = await db.execute(
+            select(Assessment).where(Assessment.deleted.is_(False))
+        )
         assessments = result.scalars().all()
     else:
         # Fetch the groups the user belongs to
@@ -79,49 +79,57 @@ async def get_assessments(current_user: UserModel = Depends(get_current_user), d
 
         # Get assessments that the user has access to through their groups
         stmt = (
-            select(Assessment).distinct(Assessment.id)
+            select(Assessment)
+            .distinct(Assessment.id)
             .join(AssessmentAccess, Assessment.id == AssessmentAccess.assessment_id)
             .where(
                 AssessmentAccess.group_id.in_(user_group_ids),
-                Assessment.deleted.is_(False)
+                Assessment.deleted.is_(False),
             )
         )
         result = await db.execute(stmt)
         assessments = result.scalars().all()
 
     # Convert SQLAlchemy models to Pydantic models
-    assessment_data = [AssessmentOut.model_validate(assessment) for assessment in assessments]
-    assessment_data = sorted(assessment_data, key=lambda x: x.requested_time, reverse=True)
+    assessment_data = [
+        AssessmentOut.model_validate(assessment) for assessment in assessments
+    ]
+    assessment_data = sorted(
+        assessment_data, key=lambda x: x.requested_time, reverse=True
+    )
 
     return assessment_data
 
+
 # Helper function to call assessment runner
-async def call_assessment_runner(assessment: AssessmentIn, modal_suffix: str, return_all_results: bool):
+async def call_assessment_runner(
+    assessment: AssessmentIn, modal_suffix: str, return_all_results: bool
+):
     runner_url = f"https://sil-ai--runner-{modal_suffix.replace('_', '')}-assessment-runner.modal.run/"
     params = {
-        'modal_suffix': modal_suffix,
-        'return_all_results': return_all_results,
+        "modal_suffix": modal_suffix,
+        "return_all_results": return_all_results,
     }
     headers = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
 
     # Asynchronously post the request to the runner
     async with httpx.AsyncClient() as client:
         response = await client.post(
-            runner_url,
-            params=params,
-            headers=headers,
-            json=assessment.dict()
+            runner_url, params=params, headers=headers, json=assessment.dict()
         )
 
     return response
 
+
 @router.post("/assessment", response_model=List[AssessmentOut])
 async def add_assessment(
     a: AssessmentIn = Depends(),
-    modal_suffix: str = '',
+    modal_suffix: str = "",
     return_all_results: bool = False,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user)  # Adjusted to get the current user model
+    current_user: UserModel = Depends(
+        get_current_user
+    ),  # Adjusted to get the current user model
 ):
     """
     Requests an assessment to be run on a revision and (where required) a reference revision.
@@ -157,12 +165,14 @@ async def add_assessment(
     - owner_id: int
     Description: The unique identifier for the owner of the assessment.
     """
-    modal_suffix = modal_suffix or os.getenv('MODAL_SUFFIX', '')
+    modal_suffix = modal_suffix or os.getenv("MODAL_SUFFIX", "")
 
-    if a.type in ["missing-words", "semantic-similarity", "word-alignment"] and a.reference_id is None:
+    if (
+        a.type in ["missing-words", "semantic-similarity", "word-alignment"]
+        and a.reference_id is None
+    ):
         raise HTTPException(
-            status_code=400,
-            detail=f"Assessment type {a.type} requires a reference_id."
+            status_code=400, detail=f"Assessment type {a.type} requires a reference_id."
         )
 
     assessment = Assessment(
@@ -171,7 +181,7 @@ async def add_assessment(
         type=a.type,
         status="queued",
         requested_time=datetime.now(),
-        owner_id=current_user.id
+        owner_id=current_user.id,
     )
 
     db.add(assessment)
@@ -181,9 +191,11 @@ async def add_assessment(
 
     # If the user is not an admin, link the assessment to their groups
     if not current_user.is_admin:
-        result = await db.execute(select(UserGroup.group_id).filter(UserGroup.user_id == current_user.id))
+        result = await db.execute(
+            select(UserGroup.group_id).filter(UserGroup.user_id == current_user.id)
+        )
         user_groups = result.all()
-        for group_id, in user_groups:
+        for (group_id,) in user_groups:
             access = AssessmentAccess(assessment_id=assessment.id, group_id=group_id)
             db.add(access)
         await db.commit()
@@ -201,6 +213,7 @@ async def add_assessment(
             raise HTTPException(status_code=response.status_code, detail=str(e)) from e
 
     return [AssessmentOut.model_validate(assessment)]
+
 
 @router.delete("/assessment")
 async def delete_assessment(
@@ -221,10 +234,8 @@ async def delete_assessment(
     assessment = result.scalars().first()
     if not assessment:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Assessment not found."
+            status_code=status.HTTP_404_NOT_FOUND, detail="Assessment not found."
         )
-
 
     # Check if the user is owner of the assesment or if it is admin
     is_owner = assessment.owner_id == current_user.id
@@ -239,9 +250,5 @@ async def delete_assessment(
     else:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to delete this assessment."
+            detail="User not authorized to delete this assessment.",
         )
-
-
-
-

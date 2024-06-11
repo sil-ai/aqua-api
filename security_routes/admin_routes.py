@@ -1,5 +1,5 @@
 from fastapi.security import OAuth2PasswordBearer
-from fastapi import FastAPI, Depends, HTTPException, status, APIRouter
+from fastapi import Depends, HTTPException, status, APIRouter
 from jose import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select

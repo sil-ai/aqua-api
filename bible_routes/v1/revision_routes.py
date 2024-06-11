@@ -1,4 +1,4 @@
-__version__ = 'v1'
+__version__ = "v1"
 
 import os
 from datetime import date
@@ -21,18 +21,16 @@ from models import RevisionIn, RevisionOut
 router = fastapi.APIRouter()
 
 api_keys = get_secret(
-        os.getenv("KEY_VAULT"),
-        os.getenv("AWS_ACCESS_KEY"),
-        os.getenv("AWS_SECRET_KEY")
-        )
+    os.getenv("KEY_VAULT"), os.getenv("AWS_ACCESS_KEY"), os.getenv("AWS_SECRET_KEY")
+)
 
 api_key_header = APIKeyHeader(name="api_key", auto_error=False)
+
 
 def api_key_auth(api_key: str = Depends(api_key_header)):
     if api_key not in api_keys:
         raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Forbidden"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Forbidden"
         )
 
     return True
@@ -44,11 +42,13 @@ def postgres_conn():
     return connection
 
 
-@router.get("/revision", dependencies=[Depends(api_key_auth)], response_model=List[RevisionOut])
-async def list_revisions(version_id: Optional[int]=None):
+@router.get(
+    "/revision", dependencies=[Depends(api_key_auth)], response_model=List[RevisionOut]
+)
+async def list_revisions(version_id: Optional[int] = None):
     """
-    Returns a list of revisions. 
-    
+    Returns a list of revisions.
+
     If version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.
     """
 
@@ -69,9 +69,8 @@ async def list_revisions(version_id: Optional[int]=None):
         connection.close()
 
         raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Version id is invalid"
-                )
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Version id is invalid"
+        )
     else:
         if version_id:
             list_revision = queries.list_revisions_query()
@@ -89,12 +88,12 @@ async def list_revisions(version_id: Optional[int]=None):
             version_data = cursor.fetchone()
 
             revision_data = RevisionOut(
-                    id=revision[0],
-                    date=revision[1],
-                    version_id=revision[2],
-                    version_abbreviation=version_data[0],
-                    name=revision[4],
-                    published=revision[3]
+                id=revision[0],
+                date=revision[1],
+                version_id=revision[2],
+                version_abbreviation=version_data[0],
+                name=revision[4],
+                published=revision[3],
             )
 
             revisions_data.append(revision_data)
@@ -105,8 +104,12 @@ async def list_revisions(version_id: Optional[int]=None):
     return revisions_data
 
 
-@router.post("/revision", dependencies=[Depends(api_key_auth)], response_model=RevisionOut)
-async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = File(...)):
+@router.post(
+    "/revision", dependencies=[Depends(api_key_auth)], response_model=RevisionOut
+)
+async def upload_revision(
+    revision: RevisionIn = Depends(), file: UploadFile = File(...)
+):
     """
     Uploads a new revision to the database. The revision must correspond to a version that already exists in the database.
 
@@ -128,20 +131,25 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
 
     # Create a corresponding revision in the database.
     try:
-        cursor.execute(revision_query, (
-        revision.version_id, name,
-        revision_date, revision.published,
-        revision.backTranslation,
-        revision.machineTranslation,
-        ))
+        cursor.execute(
+            revision_query,
+            (
+                revision.version_id,
+                name,
+                revision_date,
+                revision.published,
+                revision.backTranslation,
+                revision.machineTranslation,
+            ),
+        )
     except psycopg2.errors.ForeignKeyViolation:
         cursor.close()
         connection.close()
         raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The backTranslation parameter, if it exists, must be the valid ID of a revision that already exists in the database."
-                )
-    
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The backTranslation parameter, if it exists, must be the valid ID of a revision that already exists in the database.",
+        )
+
     returned_revision = cursor.fetchone()
     connection.commit()
 
@@ -150,12 +158,12 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
     version_data = cursor.fetchone()
 
     revision_query = RevisionOut(
-            id=returned_revision[0],
-            date=returned_revision[1],
-            version_id=returned_revision[2],
-            version_abbreviation=version_data[0],
-            name=returned_revision[4],
-            published=returned_revision[3]
+        id=returned_revision[0],
+        date=returned_revision[1],
+        version_id=returned_revision[2],
+        version_abbreviation=version_data[0],
+        name=returned_revision[4],
+        published=returned_revision[3],
     )
 
     # Parse the input Bible revision data.
@@ -169,17 +177,16 @@ async def upload_revision(revision: RevisionIn = Depends(), file: UploadFile = F
                 verses.append(np.nan)
                 bible_revision.append(revision_query.id)
             else:
-                has_text=True
+                has_text = True
                 verses.append(line.replace("\n", ""))
                 bible_revision.append(revision_query.id)
-    
+
     if not has_text:
         cursor.close()
         connection.close()
 
         raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File has no text."
+            status_code=status.HTTP_400_BAD_REQUEST, detail="File has no text."
         )
 
     # Push the revision to the database.
@@ -223,20 +230,18 @@ async def delete_revision(id: int):
 
         revision_result = cursor.fetchone()
 
-        delete_response = ("Revision " +
-            str(
-                revision_result[0]
-                ) + " deleted successfully"
-            )
+        delete_response = (
+            "Revision " + str(revision_result[0]) + " deleted successfully"
+        )
 
     else:
         cursor.close()
         connection.close()
 
         raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Revision is invalid, this revision id does not exist."
-                )
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Revision is invalid, this revision id does not exist.",
+        )
 
     cursor.close()
     connection.close()

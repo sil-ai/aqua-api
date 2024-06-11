@@ -1,10 +1,4 @@
 # utilities.py
-
-SECRET_KEY = "your_secret_key_here"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-
-
 import bcrypt
 from sqlalchemy.sql import select
 from database.models import (
@@ -14,12 +8,16 @@ from database.models import (
     BibleRevision,
     BibleVersionAccess,
     AssessmentAccess,
-    Assessment
-    
+    Assessment,
 )  # Your SQLAlchemy model
 
 
-## Password hashing and verification
+SECRET_KEY = "your_secret_key_here"
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+
+# Password hashing and verification
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     hashed_password_bytes = hashed_password.encode()
     return bcrypt.checkpw(plain_password.encode(), hashed_password_bytes)
@@ -29,7 +27,7 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
-## Authorization utilities
+# Authorization utilities
 async def is_user_authorized_for_bible_version(user_id, bible_version_id, db):
     # Admins have access to all versions
     result = await db.execute(select(UserDB).where(UserDB.id == user_id))
@@ -38,22 +36,19 @@ async def is_user_authorized_for_bible_version(user_id, bible_version_id, db):
         return True
     # Fetch the groups the user belongs to
     user_groups = (
-        select(UserGroup.group_id)
-        .where(UserGroup.user_id == user_id)
+        select(UserGroup.group_id).where(UserGroup.user_id == user_id)
     ).subquery()
-    
 
     # Check if the Bible version is accessible by one of the user's groups
-    
+
     stmt = (
         select(BibleVersion)
         .join(
-            BibleVersionAccess, 
-            BibleVersion.id == BibleVersionAccess.bible_version_id
+            BibleVersionAccess, BibleVersion.id == BibleVersionAccess.bible_version_id
         )
         .where(
             BibleVersion.id == bible_version_id,
-            BibleVersionAccess.group_id.in_(user_groups)
+            BibleVersionAccess.group_id.in_(user_groups),
         )
     )
     result = await db.execute(stmt)
@@ -71,28 +66,24 @@ async def is_user_authorized_for_revision(user_id, revision_id, db):
 
     # Fetch the groups the user belongs to
     user_groups = (
-        select(UserGroup.group_id)
-        .where(UserGroup.user_id == user_id)
+        select(UserGroup.group_id).where(UserGroup.user_id == user_id)
     ).subquery()
-    
 
     # Check if the revision's Bible version is accessible by one of the user's groups
-    
+
     stmt = (
         select(BibleVersion)
-        .join(
-            BibleRevision, 
-            BibleVersion.id == BibleRevision.bible_version_id
-        )
+        .join(BibleRevision, BibleVersion.id == BibleRevision.bible_version_id)
         .where(
             BibleRevision.id == revision_id,
-            BibleVersionAccess.group_id.in_(user_groups)
+            BibleVersionAccess.group_id.in_(user_groups),
         )
     )
     result = await db.execute(stmt)
     accessible = result.scalars().first()
 
     return accessible is not None
+
 
 async def is_user_authorized_for_assessment(user_id, assessment_id, db):
     # Admins have access to all assessments
@@ -103,8 +94,7 @@ async def is_user_authorized_for_assessment(user_id, assessment_id, db):
 
     # Fetch the groups the user belongs to
     user_groups = (
-        select(UserGroup.group_id)
-        .where(UserGroup.user_id == user_id)
+        select(UserGroup.group_id).where(UserGroup.user_id == user_id)
     ).subquery()
 
     # Check if the assessment is accessible by one of the user's groups

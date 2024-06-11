@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import selectinload
 
 from models import Token, User, Group
 from database.models import UserDB, Group as GroupDB, UserGroup
@@ -24,7 +24,6 @@ from .utilities import (
 router = APIRouter()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="latest/token")
-
 
 
 async def authenticate_user(username: str, password: str, db: AsyncSession):
@@ -47,7 +46,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     return encoded_jwt
 
 
-async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)):
+async def get_current_user(
+    db: AsyncSession = Depends(get_db), token: str = Depends(oauth2_scheme)
+):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -58,14 +59,17 @@ async def get_current_user(db: AsyncSession = Depends(get_db), token: str = Depe
         username: str = payload.get("sub")
         if username is None:
             raise credentials_exception
-        result = await db.execute(select(UserDB).options(selectinload(UserDB.groups)).where(UserDB.username == username))
+        result = await db.execute(
+            select(UserDB)
+            .options(selectinload(UserDB.groups))
+            .where(UserDB.username == username)
+        )
         user = result.scalars().first()
         if user is None:
             raise credentials_exception
         return user
     except JWTError:
         raise credentials_exception
-
 
 
 @router.post("/token", response_model=Token)
@@ -94,8 +98,7 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
 
 @router.get("/groups/me", response_model=List[Group])
 async def get_groups(
-        current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+    current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ):
     stmt = select(GroupDB).join(UserGroup).where(UserGroup.user_id == current_user.id)
     result = await db.execute(stmt)

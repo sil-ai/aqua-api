@@ -1,13 +1,5 @@
-# test_verse_routes_flow.py
-from conftest import (
-    client,
-    regular_token1,
-    regular_token2,
-    db_session,
-)  # Import necessary fixtures
 from database.models import (
     BibleRevision as BibleRevisionModel,
-    VerseText as VerseText,
     BibleVersion as BibleVersionModel,
 )
 from pathlib import Path

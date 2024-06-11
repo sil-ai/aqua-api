@@ -1,4 +1,4 @@
-__version__ = 'v2'
+__version__ = "v2"
 
 import os
 from typing import List
@@ -16,18 +16,16 @@ from models import VersionIn, VersionOut
 router = fastapi.APIRouter()
 
 api_keys = get_secret(
-        os.getenv("KEY_VAULT"),
-        os.getenv("AWS_ACCESS_KEY"),
-        os.getenv("AWS_SECRET_KEY")
-        )
+    os.getenv("KEY_VAULT"), os.getenv("AWS_ACCESS_KEY"), os.getenv("AWS_SECRET_KEY")
+)
 
 api_key_header = APIKeyHeader(name="api_key", auto_error=False)
+
 
 def api_key_auth(api_key: str = Depends(api_key_header)):
     if api_key not in api_keys:
         raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Forbidden"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Forbidden"
         )
 
     return True
@@ -39,12 +37,14 @@ def postgres_con():
     return connection
 
 
-@router.get("/version", dependencies=[Depends(api_key_auth)], response_model=List[VersionOut])
+@router.get(
+    "/version", dependencies=[Depends(api_key_auth)], response_model=List[VersionOut]
+)
 async def list_version():
     """
     Get a list of all versions.
     """
-    
+
     list_versions = queries.list_versions_query()
 
     connection = postgres_con()
@@ -53,18 +53,18 @@ async def list_version():
     query_data = cursor.fetchall()
 
     version_data = []
-    for version in query_data: 
+    for version in query_data:
         data = VersionOut(
-                    id=version[0], 
-                    name=version[1], 
-                    abbreviation=version[4], 
-                    iso_language=version[2], 
-                    iso_script=version[3], 
-                    rights=version[5],
-                    forwardTranslation=version[6],
-                    backTranslation=version[7],
-                    machineTranslation=version[8]
-                    )
+            id=version[0],
+            name=version[1],
+            abbreviation=version[4],
+            iso_language=version[2],
+            iso_script=version[3],
+            rights=version[5],
+            forwardTranslation=version[6],
+            backTranslation=version[7],
+            machineTranslation=version[8],
+        )
 
         version_data.append(data)
 
@@ -74,10 +74,12 @@ async def list_version():
     return version_data
 
 
-@router.post("/version", dependencies=[Depends(api_key_auth)], response_model=VersionOut)
+@router.post(
+    "/version", dependencies=[Depends(api_key_auth)], response_model=VersionOut
+)
 async def add_version(v: VersionIn = Depends()):
     """
-    Create a new version. 
+    Create a new version.
 
     `iso_language` and `iso_script` must be valid ISO39 and ISO 15924 codes, which can be found by GET /language and GET /script.
 
@@ -88,14 +90,20 @@ async def add_version(v: VersionIn = Depends()):
     cursor = connection.cursor()
 
     new_version = queries.add_version_query()
-        
+
     cursor.execute(
-            new_version, (
-                v.name, v.iso_language, v.iso_script,
-                v.abbreviation, v.rights, v.forwardTranslation, 
-                v.backTranslation, v.machineTranslation,
-                )
-            )
+        new_version,
+        (
+            v.name,
+            v.iso_language,
+            v.iso_script,
+            v.abbreviation,
+            v.rights,
+            v.forwardTranslation,
+            v.backTranslation,
+            v.machineTranslation,
+        ),
+    )
 
     connection.commit()
     revision = cursor.fetchone()
@@ -109,7 +117,7 @@ async def add_version(v: VersionIn = Depends()):
         rights=revision[5],
         forwardTranslation=revision[6],
         backTranslation=revision[7],
-        machineTranslation=revision[8]
+        machineTranslation=revision[8],
     )
 
     cursor.close()
@@ -123,10 +131,10 @@ async def delete_version(id: int):
     """
     Delete a version and all associated revisions, text and assessments.
     """
-    
+
     connection = postgres_con()
     cursor = connection.cursor()
-    
+
     fetch_versions = queries.list_versions_query()
     fetch_revisions = queries.list_revisions_query()
     delete_version = queries.delete_bible_version()
@@ -156,9 +164,8 @@ async def delete_version(id: int):
         version_delete_result = cursor.fetchone()
         connection.commit()
 
-        delete_response = ("Version " +
-            version_delete_result[0] +
-            " successfully deleted."
+        delete_response = (
+            "Version " + version_delete_result[0] + " successfully deleted."
         )
 
     else:
@@ -167,7 +174,7 @@ async def delete_version(id: int):
 
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Version abbreviation invalid, version does not exist"
+            detail="Version abbreviation invalid, version does not exist",
         )
 
     cursor.close()

@@ -1,11 +1,8 @@
 import os
 import psycopg2
-import sqlalchemy as db
-import pandas as pd
 from datetime import date
-
-import bible_loading
 import queries
+
 
 def setup_database():
     """Setup database for testing."""
@@ -22,7 +19,10 @@ def setup_database():
         with connection.cursor() as cursor:
             cursor.execute(iso_language_query, ("eng", "english"))
             cursor.execute(iso_script_query, ("Latn", "latin"))
-            cursor.execute(version_query, ("loading_test", "eng", "Latn", "BLTEST", None, None, None, False))
+            cursor.execute(
+                version_query,
+                ("loading_test", "eng", "Latn", "BLTEST", None, None, None, False),
+            )
 
     # Fetch version_id and other setup steps
     fetch_version_query = queries.fetch_bible_version_by_abbreviation()
@@ -37,12 +37,16 @@ def setup_database():
 
     with connection:
         with connection.cursor() as cursor:
-            cursor.execute(revision_query, (version_id, revision_date, None, False, None, None, True))
+            cursor.execute(
+                revision_query,
+                (version_id, revision_date, None, False, None, None, True),
+            )
             revision_response = cursor.fetchone()
             revision_id = revision_response[0]
 
     connection.close()
     return revision_id
+
 
 def teardown_database(revision_id):
     """Teardown database after testing."""
@@ -60,6 +64,7 @@ def teardown_database(revision_id):
 
     connection.close()
     return delete_check
+
 
 # Your test functions here...
 

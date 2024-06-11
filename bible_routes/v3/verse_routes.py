@@ -29,7 +29,7 @@ async def get_chapter(
 ):
     """
     Gets a list of verse texts for a revision for a given chapter.
-    
+
     Input:
     - revision_id: int
     Description: The unique identifier for the revision.
@@ -37,7 +37,7 @@ async def get_chapter(
     Description: The book of the Bible. e.g GEN, EXO, PSA.
     - chapter: int
     Description: The chapter of the book. e.g 1, 2, 3.
-    
+
     Returns:
     Fields(VerseText):
     - id: int
@@ -61,7 +61,6 @@ async def get_chapter(
             detail="User not authorized to access this revision.",
         )
 
-    
     stmt = (
         select(
             VerseModel.id,
@@ -98,7 +97,7 @@ async def get_chapter(
         )
         for verse in result
     ]
-     
+
     return chapter_data
 
 
@@ -113,7 +112,7 @@ async def get_verse(
 ):
     """
     Gets a single verse text for a revision for a given book, chapter, and verse.
-    
+
     Input:
     - revision_id: int
     Description: The unique identifier for the revision.
@@ -123,7 +122,7 @@ async def get_verse(
     Description: The chapter of the book. e.g 1, 2, 3.
     - verse: int
     Description: The verse number. e.g 1, 2, 3.
-    
+
     Returns:
     Fields(VerseText):
     - id: int
@@ -140,7 +139,7 @@ async def get_verse(
     Description: The chapter of the book.
     - verse: int
     Description: The verse number.
-    
+
     """
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
@@ -160,7 +159,7 @@ async def get_verse(
     )
     result = await db.execute(stmt)
     verses = result.scalars().all()
-    
+
     return verses
 
 
@@ -173,13 +172,13 @@ async def get_book(
 ):
     """
     Gets a list of verse texts for a revision for a given book.
-    
+
     Input:
     - revision_id: int
-    Description: The unique identifier for the revision. 
+    Description: The unique identifier for the revision.
     - book: str
     Description: The book of the Bible. e.g GEN, EXO, PSA.
-    
+
     Returns:
     Fields(VerseText):
     - id: int
@@ -223,11 +222,11 @@ async def get_text(
 ):
     """
     Gets a list of verse texts for a whole revision.
-    
+
     Input:
     - revision_id: int
     Description: The unique identifier for the revision.
-    
+
     Returns:
     Fields(VerseText):
     - id: int

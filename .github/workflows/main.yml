@@ -17,25 +17,25 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v2
 
-    - name: Linting (Ruff)
+    - name: Linting (Flake8)
       run: |
         python -m pip install --upgrade pip
-        pip install ruff
-    #     ruff --ignore E501 --output-format=github .
-      
+        pip install flake8
+        flake8 . --exclude='**/v1/**,**/v2/**,./venv,./alembic' --ignore=E501,W503,E203
+
     - name: Build API
       run: make build-actions
       env:
         REGISTRY: ${{ env.AWS_REGISTRY }}
-      
+
     - name: Test API
-      env: 
+      env:
         OMIT_PREVIOUS_VERSIONS: true
         MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
       run: |
         pip install -r requirements.txt
         make test
-      
+
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
@@ -53,4 +53,4 @@ jobs:
       env:
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
 
-        
+

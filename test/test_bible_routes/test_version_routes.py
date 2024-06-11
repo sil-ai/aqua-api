@@ -1,13 +1,3 @@
-from conftest import (
-    test_db_session,
-    TestingSessionLocal,
-    regular_token1,
-    regular_token2,
-    admin_token,
-    client,
-    db_session,
-)
-
 from database.models import (
     UserDB as UserModel,
     UserGroup,
@@ -24,7 +14,7 @@ new_version_data = {
     "abbreviation": "NV",
     "rights": "Some Rights",
     "machineTranslation": False,
-    "is_reference": True
+    "is_reference": True,
 }
 
 
@@ -66,7 +56,6 @@ class TestRegularUserFlow:
         assert user.username == "testuser1"
         assert group.name == "Group1"
 
-
         # Step 2: List versions as a regular user
         list_response = client.get(f"{prefix}/version", headers=headers)
         assert list_response.status_code == 200
@@ -98,102 +87,99 @@ class TestRegularUserFlow:
             "id": version_id,
             "name": "Updated Version",
         }
-        
+
         update_response = client.put(
             f"{prefix}/version",
             json=attr_update,
             headers=headers,
         )
         assert update_response.status_code == 200
-        
+
         # Checking the name change in the db
         version_in_db = (
             db_session.query(BibleVersionModel).filter_by(id=version_id).first()
         )
         assert version_in_db.name == "Updated Version"
-        
+
         # Add to a new group 4
         # Create a second group for the first regular user
         group_4 = Group(name="Group4", description="Test Group 4")
         db_session.add(group_4)
         db_session.commit()
-        
+
         # Associate both regular users with the new group
         user_1 = db_session.query(UserModel).filter_by(username="testuser1").first()
         user_group4 = UserGroup(user_id=user_1.id, group_id=group_4.id)
         db_session.add(user_group4)
         db_session.commit()
-        
+
         # Test: Adding to a group the user do not belong to(5), and other it belongs(4)
         # It shouldn't add neither
         # Create a group user does not belong to
         group_5 = Group(name="Group5", description="Test Group 5")
         db_session.add(group_5)
         db_session.commit()
-        
-        
-        attr_update = { 
-            "id": version_id,
-            "add_to_groups": [group_5.id, group_4.id]
-        }
+
+        attr_update = {"id": version_id, "add_to_groups": [group_5.id, group_4.id]}
         # Add the version to group 5
         update_response = client.put(
-            f"{prefix}/version",
-            json=attr_update,
-            headers = headers
-        ) 
-        
+            f"{prefix}/version", json=attr_update, headers=headers
+        )
+
         assert update_response.status_code == 403
-        assert update_response.json().get("detail") == "User not authorized to add version to this group."
-        
+        assert (
+            update_response.json().get("detail")
+            == "User not authorized to add version to this group."
+        )
+
         # Check in database that the version is not part of group 5
         bible_access = (
             db_session.query(BibleVersionAccess)
-            .filter(BibleVersionAccess.bible_version_id ==version_id, BibleVersionAccess.group_id == group_5.id).first()
+            .filter(
+                BibleVersionAccess.bible_version_id == version_id,
+                BibleVersionAccess.group_id == group_5.id,
+            )
+            .first()
         )
         assert bible_access is None
-        
+
         # Check in database that the version is not part of group 4
         bible_access = (
             db_session.query(BibleVersionAccess)
-            .filter(BibleVersionAccess.bible_version_id ==version_id, BibleVersionAccess.group_id == group_4.id).first()
+            .filter(
+                BibleVersionAccess.bible_version_id == version_id,
+                BibleVersionAccess.group_id == group_4.id,
+            )
+            .first()
         )
         assert bible_access is None
-        
+
         # Now, adding it correctly to a group it does belong to
-        
-        
-        attr_update = { 
-            "id": version_id,
-            "add_to_groups": [group_4.id]
-        }
+
+        attr_update = {"id": version_id, "add_to_groups": [group_4.id]}
         # Add the version to group 4
         update_response = client.put(
-            f"{prefix}/version",
-            json=attr_update,
-            headers = headers
-        ) 
-        
+            f"{prefix}/version", json=attr_update, headers=headers
+        )
+
         assert update_response.status_code == 200
-        
-        
+
         # Assert that the version is part of group 4
         bible_access = (
             db_session.query(BibleVersionAccess)
-            .filter(BibleVersionAccess.bible_version_id ==version_id, BibleVersionAccess.group_id == group_4.id).first()
+            .filter(
+                BibleVersionAccess.bible_version_id == version_id,
+                BibleVersionAccess.group_id == group_4.id,
+            )
+            .first()
         )
-        
+
         assert bible_access is not None
 
-        attr_update = {
-            "id": version_id,
-            "remove_from_groups": [group_4.id]
-        }
+        attr_update = {"id": version_id, "remove_from_groups": [group_4.id]}
         # Remove the version from group 4
         update_response = client.put(
-            f"{prefix}/version",
-            json=attr_update,
-            headers = headers
+            f"{prefix}/version", json=attr_update, headers=headers
         )
 
         assert update_response.status_code == 200
@@ -201,33 +187,29 @@ class TestRegularUserFlow:
         # Assert that the version is not part of group 4
         bible_access = (
             db_session.query(BibleVersionAccess)
-            .filter(BibleVersionAccess.bible_version_id ==version_id, BibleVersionAccess.group_id == group_4.id).first()
+            .filter(
+                BibleVersionAccess.bible_version_id == version_id,
+                BibleVersionAccess.group_id == group_4.id,
+            )
+            .first()
         )
 
         assert bible_access is None
-        
-        
-        #Assert user 2 has no right to modify the version 
-        
-        attr_update = { 
-            "id": version_id,
-            "name": "New Version 2"
-        }
-        
-        
+
+        # Assert user 2 has no right to modify the version
+
+        attr_update = {"id": version_id, "name": "New Version 2"}
+
         list_response = client.put(
-            f"{prefix}/version", 
-            headers=headers2,
-            json=attr_update
+            f"{prefix}/version", headers=headers2, json=attr_update
         )
         assert list_response.status_code == 403
-        assert list_response.json().get("detail") == "User not authorized to modify this version."
-        
-      
-        attr_update = {
-            "id": version_id,
-            "name" : "Updated Version 2"
-        }
+        assert (
+            list_response.json().get("detail")
+            == "User not authorized to modify this version."
+        )
+
+        attr_update = {"id": version_id, "name": "Updated Version 2"}
         # check that user 2 cannot update the version
         update_response = client.put(
             f"{prefix}/version",
@@ -251,8 +233,7 @@ class TestRegularUserFlow:
         )
 
         assert version_in_db is None
-        
-        
+
         # Delete association between user and group 4
         user_group4 = (
             db_session.query(UserGroup)
@@ -261,12 +242,7 @@ class TestRegularUserFlow:
         )
         db_session.delete(user_group4)
         db_session.commit()
-        
-        
 
-       
-        
-        
 
 class TestAdminFlow:
     def test_admin_create_list_and_delete_version(
@@ -347,8 +323,7 @@ class TestAdminFlow:
             db_session.query(BibleVersionModel).filter_by(id=version_id_2).first()
         )
         assert version_in_db_2 is not None
-        
-        
+
         # Verify user 1 can access both versions
         list_response = client.get(f"{prefix}/version", headers=headers)
         assert list_response.status_code == 200
@@ -357,10 +332,10 @@ class TestAdminFlow:
         assert versions[0]["id"] == version_id_1
         assert versions[1]["id"] == version_id_2
         # Verify that version 1 is associated with group 1 and group 3
-        assert versions[0]["group_ids"] == [group_1.id, group_3.id]                    
+        assert versions[0]["group_ids"] == [group_1.id, group_3.id]
         # Verify that version 2 is associated with group 1
         assert versions[1]["group_ids"] == [group_1.id]
-        
+
         # Verify user 2 can access only the first version
         headers = {"Authorization": f"Bearer {regular_token2}"}
         list_response = client.get(f"{prefix}/version", headers=headers)
@@ -403,7 +378,3 @@ class TestAdminFlow:
             .first()
         )
         assert version_in_db_2 is None
-        
-        
-        
-       
