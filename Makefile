@@ -1,6 +1,6 @@
 all: build-local
 
-IMAGENAME=aqua-api-aws
+IMAGENAME ?=aqua-api-dev
 REGISTRY ?= docker-local
 GH_BRANCH=$(shell basename ${GITHUB_REF})
 
