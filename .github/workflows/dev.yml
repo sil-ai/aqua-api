@@ -3,11 +3,11 @@ name: branch-build
 on:
   push:
     branches:
-      - aws_new_backend
+      - development
 
 env:
   AWS_REGISTRY: 279795702643.dkr.ecr.us-east-1.amazonaws.com
-  IMAGE_NAME: aqua-api-aws
+  IMAGE_NAME: aqua-api-dev
 
 jobs:
 
