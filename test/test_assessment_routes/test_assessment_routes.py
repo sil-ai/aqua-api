@@ -78,7 +78,7 @@ def test_add_assessment_success(
     assessment_data = {
         "revision_id": revision_id,
         "reference_id": reference_revision_id,
-        "type": "missing-words",
+        "type": "word-alignment",
     }
 
     with patch(
@@ -95,7 +95,7 @@ def test_add_assessment_success(
 
         assert response.status_code == 200
         assert len(response.json()) == 1
-        assert response.json()[0]["type"] == "missing-words"
+        assert response.json()[0]["type"] == "word-alignment"
         assert response.json()[0]["status"] is not None
         assert response.json()[0]["revision_id"] == revision_id
         assert response.json()[0]["reference_id"] == reference_revision_id
@@ -116,7 +116,7 @@ def test_add_assessment_success(
             db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
         )
         assert assessment is not None
-        assert assessment.type == "missing-words"
+        assert assessment.type == "word-alignment"
         assert assessment.status == "queued"
         user = (
             db_session.query(UserDB.id).filter(UserDB.username == "testuser1").first()
@@ -141,7 +141,7 @@ def test_add_assessment_success(
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["status"] == "queued"
-    assert response.json()[0]["type"] == "missing-words"
+    assert response.json()[0]["type"] == "word-alignment"
     assert response.json()[0]["revision_id"] == revision_id
     assert response.json()[0]["reference_id"] == reference_revision_id
     assert response.json()[0]["id"] == assessment_id
@@ -164,7 +164,7 @@ def test_add_assessment_success(
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["status"] == "queued"
-    assert response.json()[0]["type"] == "missing-words"
+    assert response.json()[0]["type"] == "word-alignment"
     assert response.json()[0]["revision_id"] == revision_id
     assert response.json()[0]["reference_id"] == reference_revision_id
     assert response.json()[0]["id"] == assessment_id
@@ -207,7 +207,7 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
     assessment_data = {
         "revision_id": revision_id,
         "reference_id": reference_revision_id,
-        "type": "missing-words",
+        "type": "word-alignment",
     }
 
     with patch(
