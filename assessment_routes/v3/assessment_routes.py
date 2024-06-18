@@ -168,7 +168,7 @@ async def add_assessment(
     modal_suffix = modal_suffix or os.getenv("MODAL_SUFFIX", "")
 
     if (
-        a.type in ["missing-words", "semantic-similarity", "word-alignment"]
+        a.type in ["semantic-similarity", "word-alignment"]
         and a.reference_id is None
     ):
         raise HTTPException(
