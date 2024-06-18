@@ -113,7 +113,7 @@ async def build_results_query(
     )
     # For missing words, if not reverse, we only want the non-null source results
     only_non_null = (
-        assessment_type in ["question-answering", "word-tests"]
+        assessment_type in ["missing-words", "question-answering", "word-tests"]
         and not reverse
     )
     if only_non_null:
