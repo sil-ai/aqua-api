@@ -4,7 +4,7 @@ from jose import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from .utilities import hash_password
-from models import PasswordChangeRequest, User, Group
+from models import User, Group
 from database.models import (
     UserDB,
     UserGroup,
@@ -58,7 +58,7 @@ async def create_user(
 
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
-    if user.password is None:
+    if password is None:
         raise HTTPException(status_code=400, detail="Password is required")
     hashed_password = hash_password(password)
     db_user = UserDB(
