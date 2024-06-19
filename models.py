@@ -360,7 +360,6 @@ class User(BaseModel):
     username: str
     email: Optional[EmailStr] = None  # Assuming users have an email field
     is_admin: Optional[bool] = False
-    password: Optional[str] = None
 
     class Config:
         orm_mode = True
@@ -383,3 +382,8 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+
+class PasswordChangeRequest(BaseModel):
+    username: str
+    new_password: str
