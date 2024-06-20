@@ -1,0 +1,59 @@
+name: branch-build
+
+on:
+  push:
+    branches:
+      - development
+
+env:
+  AWS_REGISTRY: 279795702643.dkr.ecr.us-east-1.amazonaws.com
+  IMAGE_NAME: aqua-api-dev
+
+jobs:
+
+  tests:
+    name: Building and pushing main branch images
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Linting (Flake8)
+      run: |
+        python -m pip install --upgrade pip
+        pip install flake8
+        flake8 . --exclude='**/v1/**,**/v2/**,./venv,./alembic' --ignore=E501,W503,E203
+
+    - name: Build API
+      run: make build-actions
+      env:
+        REGISTRY: ${{ env.AWS_REGISTRY }}
+        IMAGENAME: ${{ env.IMAGE_NAME }}
+
+    - name: Test API
+      env:
+        OMIT_PREVIOUS_VERSIONS: true
+        MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
+      run: |
+        pip install -r requirements.txt
+        make test
+
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_KEY }}
+        aws-region: us-east-1
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Push API
+      run: make push-branch
+      env:
+        REGISTRY: ${{ secrets.AWS_REGISTRY }}
+        IMAGENAME: ${{ env.IMAGE_NAME }}
+
+
