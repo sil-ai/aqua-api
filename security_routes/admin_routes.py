@@ -83,7 +83,7 @@ async def create_user(
 # create group endpoint
 @router.post("/groups", response_model=Group)
 async def create_group(
-    group: Group,
+    group: Group=Depends(),
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
 ):
