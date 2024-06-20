@@ -10,8 +10,6 @@ from sqlalchemy import select, update
 
 from models import VersionIn, VersionUpdate, VersionOut_v3 as VersionOut
 from database.models import (
-    Assessment,
-    AssessmentAccess,
     UserDB as UserModel,
     UserGroup,
     BibleVersion as BibleVersionModel,
@@ -288,50 +286,10 @@ async def modify_version(
                     detail="User not authorized to add version to this group.",
                 )
             else:
-                # Check if it already has access
-                stmt = (
-                    select(BibleVersionAccess)
-                    .where(BibleVersionAccess.bible_version_id == version_update.id)
-                    .where(BibleVersionAccess.group_id == group_id)
-                )
-                result = await db.execute(stmt)
-                access_rows = result.scalars().all()
-                if access_rows:
-                    continue
-                # Update Bible version permission
                 access = BibleVersionAccess(
                     bible_version_id=version_update.id, group_id=group_id
                 )
                 db.add(access)
-
-
-                # Bring assessments for current version
-                stmt = select(Assessment).where(
-                    Assessment.bible_version_id == version_update.id
-                )
-                result = await db.execute(stmt)
-                assessments = result.scalars().all()
-                # Update Assessment permission for each assessment
-                for assessment in assessments:
-                    # Check if it already has access
-                    stmt = (
-                        select(AssessmentAccess)
-                        .where(AssessmentAccess.assessment_id == assessment.id)
-                        .where(AssessmentAccess.group_id == group_id)
-                    )
-                    result = await db.execute(stmt)
-                    access_rows = result.scalars().all()
-                    if access_rows:
-                        continue
-
-                    assessment_access = AssessmentAccess(
-                        assessment_id=assessment.id,
-                        group_id=group_id
-                    )
-                    db.add(assessment_access)
-
-
-
         await db.commit()
 
     if "add_to_groups" in version_data:
