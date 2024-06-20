@@ -113,8 +113,7 @@ async def build_results_query(
     )
     # For missing words, if not reverse, we only want the non-null source results
     only_non_null = (
-        assessment_type in ["question-answering", "word-tests"]
-        and not reverse
+        assessment_type in ["question-answering", "word-tests"] and not reverse
     )
     if only_non_null:
         base_query = base_query.where(AssessmentResult.source.isnot(None))

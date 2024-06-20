@@ -167,10 +167,7 @@ async def add_assessment(
     """
     modal_suffix = modal_suffix or os.getenv("MODAL_SUFFIX", "")
 
-    if (
-        a.type in ["semantic-similarity", "word-alignment"]
-        and a.reference_id is None
-    ):
+    if a.type in ["semantic-similarity", "word-alignment"] and a.reference_id is None:
         raise HTTPException(
             status_code=400, detail=f"Assessment type {a.type} requires a reference_id."
         )
