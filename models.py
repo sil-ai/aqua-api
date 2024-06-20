@@ -359,7 +359,6 @@ class User(BaseModel):
     username: str
     email: Optional[EmailStr] = None  # Assuming users have an email field
     is_admin: Optional[bool] = False
-    password: Optional[str] = None
 
     class Config:
         orm_mode = True
