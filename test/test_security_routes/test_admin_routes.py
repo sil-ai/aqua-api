@@ -85,7 +85,9 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
 
     # Assert the user was not created
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert response.json()["detail"] == "Admin users cannot be created using this endpoint"
+    assert (
+        response.json()["detail"] == "Admin users cannot be created using this endpoint"
+    )
 
     # Check in the database that the user was not created
     assert not user_exists(test_db_session, admin_user_data["username"])
