@@ -61,7 +61,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     response = client.post(
         f"{prefix}/users",
         params=new_user_data,
-        data = new_auth_data,
+        data=new_auth_data,
         headers={"Authorization": f"Bearer {admin_token}"},
     )
 

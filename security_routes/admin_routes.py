@@ -83,7 +83,7 @@ async def create_user(
 # create group endpoint
 @router.post("/groups", response_model=Group)
 async def create_group(
-    group: Group=Depends(),
+    group: Group = Depends(),
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
 ):
@@ -246,7 +246,7 @@ async def change_password(
     _: UserDB = Depends(get_current_admin),
 ):
     username = form_data.username
-    new_password = form_data.password # new password
+    new_password = form_data.password  # new password
     result = await db.execute(select(UserDB).where(UserDB.username == username))
     user = result.scalars().first()
 
