@@ -2,7 +2,7 @@
 from pathlib import Path
 from database.models import (
     Assessment,
-    AssessmentAccess,
+    BibleVersionAccess,
     UserGroup,
     UserDB,
     UserDB as UserModel,
@@ -111,7 +111,7 @@ def test_add_assessment_success(
 
         assessment_id = response.json()[0]["id"]
 
-        # Now check the status of the Assessment and AssessmentAccess tables
+        # Now check the status of the Assessment and versions accessed through the group
         assessment = (
             db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
         )
@@ -127,13 +127,14 @@ def test_add_assessment_success(
             .first()
         )
 
-        access = (
-            db_session.query(AssessmentAccess)
-            .filter(AssessmentAccess.assessment_id == assessment_id)
-            .first()
+        list_version_id = (
+            db_session.query(BibleVersionAccess.bible_version_id)
+            .filter(BibleVersionAccess.group_id == user_group.group_id)
         )
-        assert access is not None
-        assert access.group_id in user_group
+
+        assert list_version_id is not None
+        assert version_id in list_version_id
+
 
     # get the assesement status
     response = list_assessment(client, regular_token1)

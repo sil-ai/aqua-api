@@ -2,7 +2,6 @@ import pandas as pd
 from database.models import (
     Assessment,
     AssessmentResult,
-    AssessmentAccess,
     BibleRevision,
     BibleVersion,
     UserDB,
@@ -37,11 +36,6 @@ def setup_assessments_results(db_session):
     assessments = db_session.query(Assessment.id).first()
     first_assessment_id = assessments[0]
 
-    # update assessmentaccess so group 1 has access to the first assessment
-    group = db_session.query(Group.id).first()
-    new_access = AssessmentAccess(assessment_id=first_assessment_id, group_id=group[0])
-    db_session.add(new_access)
-    db_session.commit()
     return first_assessment_id
 
 

@@ -1,5 +1,7 @@
 # utilities.py
 import bcrypt
+from sqlalchemy.orm import aliased
+from sqlalchemy import or_
 from sqlalchemy.sql import select
 from database.models import (
     UserGroup,
@@ -7,7 +9,6 @@ from database.models import (
     UserDB,
     BibleRevision,
     BibleVersionAccess,
-    AssessmentAccess,
     Assessment,
 )  # Your SQLAlchemy model
 
@@ -97,15 +98,29 @@ async def is_user_authorized_for_assessment(user_id, assessment_id, db):
         select(UserGroup.group_id).where(UserGroup.user_id == user_id)
     ).subquery()
 
-    # Check if the assessment is accessible by one of the user's groups
+    # Fetch versions accesible by those groups
+    version_ids = (
+        select(BibleVersion.id)
+        .join(BibleVersionAccess, BibleVersion.id == BibleVersionAccess.bible_version_id)
+        .where(BibleVersionAccess.group_id.in_(user_groups))
+    ).subquery()
+
+    ReferenceRevision = aliased(BibleRevision)
+
+    # Check if the assessment is accessible by one or both revisions
     assessment_query = (
-        select(Assessment)
-        .join(AssessmentAccess, Assessment.id == AssessmentAccess.assessment_id)
-        .where(
-            Assessment.id == assessment_id,
-            AssessmentAccess.group_id.in_(user_groups),
+            select(Assessment)
+            .join(BibleRevision, BibleRevision.id == Assessment.revision_id)
+            .outerjoin(ReferenceRevision, ReferenceRevision.id == Assessment.reference_id, isouter=True)
+            .filter(
+                BibleRevision.bible_version_id.in_(version_ids),
+                or_(
+                    Assessment.reference_id == None,
+                    ReferenceRevision.bible_version_id.in_(version_ids),
+                )
+            )
         )
-    )
+
     assessment_result = await db.execute(assessment_query)
     accessible = assessment_result.scalars().first()
 
