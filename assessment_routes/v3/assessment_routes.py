@@ -94,7 +94,7 @@ async def get_assessments(
         stmt = (
             select(Assessment)
             .join(BibleRevision, BibleRevision.id == Assessment.revision_id)
-            .outerjoin(ReferenceRevision, ReferenceRevision.id == Assessment.reference_id, isouter=True)
+            .outerjoin(ReferenceRevision, ReferenceRevision.id == Assessment.reference_id)
             .filter(
                 BibleRevision.bible_version_id.in_(version_ids),
                 or_(

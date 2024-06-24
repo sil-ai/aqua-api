@@ -111,7 +111,7 @@ async def is_user_authorized_for_assessment(user_id, assessment_id, db):
     assessment_query = (
             select(Assessment)
             .join(BibleRevision, BibleRevision.id == Assessment.revision_id)
-            .outerjoin(ReferenceRevision, ReferenceRevision.id == Assessment.reference_id, isouter=True)
+            .outerjoin(ReferenceRevision, ReferenceRevision.id == Assessment.reference_id)
             .filter(
                 BibleRevision.bible_version_id.in_(version_ids),
                 or_(

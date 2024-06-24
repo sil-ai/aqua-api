@@ -127,10 +127,12 @@ def test_add_assessment_success(
             .first()
         )
 
-        list_version_id = (
+        accessible_versions = (
             db_session.query(BibleVersionAccess.bible_version_id)
             .filter(BibleVersionAccess.group_id == user_group.group_id)
         )
+
+        list_version_id = [version.bible_version_id for version in accessible_versions]
 
         assert list_version_id is not None
         assert version_id in list_version_id
