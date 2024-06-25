@@ -91,6 +91,14 @@ async def get_assessments(
 
         ReferenceRevision = aliased(BibleRevision)
 
+        # Explanation query:
+        # Select all assessments where the Bible version of the revision is accessible by the user
+        # (The revision of the assessment will always exist)
+        # Then we make an outer join with the reference revision, in case the assessment has a reference, it brings it, otherwise it brings None
+        # Filtering:
+        # - The Bible version of the revision is accessible by the user
+        # AND
+        # - Either the assessment has no reference, or it it has, the Bible version of the reference is accessible by the user
         stmt = (
             select(Assessment)
             .join(BibleRevision, BibleRevision.id == Assessment.revision_id)

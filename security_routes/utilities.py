@@ -93,17 +93,19 @@ async def is_user_authorized_for_assessment(user_id, assessment_id, db):
     if user and user.is_admin:
         return True
 
-    # Fetch the groups the user belongs to
-    user_groups = (
-        select(UserGroup.group_id).where(UserGroup.user_id == user_id)
-    ).subquery()
+    stmt = select(UserGroup.group_id).where(UserGroup.user_id == user.id)
+    result = await db.execute(stmt)
+    user_groups = [group_id[0] for group_id in result.all()]
 
-    # Fetch versions accesible by those groups
-    version_ids = (
-        select(BibleVersion.id)
-        .join(BibleVersionAccess, BibleVersion.id == BibleVersionAccess.bible_version_id)
-        .where(BibleVersionAccess.group_id.in_(user_groups))
-    ).subquery()
+    # Get versions the user has access to through their access to groups
+    stmt = (
+        select(BibleVersionAccess.bible_version_id).where(
+            BibleVersionAccess.group_id.in_(user_groups)
+        )
+    )
+    result = await db.execute(stmt)
+    version_ids = [version_id[0] for version_id in result.all()]
+
 
     ReferenceRevision = aliased(BibleRevision)
 
