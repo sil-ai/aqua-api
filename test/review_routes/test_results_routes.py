@@ -4,6 +4,7 @@ from database.models import (
     AssessmentResult,
     BibleRevision,
     BibleVersion,
+    BibleVersionAccess,
     UserDB,
     Group,
 )
@@ -31,6 +32,21 @@ def setup_assessments_results(db_session):
         db_session.add(Assessment(**row.to_dict()))
     for _, row in assessment_result_df.iterrows():
         db_session.add(AssessmentResult(**row.to_dict()))
+    db_session.commit()
+
+    # Add access from group 1 to the bible version in bible version access
+    group = db_session.query(Group.id).first()
+
+    revision_access = BibleVersionAccess(
+        bible_version_id=115, group_id=group[0]
+    )
+    db_session.add(revision_access)
+    db_session.commit()
+
+    reference_access = BibleVersionAccess(
+        bible_version_id=505, group_id=group[0]
+    )
+    db_session.add(reference_access)
     db_session.commit()
 
     assessments = db_session.query(Assessment.id).first()
