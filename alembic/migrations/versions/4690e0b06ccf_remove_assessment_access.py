@@ -1,8 +1,8 @@
-"""assessment access removed
+"""remove assessment access
 
-Revision ID: f641e70baa2e
+Revision ID: 4690e0b06ccf
 Revises: c3998d68f8f5
-Create Date: 2024-07-02 17:47:25.361735
+Create Date: 2024-07-03 06:51:17.928671
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'f641e70baa2e'
+revision: str = '4690e0b06ccf'
 down_revision: Union[str, None] = 'c3998d68f8f5'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
