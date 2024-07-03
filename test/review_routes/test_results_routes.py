@@ -41,16 +41,16 @@ def setup_assessments_results(db_session):
         bible_version_id=115, group_id=group[0]
     )
     db_session.add(revision_access)
-    db_session.commit()
 
     reference_access = BibleVersionAccess(
         bible_version_id=505, group_id=group[0]
     )
-    db_session.add(reference_access)
-    db_session.commit()
 
     assessments = db_session.query(Assessment.id).first()
     first_assessment_id = assessments[0]
+
+    db_session.add(reference_access)
+    db_session.commit()
 
     return first_assessment_id
 
