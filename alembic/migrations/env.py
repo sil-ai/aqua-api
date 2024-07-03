@@ -32,6 +32,8 @@ load_dotenv()
 
 # Construct the DATABASE_URL from the environment variables
 DATABASE_URL = os.getenv("AQUA_DB")
+if DATABASE_URL.startswith("postgresql://"):
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
 print(DATABASE_URL)
 
 

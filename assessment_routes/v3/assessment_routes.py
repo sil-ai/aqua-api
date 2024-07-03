@@ -100,7 +100,7 @@ async def get_assessments(
         # AND
         # - Either the assessment has no reference, or it it has, the Bible version of the reference is accessible by the user
         stmt = (
-            select(Assessment)
+            select(Assessment).distinct(Assessment.id)
             .join(BibleRevision, BibleRevision.id == Assessment.revision_id)
             .outerjoin(ReferenceRevision, ReferenceRevision.id == Assessment.reference_id)
             .filter(
