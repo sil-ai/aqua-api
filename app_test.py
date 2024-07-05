@@ -334,9 +334,7 @@ def test_result(client):
         reference_id=revision_ids[1],
         type="word-alignment",
     )
-    response = client.post(
-        "/assessment", params={**good_config.dict()}
-    )
+    response = client.post("/assessment", params={**good_config.dict()})
     assert response.status_code == 200
     assessment_id = response.json()["id"]
 
