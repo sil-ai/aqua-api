@@ -11,11 +11,19 @@ from fastapi import Depends, HTTPException, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import aliased
+from sqlalchemy import or_
 import fastapi
 
 # Local application imports
 from models import AssessmentIn, AssessmentOut
-from database.models import UserDB as UserModel, UserGroup, AssessmentAccess, Assessment
+from database.models import (
+    BibleRevision,
+    BibleVersionAccess,
+    UserDB as UserModel,
+    UserGroup,
+    Assessment,
+)
 from database.dependencies import get_db
 from security_routes.auth_routes import get_current_user
 import logging
@@ -77,16 +85,40 @@ async def get_assessments(
         result = await db.execute(stmt)
         user_group_ids = [group_id[0] for group_id in result.all()]
 
-        # Get assessments that the user has access to through their groups
+        # Get versions the user has access to through their access to groups
+        stmt = select(BibleVersionAccess.bible_version_id).where(
+            BibleVersionAccess.group_id.in_(user_group_ids)
+        )
+        result = await db.execute(stmt)
+        version_ids = [version_id[0] for version_id in result.all()]
+        # Get assessments that the user has access to through their access to revision and reference
+
+        ReferenceRevision = aliased(BibleRevision)
+
+        # Explanation query:
+        # Select all assessments where the Bible version of the revision is accessible by the user
+        # (The revision of the assessment will always exist)
+        # Then we make an outer join with the reference revision, in case the assessment has a reference, it brings it, otherwise it brings None
+        # Filtering:
+        # - The Bible version of the revision is accessible by the user
+        # AND
+        # - Either the assessment has no reference, or it it has, the Bible version of the reference is accessible by the user
         stmt = (
             select(Assessment)
             .distinct(Assessment.id)
-            .join(AssessmentAccess, Assessment.id == AssessmentAccess.assessment_id)
-            .where(
-                AssessmentAccess.group_id.in_(user_group_ids),
-                Assessment.deleted.is_(False),
+            .join(BibleRevision, BibleRevision.id == Assessment.revision_id)
+            .outerjoin(
+                ReferenceRevision, ReferenceRevision.id == Assessment.reference_id
+            )
+            .filter(
+                BibleRevision.bible_version_id.in_(version_ids),
+                or_(
+                    Assessment.reference_id is None,
+                    ReferenceRevision.bible_version_id.in_(version_ids),
+                ),
             )
         )
+
         result = await db.execute(stmt)
         assessments = result.scalars().all()
 
@@ -185,17 +217,6 @@ async def add_assessment(
     await db.commit()
     await db.refresh(assessment)
     a.id = assessment.id
-
-    # If the user is not an admin, link the assessment to their groups
-    if not current_user.is_admin:
-        result = await db.execute(
-            select(UserGroup.group_id).filter(UserGroup.user_id == current_user.id)
-        )
-        user_groups = result.all()
-        for (group_id,) in user_groups:
-            access = AssessmentAccess(assessment_id=assessment.id, group_id=group_id)
-            db.add(access)
-        await db.commit()
 
     # Call runner using helper function
     response = await call_assessment_runner(a, modal_suffix, return_all_results)
