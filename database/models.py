@@ -73,9 +73,6 @@ class Assessment(Base):
     results = relationship(
         "AssessmentResult", cascade="all, delete", back_populates="assessment"
     )
-    accessible_by = relationship(
-        "AssessmentAccess", cascade="all, delete", back_populates="assessment"
-    )
     revision = relationship(
         "BibleRevision",
         foreign_keys=[revision_id],
@@ -106,18 +103,6 @@ class AssessmentResult(Base):
 
     assessment_id = Column(Integer, ForeignKey("assessment.id"))
     assessment = relationship("Assessment", back_populates="results")
-
-
-class AssessmentAccess(Base):
-    __tablename__ = "assessment_access"
-
-    id = Column(Integer, primary_key=True)
-    assessment_id = Column(Integer, ForeignKey("assessment.id"), nullable=False)
-    group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
-
-    # Relationships
-    assessment = relationship("Assessment", back_populates="accessible_by")
-    group = relationship("Group", back_populates="assessments_access")
 
 
 class BibleRevision(Base):
@@ -271,9 +256,6 @@ class Group(Base):
     description = Column(Text)
     # Relationship with UserGroups
     users = relationship("UserGroup", back_populates="group")
-    assessments_access = relationship(
-        "AssessmentAccess", back_populates="group", cascade="all, delete"
-    )
     bible_versions_access = relationship(
         "BibleVersionAccess", back_populates="group", cascade="all, delete"
     )
