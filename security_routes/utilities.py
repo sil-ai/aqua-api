@@ -104,23 +104,22 @@ async def is_user_authorized_for_assessment(user_id, assessment_id, db):
         )
     ).subquery()
 
-
-
     ReferenceRevision = aliased(BibleRevision)
 
     # Check if the assessment is accessible by one or both revisions
     assessment_query = (
-            select(Assessment).distinct(Assessment.id)
-            .join(BibleRevision, BibleRevision.id == Assessment.revision_id)
-            .outerjoin(ReferenceRevision, ReferenceRevision.id == Assessment.reference_id)
-            .filter(
-                BibleRevision.bible_version_id.in_(version_ids),
-                or_(
-                    Assessment.reference_id == None,
-                    ReferenceRevision.bible_version_id.in_(version_ids),
-                )
-            )
+        select(Assessment)
+        .distinct(Assessment.id)
+        .join(BibleRevision, BibleRevision.id == Assessment.revision_id)
+        .outerjoin(ReferenceRevision, ReferenceRevision.id == Assessment.reference_id)
+        .filter(
+            BibleRevision.bible_version_id.in_(version_ids),
+            or_(
+                Assessment.reference_id is None,
+                ReferenceRevision.bible_version_id.in_(version_ids),
+            ),
         )
+    )
 
     assessment_result = await db.execute(assessment_query)
     accessible = assessment_result.scalars().first()

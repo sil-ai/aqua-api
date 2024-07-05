@@ -48,12 +48,12 @@ sys.path.append(str(Path(__file__).parents[2]))
 
 from dotenv import load_dotenv
 from database.database import Base  # adjust the path as needed
+
 # add your model's MetaData object here
 # for 'autogenerate' support
 # from myapp import mymodel
 # target_metadata = mymodel.Base.metadata
 target_metadata = Base.metadata
-
 
 
 def run_migrations_offline() -> None:

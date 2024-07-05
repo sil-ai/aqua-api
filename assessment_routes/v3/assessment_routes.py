@@ -17,7 +17,13 @@ import fastapi
 
 # Local application imports
 from models import AssessmentIn, AssessmentOut
-from database.models import BibleRevision, BibleVersionAccess, UserDB as UserModel, UserGroup, Assessment
+from database.models import (
+    BibleRevision,
+    BibleVersionAccess,
+    UserDB as UserModel,
+    UserGroup,
+    Assessment,
+)
 from database.dependencies import get_db
 from security_routes.auth_routes import get_current_user
 import logging
@@ -80,10 +86,8 @@ async def get_assessments(
         user_group_ids = [group_id[0] for group_id in result.all()]
 
         # Get versions the user has access to through their access to groups
-        stmt = (
-            select(BibleVersionAccess.bible_version_id).where(
-                BibleVersionAccess.group_id.in_(user_group_ids)
-            )
+        stmt = select(BibleVersionAccess.bible_version_id).where(
+            BibleVersionAccess.group_id.in_(user_group_ids)
         )
         result = await db.execute(stmt)
         version_ids = [version_id[0] for version_id in result.all()]
@@ -100,15 +104,18 @@ async def get_assessments(
         # AND
         # - Either the assessment has no reference, or it it has, the Bible version of the reference is accessible by the user
         stmt = (
-            select(Assessment).distinct(Assessment.id)
+            select(Assessment)
+            .distinct(Assessment.id)
             .join(BibleRevision, BibleRevision.id == Assessment.revision_id)
-            .outerjoin(ReferenceRevision, ReferenceRevision.id == Assessment.reference_id)
+            .outerjoin(
+                ReferenceRevision, ReferenceRevision.id == Assessment.reference_id
+            )
             .filter(
                 BibleRevision.bible_version_id.in_(version_ids),
                 or_(
-                    Assessment.reference_id == None,
+                    Assessment.reference_id is None,
                     ReferenceRevision.bible_version_id.in_(version_ids),
-                )
+                ),
             )
         )
 
@@ -213,7 +220,6 @@ async def add_assessment(
     await db.commit()
     await db.refresh(assessment)
     a.id = assessment.id
-
 
     # Call runner using helper function
     response = await call_assessment_runner(a, modal_suffix, return_all_results)

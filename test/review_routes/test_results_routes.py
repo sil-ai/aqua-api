@@ -37,14 +37,10 @@ def setup_assessments_results(db_session):
     # Add access from group 1 to the bible version in bible version access
     group = db_session.query(Group.id).first()
 
-    revision_access = BibleVersionAccess(
-        bible_version_id=115, group_id=group[0]
-    )
+    revision_access = BibleVersionAccess(bible_version_id=115, group_id=group[0])
     db_session.add(revision_access)
 
-    reference_access = BibleVersionAccess(
-        bible_version_id=505, group_id=group[0]
-    )
+    reference_access = BibleVersionAccess(bible_version_id=505, group_id=group[0])
 
     assessments = db_session.query(Assessment.id).first()
     first_assessment_id = assessments[0]

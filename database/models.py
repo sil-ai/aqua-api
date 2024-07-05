@@ -105,7 +105,6 @@ class AssessmentResult(Base):
     assessment = relationship("Assessment", back_populates="results")
 
 
-
 class BibleRevision(Base):
     __tablename__ = "bible_revision"
 
