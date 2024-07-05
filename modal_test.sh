@@ -9,12 +9,10 @@ modal token set --token-id $MODAL_TOKEN_ID --token-secret $MODAL_TOKEN_SECRET --
 # # Current working directory.
 currentdir=$(pwd)
 
-# # Deploy dummy assessment endpoint (in case it was updated)
-modal deploy assessments/dummy/app.py || exit 1
 
 # Test all Modal apps.
 for dir in assessments runner
-do 
+do
 for app in $dir/*/
 do
 echo ""
@@ -28,7 +26,7 @@ cd $currentdir
 done
 done
 for dir in assessments runner
-do 
+do
 for app in $dir/*/
 do
 echo ""
