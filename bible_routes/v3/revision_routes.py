@@ -1,17 +1,14 @@
 from typing import List, Optional
 from fastapi import Depends, HTTPException, status, APIRouter, UploadFile, File
-from sqlalchemy import select   
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from tempfile import NamedTemporaryFile
 import numpy as np
 import time
 import logging
 import asyncio
 from datetime import date
-import aiofiles
-import os
 
-from bible_loading import upload_bible
+from bible_loading import async_text_dataframe, text_loading
 from models import RevisionOut_v3 as RevisionOut, RevisionIn
 from database.models import (
     BibleRevision as BibleRevisionModel,
@@ -28,11 +25,17 @@ from database.dependencies import get_db
 router = APIRouter()
 
 
-async def create_revision_out(revision: BibleVersionModel, db: AsyncSession) -> RevisionOut:
+async def create_revision_out(
+    revision: BibleVersionModel, db: AsyncSession
+) -> RevisionOut:
     # Fetch related BibleVersionModel data
-    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == revision.bible_version_id))
+    result = await db.execute(
+        select(BibleVersionModel).where(
+            BibleVersionModel.id == revision.bible_version_id
+        )
+    )
     version = result.scalars().first()
-    
+
     version_abbreviation = version.abbreviation if version else None
     iso_language = version.iso_language if version else None
 
@@ -56,6 +59,25 @@ async def list_revisions(
     Returns a list of revisions.
 
     If version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.
+
+    Input:
+    - version_id: Optional[int] = None
+    Description: The id of the version to which the revision belongs. If not provided, returns all revisions.
+
+    Returns:
+    Fields(Revision):
+    - version_id: int
+    Description: The id of the version to which the revision belongs.
+    - name: str
+    Description: The name of the revision.
+    - published: bool
+    Description: Whether the revision is published.
+    - backTranslation: Optional[int] = None
+    Description: The id of the back translation revision.
+    - machineTranslation: Optional[int] = None
+    Description: The id of the machine translation revision.
+    - file: UploadFile
+    Description: The file containing the revision text.
     """
     start_time = time.time()  # Start timer
     logging.info(
@@ -64,69 +86,75 @@ async def list_revisions(
 
     if version_id:
         # Check if version exists
-        result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == version_id))
+        result = await db.execute(
+            select(BibleVersionModel).where(BibleVersionModel.id == version_id)
+        )
         version = result.scalars().first()
-        
+
         if not version:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail="Version id is invalid"
             )
 
         # Check if user is authorized to access the version
-        if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        if not await is_user_authorized_for_bible_version(
+            current_user.id, version_id, db
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User not authorized to access this bible version.",
             )
 
-        result = await db.execute(select(BibleRevisionModel).where(BibleRevisionModel.bible_version_id == version_id))
+        result = await db.execute(
+            select(BibleRevisionModel).where(
+                BibleRevisionModel.bible_version_id == version_id
+            )
+        )
         revisions = result.scalars().all()
-        
+
     else:
         # List all revisions, but filter based on user authorization and filter based on deleted status
-        result = await db.execute(select(BibleRevisionModel).where(BibleRevisionModel.deleted.is_(False)))
+        result = await db.execute(
+            select(BibleRevisionModel).where(BibleRevisionModel.deleted.is_(False))
+        )
         revisions = result.scalars().all()
-        
+
         revisions = [
             revision
             for revision in revisions
             if await is_user_authorized_for_revision(current_user.id, revision.id, db)
         ]
-    revision_out_list = await asyncio.gather(*[create_revision_out(revision, db) for revision in revisions])
+    revision_out_list = await asyncio.gather(
+        *[create_revision_out(revision, db) for revision in revisions]
+    )
 
     processing_time = time.time() - start_time
     logging.info(
         f"Listed revisions for User {current_user.id} in {processing_time:.2f} seconds."
     )
     return revision_out_list
-    
-    
 
-async def process_and_upload_revision(file_content: bytes, revision_id: int, db: AsyncSession):
-    with NamedTemporaryFile(delete=False) as temp_file:
-        temp_file_name = temp_file.name
-        temp_file.write(file_content)
-        temp_file.seek(0)
-    
-    verses = []
+
+async def process_and_upload_revision(
+    file_content: bytes, revision_id: int, db: AsyncSession
+):
+    text_content = file_content.decode("utf-8")
+
     has_text = False
+    verses = []
+    for line in text_content.splitlines():
+        if line not in ["\n", "", " "]:
+            verses.append(line.replace("\n", ""))
+            has_text = True
+        else:
+            verses.append(np.nan)
 
-    async with aiofiles.open(temp_file_name, "r") as bible_data:
-        async for line in bible_data:
-            if line in ["\n", "", " "]:
-                verses.append(np.nan)
-            else:
-                has_text = True
-                verses.append(line.replace("\n", ""))
-    
     if not has_text:
         raise ValueError("File has no text.")
 
-    # Clean up the temporary file asynchronously
-    os.remove(temp_file_name)
-
-    # Assuming upload_bible function exists and is properly set for async operation
-    await upload_bible(verses, [revision_id] * len(verses), db)
+    bible_revision = [revision_id] * len(verses)
+    verse_text = await async_text_dataframe(verses, bible_revision)
+    await text_loading(verse_text, db)
 
 
 @router.post("/revision", response_model=RevisionOut)
@@ -136,12 +164,32 @@ async def upload_revision(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
+    """
+    Uploads a new revision.
+
+    Input:
+    Fields(Revision):
+    - version_id: int
+    Description: The id of the version to which the revision belongs.
+    - name: str
+    Description: The name of the revision.
+    - published: bool
+    Description: Whether the revision is published.
+    - backTranslation: Optional[int] = None
+    Description: The id of the back translation revision.
+    - machineTranslation: Optional[int] = None
+    Description: The id of the machine translation revision.
+    - file: UploadFile
+    Description: The file containing the revision text.
+    """
     start_time = time.time()
 
     logging.info(f"Uploading new revision: {revision.model_dump()}")
-    result = await db.execute(select(BibleVersionModel).where(BibleVersionModel.id == revision.version_id))
+    result = await db.execute(
+        select(BibleVersionModel).where(BibleVersionModel.id == revision.version_id)
+    )
     version = result.scalars().first()
-    
+
     if not version:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Version id is invalid"
@@ -199,12 +247,22 @@ async def delete_revision(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
+    """
+    Deletes a revision.
+
+    Input:
+    - id: int
+    Description: The id of the revision to delete.
+    """
     start_time = time.time()  # Start timer
 
     # Check if the revision exists and if the user is authorized
     result = await db.execute(
         select(BibleRevisionModel, BibleVersionModel)
-        .join(BibleVersionModel, BibleRevisionModel.bible_version_id == BibleVersionModel.id)
+        .join(
+            BibleVersionModel,
+            BibleRevisionModel.bible_version_id == BibleVersionModel.id,
+        )
         .where(BibleRevisionModel.id == id)
     )
     revision, bible_version = result.first()  # Here, we destructure the result
@@ -218,12 +276,13 @@ async def delete_revision(
 
     # Check if the user is authorized to perform action on the revision
     # Here, we use the fetched bible_version's owner_id directly without accessing through revision
-    if not current_user.is_admin and (bible_version is None or bible_version.owner_id != current_user.id):
+    if not current_user.is_admin and (
+        bible_version is None or bible_version.owner_id != current_user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to perform this action on the revision.",
         )
-
 
     # delete the revision by updating the boolean field deleted to True and the deletedAt field to the current time
     revision.deleted = True
@@ -248,11 +307,20 @@ async def rename_revision(
 ):
     """
     Rename a revision.
+
+    Input:
+    - id: int
+    Description: The id of the revision to rename.
+    - new_name: str
+    Description: The new name for the revision.
     """
     # Check if the revision exists
     result = await db.execute(
         select(BibleRevisionModel, BibleVersionModel)
-        .join(BibleVersionModel, BibleRevisionModel.bible_version_id == BibleVersionModel.id)
+        .join(
+            BibleVersionModel,
+            BibleRevisionModel.bible_version_id == BibleVersionModel.id,
+        )
         .where(BibleRevisionModel.id == id)
     )
     revision, bible_version = result.first()  # Here, we destructure the result
@@ -264,7 +332,9 @@ async def rename_revision(
 
     # Check if the user is authorized to rename the revision
     # Here, we use the fetched bible_version's owner_id directly without accessing through revision
-    if not current_user.is_admin and (bible_version is None or bible_version.owner_id != current_user.id):
+    if not current_user.is_admin and (
+        bible_version is None or bible_version.owner_id != current_user.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to rename this revision.",

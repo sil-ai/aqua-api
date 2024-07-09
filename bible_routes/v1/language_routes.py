@@ -1,4 +1,4 @@
-__version__ = 'v1'
+__version__ = "v1"
 
 import os
 from typing import List
@@ -18,18 +18,16 @@ router = fastapi.APIRouter()
 
 
 api_keys = get_secret(
-        os.getenv("KEY_VAULT"),
-        os.getenv("AWS_ACCESS_KEY"),
-        os.getenv("AWS_SECRET_KEY")
-        )
+    os.getenv("KEY_VAULT"), os.getenv("AWS_ACCESS_KEY"), os.getenv("AWS_SECRET_KEY")
+)
 
 api_key_header = APIKeyHeader(name="api_key", auto_error=False)
+
 
 def api_key_auth(api_key: str = Depends(api_key_header)):
     if api_key not in api_keys:
         raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Forbidden"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Forbidden"
         )
 
     return True
@@ -41,10 +39,12 @@ def postgres_conn():
     return connection
 
 
-@router.get("/language", dependencies=[Depends(api_key_auth)], response_model=List[Language])
+@router.get(
+    "/language", dependencies=[Depends(api_key_auth)], response_model=List[Language]
+)
 async def list_languages():
     """
-    Get a list of ISO 639-2 language codes and their English names. Any version added to the database 
+    Get a list of ISO 639-2 language codes and their English names. Any version added to the database
     must have a language code that is in this list.
     """
 
@@ -55,21 +55,25 @@ async def list_languages():
 
     cursor.execute(list_language)
     language_result = cursor.fetchall()
-    language_list = [Language(iso639=language[1], name=language[2]) for language in language_result]
-    
+    language_list = [
+        Language(iso639=language[1], name=language[2]) for language in language_result
+    ]
+
     cursor.close()
     connection.close()
 
     return language_list
 
 
-@router.get("/script", dependencies=[Depends(api_key_auth)], response_model=List[Script])
+@router.get(
+    "/script", dependencies=[Depends(api_key_auth)], response_model=List[Script]
+)
 async def list_scripts():
     """
     Get a list of ISO 15924 script codes and their English names. Any version added to the database
     must have a script code that is in this list.
     """
-    
+
     connection = postgres_conn()
     cursor = connection.cursor()
 
@@ -77,7 +81,9 @@ async def list_scripts():
 
     cursor.execute(list_script)
     script_result = cursor.fetchall()
-    script_list = [Script(iso15924=script[1], name=script[2]) for script in script_result]
+    script_list = [
+        Script(iso15924=script[1], name=script[2]) for script in script_result
+    ]
 
     cursor.close()
     connection.close()

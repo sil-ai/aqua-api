@@ -1,10 +1,8 @@
 # test_revision_flows.py
 from pathlib import Path
-
 from database.models import (
-    VerseText as VerseText,
     Assessment,
-    AssessmentAccess,
+    BibleVersionAccess,
     UserGroup,
     UserDB,
     UserDB as UserModel,
@@ -80,7 +78,7 @@ def test_add_assessment_success(
     assessment_data = {
         "revision_id": revision_id,
         "reference_id": reference_revision_id,
-        "type": "missing-words",
+        "type": "word-alignment",
     }
 
     with patch(
@@ -97,7 +95,7 @@ def test_add_assessment_success(
 
         assert response.status_code == 200
         assert len(response.json()) == 1
-        assert response.json()[0]["type"] == "missing-words"
+        assert response.json()[0]["type"] == "word-alignment"
         assert response.json()[0]["status"] is not None
         assert response.json()[0]["revision_id"] == revision_id
         assert response.json()[0]["reference_id"] == reference_revision_id
@@ -113,15 +111,13 @@ def test_add_assessment_success(
 
         assessment_id = response.json()[0]["id"]
 
-        # Now check the status of the Assessment and AssessmentAccess tables
+        # Now check the status of the Assessment and versions accessed through the group
         assessment = (
             db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
         )
         assert assessment is not None
-        assert assessment.type == "missing-words"
-        assert (
-            assessment.status == "queued"
-        ) 
+        assert assessment.type == "word-alignment"
+        assert assessment.status == "queued"
         user = (
             db_session.query(UserDB.id).filter(UserDB.username == "testuser1").first()
         )
@@ -131,13 +127,14 @@ def test_add_assessment_success(
             .first()
         )
 
-        access = (
-            db_session.query(AssessmentAccess)
-            .filter(AssessmentAccess.assessment_id == assessment_id)
-            .first()
-        )
-        assert access is not None
-        assert access.group_id in user_group
+        accessible_versions = db_session.query(
+            BibleVersionAccess.bible_version_id
+        ).filter(BibleVersionAccess.group_id == user_group.group_id)
+
+        list_version_id = [version.bible_version_id for version in accessible_versions]
+
+        assert list_version_id is not None
+        assert version_id in list_version_id
 
     # get the assesement status
     response = list_assessment(client, regular_token1)
@@ -145,7 +142,7 @@ def test_add_assessment_success(
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["status"] == "queued"
-    assert response.json()[0]["type"] == "missing-words"
+    assert response.json()[0]["type"] == "word-alignment"
     assert response.json()[0]["revision_id"] == revision_id
     assert response.json()[0]["reference_id"] == reference_revision_id
     assert response.json()[0]["id"] == assessment_id
@@ -155,7 +152,7 @@ def test_add_assessment_success(
     # check owner_id in the db is the test user1 id
     user = db_session.query(UserModel).filter_by(username="testuser1").first()
     assert user.id == owner_id
-    
+
     # confirm that regular_token2 cannot access the assessment
     response = list_assessment(client, regular_token2)
     assert response.status_code == 200
@@ -168,11 +165,11 @@ def test_add_assessment_success(
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["status"] == "queued"
-    assert response.json()[0]["type"] == "missing-words"
+    assert response.json()[0]["type"] == "word-alignment"
     assert response.json()[0]["revision_id"] == revision_id
     assert response.json()[0]["reference_id"] == reference_revision_id
     assert response.json()[0]["id"] == assessment_id
-    
+
     # delete the assesment as the user that created it
     response = delete_assessment(client, regular_token1, assessment_id)
     assert response.status_code == 200
@@ -182,7 +179,7 @@ def test_add_assessment_success(
         db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
     )
     assert assessment is not None
-    
+
     # Create again the assessment
     response = client.post(
         f"{prefix}/assessment",
@@ -193,14 +190,14 @@ def test_add_assessment_success(
     response = delete_assessment(client, admin_token, assessment_id)
     assert response.status_code == 200
 
-    
     # check that the assessment has been deleted in the db by checking the deleted column
     assessment = (
         db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
     )
     assert assessment is not None
     assert assessment.deleted is False
-    
+
+
 def test_add_assessment_failure(client, regular_token1, db_session, test_db_session):
     # Create two revisions
     version_id = create_bible_version(client, regular_token1)
@@ -211,7 +208,7 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
     assessment_data = {
         "revision_id": revision_id,
         "reference_id": reference_revision_id,
-        "type": "missing-words",
+        "type": "word-alignment",
     }
 
     with patch(
