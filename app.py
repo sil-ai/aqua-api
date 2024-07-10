@@ -1,5 +1,6 @@
 __version__ = "v1"
 
+import json
 import fastapi
 from fastapi.openapi.utils import get_openapi
 import os
@@ -68,15 +69,16 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         url = f"{request.url.path}?{request.query_params}" if request.query_params else request.url.path
         start_time = time.time()
         # check if token string is in request.url.path
-        if "token" in url:
-            body_str = "Token"
 
+        sensitive_paths = ["/token", "/users", "change-password"]  # Add other sensitive paths here
+        is_sensitive_path = any(path in url for path in sensitive_paths)
+
+        if is_sensitive_path:
+            body_str = "Sensitive Data - Not Logged"
         else:
             await self.set_body(request)
             body = await request.body()
             body_str = body.decode() if body else "No Body"
-
-
         response = await call_next(request)
         process_time = (time.time() - start_time) * 1000
         formatted_process_time = "{0:.2f}".format(process_time)
