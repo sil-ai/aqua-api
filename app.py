@@ -70,7 +70,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         start_time = time.time()
         # check if token string is in request.url.path
 
-        sensitive_paths = ["/token", "/users", "change-password"]  # Add other sensitive paths here
+        sensitive_paths = ["/token", "/users", "/change-password"]  # Add other sensitive paths here
         is_sensitive_path = any(path in url for path in sensitive_paths)
 
         if is_sensitive_path:
@@ -90,7 +90,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             status_phrase=""
 
 
-        logger.info(f'{host}:{port} - "{request.method} {url}" {response.status_code} {status_phrase} {formatted_process_time}ms Body:{body_str}')
+        logger.info(f'{host}:{port} - "{request.method} {url}" {response.status_code} {status_phrase} {formatted_process_time}ms Body: {body_str}')
         return response
 
 
