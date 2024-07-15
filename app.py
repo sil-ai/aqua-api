@@ -1,5 +1,6 @@
 __version__ = "v1"
 
+import json
 import fastapi
 from fastapi.openapi.utils import get_openapi
 import os
@@ -29,6 +30,16 @@ if not omit_previous_versions:
     from bible_routes.v2.verse_routes import router as verse_router_v2
     from assessment_routes.v2.assessment_routes import router as assessment_router_v2
     from review_routes.v2.results_routes import router as results_router_v2
+
+from bible_routes.v3.language_routes import router as language_router_v3
+from bible_routes.v3.version_routes import router as version_router_v3
+from bible_routes.v3.revision_routes import router as revision_router_v3
+from bible_routes.v3.verse_routes import router as verse_router_v3
+from assessment_routes.v3.assessment_routes import router as assessment_router_v3
+from review_routes.v3.results_routes import router as results_router_v3
+from middleware import LoggingMiddleware
+
+
 
 app = fastapi.FastAPI()
 
@@ -60,6 +71,7 @@ def my_schema():
 
 
 def configure(app):
+    app.add_middleware(LoggingMiddleware)
     configure_routing(app)
 
 

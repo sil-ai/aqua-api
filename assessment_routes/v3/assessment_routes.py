@@ -72,6 +72,7 @@ async def get_assessments(
     Description: The unique identifier for the owner of the assessment.
 
     """
+    
 
     if current_user.is_admin:
         # Admin users can access all assessments
