@@ -6,9 +6,7 @@ import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 
 
-
 class LoggingMiddleware(BaseHTTPMiddleware):
-
     def __init__(self, app):
         super().__init__(app)
 
@@ -25,12 +23,19 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         logger = logging.getLogger()
         logger.setLevel(logging.INFO)
 
-
-        url = f"{request.url.path}?{request.query_params}" if request.query_params else request.url.path
+        url = (
+            f"{request.url.path}?{request.query_params}"
+            if request.query_params
+            else request.url.path
+        )
         start_time = time.time()
         # check if token string is in request.url.path
 
-        sensitive_paths = ["/token", "/users", "/change-password"]  # Add other sensitive paths here
+        sensitive_paths = [
+            "/token",
+            "/users",
+            "/change-password",
+        ]  # Add other sensitive paths here
         is_sensitive_path = any(path in url for path in sensitive_paths)
 
         if is_sensitive_path:
@@ -47,8 +52,9 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         try:
             status_phrase = http.HTTPStatus(response.status_code).phrase
         except ValueError:
-            status_phrase=""
+            status_phrase = ""
 
-
-        logger.info(f'{host}:{port} - "{request.method} {url}" {response.status_code} {status_phrase} {formatted_process_time}ms Body: {body_str}')
+        logger.info(
+            f'{host}:{port} - "{request.method} {url}" {response.status_code} {status_phrase} {formatted_process_time}ms Body: {body_str}'
+        )
         return response
