@@ -1,3 +1,4 @@
+import json
 from starlette.requests import Request
 import time
 import http
@@ -43,7 +44,13 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         else:
             await self.set_body(request)
             body = await request.body()
-            body_str = body.decode() if body else "No Body"
+            # Try to parse the body as JSON and reformat it as a single-line string
+            try:
+                body_json = json.loads(body.decode())
+                body_str = json.dumps(body_json)
+            except json.JSONDecodeError:
+                body_str = body.decode() if body else "No Body"
+
         response = await call_next(request)
         process_time = (time.time() - start_time) * 1000
         formatted_process_time = "{0:.2f}".format(process_time)
