@@ -5,11 +5,26 @@ import http
 from starlette.types import Message
 import logging
 from starlette.middleware.base import BaseHTTPMiddleware
-
+from pythonjsonlogger import jsonlogger
 
 class LoggingMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
+        self.configure_logger()
+
+    def configure_logger(self):
+        # Configure the logger only once during initialization
+        logger = logging.getLogger(__name__)
+        # Check if the logger already has handlers to avoid duplicate logs
+        if not logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(
+                jsonlogger.JsonFormatter(
+                    fmt='{"host": "%(host)s", "port": "%(port)s", "method": "%(method)s", "url": "%(url)s", "status_code": %(status_code)s, "status_phrase": "%(status_phrase)s", "processing_time_ms": "%(formatted_process_time)s", "body": "%(body_str)s"}'
+                )
+            )
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
 
     async def set_body(self, request: Request):
         receive_ = await request._receive()
@@ -20,31 +35,21 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         request._receive = receive
 
     async def dispatch(self, request, call_next):
-        # Create a logger
-        logger = logging.getLogger()
-        logger.setLevel(logging.INFO)
+        logger = logging.getLogger(__name__)
 
-        url = (
-            f"{request.url.path}?{request.query_params}"
-            if request.query_params
-            else request.url.path
-        )
+        url = f"{request.url.path}?{request.query_params}" if request.query_params else request.url.path
         start_time = time.time()
-        # check if token string is in request.url.path
 
-        sensitive_paths = [
-            "/token",
-            "/users",
-            "/change-password",
-        ]  # Add other sensitive paths here
+        sensitive_paths = ["/token", "/users", "/change-password"]  # Add other sensitive paths here
         is_sensitive_path = any(path in url for path in sensitive_paths)
-
-        if is_sensitive_path:
+        print(request.method)
+        print(url)
+        post_revision = request.method == 'POST' and 'revision' in url
+        if is_sensitive_path or post_revision:
             body_str = "Sensitive Data - Not Logged"
         else:
             await self.set_body(request)
             body = await request.body()
-            # Try to parse the body as JSON and reformat it as a single-line string
             try:
                 body_json = json.loads(body.decode())
                 body_str = json.dumps(body_json)
@@ -62,8 +67,17 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             status_phrase = ""
 
         logger.info(
-            f'{host}:{port} - "{request.method} {url}" {response.status_code} {status_phrase} {formatted_process_time}ms Body: {body_str}'
+            "Request processed:",
+            extra={
+                "host": host,
+                "port": port,
+                "method": request.method,
+                "url": url,
+                "status_code": response.status_code,
+                "status_phrase": status_phrase,
+                "formatted_process_time": formatted_process_time,
+                "body_str": body_str,
+            },
         )
-
 
         return response
