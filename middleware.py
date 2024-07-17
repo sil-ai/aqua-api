@@ -7,6 +7,7 @@ import logging
 from starlette.middleware.base import BaseHTTPMiddleware
 from pythonjsonlogger import jsonlogger
 
+
 class LoggingMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
@@ -37,14 +38,22 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         logger = logging.getLogger(__name__)
 
-        url = f"{request.url.path}?{request.query_params}" if request.query_params else request.url.path
+        url = (
+            f"{request.url.path}?{request.query_params}"
+            if request.query_params
+            else request.url.path
+        )
         start_time = time.time()
 
-        sensitive_paths = ["/token", "/users", "/change-password"]  # Add other sensitive paths here
+        sensitive_paths = [
+            "/token",
+            "/users",
+            "/change-password",
+        ]  # Add other sensitive paths here
         is_sensitive_path = any(path in url for path in sensitive_paths)
         print(request.method)
         print(url)
-        post_revision = request.method == 'POST' and 'revision' in url
+        post_revision = request.method == "POST" and "revision" in url
         if is_sensitive_path or post_revision:
             body_str = "Sensitive Data - Not Logged"
         else:
