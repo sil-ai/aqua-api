@@ -66,6 +66,6 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         )
 
         logger.info(
-            f'json {host}:{port} - "{request.method} {url}" {response.status_code} {status_phrase} {formatted_process_time}ms Body: {body_str}'
+            f'json {host}:{port} - "{request.method} {url}" {response.status_code} {status_phrase} {formatted_process_time}ms Body: {body_json}'
         )
         return response
