@@ -3,10 +3,11 @@ name: branch-build
 on:
   push:
     branches:
-      - aws_new_backend
+      - main
 
 env:
   AWS_REGISTRY: 279795702643.dkr.ecr.us-east-1.amazonaws.com
+  IMAGE_NAME: aqua-api-aws
 
 jobs:
 
@@ -27,6 +28,7 @@ jobs:
       run: make build-actions
       env:
         REGISTRY: ${{ env.AWS_REGISTRY }}
+        IMAGENAME: ${{ env.IMAGE_NAME }}
 
     - name: Test API
       env:
@@ -52,5 +54,6 @@ jobs:
       run: make push-branch
       env:
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
+        IMAGENAME: ${{ env.IMAGE_NAME }}
 
 
