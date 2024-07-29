@@ -29,20 +29,68 @@
 To run the API locally while developing:
 
 1. Get the necessary DB creds, etc.
+2. Clone the repository and enter the folder.
+    ```
+    $ git clone https://github.com/sil-ai/aqua-api.git
+    $ cd aqua-api
+    ```
 
-2. Install the requirements:
+3. Install the requirements:
 
     ```
     $ pip install -r requirements.txt
     ```
 
-3. Run the API:
+4. In case you face an error on the previous point regarding a postgres package
+    ```
+    sudo apt get install libpq-dev
+    ```
+
+3. Run the API, make sure to set this environment variables or uvicorn command will fail:
 
     ```
     $ GRAPHQL_URL=<value> AWS_ACCESS_KEY=<value> GRAPHQL_SECRET=<value> AQUA_DB=<value> AWS_SECRET_KEY=<value> uvicorn app:app --host 0.0.0.0 --port 8000
     ```
 
 4. Use Postman or cURL to interact with (i.e., call) the various endpoints to see how they work. And/or pull up the docs at `localhost:8080/docs`
+
+## Swagger
+
+Once you put the API app, you will find detailed documentation on `localhost:8080/docs`.
+On the top right corner you will see a button named `Authorize`. There, in the segment
+`OAuth2PasswordBearer`, you will be able to put your username and password to test the API.
+
+## Makefile
+
+A Makefile is a tool implented to help automize repetitive tasks you may want to perform with
+the API, here are the most important commands.
+
+1. make localdb-up
+
+Builds the database locally through Docker, if you want to use this local db you have to
+reference it through the corresponding env variable.
+
+2. make up
+
+This will build all the project, including the API and the DB, through Docker as well.
+
+3. make down
+This will tear down all the project, API and DB, stopping the Docker containers.
+
+4. make test
+
+This will run the tests using pytest, creating a database, or using an existing one.
+If you were using a local db is important that you perform make down before performing
+this command, because in the moment it starts to populate the db, it will find
+duplicates and raise an error.
+
+5. make linting
+
+This will perform a formatting with the tool black, and a linting verification with flake8
+
+6. Other commands like build-local or build-actions are used on github workflows, to push
+to the runners, but this are used automatically when you push to main.
+
 
 ## Environment Variables
 
