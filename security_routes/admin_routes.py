@@ -65,7 +65,7 @@ async def create_user(
             status_code=400, detail="Admin users cannot be created using this endpoint"
         )
 
-    hashed_password = hash_password(user.password)
+    hashed_password = hash_password(password)
 
     #  Ensure the user is not an admin
     db_user = UserDB(

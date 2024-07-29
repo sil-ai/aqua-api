@@ -76,14 +76,18 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     admin_user_data = {
         "username": "admin_user",
         "email": "admin_user@example.com",
-        "password": "password123",
         "is_admin": True,
+    }
+    admin_auth_data = {
+        "username": "admin_user",
+        "password": "adminpassword",
     }
 
     # Send a POST request to create a new user
     response = client.post(
         f"{prefix}/users",
         params=admin_user_data,
+        data=admin_auth_data,
         headers={"Authorization": f"Bearer {admin_token}"},
     )
 
