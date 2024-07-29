@@ -41,7 +41,7 @@ To run the API locally while developing:
     $ pip install -r requirements.txt
     ```
 
-4. In case you face an error on the previous point regarding a postgres package
+4. In case you face an error on the previous point regarding a postgres package.
     ```
     sudo apt get install libpq-dev
     ```
@@ -52,7 +52,7 @@ To run the API locally while developing:
     $ GRAPHQL_URL=<value> AWS_ACCESS_KEY=<value> GRAPHQL_SECRET=<value> AQUA_DB=<value> AWS_SECRET_KEY=<value> uvicorn app:app --host 0.0.0.0 --port 8000
     ```
 
-4. Use Postman or cURL to interact with (i.e., call) the various endpoints to see how they work. And/or pull up the docs at `localhost:8080/docs`
+4. Use Postman or cURL to interact with (i.e., call) the various endpoints to see how they work. And/or pull up the docs at `localhost:8080/docs`.
 
 ## Swagger
 
@@ -62,7 +62,7 @@ On the top right corner you will see a button named `Authorize`. There, in the s
 
 ## Makefile
 
-A Makefile is a tool implented to help automize repetitive tasks you may want to perform with
+A Makefile is a tool to help automize repetitive tasks you may want to perform with
 the API, here are the most important commands.
 
 1. make localdb-up
