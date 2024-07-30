@@ -129,6 +129,18 @@ to the runners, but this are used automatically when you push to main.
 
 `AQUA_DB` - Specifies the database environment. **Important Note**: The `AQUA_DB` variable should never be set to `production value` in your local Bash session unless you are actively conducting a migration. Setting this variable to `production` outside of a controlled migration process can result in unintended changes to live data. Always ensure this variable is set to a development or staging value for local development.
 
+## How to access the API
+
+Apart from running locally, we've got a production endpoint and a development endpoint.
+
+1. Production Endpoint
+
+`https://tmv9bz5v4q.us-east-1.awsapprunner.com/docs`
+
+2. Development Endpoint
+
+`https://cp3by92k8p.us-east-1.awsapprunner.com/docs`
+
 
 ## Integration Notebook
 
