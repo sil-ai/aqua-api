@@ -43,7 +43,7 @@ To run the API locally while developing:
 
 4. In case you face an error on the previous point regarding a postgres package.
     ```
-    sudo apt get install libpq-dev
+    $ sudo apt get install libpq-dev
     ```
 
 3. Run the API (make sure tu have the .env file in the directory):
@@ -53,7 +53,7 @@ To run the API locally while developing:
     $ make up
     ```
 
-4. Use Postman or cURL to interact with (i.e., call) the various endpoints to see how they work. And/or pull up the docs at `localhost:8080/docs`.
+4. Use Postman or cURL to interact with (i.e., call) the various endpoints to see how they work. And/or pull up the docs at `localhost:8000/docs`.
 
 ## Environment file
 
@@ -94,7 +94,7 @@ Builds the database locally through Docker, if you want to use this local db you
 reference it through the corresponding env variable.
 
 The local DB will be accesible at port 5432, with a user: dbuser, a password: dbpassword, and
-a db named dbname, therefore the `AQUA_DB` varible would be set to postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname.
+a database: dbname, therefore the `AQUA_DB` varible would be set to postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname.
 
 2. `make build-local`
 
@@ -137,17 +137,17 @@ as an admin and as a regular user, to be able to use it please do the following:
 
 1. Build the db
 ```
-make localdb-up
+$ make localdb-up
 ```
 2. Populate the db with conftest(you have to run the following commands on the same shell),
 this step is necessary for you to have data to run the API calls in the notebook.
 ```
-export PYTHONPATH=$PYTHONPATH:$(pwd)
-conftest.py
+$ export PYTHONPATH=$PYTHONPATH:$(pwd)
+$ conftest.py
 ```
 
 3. Run the API
 ```
-make build-local
-make up
+$ make build-local
+$ make up
 ```
