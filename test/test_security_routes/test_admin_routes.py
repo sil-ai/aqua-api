@@ -41,14 +41,18 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     new_user_data = {
         "username": "new_user",
         "email": "new_user@example.com",
-        "password": "password123",
         "is_admin": False,
     }
 
+    new_auth_data = {
+        "username": "new_user",
+        "password": "passwor123",
+    }
     # Send a POST as regular user to get a 400 error
     response = client.post(
         f"{prefix}/users",
         params=new_user_data,
+        data=new_auth_data,
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == status.HTTP_403_FORBIDDEN
@@ -57,6 +61,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     response = client.post(
         f"{prefix}/users",
         params=new_user_data,
+        data=new_auth_data,
         headers={"Authorization": f"Bearer {admin_token}"},
     )
 
@@ -64,7 +69,6 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["username"] == new_user_data["username"]
     assert response.json()["email"] == new_user_data["email"]
-    assert response.json()["password"] is None
     assert response.json()["is_admin"] == new_user_data["is_admin"]
     assert user_exists(test_db_session, new_user_data["username"])
 
@@ -72,14 +76,18 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     admin_user_data = {
         "username": "admin_user",
         "email": "admin_user@example.com",
-        "password": "password123",
-        "is_admin": True,
+        "is_admin": True
+    }
+    admin_auth_data = {
+        "username": "admin_user",
+        "password": "adminpassword",
     }
 
     # Send a POST request to create a new user
     response = client.post(
         f"{prefix}/users",
         params=admin_user_data,
+        data=admin_auth_data,
         headers={"Authorization": f"Bearer {admin_token}"},
     )
 
@@ -95,11 +103,11 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     # send a post request to update te password to the change-password enpoint
     password_update = {
         "username": "new_user",
-        "new_password": "newpassword",
+        "password": "newpassword",
     }
     response = client.post(
         f"{prefix}/change-password",
-        params=password_update,
+        data=password_update,
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == 200
@@ -111,6 +119,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     response = client.post(
         f"{prefix}/users",
         params=new_user_data,
+        data=new_auth_data,
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == status.HTTP_400_BAD_REQUEST
