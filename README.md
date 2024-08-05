@@ -35,13 +35,13 @@ To run the API locally while developing:
     ```
     $ pip install -r requirements.txt
     ```
-    
+
 3. Run the API:
 
     ```
     $ GRAPHQL_URL=<value> AWS_ACCESS_KEY=<value> GRAPHQL_SECRET=<value> AQUA_DB=<value> AWS_SECRET_KEY=<value> uvicorn app:app --host 0.0.0.0 --port 8000
     ```
-    
+
 4. Use Postman or cURL to interact with (i.e., call) the various endpoints to see how they work. And/or pull up the docs at `localhost:8080/docs`
 
 ## Environment Variables
@@ -55,7 +55,7 @@ To use a deployed version of the API, you will need:
 - The URL of the deployed API endpoint (referred to below as `<url>`, which should be replaced by the actual URL endpoint)
 - An active API key (referred to below as `<key>`, which should be replace by your actual API key)
 
-You can review the live swagger docs of the API by visiting `<url>/docs`. This will list out the endpoints, HTTP methods, parameters, etc. that are available. 
+You can review the live swagger docs of the API by visiting `<url>/docs`. This will list out the endpoints, HTTP methods, parameters, etc. that are available.
 
 To call the API, you need to use OAuth 2.0 and set the current token for authentication to your API key. Here are some examples that show how to list versions in the API:
 
@@ -82,4 +82,26 @@ response = requests.request("GET", url, headers=headers, data=payload)
 
 print(response.text)
 
+```
+
+
+## Integration Notebook
+
+This notebook helps to test the flow of the API, using different calls you would usually do,
+as an admin and as a regular user, to be able to use it please do the following:
+
+1. Build the db
+```
+make localdb-up
+```
+2. Populate the db with conftest(you have to run the following commands on the same shell),
+this step is necessary for you to have data to run the API calls in the notebook.
+```
+export PYTHONPATH=$PYTHONPATH:$(pwd)
+conftest.py
+```
+
+3. Run the API
+```
+uvicorn app:app --host 0.0.0.0 --port 8000
 ```

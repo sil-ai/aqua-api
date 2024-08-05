@@ -134,12 +134,9 @@ async def get_assessments(
 
 
 # Helper function to call assessment runner
-async def call_assessment_runner(
-    assessment: AssessmentIn, modal_suffix: str, return_all_results: bool
-):
-    runner_url = f"https://sil-ai--runner-{modal_suffix.replace('_', '')}-assessment-runner.modal.run/"
+async def call_assessment_runner(assessment: AssessmentIn, return_all_results: bool):
+    runner_url = "https://sil-ai--runner-assessment-runner.modal.run/"
     params = {
-        "modal_suffix": modal_suffix,
         "return_all_results": return_all_results,
     }
     headers = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
@@ -156,7 +153,6 @@ async def call_assessment_runner(
 @router.post("/assessment", response_model=List[AssessmentOut])
 async def add_assessment(
     a: AssessmentIn = Depends(),
-    modal_suffix: str = "",
     return_all_results: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(
@@ -197,7 +193,6 @@ async def add_assessment(
     - owner_id: int
     Description: The unique identifier for the owner of the assessment.
     """
-    modal_suffix = modal_suffix or os.getenv("MODAL_SUFFIX", "")
 
     if a.type in ["semantic-similarity", "word-alignment"] and a.reference_id is None:
         raise HTTPException(
@@ -219,7 +214,7 @@ async def add_assessment(
     a.id = assessment.id
 
     # Call runner using helper function
-    response = await call_assessment_runner(a, modal_suffix, return_all_results)
+    response = await call_assessment_runner(a, return_all_results)
 
     if not 200 <= response.status_code < 300:
         try:

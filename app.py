@@ -1,6 +1,7 @@
 __version__ = "v1"
 
 import fastapi
+from middleware import LoggingMiddleware
 from fastapi.openapi.utils import get_openapi
 import os
 
@@ -60,6 +61,7 @@ def my_schema():
 
 
 def configure(app):
+    app.add_middleware(LoggingMiddleware)
     configure_routing(app)
 
 
