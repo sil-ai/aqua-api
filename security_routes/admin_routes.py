@@ -1,4 +1,4 @@
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi import Depends, HTTPException, status, APIRouter
 from jose import jwt
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,22 +48,24 @@ async def get_current_admin(
 @router.post("/users", response_model=User)
 async def create_user(
     user: User = Depends(),
+    form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
 ):
+    password = form_data.password
     result = await db.execute(select(UserDB).where(UserDB.username == user.username))
     db_user = result.scalars().first()
 
     if db_user:
         raise HTTPException(status_code=400, detail="Username already registered")
-    if user.password is None:
+    if password is None:
         raise HTTPException(status_code=400, detail="Password is required")
     if user.is_admin:
         raise HTTPException(
             status_code=400, detail="Admin users cannot be created using this endpoint"
         )
 
-    hashed_password = hash_password(user.password)
+    hashed_password = hash_password(password)
 
     #  Ensure the user is not an admin
     db_user = UserDB(
@@ -82,7 +84,6 @@ async def create_user(
         email=db_user.email,
         is_admin=False,
     )
-    return_user.password = None  # Ensure password is not included in the response
     return return_user
 
 
@@ -247,11 +248,12 @@ async def delete_user(
 # create a change password endpoint
 @router.post("/change-password")
 async def change_password(
-    username: str,
-    new_password: str,
+    form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
 ):
+    username = form_data.username
+    new_password = form_data.password  # new password
     result = await db.execute(select(UserDB).where(UserDB.username == username))
     user = result.scalars().first()
 
