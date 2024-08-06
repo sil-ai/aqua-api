@@ -76,7 +76,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     admin_user_data = {
         "username": "admin_user",
         "email": "admin_user@example.com",
-        "is_admin": True
+        "is_admin": True,
     }
     admin_auth_data = {
         "username": "admin_user",
