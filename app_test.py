@@ -264,7 +264,9 @@ def test_assessment(client):
             revision_ids.append(version_data["id"])
 
     with pytest.raises(ValidationError):
-        AssessmentIn(revision_id="eleven", reference_id=revision_ids[0], type="word-alignment")
+        AssessmentIn(
+            revision_id="eleven", reference_id=revision_ids[0], type="word-alignment"
+        )
 
     with pytest.raises(ValidationError):
         AssessmentIn(
@@ -336,6 +338,7 @@ def test_result(client):
     )
     response = client.post(
         "/assessment", params={**good_config.dict(), "modal_suffix": "test"}
+    )
 
     response = client.post("/assessment", params={**good_config.dict()})
     assert response.status_code == 200
