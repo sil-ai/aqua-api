@@ -67,6 +67,7 @@ async def create_user(
 
     hashed_password = hash_password(password)
 
+
     #  Ensure the user is not an admin
     db_user = UserDB(
         username=user.username,

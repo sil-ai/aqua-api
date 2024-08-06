@@ -264,7 +264,7 @@ def test_assessment(client):
             revision_ids.append(version_data["id"])
 
     with pytest.raises(ValidationError):
-        AssessmentIn(revision_id="eleven", reference_id=revision_ids[0], type="dummy")
+        AssessmentIn(revision_id="eleven", reference_id=revision_ids[0], type="word-alignment")
 
     with pytest.raises(ValidationError):
         AssessmentIn(
@@ -278,7 +278,7 @@ def test_assessment(client):
     )  # This should require a reference_id
 
     good_config = AssessmentIn(
-        revision_id=revision_ids[0], reference_id=revision_ids[1], type="dummy"
+        revision_id=revision_ids[0], reference_id=revision_ids[1], type="word-alignment"
     )
 
     for prefix in version_prefixes:
@@ -334,6 +334,9 @@ def test_result(client):
         reference_id=revision_ids[1],
         type="word-alignment",
     )
+    response = client.post(
+        "/assessment", params={**good_config.dict(), "modal_suffix": "test"}
+
     response = client.post("/assessment", params={**good_config.dict()})
     assert response.status_code == 200
     assessment_id = response.json()["id"]
