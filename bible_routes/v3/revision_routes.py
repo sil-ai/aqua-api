@@ -16,7 +16,7 @@ from database.models import (
     UserDB as UserModel,
 )
 from security_routes.utilities import (
-    is_user_authorized_for_revision,
+    get_revisions_authorized_for_user,
     is_user_authorized_for_bible_version,
 )
 from security_routes.auth_routes import get_current_user
@@ -118,12 +118,11 @@ async def list_revisions(
             select(BibleRevisionModel).where(BibleRevisionModel.deleted.is_(False))
         )
         revisions = result.scalars().all()
+        revisions_for_user = await get_revisions_authorized_for_user(current_user.id, db)
 
-        revisions = [
-            revision
-            for revision in revisions
-            if await is_user_authorized_for_revision(current_user.id, revision.id, db)
-        ]
+        # Intersect the two lists to get the revisions that are authorized for the user
+        revisions = list(set(revisions).intersection(revisions_for_user))
+
     revision_out_list = await asyncio.gather(
         *[create_revision_out(revision, db) for revision in revisions]
     )
