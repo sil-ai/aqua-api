@@ -1,9 +1,9 @@
 name: delete-stale-branches
 
 on:
-  push:
-    branches:
-      - action_stale_branches/AQUA218
+  schedule:
+    - cron: '0 0 9 */2 *'  # Esto se ejecuta a las 00:00 UTC del primer día de cada segundo mes
+
 jobs:
   cleaning:
     name: Cleanup old branches
