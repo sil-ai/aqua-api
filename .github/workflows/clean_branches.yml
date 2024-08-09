@@ -2,7 +2,7 @@ name: delete-stale-branches
 
 on:
   schedule:
-    - cron: '0 0 9 */2 *'  # Esto se ejecuta a las 00:00 UTC del primer día de cada segundo mes
+    - cron: '0 14 9 */2 *'  # Esto se ejecuta a las 00:00 UTC del primer día de cada segundo mes
 
 jobs:
   cleaning:
@@ -16,7 +16,7 @@ jobs:
         with:
           repo_token: ${{ github.token }}
           date: '3 months ago'
-          dry_run: true
+          dry_run: false
           delete_tags: true
           minimum_tags: 5
           extra_protected_branch_regex: ^(main|master|development)$
