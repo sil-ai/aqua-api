@@ -1,9 +1,6 @@
 name: delete-stale-branches
 
 on:
-  push:
-    branches:
-      - action_stale_branches/AQUA218
   schedule:
     - cron: '0 0 1 */2 *'  # This means to execute at 00:00 the first day every two months
 
