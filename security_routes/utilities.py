@@ -90,23 +90,24 @@ async def get_revisions_authorized_for_user(user_id,db):
     result = await db.execute(select(UserDB).where(UserDB.id == user_id))
     user = result.scalars().first()
     if user and user.is_admin:
-        return True
+        # Just return all revisions
+        return await db.execute(select(BibleRevision)).scalars().all()
 
     # Fetch the groups the user belongs to
     user_groups = (
         select(UserGroup.group_id).where(UserGroup.user_id == user_id)
     ).subquery()
 
-    # Check if the revision's Bible version is accessible by one of the user's groups
 
+    # return the revision associated to the BibleVersion
     stmt = (
-        select(BibleVersion)
-        .join(BibleRevision, BibleVersion.id == BibleRevision.bible_version_id)
+        select(BibleRevision)
+        .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
         .where(
-
             BibleVersionAccess.group_id.in_(user_groups),
         )
     )
+
     result = await db.execute(stmt)
 
     return result.scalars().all()
