@@ -5,7 +5,7 @@ on:
     branches:
       - action_stale_branches/AQUA218
   schedule:
-    - cron: '0 14 9 */2 *'  # Esto se ejecuta a las 00:00 UTC del primer día de cada segundo mes
+    - cron: '0 0 1 */2 *'  # This means to execute at 00:00 the first day every two months
 
 jobs:
   cleaning:
