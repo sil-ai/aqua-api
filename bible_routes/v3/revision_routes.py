@@ -113,7 +113,9 @@ async def list_revisions(
             select(BibleRevisionModel).where(BibleRevisionModel.deleted.is_(False))
         )
         revisions = result.scalars().all()
-        revisions_for_user = await get_revisions_authorized_for_user(current_user.id, db)
+        revisions_for_user = await get_revisions_authorized_for_user(
+            current_user.id, db
+        )
 
         # Intersect the two lists to get the revisions that are authorized for the user
         revisions = list(set(revisions).intersection(revisions_for_user))

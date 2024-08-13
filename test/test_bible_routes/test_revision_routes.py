@@ -10,14 +10,11 @@ from datetime import datetime
 
 from database.models import (
     BibleRevision as BibleRevisionModel,
-    UserGroup,
     VerseText as VerseText,
     BibleVersion as BibleVersionModel,
     UserDB,
 )
 from sqlalchemy.future import select
-
-from models import Group
 
 
 @pytest.mark.asyncio
@@ -257,5 +254,3 @@ def test_performance_revision_upload(client, regular_token1, db_session):
         logging.info(f"Uploaded revision in {total_time:.2f} seconds.")
         assert total_time <= 7
         assert response.status_code == 200
-
-
