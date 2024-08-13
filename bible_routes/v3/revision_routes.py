@@ -79,11 +79,6 @@ async def list_revisions(
     - file: UploadFile
     Description: The file containing the revision text.
     """
-    start_time = time.time()  # Start timer
-    logging.info(
-        f"User {current_user.id} requested list of revisions. Version ID: {'All' if version_id is None else version_id}"
-    )
-
     if version_id:
         # Check if version exists
         result = await db.execute(
@@ -127,10 +122,6 @@ async def list_revisions(
         *[create_revision_out(revision, db) for revision in revisions]
     )
 
-    processing_time = time.time() - start_time
-    logging.info(
-        f"Listed revisions for User {current_user.id} in {processing_time:.2f} seconds."
-    )
     return revision_out_list
 
 

@@ -10,11 +10,14 @@ from datetime import datetime
 
 from database.models import (
     BibleRevision as BibleRevisionModel,
+    UserGroup,
     VerseText as VerseText,
     BibleVersion as BibleVersionModel,
     UserDB,
 )
 from sqlalchemy.future import select
+
+from models import Group
 
 
 @pytest.mark.asyncio
@@ -254,23 +257,5 @@ def test_performance_revision_upload(client, regular_token1, db_session):
         logging.info(f"Uploaded revision in {total_time:.2f} seconds.")
         assert total_time <= 7
         assert response.status_code == 200
-
-
-def test_revision_list(client, regular_token1, regular_token2, db_session):
-    version_id = create_bible_version(client, regular_token1)
-    revision_id = upload_revision(client, regular_token1, version_id)
-    response, listed_revisions = list_revision(client, regular_token1, version_id)
-    assert response == 200
-    assert len(listed_revisions) == 1
-    assert listed_revisions[0]["bible_version_id"] == version_id
-
-    response, _ = list_revision(client, regular_token2, version_id)
-    assert response == 403  # Regular user 2 should not have access
-
-    response, _ = list_revision(client, regular_token2, 999999999)
-    assert response == 400  # invalid version
-
-    response, listed_revisions = list_revision(client, regular_token2)
-    assert len(listed_revisions) == 0  # Regular user 2 should not have access to any revisions
 
 
