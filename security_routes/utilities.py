@@ -86,6 +86,33 @@ async def is_user_authorized_for_revision(user_id, revision_id, db):
     return accessible is not None
 
 
+async def get_revisions_authorized_for_user(user_id, db):
+    # Admins have access to all revisions
+    result = await db.execute(select(UserDB).where(UserDB.id == user_id))
+    user = result.scalars().first()
+    if user and user.is_admin:
+        # Just return all revisions
+        return await db.execute(select(BibleRevision)).scalars().all()
+
+    # Fetch the groups the user belongs to
+    user_groups = (
+        select(UserGroup.group_id).where(UserGroup.user_id == user_id)
+    ).subquery()
+
+    # return the revision associated to the BibleVersion
+    stmt = (
+        select(BibleRevision)
+        .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
+        .where(
+            BibleVersionAccess.group_id.in_(user_groups),
+        )
+    )
+
+    result = await db.execute(stmt)
+
+    return result.scalars().all()
+
+
 async def is_user_authorized_for_assessment(user_id, assessment_id, db):
     # Admins have access to all assessments
     user_result = await db.execute(select(UserDB).where(UserDB.id == user_id))
