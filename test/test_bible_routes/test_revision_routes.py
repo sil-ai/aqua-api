@@ -267,10 +267,9 @@ def test_get_revision(client, regular_token1, regular_token2, db_session):
     response, listed_revisions = list_revision(client, regular_token2)
     prev_rev2 = len(listed_revisions)
 
-    for i in range(4):
-        print(f"Creating revision {i + 1}")
+    for _ in range(4):
         version_id = create_bible_version(client, regular_token1)
-        _ = upload_revision(client, regular_token1, version_id)
+        upload_revision(client, regular_token1, version_id)
 
     # Get revisions user 1
     response, listed_revisions = list_revision(client, regular_token1)
@@ -281,10 +280,9 @@ def test_get_revision(client, regular_token1, regular_token2, db_session):
     for revision in listed_revisions:
         delete_revision(client, regular_token1, revision["id"])
 
-    for i in range(5):
-        print(f"Creating revision {i + 1}")
+    for _ in range(5):
         version_id = create_bible_version(client, regular_token2)
-        _ = upload_revision(client, regular_token2, version_id)
+        upload_revision(client, regular_token2, version_id)
 
     # Get revisions user 2
     response, listed_revisions = list_revision(client, regular_token2)
