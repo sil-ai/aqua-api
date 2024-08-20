@@ -99,16 +99,13 @@ async def get_revisions_authorized_for_user(user_id, db):
         select(UserGroup.group_id).where(UserGroup.user_id == user_id)
     ).subquery()
 
-    from sqlalchemy.orm import aliased
-
-    # Assuming BibleVersionAccess is a table that links BibleVersion to groups
-    BibleVersionAccess = aliased(BibleVersionAccess)
-
     # return the revision associated to the BibleVersion
     stmt = (
         select(BibleRevision)
         .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
-        .join(BibleVersionAccess, BibleVersionAccess.bible_version_id == BibleVersion.id)
+        .join(
+            BibleVersionAccess, BibleVersionAccess.bible_version_id == BibleVersion.id
+        )
         .where(
             BibleVersionAccess.group_id.in_(user_groups),
         )
