@@ -8,12 +8,12 @@ services:
       - "5678:5678" # Expose the debug port
    # command: pytest -v
     environment:
-      - DATABASE_URL=${AQUA_DB}
+      - DATABASE_URL=postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname
       - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
       - AWS_SECRET_KEY=${AWS_SECRET_KEY}
       - GRAPHQL_URL=${GRAPHQL_URL}
       - GRAPHQL_SECRET=${GRAPHQL_SECRET}
-      - AQUA_DB=${AQUA_DB}
+      - AQUA_DB=postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname
       - TEST_KEY=${TEST_KEY}
       - FAIL_KEY=${FAIL_KEY}
       - KEY_VAULT=${KEY_VAULT}
