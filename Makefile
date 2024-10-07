@@ -22,7 +22,6 @@ up:
 	docker-compose up -d
 
 localapi-up:
-	@export REGISTRY=local && \
 	export PYTHONPATH=aqua-api && \
 	docker-compose up -d api
 
