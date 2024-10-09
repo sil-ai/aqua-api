@@ -50,10 +50,12 @@ To run the API locally while developing:
 
     ```
     $ make build-local
-    $ make up
+    $ make project-up
     ```
 
-4. Use Postman or cURL to interact with (i.e., call) the various endpoints to see how they work. And/or pull up the docs at `localhost:8000/docs`.
+4. `make project-up` will initialize the project and populate the db with the data inserted through conftest.py.
+
+5. Use Postman or cURL to interact with (i.e., call) the various endpoints to see how they work. And/or pull up the docs at `localhost:8000/docs`.
 
 ## Environment file
 

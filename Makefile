@@ -21,6 +21,18 @@ localdb-up:
 up:
 	docker-compose up -d
 
+localapi-up:
+	export PYTHONPATH=aqua-api && \
+	docker-compose up -d api
+
+project-up:
+	make down
+	make localdb-up
+	make localapi-up
+	@export PYTHONPATH=${PWD} && \
+	python test/conftest.py
+
+
 down:
 	docker-compose down
 
