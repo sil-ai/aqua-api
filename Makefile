@@ -23,7 +23,7 @@ up:
 
 localapi-up:
 	export PYTHONPATH=aqua-api && \
-	docker-compose up -d --build api
+	docker-compose up -d api
 
 project-up:
 	make down
