@@ -13,7 +13,6 @@ from database.models import (
     Assessment,
 )  # Your SQLAlchemy model
 
-
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
