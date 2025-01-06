@@ -205,6 +205,7 @@ def setup_references_and_isos(db_session):
     db_session.add(IsoLanguage(iso639="eng", name="english"))
     db_session.add(IsoLanguage(iso639="ngq", name="ngq"))
     db_session.add(IsoLanguage(iso639="swh", name="swh"))
+    db_session.add(IsoLanguage(iso639="zga", name="kinga"))
     db_session.add(IsoScript(iso15924="Latn", name="latin"))
     db_session.commit()
 
