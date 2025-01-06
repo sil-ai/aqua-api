@@ -136,7 +136,7 @@ async def get_assessments(
 
 # Helper function to call assessment runner
 async def call_assessment_runner(assessment: AssessmentIn, return_all_results: bool):
-    runner_url = "https://sil-ai--runner-assessment-runner.modal.run"
+    runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"
     params = {
         "return_all_results": return_all_results,
     }
@@ -195,7 +195,6 @@ async def add_assessment(
     - owner_id: int
     Description: The unique identifier for the owner of the assessment.
     """
-    logger.info(f'{a=}')
     if a.type in ["semantic-similarity", "word-alignment", "translation-similarity"] and a.reference_id is None:
         raise HTTPException(
             status_code=400, detail=f"Assessment type {a.type} requires a reference_id."
@@ -209,19 +208,14 @@ async def add_assessment(
         requested_time=datetime.now(),
         owner_id=current_user.id,
     )
-    logger.info(f'{assessment=}')
 
     db.add(assessment)
     await db.commit()
     await db.refresh(assessment)
     a.id = assessment.id
 
-    logger.info(f'{a=}')
-
     # Call runner using helper function
     response = await call_assessment_runner(a, return_all_results)
-
-    logger.info(f'{response=}')
 
     if not 200 <= response.status_code < 300:
         try:

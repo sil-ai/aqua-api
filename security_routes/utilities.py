@@ -1,5 +1,6 @@
 # utilities.py
 import bcrypt
+import os
 from sqlalchemy.orm import aliased
 from sqlalchemy import or_
 from sqlalchemy.sql import select
@@ -13,7 +14,7 @@ from database.models import (
 )  # Your SQLAlchemy model
 
 
-SECRET_KEY = "your_secret_key_here"
+SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
