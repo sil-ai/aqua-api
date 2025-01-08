@@ -130,7 +130,8 @@ def test_text_dataframe(db_setup_teardown):
     assert success is True
 
 
-def test_text_loading(db_setup_teardown, db_session):
+# def test_text_loading(db_setup_teardown, db_session):
+def test_text_loading(db_setup_teardown):
     revision_id = db_setup_teardown  # This is the value returned by setup_database
     db_engine = db.create_engine(os.getenv("AQUA_DB"))
 
