@@ -130,7 +130,7 @@ def test_text_dataframe(db_setup_teardown):
     assert success is True
 
 
-def test_text_loading(db_setup_teardown, db_session):
+def test_text_loading(db_setup_teardown):
     revision_id = db_setup_teardown  # This is the value returned by setup_database
     db_engine = db.create_engine(os.getenv("AQUA_DB"))
 
@@ -144,15 +144,8 @@ def test_text_loading(db_setup_teardown, db_session):
 
     text_load = bible_loading.text_loading(verse_text, db_engine)
     assert text_load is True
-    # # __________________________________________
-    # verify = db_session.query(VerseText).filter_by(
-    #     revision_id=revision_id,
-    #     verse_reference="GEN 1:1"
-    # ).first()
 
-    # assert verify is not None
-    # assert verify.text == 'TEST'
-    # # _________________________________
+    # TODO - Do an explicit SQL query to check that the data was uploaded.
 
 
 def test_upload_bible(db_setup_teardown):
