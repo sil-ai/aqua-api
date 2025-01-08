@@ -195,7 +195,10 @@ async def add_assessment(
     - owner_id: int
     Description: The unique identifier for the owner of the assessment.
     """
-    if a.type in ["semantic-similarity", "word-alignment", "translation-similarity"] and a.reference_id is None:
+    if (
+        a.type in ["semantic-similarity", "word-alignment", "translation-similarity"]
+        and a.reference_id is None
+    ):
         raise HTTPException(
             status_code=400, detail=f"Assessment type {a.type} requires a reference_id."
         )
