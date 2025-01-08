@@ -11,10 +11,10 @@ build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
 localdb-up:
-	@export AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" && \
+	@export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
 	docker-compose up -d db && \
 	sleep 5 && \
-	cd alembic && AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" alembic upgrade head && \
+	cd alembic && AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" alembic upgrade head && \
 	cd ..
 
 
@@ -29,7 +29,7 @@ project-up:
 	make down
 	make localdb-up
 	make localapi-up
-	@export PYTHONPATH=${PWD} AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" && \
+	@export PYTHONPATH=${PWD} && \
 	python test/conftest.py
 
 
