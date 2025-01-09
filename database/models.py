@@ -62,6 +62,8 @@ class NgramsTable(Base):
     ngram = Column(Text)
     ngram_size = Column(Integer)
 
+    vrefs = relationship("NgramVrefTable", back_populates="ngram")
+
 
 class NgramVrefTable(Base):
     __tablename__ = "ngram_vref_table"
@@ -69,6 +71,8 @@ class NgramVrefTable(Base):
     id = Column(Integer, primary_key=True)
     ngram_id = Column(Integer, ForeignKey("ngrams_table.id"))
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"))
+
+    ngram = relationship("NgramsTable", back_populates="vrefs")
 
 
 class Assessment(Base):
