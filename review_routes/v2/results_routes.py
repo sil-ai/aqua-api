@@ -338,11 +338,14 @@ async def get_result(
             vref=vref,
             score=result[5] if result[5] else 0,
             source=result[6],
-            target=[
-                {key: value} for key, value in ast.literal_eval(str(result[7])).items()
-            ]
-            if ast.literal_eval(str(result[7])) and result[7] is not None
-            else None,
+            target=(
+                [
+                    {key: value}
+                    for key, value in ast.literal_eval(str(result[7])).items()
+                ]
+                if ast.literal_eval(str(result[7])) and result[7] is not None
+                else None
+            ),
             flag=result[8] if result[8] else False,
             note=result[9] if result[9] else None,
             revision_text=result[10],
@@ -969,11 +972,14 @@ async def get_average_results(
             vref=vref,
             score=result[5] if result[5] else 0,
             source=result[6],
-            target=[
-                {key: value} for key, value in ast.literal_eval(str(result[7])).items()
-            ]
-            if ast.literal_eval(str(result[7])) and result[7] is not None
-            else None,
+            target=(
+                [
+                    {key: value}
+                    for key, value in ast.literal_eval(str(result[7])).items()
+                ]
+                if ast.literal_eval(str(result[7])) and result[7] is not None
+                else None
+            ),
             flag=result[8] if result[8] else False,
             note=result[9] if result[9] else None,
             revision_text=result[10],
