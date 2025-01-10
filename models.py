@@ -190,12 +190,12 @@ class VerseText(BaseModel):
 
 
 class AssessmentType(Enum):
-    dummy = "dummy"
     word_alignment = "word-alignment"
     sentence_length = "sentence-length"
     semantic_similarity = "semantic-similarity"
     model_config = ConfigDict(from_attributes=True)
     question_answering = "question-answering"
+    translation_similarity = "translation-similarity"
 
 
 class AssessmentIn(BaseModel):
