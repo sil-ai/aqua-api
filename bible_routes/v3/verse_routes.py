@@ -266,7 +266,6 @@ async def get_vrefs(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    print("vrefs", vrefs)
     """
     Gets a list of verse texts for a revision for a given list of verse references.
 
