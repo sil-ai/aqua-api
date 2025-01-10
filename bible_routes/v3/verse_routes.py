@@ -2,7 +2,7 @@ __version__ = "v3"
 
 from typing import List
 import fastapi
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -259,7 +259,6 @@ async def get_text(
     return verses
 
 
-
 @router.get("/vrefs", response_model=List[VerseText])
 async def get_vrefs(
     revision_id: int,
@@ -267,7 +266,6 @@ async def get_vrefs(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    print("vrefs", vrefs)
     """
     Gets a list of verse texts for a revision for a given list of verse references.
 
