@@ -120,11 +120,7 @@ def test_verse_routes_flow(client, regular_token1, regular_token2, db_session):
     # Test /vrefs endpoint
     vrefs_response = client.get(
         f"/{prefix}/vrefs",
-        params={
-            "revision_id": revision_id,
-            "vrefs": ["GEN 1:1", "GEN 1:2", "GEN 1:3"]
-        },
-
+        params={"revision_id": revision_id, "vrefs": ["GEN 1:1", "GEN 1:2", "GEN 1:3"]},
         headers=headers,
     )
     assert vrefs_response.status_code == 200
