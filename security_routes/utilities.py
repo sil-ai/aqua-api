@@ -92,7 +92,8 @@ async def get_revisions_authorized_for_user(user_id, db):
     user = result.scalars().first()
     if user and user.is_admin:
         # Just return all revisions
-        return await db.execute(select(BibleRevision)).scalars().all()
+        result = await db.execute(select(BibleRevision))
+        return result.scalars().all()
 
     # Fetch the groups the user belongs to
     user_groups = (
