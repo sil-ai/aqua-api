@@ -11,6 +11,7 @@ build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
 localdb-up:
+	make down
 	@export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
 	docker-compose up -d db && \
 	sleep 5 && \
@@ -34,12 +35,12 @@ project-up:
 
 
 down:
-	docker-compose down
+	docker-compose down -v
 
 test: localdb-up
 	@export PYTHONPATH=${PWD} && \
 	export AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" && \
-	pytest test
+	pytest -s test
 
 push-branch:
 	docker push ${REGISTRY}/${IMAGENAME}:latest

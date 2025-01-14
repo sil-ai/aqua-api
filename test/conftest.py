@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
+
 from database.models import (
     Base,
     UserDB,
@@ -26,16 +28,42 @@ engine = create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
+@pytest.fixture(scope="module")
+async def async_test_db_session_2():
+    async_engine = create_async_engine(
+        "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
+    )
+
+    AsyncSessionLocal = sessionmaker(
+        autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
+    )
+
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with AsyncSessionLocal() as async_session:
+        await setup_database_async(async_session)
+        try:
+            yield async_session
+        finally:
+            await teardown_database_async(async_session)
+            await async_engine.dispose()
+
+
+
 # Asynchronous session fixture
 @pytest.fixture(scope="module")
 async def async_test_db_session():
     async_engine = create_async_engine(
         "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
     )
+
     AsyncSessionLocal = sessionmaker(
         autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
     )
     async with AsyncSessionLocal() as async_session:
+
         yield async_session
 
 
@@ -100,6 +128,14 @@ def setup_database(db_session):
 
     # Section 3: Loading Revision
     load_revision_data(db_session)
+
+
+async def setup_database_async(session):
+    """Set up the database for testing asynchronously."""
+    await setup_users_and_groups_async(session)
+    await setup_references_and_isos_async(session)
+    await load_revision_data_async(session)
+
 
 
 def setup_users_and_groups(db_session):
@@ -171,6 +207,12 @@ async def setup_users_and_groups_async(session):
     session.add_all([test_user1, test_user2, admin_user])
     await session.commit()  # Use await for committing the transaction
 
+    await session.refresh(test_user1)
+    await session.refresh(test_user2)
+    await session.refresh(admin_user)
+    await session.flush()
+
+
     # Create groups
     group1 = Group(name="Group1", description="Test Group 1")
     group2 = Group(name="Group2", description="Test Group 2")
@@ -178,9 +220,23 @@ async def setup_users_and_groups_async(session):
     session.add_all([group1, group2])
     await session.commit()  # Use await for committing the transaction
 
-    # Associate users with groups
-    user_group1 = UserGroup(user_id=test_user1.id, group_id=group1.id)
-    user_group2 = UserGroup(user_id=test_user2.id, group_id=group2.id)
+    await session.refresh(group1)
+    await session.refresh(group2)
+    await session.flush()
+
+    result = await session.execute(select(UserDB).where(UserDB.username == "testuser1"))
+    test_user1 = result.scalars().first()
+
+    result = await session.execute(select(UserDB).where(UserDB.username == "testuser2"))
+    test_user2 = result.scalars().first()
+
+    test_user1_id = test_user1.id
+    group1_id = group1.id
+    test_user2_id = test_user2.id
+    group2_id = group2.id
+
+    user_group1 = UserGroup(user_id=test_user1_id, group_id=group1_id)
+    user_group2 = UserGroup(user_id=test_user2_id, group_id=group2_id)
 
     session.add_all([user_group1, user_group2])
     await session.commit()  # Use await for committing the transaction
@@ -291,6 +347,11 @@ async def load_revision_data_async(session):
     # Commit to save the version and retrieve its ID for the revision
     await session.commit()
 
+    result = await session.execute(
+        select(BibleVersion).where(BibleVersion.name == "loading_test")
+    )
+    version = result.scalars().first()
+
     # Add revision
     revision = BibleRevision(
         date=date.today(),
@@ -319,10 +380,10 @@ async def teardown_database_async(session):
     using session and engine from async ORM.
     """
     async with session.begin():
-        session.execute("SET session_replication_role = replica;")
+        await session.execute("SET session_replication_role = replica;")
         for table in reversed(Base.metadata.sorted_tables):
             await session.execute(table.delete())
-        session.execute("SET session_replication_role = DEFAULT;")
+        await session.execute("SET session_replication_role = DEFAULT;")
 
 
 if __name__ == "__main__":
