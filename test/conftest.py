@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select
+from sqlalchemy import select, column
 
 from database.models import (
     Base,
@@ -18,6 +18,7 @@ from database.models import (
     BookReference,
     ChapterReference,
     VerseReference,
+    BibleVersionAccess
 )
 import bcrypt
 from datetime import date
@@ -44,12 +45,14 @@ async def async_test_db_session_2():
 
     async with AsyncSessionLocal() as async_session:
         await setup_database_async(async_session)
+
+    async with AsyncSessionLocal() as async_session:
         try:
             yield async_session
         finally:
-            await teardown_database_async(async_session)
+            async with AsyncSessionLocal() as teardown_session:
+                await teardown_database_async(teardown_session)
             await async_engine.dispose()
-
 
 
 # Asynchronous session fixture
@@ -325,42 +328,118 @@ def load_revision_data(db_session):
     db_session.commit()
 
 
+# async def load_revision_data_async(session):
+#     """Load revision data into the database asynchronously."""
+#     # Add version
+#     # Asynchronously query the id for testuser1
+#     result = await session.execute(
+#         select(UserDB).where(UserDB.username == "testuser1")  # noqa
+#     )
+#     user = result.scalars().first()
+#     user_id = user.id if user else None
+
+#     version = BibleVersion(
+#         name="loading_test",
+#         iso_language="eng",
+#         iso_script="Latn",
+#         abbreviation="BLTEST",
+#         owner_id=user_id,
+#     )
+#     session.add(version)
+
+#     # Commit to save the version and retrieve its ID for the revision
+#     await session.commit()
+
+#     result = await session.execute(
+#         select(BibleVersion).where(BibleVersion.name == "loading_test")
+#     )
+#     version = result.scalars().first()
+
+#     # Add revision
+#     revision = BibleRevision(
+#         date=date.today(),
+#         bible_version_id=version.id,
+#         published=False,
+#         machine_translation=True,
+#     )
+#     session.add(revision)
+#     await session.commit()
+
 async def load_revision_data_async(session):
     """Load revision data into the database asynchronously."""
-    # Add version
-    # Asynchronously query the id for testuser1
-    result = await session.execute(
-        select(UserDB).where(UserDB.username == "testuser1")  # noqa
-    )
+    # Query the ID for testuser1
+    result = await session.execute(select(UserDB).where(UserDB.username == "testuser1"))
     user = result.scalars().first()
     user_id = user.id if user else None
 
+    # Ensure testuser1 belongs to a group
+    result = await session.execute(select(Group).where(Group.name == "Group1"))
+    group = result.scalars().first()
+    if not group:
+        group = Group(name="Group1", description="Test Group 1")
+        session.add(group)
+        await session.commit()
+        await session.refresh(group)
+
+    result = await session.execute(
+        select(UserGroup).where(UserGroup.user_id == user_id, UserGroup.group_id == group.id)
+    )
+    user_group = result.scalars().first()
+    if not user_group:
+        user_group = UserGroup(user_id=user_id, group_id=group.id)
+        session.add(user_group)
+        await session.commit()
+
+    # Add a Bible version
     version = BibleVersion(
         name="loading_test",
         iso_language="eng",
         iso_script="Latn",
         abbreviation="BLTEST",
         owner_id=user_id,
+        is_reference=False,
     )
     session.add(version)
-
-    # Commit to save the version and retrieve its ID for the revision
     await session.commit()
+    await session.refresh(version)
 
     result = await session.execute(
         select(BibleVersion).where(BibleVersion.name == "loading_test")
     )
-    version = result.scalars().first()
+    version_ = result.scalars().first()
 
-    # Add revision
+    # Add a revision
     revision = BibleRevision(
         date=date.today(),
-        bible_version_id=version.id,
+        bible_version_id=version_.id,
         published=False,
         machine_translation=True,
     )
     session.add(revision)
     await session.commit()
+    await session.refresh(revision)
+
+    result = await session.execute(select(Group).where(Group.name == "Group1"))
+    group = result.scalars().first()
+
+    result = await session.execute(
+        select(BibleVersion).where(BibleVersion.name == "loading_test")
+    )
+    version_ = result.scalars().first()
+
+    # Give Group1 access to the Bible version
+    result = await session.execute(
+        select(BibleVersionAccess).where(
+        BibleVersionAccess.bible_version_id == version_.id,
+        BibleVersionAccess.group_id == group.id,
+        )
+    )
+    bible_version_access = result.scalars().first()
+    if not bible_version_access:
+        bible_version_access = BibleVersionAccess(bible_version_id=version_.id, group_id=group.id)
+        session.add(bible_version_access)
+        await session.commit()
+
 
 
 def teardown_database(db_session):
@@ -374,16 +453,19 @@ def teardown_database(db_session):
             transaction.commit()
 
 
+
+
 async def teardown_database_async(session):
     """
     Tear down the database by deleting all data from tables asynchronously,
     using session and engine from async ORM.
     """
-    async with session.begin():
-        await session.execute("SET session_replication_role = replica;")
-        for table in reversed(Base.metadata.sorted_tables):
-            await session.execute(table.delete())
-        await session.execute("SET session_replication_role = DEFAULT;")
+    await session.execute("SET session_replication_role = replica;")
+    for table in reversed(Base.metadata.sorted_tables):
+        await session.execute(table.delete())
+    await session.execute("SET session_replication_role = DEFAULT;")
+    await session.commit()  # Asegúrate de confirmar los cambios
+
 
 
 if __name__ == "__main__":

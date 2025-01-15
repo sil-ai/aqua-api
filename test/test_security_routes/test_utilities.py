@@ -24,26 +24,30 @@ def test_verify_password():
     assert not verify_password("wrongpassword", hashed_password)
 
 @pytest.mark.asyncio
-async def test_get_revisions_as_admin(async_test_db_session_2):
-    # db = async_test_db_session_2
+async def test_get_revisions(async_test_db_session_2):
     async for db in async_test_db_session_2:
+        # As Admin
         result = await db.execute(select(UserDB).where(UserDB.username == "admin"))
+        admin_user = result.scalars().first()
+
+        revisions = await get_revisions_authorized_for_user(admin_user.id, db)
+
+        all_revisions = await db.execute(select(BibleRevision))
+        all_revisions_count = len(all_revisions.scalars().all())
+
+        assert len(revisions) == all_revisions_count
+        assert all(rev in revisions for rev in all_revisions.scalars().all())
+
+        # As User
+        result = await db.execute(select(UserDB).where(UserDB.username == "testuser1"))
         user = result.scalars().first()
 
-        print(user)
+        revisions = await get_revisions_authorized_for_user(user.id, db)
+
+        all_revisions = await db.execute(select(BibleRevision))
+        all_revisions_count = len(all_revisions.scalars().all())
+
+        assert len(revisions) == all_revisions_count
+        assert all(rev in revisions for rev in all_revisions.scalars().all())
 
 
-    # result = session.execute(select(UserDB).where(UserDB.username == "admin"))
-    # admin_user = result.scalars().first()
-
-    # print(admin_user)
-
-    # revisions = get_revisions_authorized_for_user(admin_user.id, session)
-
-    # all_revisions = session.execute(select(BibleRevision))
-    # print(all_revisions)
-    # all_revisions_count = len(all_revisions.scalars().all())
-    # print(all_revisions_count)
-    # print(len(revisions))
-    # assert len(revisions) == all_revisions_count
-    # assert all(rev in revisions for rev in all_revisions.scalars().all())
