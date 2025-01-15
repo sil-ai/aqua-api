@@ -40,7 +40,7 @@ down:
 test: localdb-up
 	@export PYTHONPATH=${PWD} && \
 	export AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" && \
-	pytest -s test
+	pytest test
 
 push-branch:
 	docker push ${REGISTRY}/${IMAGENAME}:latest

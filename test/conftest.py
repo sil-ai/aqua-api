@@ -4,8 +4,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select, column
-
+from sqlalchemy import select
 from database.models import (
     Base,
     UserDB,
@@ -326,44 +325,6 @@ def load_revision_data(db_session):
     )
     db_session.add(revision)
     db_session.commit()
-
-
-# async def load_revision_data_async(session):
-#     """Load revision data into the database asynchronously."""
-#     # Add version
-#     # Asynchronously query the id for testuser1
-#     result = await session.execute(
-#         select(UserDB).where(UserDB.username == "testuser1")  # noqa
-#     )
-#     user = result.scalars().first()
-#     user_id = user.id if user else None
-
-#     version = BibleVersion(
-#         name="loading_test",
-#         iso_language="eng",
-#         iso_script="Latn",
-#         abbreviation="BLTEST",
-#         owner_id=user_id,
-#     )
-#     session.add(version)
-
-#     # Commit to save the version and retrieve its ID for the revision
-#     await session.commit()
-
-#     result = await session.execute(
-#         select(BibleVersion).where(BibleVersion.name == "loading_test")
-#     )
-#     version = result.scalars().first()
-
-#     # Add revision
-#     revision = BibleRevision(
-#         date=date.today(),
-#         bible_version_id=version.id,
-#         published=False,
-#         machine_translation=True,
-#     )
-#     session.add(revision)
-#     await session.commit()
 
 async def load_revision_data_async(session):
     """Load revision data into the database asynchronously."""
