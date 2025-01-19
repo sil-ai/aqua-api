@@ -34,12 +34,14 @@ project-up:
 
 
 down:
-	docker-compose down
+	docker-compose down -v
 
 test: localdb-up
 	@export PYTHONPATH=${PWD} && \
 	export AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" && \
 	pytest test
+	make down
+
 
 push-branch:
 	docker push ${REGISTRY}/${IMAGENAME}:latest
