@@ -17,7 +17,7 @@ from database.models import (
     BookReference,
     ChapterReference,
     VerseReference,
-    BibleVersionAccess
+    BibleVersionAccess,
 )
 import bcrypt
 from datetime import date
@@ -65,7 +65,6 @@ async def async_test_db_session():
         autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
     )
     async with AsyncSessionLocal() as async_session:
-
         yield async_session
 
 
@@ -137,7 +136,6 @@ async def setup_database_async(session):
     await setup_users_and_groups_async(session)
     await setup_references_and_isos_async(session)
     await load_revision_data_async(session)
-
 
 
 def setup_users_and_groups(db_session):
@@ -213,7 +211,6 @@ async def setup_users_and_groups_async(session):
     await session.refresh(test_user2)
     await session.refresh(admin_user)
     await session.flush()
-
 
     # Create groups
     group1 = Group(name="Group1", description="Test Group 1")
@@ -326,6 +323,7 @@ def load_revision_data(db_session):
     db_session.add(revision)
     db_session.commit()
 
+
 async def load_revision_data_async(session):
     """Load revision data into the database asynchronously."""
     # Query the ID for testuser1
@@ -343,7 +341,9 @@ async def load_revision_data_async(session):
         await session.refresh(group)
 
     result = await session.execute(
-        select(UserGroup).where(UserGroup.user_id == user_id, UserGroup.group_id == group.id)
+        select(UserGroup).where(
+            UserGroup.user_id == user_id, UserGroup.group_id == group.id
+        )
     )
     user_group = result.scalars().first()
     if not user_group:
@@ -391,16 +391,17 @@ async def load_revision_data_async(session):
     # Give Group1 access to the Bible version
     result = await session.execute(
         select(BibleVersionAccess).where(
-        BibleVersionAccess.bible_version_id == version_.id,
-        BibleVersionAccess.group_id == group.id,
+            BibleVersionAccess.bible_version_id == version_.id,
+            BibleVersionAccess.group_id == group.id,
         )
     )
     bible_version_access = result.scalars().first()
     if not bible_version_access:
-        bible_version_access = BibleVersionAccess(bible_version_id=version_.id, group_id=group.id)
+        bible_version_access = BibleVersionAccess(
+            bible_version_id=version_.id, group_id=group.id
+        )
         session.add(bible_version_access)
         await session.commit()
-
 
 
 def teardown_database(db_session):
@@ -414,8 +415,6 @@ def teardown_database(db_session):
             transaction.commit()
 
 
-
-
 async def teardown_database_async(session):
     """
     Tear down the database by deleting all data from tables asynchronously,
@@ -426,7 +425,6 @@ async def teardown_database_async(session):
         await session.execute(table.delete())
     await session.execute("SET session_replication_role = DEFAULT;")
     await session.commit()
-
 
 
 if __name__ == "__main__":
