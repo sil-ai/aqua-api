@@ -83,6 +83,8 @@ async def validate_parameters(
         )
 
 
+# make another build_ngrams_query
+# will be less complicated, no filtering, no aggregation
 async def build_results_query(
     assessment_id: int,
     book: Optional[str],
@@ -112,11 +114,12 @@ async def build_results_query(
         select(Assessment.type).where(Assessment.id == assessment_id)
     )
     # For missing words, if not reverse, we only want the non-null source results
-    only_non_null = (
-        assessment_type in ["question-answering", "word-tests"] and not reverse
-    )
-    if only_non_null:
-        base_query = base_query.where(AssessmentResult.source.isnot(None))
+    # not relevant, can delete
+    # only_non_null = (
+    #     assessment_type in ["question-answering", "word-tests"] and not reverse
+    # )
+    # if only_non_null:
+    #     base_query = base_query.where(AssessmentResult.source.isnot(None))
 
     subquery = base_query.subquery()
 
@@ -295,14 +298,25 @@ async def get_result(
     response_model=Dict[str, Union[List[Result], int]],
 )
 async def get_ngrams_result(
+    # modify these parameters to match the ngrams assessment
+
     assessment_id: int,
+
+    # fetch everything by default for now
+    # remove for now
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
+
+    # keep pagination
     page: Optional[int] = None,
     page_size: Optional[int] = None,
+
+    # remove for now
     aggregate: Optional[aggType] = None,
     reverse: Optional[bool] = False,
+
+    # keep these
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -344,6 +358,8 @@ async def get_ngrams_result(
             detail="User not authorized to see this assessment",
         )
 
+    # create SQL query to fetch results
+    # build_ngrams_query
     query, count_query = await build_results_query(
         assessment_id,
         book,
@@ -357,11 +373,14 @@ async def get_ngrams_result(
     )
 
     # Execute the query and fetch results
+    # stays the same
     result_data = await db.execute(query)
+    # will be json data
     result_data = result_data.fetchall()
     result_agg_data = await db.scalar(count_query)
 
     # Process and format results
+    # json to return GET API call
     result_list = []
     for row in result_data:
         # Constructing the verse reference string
@@ -372,6 +391,7 @@ async def get_ngrams_result(
                 vref += f":{row.verse}"
 
         # Building the Result object
+        # modify this to match the ngrams assessment
         result_obj = Result(
             id=row.id if hasattr(row, "id") else None,
             assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
