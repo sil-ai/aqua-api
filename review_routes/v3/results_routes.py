@@ -286,6 +286,119 @@ async def get_result(
     return {"results": result_list, "total_count": total_count}
 
 
+
+
+
+###################################################################
+@router.get(
+    "/ngrams_result",
+    response_model=Dict[str, Union[List[Result], int]],
+)
+async def get_ngrams_result(
+    assessment_id: int,
+    book: Optional[str] = None,
+    chapter: Optional[int] = None,
+    verse: Optional[int] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    aggregate: Optional[aggType] = None,
+    reverse: Optional[bool] = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Returns a list of all results for a given assessment. These results are generally one for each verse in the assessed text(s).
+
+    Parameters
+    ----------
+    assessment_id : int
+        The ID of the assessment to get results for.
+    book : str, optional
+        Restrict results to one book.
+    chapter : int, optional
+        Restrict results to one chapter. If set, book must also be set.
+    verse : int, optional
+        Restrict results to one verse. If set, book and chapter must also be set.
+    page : int, optional
+        The page of results to return. If set, page_size must also be set.
+    page_size : int, optional
+        The number of results to return per page. If set, page must also be set.
+    aggregate : str, optional
+        If set to "chapter", results will be aggregated by chapter. Otherwise results will be returned at the verse level.
+
+    Notes
+    -----
+    Source and target are only returned for missing-words assessments. Source is single words from the source text. Target is
+    a json array of words that match this source in the "baseline reference" texts. These may be used to show how the source
+    word has been translated in a few other major languages.
+
+    Flag is a boolean value that is currently only implemented in missing-words assessments. It is used to indicate that the
+    missing word appears in the baseline reference texts, and so there is a higher likelihood that it is a word that should
+    be included in the text being assessed.
+    """
+    await validate_parameters(book, chapter, verse, aggregate)
+
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+
+    query, count_query = await build_results_query(
+        assessment_id,
+        book,
+        chapter,
+        verse,
+        page,
+        page_size,
+        aggregate,
+        reverse,
+        db,
+    )
+
+    # Execute the query and fetch results
+    result_data = await db.execute(query)
+    result_data = result_data.fetchall()
+    result_agg_data = await db.scalar(count_query)
+
+    # Process and format results
+    result_list = []
+    for row in result_data:
+        # Constructing the verse reference string
+        vref = f"{row.book}"
+        if hasattr(row, "chapter") and row.chapter is not None:
+            vref += f" {row.chapter}"
+            if hasattr(row, "verse") and row.verse is not None:
+                vref += f":{row.verse}"
+
+        # Building the Result object
+        result_obj = Result(
+            id=row.id if hasattr(row, "id") else None,
+            assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
+            vref=vref,
+            score=row.score if hasattr(row, "score") else None,
+            source=row.source if hasattr(row, "source") else None,
+            target=(
+                ast.literal_eval(row.target)
+                if hasattr(row, "target") and row.target is not None
+                else None
+            ),
+            flag=row.flag if hasattr(row, "flag") else None,
+            note=row.note if hasattr(row, "note") else None,
+            revision_text=row.revision_text if hasattr(row, "revision_text") else None,
+            reference_text=(
+                row.reference_text if hasattr(row, "reference_text") else None
+            ),
+            hide=row.hide if hasattr(row, "hide") else None,
+        )
+        # Add the Result object to the result list
+        result_list.append(result_obj)
+    total_count = result_agg_data  # Get the total count from the aggregation query
+
+    return {"results": result_list, "total_count": total_count}
+###################################################################
+
+
 async def build_compare_results_baseline_query(
     reference_id: Optional[int],
     baseline_ids: Optional[List[int]],
