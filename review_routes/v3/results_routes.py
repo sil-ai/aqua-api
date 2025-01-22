@@ -113,13 +113,6 @@ async def build_results_query(
     assessment_type = await db.scalar(
         select(Assessment.type).where(Assessment.id == assessment_id)
     )
-    # For missing words, if not reverse, we only want the non-null source results
-    # not relevant, can delete
-    # only_non_null = (
-    #     assessment_type in ["question-answering", "word-tests"] and not reverse
-    # )
-    # if only_non_null:
-    #     base_query = base_query.where(AssessmentResult.source.isnot(None))
 
     subquery = base_query.subquery()
 
@@ -299,23 +292,10 @@ async def get_result(
 )
 async def get_ngrams_result(
     # modify these parameters to match the ngrams assessment
-
     assessment_id: int,
-
-    # fetch everything by default for now
-    # remove for now
-    book: Optional[str] = None,
-    chapter: Optional[int] = None,
-    verse: Optional[int] = None,
-
     # keep pagination
     page: Optional[int] = None,
     page_size: Optional[int] = None,
-
-    # remove for now
-    aggregate: Optional[aggType] = None,
-    reverse: Optional[bool] = False,
-
     # keep these
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -362,13 +342,8 @@ async def get_ngrams_result(
     # build_ngrams_query
     query, count_query = await build_results_query(
         assessment_id,
-        book,
-        chapter,
-        verse,
         page,
         page_size,
-        aggregate,
-        reverse,
         db,
     )
 
@@ -382,34 +357,12 @@ async def get_ngrams_result(
     # Process and format results
     # json to return GET API call
     result_list = []
-    for row in result_data:
-        # Constructing the verse reference string
-        vref = f"{row.book}"
-        if hasattr(row, "chapter") and row.chapter is not None:
-            vref += f" {row.chapter}"
-            if hasattr(row, "verse") and row.verse is not None:
-                vref += f":{row.verse}"
 
         # Building the Result object
         # modify this to match the ngrams assessment
         result_obj = Result(
             id=row.id if hasattr(row, "id") else None,
             assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
-            vref=vref,
-            score=row.score if hasattr(row, "score") else None,
-            source=row.source if hasattr(row, "source") else None,
-            target=(
-                ast.literal_eval(row.target)
-                if hasattr(row, "target") and row.target is not None
-                else None
-            ),
-            flag=row.flag if hasattr(row, "flag") else None,
-            note=row.note if hasattr(row, "note") else None,
-            revision_text=row.revision_text if hasattr(row, "revision_text") else None,
-            reference_text=(
-                row.reference_text if hasattr(row, "reference_text") else None
-            ),
-            hide=row.hide if hasattr(row, "hide") else None,
         )
         # Add the Result object to the result list
         result_list.append(result_obj)
