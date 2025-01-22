@@ -140,18 +140,18 @@ async def get_result(
                 assessment_id=result[assessment_tag],
                 vref=result[vref_tag] if vref_tag is not None else None,
                 source=result[source_tag],
-                target=str(result[target_tag])
-                if result[target_tag] != "null"
-                else None,
+                target=(
+                    str(result[target_tag]) if result[target_tag] != "null" else None
+                ),
                 score=result[score_tag],
                 flag=result[flag_tag] if result[flag_tag] else False,
                 note=result[note_tag] if result[note_tag] else None,
-                revision_text=result[10]
-                if table_name == "assessment_result_with_text"
-                else None,
-                reference_text=result[11]
-                if table_name == "assessment_result_with_text"
-                else None,
+                revision_text=(
+                    result[10] if table_name == "assessment_result_with_text" else None
+                ),
+                reference_text=(
+                    result[11] if table_name == "assessment_result_with_text" else None
+                ),
             )
 
             result_list.append(results)

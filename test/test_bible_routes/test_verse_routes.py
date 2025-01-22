@@ -116,3 +116,16 @@ def test_verse_routes_flow(client, regular_token1, regular_token2, db_session):
     assert book_response.status_code == 200
     assert chapter_response.json()[0]["book"] == book
     assert chapter_response.json()[0]["revision_id"] == revision_id
+
+    # Test /vrefs endpoint
+    vrefs_response = client.get(
+        f"/{prefix}/vrefs",
+        params={"revision_id": revision_id, "vrefs": ["GEN 1:1", "GEN 1:2", "GEN 1:3"]},
+        headers=headers,
+    )
+    assert vrefs_response.status_code == 200
+    assert len(vrefs_response.json()) == 3
+    assert vrefs_response.json()[0]["book"] == "GEN"
+    assert vrefs_response.json()[0]["chapter"] == 1
+    assert vrefs_response.json()[0]["verse"] == 1
+    assert vrefs_response.json()[0]["revision_id"] == revision_id
