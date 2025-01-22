@@ -17,6 +17,16 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@v2
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.11
+
+    - name: Install Docker Compose
+      run: |
+        sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+        sudo chmod +x /usr/local/bin/docker-compose
+        docker-compose --version
 
     - name: Install Docker Compose
       run: |
@@ -40,6 +50,8 @@ jobs:
       env:
         OMIT_PREVIOUS_VERSIONS: true
         MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
+        SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        AIOHTTP_NO_EXTENSIONS: 1
       run: |
         pip install -r requirements.txt
         make test

@@ -266,15 +266,17 @@ async def get_result(
             vref=vref,
             score=row.score if hasattr(row, "score") else None,
             source=row.source if hasattr(row, "source") else None,
-            target=ast.literal_eval(row.target)
-            if hasattr(row, "target") and row.target is not None
-            else None,
+            target=(
+                ast.literal_eval(row.target)
+                if hasattr(row, "target") and row.target is not None
+                else None
+            ),
             flag=row.flag if hasattr(row, "flag") else None,
             note=row.note if hasattr(row, "note") else None,
             revision_text=row.revision_text if hasattr(row, "revision_text") else None,
-            reference_text=row.reference_text
-            if hasattr(row, "reference_text")
-            else None,
+            reference_text=(
+                row.reference_text if hasattr(row, "reference_text") else None
+            ),
             hide=row.hide if hasattr(row, "hide") else None,
         )
         # Add the Result object to the result list

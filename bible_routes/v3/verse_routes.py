@@ -2,7 +2,7 @@ __version__ = "v3"
 
 from typing import List
 import fastapi
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -252,6 +252,59 @@ async def get_text(
     stmt = (
         select(VerseModel)
         .where(VerseModel.revision_id == revision_id)
+        .order_by(VerseModel.id)
+    )
+    result = await db.execute(stmt)
+    verses = result.scalars().all()
+    return verses
+
+
+@router.get("/vrefs", response_model=List[VerseText])
+async def get_vrefs(
+    revision_id: int,
+    vrefs: List[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Gets a list of verse texts for a revision for a given list of verse references.
+
+    Input:
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - vrefs: List[str]
+    Description: A list of full verse references, including book, chapter and text. Must be in the format "GEN 1:1".
+
+    Returns:
+    Fields(VerseText):
+    - id: int
+    Description: The unique identifier for the verse.
+    - text: str
+    Description: The text of the verse.
+    - verse_reference: str
+    Description: The full verse reference, including book, chapter and text.
+    - revision_id: int
+    Description: The unique identifier for the revision.
+    - book: str
+    Description: The book of the Bible.
+    - chapter: int
+    Description: The chapter of the book.
+    - verse: int
+    Description: The verse number.
+    """
+
+    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this revision.",
+        )
+
+    stmt = (
+        select(VerseModel)
+        .where(
+            VerseModel.revision_id == revision_id,
+            VerseModel.verse_reference.in_(vrefs),
+        )
         .order_by(VerseModel.id)
     )
     result = await db.execute(stmt)

@@ -2,22 +2,23 @@ version: '3'
 services:
   api:
     build: .
-    image: ${REGISTRY}/${IMAGENAME}:latest
+    image: local/aqua-api:latest
     ports:
       - "8000:8000"
       - "5678:5678" # Expose the debug port
    # command: pytest -v
     environment:
-      - DATABASE_URL=${AQUA_DB}
+      - DATABASE_URL=postgresql+asyncpg://dbuser:dbpassword@db:5432/dbname
       - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
       - AWS_SECRET_KEY=${AWS_SECRET_KEY}
       - GRAPHQL_URL=${GRAPHQL_URL}
       - GRAPHQL_SECRET=${GRAPHQL_SECRET}
-      - AQUA_DB=${AQUA_DB}
+      - AQUA_DB=postgresql+asyncpg://dbuser:dbpassword@db:5432/dbname
       - TEST_KEY=${TEST_KEY}
       - FAIL_KEY=${FAIL_KEY}
       - KEY_VAULT=${KEY_VAULT}
       - MODAL_WEBHOOK_TOKEN=${MODAL_WEBHOOK_TOKEN}
+      - SECRET_KEY=${SECRET_KEY}
     depends_on:
       - db
 

@@ -254,3 +254,41 @@ def test_performance_revision_upload(client, regular_token1, db_session):
         logging.info(f"Uploaded revision in {total_time:.2f} seconds.")
         assert total_time <= 7
         assert response.status_code == 200
+
+    # Delete revision
+    revision_id = response.json()["id"]
+    assert delete_revision(client, regular_token1, revision_id) == 200
+
+
+def test_get_revision(client, regular_token1, regular_token2, db_session):
+    # Count how many revisions user1 and user2 previously have
+    response, listed_revisions = list_revision(client, regular_token1)
+    prev_rev1 = len(listed_revisions)
+    response, listed_revisions = list_revision(client, regular_token2)
+    prev_rev2 = len(listed_revisions)
+
+    for _ in range(4):
+        version_id = create_bible_version(client, regular_token1)
+        upload_revision(client, regular_token1, version_id)
+
+    # Get revisions user 1
+    response, listed_revisions = list_revision(client, regular_token1)
+    assert response == 200
+    assert len(listed_revisions) == prev_rev1 + 4
+
+    # remove 4 revisions
+    for revision in listed_revisions:
+        delete_revision(client, regular_token1, revision["id"])
+
+    for _ in range(5):
+        version_id = create_bible_version(client, regular_token2)
+        upload_revision(client, regular_token2, version_id)
+
+    # Get revisions user 2
+    response, listed_revisions = list_revision(client, regular_token2)
+    assert response == 200
+    assert len(listed_revisions) == prev_rev2 + 5
+
+    # remove 5 revisions
+    for revision in listed_revisions:
+        delete_revision(client, regular_token2, revision["id"])

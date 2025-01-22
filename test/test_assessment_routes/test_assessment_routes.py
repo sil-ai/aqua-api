@@ -185,7 +185,6 @@ def test_add_assessment_success(
         f"{prefix}/assessment",
         params=assessment_data,
         headers={"Authorization": f"Bearer {regular_token1}"},
-        timeout=30.0
     )
     # Delete as an admin
     response = delete_assessment(client, admin_token, assessment_id)
