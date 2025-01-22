@@ -303,6 +303,14 @@ class MultipleResult(BaseModel):
     hide: bool = False
 
 
+class NgramResult(BaseModel):
+    id: int
+    assessment_id: int
+    ngram: str
+    ngram_size: int
+    vrefs: List[str]  # ✅ Store multiple verse references for the n-gram
+
+
 class WordAlignment(BaseModel):
     id: Optional[int] = None
     assessment_id: int
