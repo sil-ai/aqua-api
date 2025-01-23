@@ -17,6 +17,8 @@ from database.models import (
     BibleRevision,
     AlignmentTopSourceScores,
     VerseText,
+    NgramsTable,
+    NgramVrefTable,
     UserDB as UserModel,
 )
 from security_routes.utilities import is_user_authorized_for_assessment
@@ -65,6 +67,7 @@ async def execute_query(query, count_query, db):
     result_data = await db.execute(query)
     result_data = result_data.fetchall()
     total_count = await db.scalar(count_query)
+
     return result_data, total_count
 
 
@@ -87,6 +90,7 @@ def format_vref(row):
         vref += f" {row.chapter}"
         if hasattr(row, "verse") and row.verse is not None:
             vref += f":{row.verse}"
+
     return vref
 
 
@@ -106,6 +110,7 @@ async def merge_results(df_main, df_baseline, aggregate):
 
     joined_df["z_score"] = joined_df.apply(calculate_z_score, axis=1)
     joined_df = joined_df.where(pd.notna(joined_df), None)
+
     return joined_df
 
 
@@ -274,9 +279,8 @@ async def build_ngrams_query(
     Returns:
         Tuple: A tuple containing the base query object and the count query object.
     """
-    from database.models import NgramsTable, NgramVrefTable
 
-    # Select n-grams and their corresponding vrefs
+    # Select ngrams and their corresponding vrefs
     base_query = (
         select(
             NgramsTable.id,
@@ -410,6 +414,8 @@ async def get_ngrams_result(
         The page of results to return. If set, page_size must also be set.
     page_size : int, optional
         The number of results to return per page. If set, page must also be set.
+    db : Session
+        The database session object to execute queries against.
 
     Returns
     -------
@@ -422,7 +428,7 @@ async def get_ngrams_result(
             detail="User not authorized to see this assessment",
         )
 
-    # ✅ Build and execute the query for n-grams
+    # ✅ Build and execute the query for ngrams
     query, count_query = await build_ngrams_query(assessment_id, page, page_size, db)
     result_data, total_count = await execute_query(query, count_query, db)
 
