@@ -27,19 +27,57 @@ import ast
 
 router = APIRouter()
 
-
 class aggType(Enum):
     chapter = "chapter"
     book = "book"
     text = "text"
 
+
 # helper functions
+def aggregate_by_columns(aggregate):
+    if aggregate == aggType.chapter:
+        group_by_columns = ["book", "chapter"]
+    elif aggregate == aggType.book:
+        group_by_columns = ["book"]
+    elif aggregate == aggType.text:
+        # No extra grouping needed, just aggregate over the entire text
+        group_by_columns = []
+    else:  # Default case, aggregate by verse
+        group_by_columns = ["book", "chapter", "verse"]
+
+    return group_by_columns
+
+
+def calculate_z_score(row):
+    if (
+        row["stddev_of_avg_score"]
+        and row["stddev_of_avg_score"] != 0
+        and not pd.isna(row["average_of_avg_score"])
+        and not pd.isna(row["score"])
+    ):
+        return (row["score"] - row["average_of_avg_score"]) / row["stddev_of_avg_score"]
+    else:
+        return None
+
+
 async def execute_query(query, count_query, db):
     """Executes a given query and count query asynchronously."""
     result_data = await db.execute(query)
     result_data = result_data.fetchall()
     total_count = await db.scalar(count_query)
     return result_data, total_count
+
+
+def apply_book_chapter_verse_filters(query, book=None, chapter=None, verse=None):
+
+    if book is not None:
+        query = query.where(AssessmentResult.book == book)  # ✅ Uses the model from the calling function
+    if chapter is not None:
+        query = query.where(AssessmentResult.chapter == chapter)
+    if verse is not None:
+        query = query.where(AssessmentResult.verse == verse)
+
+    return query  # ✅ Returns the modified query
 
 
 def format_vref(row):
@@ -120,8 +158,6 @@ async def validate_parameters(
         )
 
 
-# make another build_ngrams_query
-# will be less complicated, no filtering, no aggregation
 async def build_results_query(
     assessment_id: int,
     book: Optional[str],
@@ -133,6 +169,25 @@ async def build_results_query(
     reverse: Optional[bool],
     db: AsyncSession,
 ) -> Tuple:
+    """
+    Builds a query to fetch assessment results for a given assessment, with optional filtering and aggregation.
+
+    Args:
+        assessment_id (int): The ID of the assessment to fetch results for.
+        book (Optional[str]): The book name to filter the results by. Default is None.
+        chapter (Optional[int]): The chapter number to filter the results by. Default is None.
+        verse (Optional[int]): The verse number to filter the results by. Default is None.
+        page (Optional[int]): The page number for pagination. Default is None.
+        page_size (Optional[int]): The number of results per page. Default is None.
+        aggregate (Optional[aggType]): The aggregation type for results. Default is None.
+        reverse (Optional[bool]): Whether to reverse the results. Default is False.
+        db (Session): The database session object to execute queries against.
+
+    Returns:
+        Tuple: A tuple containing the base query object and the count query object.
+        The base query object is configured to fetch data according to the specified filters and aggregation settings.
+        The count query object is used to count the total number of rows matching the query.
+    """
     # Initialize the base query
     base_query = select(AssessmentResult).where(
         AssessmentResult.assessment_id == assessment_id
@@ -153,17 +208,7 @@ async def build_results_query(
 
     subquery = base_query.subquery()
 
-    if aggregate == aggType.chapter:
-        group_by_columns = ["book", "chapter"]
-
-    elif aggregate == aggType.book:
-        group_by_columns = ["book"]
-
-    elif aggregate == aggType.text:
-        group_by_columns = []
-
-    else:
-        group_by_columns = ["book", "chapter", "verse"]
+    group_by_columns = aggregate_by_columns(aggregate)
 
     base_query = (
         select(
@@ -211,14 +256,24 @@ async def build_results_query(
     )
 
 
-# build query specific to ngrams assessment
 async def build_ngrams_query(
     assessment_id: int,
     page: Optional[int],
     page_size: Optional[int],
     db: AsyncSession,
 ):
-    """Builds a query to fetch n-gram results for an assessment."""
+    """
+    Builds a query to fetch n-gram results for an assessment.
+
+    Args:
+        assessment_id (int): The ID of the assessment to fetch n-gram results for.
+        page (Optional[int]): The page number for pagination. Default is None.
+        page_size (Optional[int]): The number of results per page. Default is None.
+        db (Session): The database session object to execute queries against.
+
+    Returns:
+        Tuple: A tuple containing the base query object and the count query object.
+    """
     from database.models import NgramsTable, NgramVrefTable
 
     # Select n-grams and their corresponding vrefs
@@ -346,6 +401,20 @@ async def get_ngrams_result(
 ):
     """
     Returns a list of n-gram results for a given assessment.
+
+    Parameters
+    ----------
+    assessment_id : int 
+        The ID of the assessment to get results for.
+    page : int, optional
+        The page of results to return. If set, page_size must also be set.
+    page_size : int, optional
+        The number of results to return per page. If set, page must also be set.
+
+    Returns
+    -------
+    Dict[str, Union[List[NgramResult], int]]
+        A dictionary containing the list of results and the total count of results.
     """
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -404,15 +473,7 @@ async def build_compare_results_baseline_query(
         func.avg(AssessmentResult.score).label("avg_score"),
     ]
 
-    if aggregate == aggType.chapter:
-        group_by_columns = ["book", "chapter"]
-    elif aggregate == aggType.book:
-        group_by_columns = ["book"]
-    elif aggregate == aggType.text:
-        # No extra grouping needed, just aggregate over the entire text
-        group_by_columns = []
-    else:  # Default case, aggregate by verse
-        group_by_columns = ["book", "chapter", "verse"]
+    group_by_columns = aggregate_by_columns(aggregate)
 
     select_columns.extend([getattr(AssessmentResult, col) for col in group_by_columns])
 
@@ -420,18 +481,10 @@ async def build_compare_results_baseline_query(
     baseline_assessments_subquery = select(*select_columns).where(
         AssessmentResult.assessment_id.in_(baseline_assessment_ids)
     )
-    if book is not None:
-        baseline_assessments_subquery = baseline_assessments_subquery.where(
-            AssessmentResult.book == book
-        )
-    if chapter is not None:
-        baseline_assessments_subquery = baseline_assessments_subquery.where(
-            AssessmentResult.chapter == chapter
-        )
-    if verse is not None:
-        baseline_assessments_subquery = baseline_assessments_subquery.where(
-            AssessmentResult.verse == verse
-        )
+
+    baseline_assessments_query = apply_book_chapter_verse_filters(
+        baseline_assessments_subquery, book, chapter, verse
+    )
 
     baseline_assessments_subquery = (
         baseline_assessments_subquery.group_by(
@@ -503,32 +556,18 @@ async def build_compare_results_main_query(
     main_assessment_id = main_assessment.id
 
     # Apply aggregation if specified
-    if aggregate == aggType.chapter:
-        group_by_columns = ["book", "chapter"]
-    elif aggregate == aggType.book:
-        group_by_columns = ["book"]
-    elif aggregate == aggType.text:
-        group_by_columns = []
-    else:
-        group_by_columns = ["book", "chapter", "verse"]
+    group_by_columns = aggregate_by_columns(aggregate)
 
     main_assessment_query = select(
         func.min(AssessmentResult.id).label("id"),
         *[getattr(AssessmentResult, col) for col in group_by_columns],
         func.avg(AssessmentResult.score).label("score"),
     ).where(AssessmentResult.assessment_id == main_assessment_id)
-    if book is not None:
-        main_assessment_query = main_assessment_query.where(
-            AssessmentResult.book == book
-        )
-    if chapter is not None:
-        main_assessment_query = main_assessment_query.where(
-            AssessmentResult.chapter == chapter
-        )
-    if verse is not None:
-        main_assessment_query = main_assessment_query.where(
-            AssessmentResult.verse == verse
-        )
+
+    main_assessment_query = apply_book_chapter_verse_filters(
+        main_assessment_query, book, chapter, verse
+    )
+
     main_assessment_query = main_assessment_query.group_by(
         *[getattr(AssessmentResult, col) for col in group_by_columns]
     ).order_by("id")
@@ -706,19 +745,6 @@ async def build_missing_words_baseline_query(
         )
 
     return baseline_assessments_query
-
-
-def calculate_z_score(row):
-    if (
-        row["stddev_of_avg_score"]
-        and row["stddev_of_avg_score"] != 0
-        and not pd.isna(row["average_of_avg_score"])
-        and not pd.isna(row["score"])
-    ):
-        return (row["score"] - row["average_of_avg_score"]) / row["stddev_of_avg_score"]
-    else:
-        return None
-
 
 
 @router.get(
@@ -1004,6 +1030,7 @@ async def get_missing_words(
     )
     main_assessment_results = await db.execute(main_assessment_query)
     main_assessment_results = main_assessment_results.all()
+
     df_main = pd.DataFrame(main_assessment_results)
     total_count = len(df_main)
 
@@ -1017,6 +1044,7 @@ async def get_missing_words(
             verse,
             db,
         )
+        
         baseline_assessment_results = await db.execute(baseline_assessment_query)
         baseline_assessment_results = baseline_assessment_results.all()
         if baseline_assessment_results:
