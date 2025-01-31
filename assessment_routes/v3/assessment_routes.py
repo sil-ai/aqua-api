@@ -137,7 +137,7 @@ async def get_assessments(
 
 # Helper function to call assessment runner
 async def call_assessment_runner(assessment: AssessmentIn, return_all_results: bool):
-    runner_url = "https://sil-ai--runner-assessment-runner.modal.run"
+    runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"
     params = {
         "return_all_results": return_all_results,
     }
