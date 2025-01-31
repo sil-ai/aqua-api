@@ -199,7 +199,7 @@ async def add_assessment(
     """
     if (
         a.type
-        in ["semantic-similarity", "word-alignment", "translation-similarity", "ngrams"]
+        in ["semantic-similarity", "word-alignment", "translation-similarity"]
         and a.reference_id is None
     ):
         raise HTTPException(
