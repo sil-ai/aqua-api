@@ -1,6 +1,8 @@
 import os
-import psycopg2
 from datetime import date
+
+import psycopg2
+
 import queries
 
 

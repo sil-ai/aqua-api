@@ -1,20 +1,20 @@
 # test_revision_flows.py
-import pytest
-from pathlib import Path
-from bible_routes.v3.revision_routes import process_and_upload_revision
-import aiofiles
-import time
 import logging
+import time
 from datetime import datetime
+from pathlib import Path
 
+import aiofiles
+import pytest
+from sqlalchemy.future import select
 
+from bible_routes.v3.revision_routes import process_and_upload_revision
+from database.models import BibleRevision as BibleRevisionModel
+from database.models import BibleVersion as BibleVersionModel
 from database.models import (
-    BibleRevision as BibleRevisionModel,
-    VerseText as VerseText,
-    BibleVersion as BibleVersionModel,
     UserDB,
 )
-from sqlalchemy.future import select
+from database.models import VerseText as VerseText
 
 
 @pytest.mark.asyncio

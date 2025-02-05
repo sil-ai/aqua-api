@@ -1,10 +1,9 @@
-from typing import Optional, Dict
-import os
 import json
+import os
+from typing import Dict, Optional
 
-import sqlalchemy as db
 import pandas as pd
-
+import sqlalchemy as db
 
 vref_filename = "../fixtures/vref.txt"
 my_col = ["book", "chapter", "verse"]

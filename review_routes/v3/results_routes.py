@@ -1,29 +1,33 @@
 __version__ = "v3"
 
-import os
-from fastapi import Depends, HTTPException, status, APIRouter, Query
-from typing import Optional, Dict, List, Union, Tuple
-from sqlalchemy import func, case, Text
-import pandas as pd
-from enum import Enum
-from database.dependencies import get_db
-from sqlalchemy.orm import aliased
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from sqlalchemy.sql import select
-from database.models import (
-    AssessmentResult,
-    Assessment,
-    BibleRevision,
-    AlignmentTopSourceScores,
-    VerseText,
-    UserDB as UserModel,
-)
-from security_routes.utilities import is_user_authorized_for_assessment
-from security_routes.auth_routes import get_current_user
-from models import Result_v2 as Result, WordAlignment, MultipleResult
 import ast
+import os
+from enum import Enum
+from typing import Dict, List, Optional, Tuple, Union
 
+import pandas as pd
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import Text, case, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
+from sqlalchemy.sql import select
+
+from database.dependencies import get_db
+from database.models import (
+    AlignmentTopSourceScores,
+    Assessment,
+    AssessmentResult,
+    BibleRevision,
+)
+from database.models import UserDB as UserModel
+from database.models import (
+    VerseText,
+)
+from models import MultipleResult
+from models import Result_v2 as Result
+from models import WordAlignment
+from security_routes.auth_routes import get_current_user
+from security_routes.utilities import is_user_authorized_for_assessment
 
 router = APIRouter()
 

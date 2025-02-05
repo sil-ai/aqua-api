@@ -1,11 +1,12 @@
+from database.models import BibleVersion as BibleVersionModel
 from database.models import (
-    UserDB as UserModel,
-    UserGroup,
-    Group,
-    BibleVersion as BibleVersionModel,
     BibleVersionAccess,
+    Group,
 )
-
+from database.models import UserDB as UserModel
+from database.models import (
+    UserGroup,
+)
 
 new_version_data = {
     "name": "New Version",

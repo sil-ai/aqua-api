@@ -1,9 +1,11 @@
-from sqlalchemy.sql import insert
-import pandas as pd
-from database.models import VerseText
 import asyncio
-import aiofiles
 from io import StringIO
+
+import aiofiles
+import pandas as pd
+from sqlalchemy.sql import insert
+
+from database.models import VerseText
 
 
 # Parse the revision verses into a dataframe.

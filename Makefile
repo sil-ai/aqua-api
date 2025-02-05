@@ -36,7 +36,7 @@ project-up:
 down:
 	docker-compose down -v
 
-test: localdb-up
+test: linting localdb-up
 	@export PYTHONPATH=${PWD} && \
 	export AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" && \
 	pytest test
@@ -56,5 +56,8 @@ push-release:
 linting:
 	@echo "Running linting"
 	@black --check .
-	@flake8 . --exclude='**/v1/**,**/v2/**,./venv,./alembic' --ignore=E501,W503,E203
+	@echo "Black passed"
+	@isort --check .
+	@echo "Isort passed"
+	@flake8 . --exclude='**/v1/**,**/v2/**,./venv,./alembic' --ignore=E501,W503,E203,E228,E226
 	@echo "Linting passed"

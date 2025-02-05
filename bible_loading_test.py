@@ -1,13 +1,15 @@
 import os
-import psycopg2
-import sqlalchemy as db
-import pandas as pd
 from datetime import date
+
+import numpy as np
+import pandas as pd
+import psycopg2
 import pytest
+import sqlalchemy as db
+from sqlalchemy import create_engine
+
 import bible_loading
 import queries
-import numpy as np
-from sqlalchemy import create_engine
 
 
 @pytest.fixture(scope="module")

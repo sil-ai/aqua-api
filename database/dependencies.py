@@ -1,9 +1,10 @@
 # dependencies.py
 
-from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
 import os
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+
+from dotenv import load_dotenv
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 # Load environment variables from .env file

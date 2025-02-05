@@ -1,32 +1,34 @@
 __version__ = "v3"
 # Standard library imports
+import logging
 import os
-from datetime import datetime
+from datetime import date, datetime
 from typing import List
-from datetime import date
+
+import fastapi
 import httpx
 
 # Third party imports
 from fastapi import Depends, HTTPException, status
+from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from sqlalchemy.orm import aliased
-from sqlalchemy import or_
-import fastapi
+
+from database.dependencies import get_db
+from database.models import (
+    Assessment,
+    BibleRevision,
+    BibleVersionAccess,
+)
+from database.models import UserDB as UserModel
+from database.models import (
+    UserGroup,
+)
 
 # Local application imports
 from models import AssessmentIn, AssessmentOut
-from database.models import (
-    BibleRevision,
-    BibleVersionAccess,
-    UserDB as UserModel,
-    UserGroup,
-    Assessment,
-)
-from database.dependencies import get_db
 from security_routes.auth_routes import get_current_user
-import logging
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -198,8 +200,7 @@ async def add_assessment(
     Description: The unique identifier for the owner of the assessment.
     """
     if (
-        a.type
-        in ["semantic-similarity", "word-alignment", "translation-similarity"]
+        a.type in ["semantic-similarity", "word-alignment", "translation-similarity"]
         and a.reference_id is None
     ):
         raise HTTPException(

@@ -1,17 +1,19 @@
 # utilities.py
-import bcrypt
 import os
-from sqlalchemy.orm import aliased
+
+import bcrypt
 from sqlalchemy import or_
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
-from database.models import (
-    UserGroup,
-    BibleVersion,
-    UserDB,
-    BibleRevision,
-    BibleVersionAccess,
+
+from database.models import (  # Your SQLAlchemy model
     Assessment,
-)  # Your SQLAlchemy model
+    BibleRevision,
+    BibleVersion,
+    BibleVersionAccess,
+    UserDB,
+    UserGroup,
+)
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"

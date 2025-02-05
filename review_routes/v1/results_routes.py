@@ -1,14 +1,14 @@
 __version__ = "v1"
 
 import os
-from typing import List, Optional
-from enum import Enum
 import re
+from enum import Enum
+from typing import List, Optional
 
 import fastapi
+import psycopg2
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
-import psycopg2
 
 import queries
 from key_fetch import get_secret

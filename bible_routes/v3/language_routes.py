@@ -4,16 +4,17 @@ from typing import List
 
 import fastapi
 from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from models import Script, Language
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database.dependencies import get_db
 from database.models import (
-    UserDB as UserModel,
     IsoLanguage,
     IsoScript,
 )
+from database.models import UserDB as UserModel
+from models import Language, Script
 from security_routes.auth_routes import get_current_user
-from database.dependencies import get_db
 
 router = fastapi.APIRouter()
 

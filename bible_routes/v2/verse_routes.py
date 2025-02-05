@@ -1,18 +1,17 @@
 __version__ = "v2"
 
 import os
-from typing import List
 import re
+from typing import List
 
 import fastapi
+import psycopg2
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
-import psycopg2
 
 import queries
 from key_fetch import get_secret
 from models import VerseText
-
 
 router = fastapi.APIRouter()
 

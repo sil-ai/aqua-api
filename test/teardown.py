@@ -1,8 +1,9 @@
 # Import necessary modules
-from conftest import teardown_database
-import sqlalchemy as db
-from sqlalchemy.orm import sessionmaker
 import os
+
+import sqlalchemy as db
+from conftest import teardown_database
+from sqlalchemy.orm import sessionmaker
 
 # Ensure that the DB session is properly initialized
 

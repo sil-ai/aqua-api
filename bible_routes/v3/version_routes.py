@@ -1,22 +1,26 @@
 __version__ = "v3"
 
-from typing import List
 from datetime import date
+from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import VersionIn, VersionUpdate, VersionOut_v3 as VersionOut
+from database.dependencies import get_db
+from database.models import BibleVersion as BibleVersionModel
 from database.models import (
-    UserDB as UserModel,
-    UserGroup,
-    BibleVersion as BibleVersionModel,
     BibleVersionAccess,
 )
+from database.models import UserDB as UserModel
+from database.models import (
+    UserGroup,
+)
+from models import VersionIn
+from models import VersionOut_v3 as VersionOut
+from models import VersionUpdate
 from security_routes.auth_routes import get_current_user
-from database.dependencies import get_db
 
 router = fastapi.APIRouter()
 
