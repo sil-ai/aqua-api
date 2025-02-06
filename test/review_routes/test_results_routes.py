@@ -1,12 +1,13 @@
 import pandas as pd
+
 from database.models import (
     Assessment,
     AssessmentResult,
     BibleRevision,
     BibleVersion,
     BibleVersionAccess,
-    UserDB,
     Group,
+    UserDB,
 )
 
 

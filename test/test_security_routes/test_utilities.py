@@ -1,15 +1,14 @@
 # tests/utilities/test_verify_password.py
 
-from security_routes.utilities import verify_password
 import bcrypt
-
 import pytest
 from sqlalchemy import select
+
 from database.models import (
-    UserDB,
     BibleRevision,
+    UserDB,
 )
-from security_routes.utilities import get_revisions_authorized_for_user
+from security_routes.utilities import get_revisions_authorized_for_user, verify_password
 
 
 def test_verify_password():

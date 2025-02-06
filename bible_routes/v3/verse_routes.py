@@ -1,20 +1,19 @@
 __version__ = "v3"
 
 from typing import List
-import fastapi
-from fastapi import Depends, HTTPException, status, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
+import fastapi
+from fastapi import Depends, HTTPException, Query, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database.dependencies import get_db
+from database.models import UserDB as UserModel
+from database.models import VerseReference as VerseReferenceModel
+from database.models import VerseText as VerseModel
 from models import VerseText
-from database.models import (
-    VerseText as VerseModel,
-    VerseReference as VerseReferenceModel,
-    UserDB as UserModel,
-)
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_revision
-from database.dependencies import get_db
 
 router = fastapi.APIRouter()
 

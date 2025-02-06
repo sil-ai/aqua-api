@@ -1,26 +1,26 @@
+import asyncio
+import logging
+import time
+from datetime import date
 from typing import List, Optional
-from fastapi import Depends, HTTPException, status, APIRouter, UploadFile, File
+
+import numpy as np
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-import numpy as np
-import time
-import logging
-import asyncio
-from datetime import date
 
 from bible_loading import async_text_dataframe, text_loading
-from models import RevisionOut_v3 as RevisionOut, RevisionIn
-from database.models import (
-    BibleRevision as BibleRevisionModel,
-    BibleVersion as BibleVersionModel,
-    UserDB as UserModel,
-)
+from database.dependencies import get_db
+from database.models import BibleRevision as BibleRevisionModel
+from database.models import BibleVersion as BibleVersionModel
+from database.models import UserDB as UserModel
+from models import RevisionIn
+from models import RevisionOut_v3 as RevisionOut
+from security_routes.auth_routes import get_current_user
 from security_routes.utilities import (
     get_revisions_authorized_for_user,
     is_user_authorized_for_bible_version,
 )
-from security_routes.auth_routes import get_current_user
-from database.dependencies import get_db
 
 router = APIRouter()
 

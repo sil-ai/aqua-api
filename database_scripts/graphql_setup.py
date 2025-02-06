@@ -1,6 +1,6 @@
-import requests
 import os
 
+import requests
 
 hasura_headers = {"x-hasura-admin-secret": os.getenv("NEW_HASURA_SECRET")}
 db_string = os.getenv("AQUA_DB")

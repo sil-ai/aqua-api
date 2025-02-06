@@ -1,7 +1,8 @@
-from pydantic import BaseModel, ConfigDict, EmailStr
-from enum import Enum
-from typing import Union, Optional, List
 import datetime
+from enum import Enum
+from typing import List, Optional, Union
+
+from pydantic import BaseModel, ConfigDict, EmailStr
 
 
 class VersionUpdate(BaseModel):

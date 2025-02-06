@@ -1,24 +1,24 @@
 # auth_routes.py
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import List, Optional
 
-from fastapi import Depends, HTTPException, status, APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models import Token, User, Group
-from database.models import UserDB, Group as GroupDB, UserGroup
-
-
 from database.dependencies import get_db  # Function to get the database session
+from database.models import Group as GroupDB
+from database.models import UserDB, UserGroup
+from models import Group, Token, User
+
 from .utilities import (
-    verify_password,
-    SECRET_KEY,
-    ALGORITHM,
     ACCESS_TOKEN_EXPIRE_MINUTES,
+    ALGORITHM,
+    SECRET_KEY,
+    verify_password,
 )
 
 router = APIRouter()

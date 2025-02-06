@@ -1,20 +1,21 @@
 __version__ = "v2"
 
-import os
-from typing import Optional, Dict, Union, List
-from enum import Enum
-import re
 import ast
+import os
+import re
+from enum import Enum
+from typing import Dict, List, Optional, Union
 
-import fastapi
-from fastapi import Depends, HTTPException, status, Query
-from fastapi.security.api_key import APIKeyHeader
 import asyncpg
+import fastapi
+from fastapi import Depends, HTTPException, Query, status
+from fastapi.security.api_key import APIKeyHeader
 
 import queries
 from key_fetch import get_secret
+from models import AssessmentType, MultipleResult
 from models import Result_v2 as Result
-from models import WordAlignment, MultipleResult, AssessmentType
+from models import WordAlignment
 
 
 class aggType(Enum):

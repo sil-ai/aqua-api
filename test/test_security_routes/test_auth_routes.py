@@ -1,6 +1,7 @@
 # test_auth_routes.py
 
 from fastapi.testclient import TestClient
+
 from app import app  # Import your FastAPI application instance
 
 client = TestClient(app)

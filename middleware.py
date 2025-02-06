@@ -1,11 +1,12 @@
-import json
-from starlette.requests import Request
-import time
 import http
-from starlette.types import Message
+import json
 import logging
-from starlette.middleware.base import BaseHTTPMiddleware
+import time
+
 from pythonjsonlogger import jsonlogger
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.types import Message
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):

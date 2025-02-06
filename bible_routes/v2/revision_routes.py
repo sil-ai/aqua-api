@@ -1,22 +1,21 @@
 __version__ = "v2"
 
 import os
-from datetime import date
-from typing import Optional, List
-from tempfile import NamedTemporaryFile
 import re
+from datetime import date
+from tempfile import NamedTemporaryFile
+from typing import List, Optional
 
 import fastapi
-from fastapi import Depends, HTTPException, status, File, UploadFile
-from fastapi.security.api_key import APIKeyHeader
-import psycopg2
 import numpy as np
+import psycopg2
+from fastapi import Depends, File, HTTPException, UploadFile, status
+from fastapi.security.api_key import APIKeyHeader
 
-import queries
 import bible_loading
+import queries
 from key_fetch import get_secret
 from models import RevisionIn, RevisionOut
-
 
 router = fastapi.APIRouter()
 
