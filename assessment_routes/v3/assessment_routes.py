@@ -7,6 +7,7 @@ from typing import List
 
 import fastapi
 import httpx
+from dotenv import load_dotenv
 
 # Third party imports
 from fastapi import Depends, HTTPException, status
@@ -29,6 +30,8 @@ from database.models import (
 # Local application imports
 from models import AssessmentIn, AssessmentOut
 from security_routes.auth_routes import get_current_user
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -139,7 +142,11 @@ async def get_assessments(
 
 # Helper function to call assessment runner
 async def call_assessment_runner(assessment: AssessmentIn, return_all_results: bool):
-    runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"
+    if os.getenv("MODAL_ENV") == "main":
+        runner_url = "https://sil-ai--runner-assessment-runner.modal.run"
+    else:
+        runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"
+
     params = {
         "return_all_results": return_all_results,
     }
