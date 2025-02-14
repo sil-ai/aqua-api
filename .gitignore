@@ -114,6 +114,7 @@ ENV/
 env.bak/
 venv.bak/
 pyvenv.cfg
+39venv
 
 # Spyder project settings
 .spyderproject
@@ -141,3 +142,6 @@ dmypy.json
 
 # Scripts folder
 Scripts
+
+# test integration notebook
+notebooks/test_integration.ipynb
