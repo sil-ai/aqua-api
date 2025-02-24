@@ -145,3 +145,6 @@ Scripts
 
 # test integration notebook
 # notebooks/test_integration.ipynb
+
+#aws
+aws/
