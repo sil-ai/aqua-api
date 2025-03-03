@@ -1,4 +1,5 @@
 # auth_routes.py
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -22,6 +23,8 @@ from .utilities import (
 )
 
 router = APIRouter()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="latest/token")
 
@@ -83,6 +86,8 @@ async def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    logger.info(f"User {user.username} logged in.")
+
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username, "is_admin": user.is_admin},
