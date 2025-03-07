@@ -70,6 +70,8 @@ async def get_current_user(
         user = result.scalars().first()
         if user is None:
             raise credentials_exception
+        logger.info(f"User {user.username} logged in.")
+        logger.info(f"Date {datetime.now()}.")
         return user
     except JWTError:
         raise credentials_exception
@@ -86,7 +88,6 @@ async def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    logger.info(f"User {user.username} logged in.")
 
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
