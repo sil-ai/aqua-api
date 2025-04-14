@@ -6,7 +6,7 @@ services:
     ports:
       - "8000:8000"
       - "5678:5678" # Expose the debug port
-   # command: pytest -v
+    # command: pytest -v
     environment:
       - DATABASE_URL=postgresql+asyncpg://dbuser:dbpassword@db:5432/dbname
       - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
@@ -30,3 +30,18 @@ services:
       POSTGRES_DB: dbname
     ports:
       - "5432:5432"
+
+  assessment-runner:
+    build:
+      context: ./aqua-assessments
+      dockerfile: Dockerfile
+    image: local/aqua-assessments:latest
+    environment:
+      - MODAL_TOKEN=${MODAL_TOKEN}
+      - MODAL_WEBHOOK_TOKEN=${MODAL_WEBHOOK_TOKEN}
+      - AQUA_DB=${CUSTOM_AQUA_DB:-postgresql+asyncpg://dbuser:dbpassword@db:5432/dbname}
+      - MODAL_ENV=${MODAL_ENV:-dev}
+    volumes:
+      - ./aqua-assessments:/app
+    depends_on:
+      - db

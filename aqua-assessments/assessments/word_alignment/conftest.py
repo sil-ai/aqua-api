@@ -1,0 +1,34 @@
+import os
+import requests
+import pytest
+
+
+@pytest.fixture
+def base_url():
+    return os.getenv("AQUA_URL")
+
+
+@pytest.fixture
+def header():
+    AQUA_URL = os.getenv("AQUA_URL")
+    TEST_USER = os.getenv("TEST_USER")
+    TEST_PASSWORD = os.getenv("TEST_PASSWORD")
+    base_url = AQUA_URL
+
+    response = requests.post(
+            base_url+"/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
+    )
+
+    token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+class AssessmentStorage:
+    version_id: int = 0
+    revisions: list = []
+    assessment_id: int = 0
+
+
+@pytest.fixture(scope="session")
+def assessment_storage():
+    return AssessmentStorage()
