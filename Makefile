@@ -32,6 +32,8 @@ project-up:
 	@export PYTHONPATH=${PWD} && \
 	python test/conftest.py
 
+prod-up:
+	docker-compose -f docker-compose.dev.yml up
 
 down:
 	docker-compose down -v
