@@ -7,8 +7,6 @@ import requests
 
 from app import Assessment
 
-
-
 volume = modal.NetworkFileSystem.from_name("pytorch-model-vol", create_if_missing=True)
 CACHE_PATH = "/root/model_cache"
 
@@ -40,9 +38,7 @@ app = modal.App(
 )
 
 assess = modal.Function.lookup("semantic-similarity-test", "assess")
-get_sim_scores = modal.Function.lookup(
-    "semantic-similarity-test", "get_sim_scores"
-)
+get_sim_scores = modal.Function.lookup("semantic-similarity-test", "get_sim_scores")
 
 
 @app.function(timeout=3600)

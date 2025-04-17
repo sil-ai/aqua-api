@@ -1,7 +1,6 @@
 from typing import Tuple
 
 import pandas as pd
-
 from word_alignment_steps.prepare_data import normalize_word
 
 

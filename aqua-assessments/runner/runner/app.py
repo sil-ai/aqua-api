@@ -1,15 +1,14 @@
 import datetime
-from enum import Enum
 import os
+from enum import Enum
 from typing import Optional
 
 import fastapi
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import modal
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from modal import Secret
 from pydantic import BaseModel
-
 
 auth_scheme = HTTPBearer()
 
@@ -63,8 +62,8 @@ class RunAssessment:
         self.AQUA_DB = AQUA_DB
         self.modal_suffix = modal_suffix
         self.database_id = AQUA_DB.split("@")[1][3:].split(".")[0]
+        from sqlalchemy import Column, DateTime, Integer, Text
         from sqlalchemy.orm import declarative_base
-        from sqlalchemy import Column, Integer, Text, DateTime
 
         Base = declarative_base()
         self.Assessment = type(
@@ -88,8 +87,8 @@ class RunAssessment:
         )
 
     def yield_session(self):
-        from sqlalchemy.orm import Session
         from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session
 
         engine = create_engine(self.AQUA_DB, pool_size=5, pool_recycle=3600)
 
@@ -145,9 +144,9 @@ class RunAssessment:
             print(
                 f"Pushing verse scores to the database: {self.config} (database: {self.database_id})"
             )
-            response, ids = modal.Function.lookup(f'push-results{self.modal_suffix}', "push_results").remote(
-                self.assessment_response["results"], self.AQUA_DB
-            )
+            response, ids = modal.Function.lookup(
+                f"push-results{self.modal_suffix}", "push_results"
+            ).remote(self.assessment_response["results"], self.AQUA_DB)
 
         # if "alignment_threshold_scores" in self.assessment_response:
         #    for result in self.assessment_response["alignment_threshold_scores"]:
@@ -171,7 +170,6 @@ class RunAssessment:
             response, ids = modal.Function.lookup(
                 f"push-results{self.modal_suffix}", "push_results"
             ).remote(
-
                 self.assessment_response["alignment_top_source_scores"],
                 self.AQUA_DB,
                 table_name="alignment_top_source_scores",
@@ -185,7 +183,7 @@ class RunAssessment:
 
 @app.function(timeout=7200)
 def run_assessment_runner(
-    config, AQUA_DB,  modal_suffix: str = "", return_all_results: bool = False
+    config, AQUA_DB, modal_suffix: str = "", return_all_results: bool = False
 ):
     assessment = RunAssessment(
         config=config, AQUA_DB=AQUA_DB, modal_suffix=modal_suffix
@@ -223,7 +221,9 @@ def run_assessment_runner(
         assessment.log_end(status="failed")
 
 
-@app.function(secrets=[Secret.from_name("webhook-auth-token"), Secret.from_name("aqua-db")])
+@app.function(
+    secrets=[Secret.from_name("webhook-auth-token"), Secret.from_name("aqua-db")]
+)
 @modal.web_endpoint(method="POST")
 async def assessment_runner(
     config: Assessment,
@@ -239,7 +239,6 @@ async def assessment_runner(
             detail="Incorrect bearer token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
 
     print("MODAL_SUFFIX")
     print(modal_suffix)

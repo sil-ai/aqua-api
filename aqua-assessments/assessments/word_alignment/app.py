@@ -1,16 +1,14 @@
 import asyncio
 import json
 import os
-from pathlib import Path
 import pickle
+from pathlib import Path
 from typing import List, Literal, Optional, Union
-from modal import Function
+
 import modal
+import word_alignment_steps.prepare_data as prepare_data
 from pandas.core.series import Series
 from pydantic import BaseModel
-
-import word_alignment_steps.prepare_data as prepare_data
-
 
 index_cache_volume = modal.NetworkFileSystem.from_name(
     "index_cache", create_if_missing=True
@@ -24,7 +22,6 @@ machine_model_cache_volume = modal.Volume.from_name(
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
     suffix += "-test"
-
 
 
 image_envs = {k: v for k, v in os.environ.items() if k.startswith("MODAL_")}
@@ -56,9 +53,7 @@ app = modal.App(
 )
 
 run_pull_rev = modal.Function.lookup(f"pull-revision{suffix}", "pull_revision")
-run_save_results = modal.Function.lookup(
-    f"save-results{suffix}", "save_results"
-)
+run_save_results = modal.Function.lookup(f"save-results{suffix}", "save_results")
 
 
 CACHE_DIR = "/cache"
@@ -89,9 +84,7 @@ def get_indices(
     return words
 
 
-@app.function(
-    cpu=2, volumes={"/model_cache": machine_model_cache_volume}, timeout=7200
-)
+@app.function(cpu=2, volumes={"/model_cache": machine_model_cache_volume}, timeout=7200)
 def get_translation_scores(corpus_tuples: list[tuple], model_id: str) -> dict:
     from word_alignment_steps.train_fa_model import create_model
 

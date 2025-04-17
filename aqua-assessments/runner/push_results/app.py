@@ -2,11 +2,10 @@ import os
 from typing import List, Optional
 
 import modal
+from db_connect import get_session
 from pydantic import BaseModel
 
-from db_connect import get_session
 from models import Result
-
 
 """
 Create a table with the following SQL, in order for it to auto-increment the id field.
@@ -32,9 +31,7 @@ app = modal.App(
     name="push-results" + suffix,
     image=modal.Image.debian_slim()
     .apt_install("libpq-dev", "gcc")
-    .pip_install(
-        "pandas~=1.5.0", "psycopg2-binary~=2.9.0", "sqlalchemy~=1.4.0"
-    ),
+    .pip_install("pandas~=1.5.0", "psycopg2-binary~=2.9.0", "sqlalchemy~=1.4.0"),
 )
 
 
@@ -67,13 +64,13 @@ class PushResults:
 
         Base = declarative_base()
         from sqlalchemy import (
-            Column,
-            Integer,
-            Text,
             Boolean,
+            Column,
+            DateTime,
             Float,
             ForeignKey,
-            DateTime,
+            Integer,
+            Text,
         )
 
         class AssessmentResult(Base):
@@ -136,9 +133,9 @@ class PushResults:
                 id=result.id,
                 assessment_id=result.assessment_id,
                 vref=result.vref,
-                book = result.vref.split(' ')[0],
-                chapter = result.vref.split(' ')[1].split(':')[0],
-                verse = result.vref.split(' ')[1].split(':')[1],
+                book=result.vref.split(" ")[0],
+                chapter=result.vref.split(" ")[1].split(":")[0],
+                verse=result.vref.split(" ")[1].split(":")[1],
                 source=result.source,
                 target=result.target,
                 score=result.score,
@@ -160,7 +157,7 @@ class PushResults:
         Base = declarative_base()
 
         class AssessmentResult(Base):
-            from sqlalchemy import Column, Integer, Text, Boolean, Float, ForeignKey
+            from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, Text
 
             __tablename__ = self.table_name
             id = Column(Integer, primary_key=True)  # autoincrements by default

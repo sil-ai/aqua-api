@@ -1,6 +1,7 @@
 import os
-import requests
+
 import pytest
+import requests
 
 
 class ValueStorage:
@@ -26,7 +27,7 @@ def header():
     base_url = AQUA_URL
 
     response = requests.post(
-            base_url+"/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
+        base_url + "/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
     )
 
     token = response.json()["access_token"]

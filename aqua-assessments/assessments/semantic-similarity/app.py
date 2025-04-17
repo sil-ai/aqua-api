@@ -1,6 +1,7 @@
 import math
 import os
 from typing import Literal, Optional, Union
+
 import modal
 from modal import app
 from pydantic import BaseModel
@@ -9,7 +10,6 @@ from pydantic import BaseModel
 suffix = ""
 if os.environ.get("MODAL_TEST") == "TRUE":
     suffix += "-test"
-
 
 
 cache_vol = modal.Volume.from_name("sem-sim-labse-model-cache", create_if_missing=True)
@@ -52,7 +52,7 @@ class Assessment(BaseModel):
     volumes={CACHE_PATH: cache_vol},
 )
 def get_labse_model(cache_path=CACHE_PATH):
-    from transformers import BertTokenizerFast, BertModel
+    from transformers import BertModel, BertTokenizerFast
 
     try:
         semsim_model = BertModel.from_pretrained(
@@ -79,14 +79,15 @@ def get_labse_model(cache_path=CACHE_PATH):
     return semsim_model, semsim_tokenizer
 
 
-@app.function(timeout=600, retries=3, gpu='T4')
+@app.function(timeout=600, retries=3, gpu="T4")
 def get_sim_scores(
     batched_sentences,
     semsim_model=None,
     semsim_tokenizer=None,
 ):
-    import torch
     import gc
+
+    import torch
     from torch.cuda import OutOfMemoryError
 
     rev_sents_input, ref_sents_input = batched_sentences
@@ -123,19 +124,19 @@ def get_sim_scores(
 
     except OutOfMemoryError as e:
         print(f"OutOfMemoryError occurred: {e}")
-        
+
         # Free GPU memory
-        if 'rev_sents_input_tokenized' in locals():
+        if "rev_sents_input_tokenized" in locals():
             del rev_sents_input_tokenized
-        if 'ref_sents_input_tokenized' in locals():
+        if "ref_sents_input_tokenized" in locals():
             del ref_sents_input_tokenized
-        if 'rev_sents_output' in locals():
+        if "rev_sents_output" in locals():
             del rev_sents_output
-        if 'ref_sents_output' in locals():
+        if "ref_sents_output" in locals():
             del ref_sents_output
-        if 'rev_sents_embedding' in locals():
+        if "rev_sents_embedding" in locals():
             del rev_sents_embedding
-        if 'ref_sents_embedding' in locals():
+        if "ref_sents_embedding" in locals():
             del ref_sents_embedding
 
         gc.collect()  # Force garbage collection
@@ -146,18 +147,26 @@ def get_sim_scores(
         # Split and retry
         if batch_size > 2:  # Don't keep splitting if batch is too small
             mid_point = batch_size // 2
-            print(f"Splitting batch, new size: {mid_point} and {batch_size - mid_point}...")
+            print(
+                f"Splitting batch, new size: {mid_point} and {batch_size - mid_point}..."
+            )
             first_half = (rev_sents_input[:mid_point], ref_sents_input[:mid_point])
             second_half = (rev_sents_input[mid_point:], ref_sents_input[mid_point:])
-            
+
             # Process each half
-            first_half_scores = get_sim_scores.remote(first_half, semsim_model, semsim_tokenizer)
-            second_half_scores = get_sim_scores.remote(second_half, semsim_model, semsim_tokenizer)
-            
+            first_half_scores = get_sim_scores.remote(
+                first_half, semsim_model, semsim_tokenizer
+            )
+            second_half_scores = get_sim_scores.remote(
+                second_half, semsim_model, semsim_tokenizer
+            )
+
             # Combine results
             return first_half_scores + second_half_scores
         else:
-            print("Unable to process batch even after splitting. Returning dummy scores...")
+            print(
+                "Unable to process batch even after splitting. Returning dummy scores..."
+            )
             print(f"Sentences: {rev_sents_input=} /n {ref_sents_input=}")
             return [0.5] * batch_size
 

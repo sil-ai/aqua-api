@@ -3,7 +3,6 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
 import word_alignment_steps.prepare_data as prepare_data
 
 
@@ -13,14 +12,14 @@ def run_embeddings(
     """
     run_embeddings
 
-    This function takes in a DataFrame of source and target sentences (condensed_df), 
-    and two dictionaries (source_index_cache and target_index_cache) that contain 
+    This function takes in a DataFrame of source and target sentences (condensed_df),
+    and two dictionaries (source_index_cache and target_index_cache) that contain
     indexes of the verses in which each word occurs. It then uses these inputs to
     calculate embedding scores for each pair of source and target words.
 
     Inputs:
 
-    condensed_df: a DataFrame containing two columns, 'src' and 'trg', with verse 
+    condensed_df: a DataFrame containing two columns, 'src' and 'trg', with verse
     strings as their values
     source_index_cache: a dictionary containing indexes of the verses in which each source word occurs.
     target_index_cache: a dictionary containing indexes of the verses in which each target word occurs.

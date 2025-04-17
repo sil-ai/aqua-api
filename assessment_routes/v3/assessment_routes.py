@@ -139,6 +139,7 @@ async def get_assessments(
 
     return assessment_data
 
+
 # Helper function to call assessment runner
 async def call_assessment_runner(assessment: AssessmentIn, return_all_results: bool):
     if os.getenv("MODAL_ENV") == "main":

@@ -1,10 +1,9 @@
-from pathlib import Path
 import pickle
 import time
+from pathlib import Path
 
 import modal
 import pytest
-
 import word_alignment_steps.prepare_data as prepare_data
 
 version_abbreviation = "WA-DEL"
@@ -121,7 +120,6 @@ def test_add_revision(base_url, header, assessment_storage, filepath: Path, name
     assessment_storage.revisions.append(response_abv.json()["id"])
 
 
-
 run_word_alignment = modal.Function.lookup("word-alignment-test", "assess")
 
 
@@ -139,8 +137,9 @@ def get_results(assessment_config, return_all_results: bool = False):
 def test_assess_draft(base_url, header, assessment_storage):
     with app.run():
         # Use the two revisions of the version_abbreviation version as revision and reference
+        from typing import Literal, Optional
+
         from pydantic import BaseModel
-        from typing import Optional, Literal
 
         class Assessment(BaseModel):
             id: Optional[int] = None
@@ -173,9 +172,7 @@ def test_assess_draft(base_url, header, assessment_storage):
         # )
 
 
-get_word_alignment_results = modal.Function.lookup(
-    "save-results-test", "get_results"
-)
+get_word_alignment_results = modal.Function.lookup("save-results-test", "get_results")
 
 
 @app.function(secrets=[modal.Secret.from_name("aqua-pytest")])
@@ -215,8 +212,9 @@ def check_word_alignment_results(assessment_config):
 
 def test_check_word_alignment_results(assessment_storage):
     with app.run():
+        from typing import Literal, Optional
+
         from pydantic import BaseModel
-        from typing import Optional, Literal
 
         class Assessment(BaseModel):
             id: Optional[int] = None
@@ -254,8 +252,9 @@ def test_delete_version(base_url, header, assessment_storage):
 
 if __name__ == "__main__":
     import os
-    from conftest import AssessmentStorage
+
     import requests
+    from conftest import AssessmentStorage
 
     AQUA_URL = os.getenv("AQUA_URL")
     TEST_USER = os.getenv("TEST_USER")
@@ -263,7 +262,7 @@ if __name__ == "__main__":
     base_url = AQUA_URL
 
     response = requests.post(
-            base_url+"/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
+        base_url + "/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
     )
 
     token = response.json()["access_token"]

@@ -1,7 +1,6 @@
-from typing import Tuple, List
+from typing import List, Tuple
 
 import pandas as pd
-
 import word_alignment_steps.prepare_data as prepare_data
 
 

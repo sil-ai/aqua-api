@@ -1,6 +1,6 @@
-from pathlib import Path
 import pickle
 import re
+from pathlib import Path
 from typing import Dict, List
 
 
@@ -49,14 +49,13 @@ def normalize_word(word: str) -> str:
 
 
 def create_tokens(src_data: List[str], vref_filepath: Path):
-
     """
     Takes a list of strings where each item corresponds to a verse, and the filepath for vref.text.
     Returns a (pickled) tokenixed dataframe of words for each verse, tokenized using the LatinWordTokenizer.
     """
+    import pandas as pd
     from machine.corpora import TextFileTextCorpus
     from machine.tokenization import LatinWordTokenizer
-    import pandas as pd
 
     with open(vref_filepath, "r") as f:
         vrefs = f.readlines()
@@ -85,7 +84,7 @@ def condense_df(df_pkl: bytes) -> bytes:
     """
     Takes a (pickled) input dataframe with src_tokenized and trg_tokenized coumns, and outputs
     a dataframe which only include those lines that are not blank in both input files.
-    Also condenses < range > lines into the previous line in both source and target, 
+    Also condenses < range > lines into the previous line in both source and target,
     and removes the vref for that line, adding the removed indices into the 'indices'
     column, so you know which indices have been combined.
 

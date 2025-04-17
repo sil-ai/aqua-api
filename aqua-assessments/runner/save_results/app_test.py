@@ -16,10 +16,8 @@ app = modal.App(
 )
 
 save_results_test = modal.Function.lookup("save-results-test", "save_results")
-get_results_test =  modal.Function.lookup("save-results-test", "get_results")
-delete_results_test =  modal.Function.lookup(
-    "save-results-test", "delete_results"
-)
+get_results_test = modal.Function.lookup("save-results-test", "get_results")
+delete_results_test = modal.Function.lookup("save-results-test", "delete_results")
 
 
 @app.function(timeout=60, secrets=[modal.Secret.from_name("aqua-pytest")])

@@ -2,9 +2,9 @@ from pathlib import Path
 from typing import List
 
 import modal
-from pydantic import ValidationError
 import pytest
 import requests
+from pydantic import ValidationError
 
 from models import Result
 
@@ -31,10 +31,8 @@ app = modal.App(
         )
     ),
 )
-run_push_results =  modal.Function.lookup("push-results-test", "push_results")
-run_delete_results =  modal.Function.lookup(
-    "push-results-test", "delete_results"
-)
+run_push_results = modal.Function.lookup("push-results-test", "push_results")
+run_delete_results = modal.Function.lookup("push-results-test", "delete_results")
 
 version_abbreviation = "PSR-DEL"
 version_name = "push results delete"
@@ -97,9 +95,10 @@ def delete_results(ids: List[int], AQUA_DB: str):
     secrets=[modal.Secret.from_name("aqua-pytest"), modal.Secret.from_name("aqua-api")]
 )
 def push_df_results():
+    import os
+
     import pandas as pd
     import requests
-    import os
 
     AQUA_DB = os.getenv("AQUA_DB")
     AQUA_URL = os.getenv("AQUA_URL")
@@ -107,7 +106,7 @@ def push_df_results():
     TEST_PASSWORD = os.getenv("TEST_PASSWORD")
     base_url = AQUA_URL
     response = requests.post(
-            base_url+"/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
+        base_url + "/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
     )
 
     token = response.json()["access_token"]
@@ -127,7 +126,6 @@ def push_df_results():
     revision_id = response.json()[0]["id"]
     reference_id = response.json()[1]["id"]
 
-
     verse_scores = pd.read_csv("/root/verse_scores.csv")
     alignment_threshold_scores = pd.read_csv("/root/alignment_threshold_scores.csv")
 
@@ -143,7 +141,9 @@ def push_df_results():
         headers=header,
     )
 
-    assessment_id = response.json()[0]["id"] # here it returned a list of just 1 assessment, but we have to indicate the first one anyway
+    assessment_id = response.json()[0][
+        "id"
+    ]  # here it returned a list of just 1 assessment, but we have to indicate the first one anyway
 
     num_rows = 10
     results = []

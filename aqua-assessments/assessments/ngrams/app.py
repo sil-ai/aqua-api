@@ -1,18 +1,16 @@
 import os
-from pathlib import Path
-import string
-from typing import Literal, Optional, Union
-from modal import Function
-import modal
-from pydantic import BaseModel
-
 import string
 from collections import defaultdict
 from itertools import islice
+from pathlib import Path
+from typing import Literal, Optional, Union
 
+import modal
 import nltk
-nltk.download('punkt')
-nltk.download('punkt_tab')
+from pydantic import BaseModel
+
+nltk.download("punkt")
+nltk.download("punkt_tab")
 
 
 # Manage deployment suffix on modal endpoint if testing.
@@ -46,12 +44,8 @@ app = modal.App(
 )
 
 
-run_pull_revision =  modal.Function.lookup(
-    "pull-revision" + suffix, "pull_revision"
-)
-run_push_results =  modal.Function.lookup(
-    "push-results" + suffix, "push_results"
-)
+run_pull_revision = modal.Function.lookup("pull-revision" + suffix, "pull_revision")
+run_push_results = modal.Function.lookup("push-results" + suffix, "push_results")
 
 
 def get_vrefs():
@@ -85,45 +79,49 @@ def find_ngrams(reference_text, n):
     Returns:
         A list of n-grams that appear more than once across all texts.
     """
-    from tqdm import tqdm
     import nltk
+    from tqdm import tqdm
 
-    ngrams = defaultdict(lambda: {
-       "count": 0, 
-       "vrefs": [], 
-       "reference_text": []
-       })
+    ngrams = defaultdict(lambda: {"count": 0, "vrefs": [], "reference_text": []})
 
     vrefs = get_vrefs()
 
     # loop through each verse and find ngrams
     for i in tqdm(range(len(reference_text))):
-
-        #only process if the reference text is not empty
+        # only process if the reference text is not empty
         if reference_text[i] != "":
-
-            #clean and tokenize the reference text
-            cleaned_reference_text = reference_text[i].translate(str.maketrans('', '', string.punctuation+"”“’‘")).lower()
+            # clean and tokenize the reference text
+            cleaned_reference_text = (
+                reference_text[i]
+                .translate(str.maketrans("", "", string.punctuation + "”“’‘"))
+                .lower()
+            )
             words = nltk.word_tokenize(cleaned_reference_text)
 
-            #get current vref
+            # get current vref
             vref = vrefs[i]
 
-            #get all ngrams of length n
-            ngrams_in_text = (tuple(islice(words, i, i + n)) for i in range(len(words) - n + 1))
+            # get all ngrams of length n
+            ngrams_in_text = (
+                tuple(islice(words, i, i + n)) for i in range(len(words) - n + 1)
+            )
             for ngram in ngrams_in_text:
                 ngrams[ngram]["count"] += 1
 
-                #only add ngram if it is not redundant
+                # only add ngram if it is not redundant
                 if vref not in ngrams[ngram]["vrefs"]:
                     ngrams[ngram]["vrefs"].append(vref)
-    
+
     # filter for ngrams that appear more than once
-    result = [{
-       "ngram": " ".join(ngram), 
-       "vrefs": data["vrefs"], 
-       } for ngram, data in ngrams.items() if data["count"] > 1]
-    
+    result = [
+        {
+            "ngram": " ".join(ngram),
+            "vrefs": data["vrefs"],
+        }
+        for ngram, data in ngrams.items()
+        if data["count"] > 1
+    ]
+
     return result
 
 
@@ -165,7 +163,7 @@ def filter_redundant_ngrams_recursive(ngrams_dict):
     Returns:
         A dictionary with redundant n-grams removed.
     """
-      
+
     # Store n-grams in descending order of size
     sorted_keys = sorted(ngrams_dict.keys(), reverse=True)
 
@@ -189,25 +187,25 @@ def filter_redundant_ngrams_recursive(ngrams_dict):
         ngrams_dict[key] = filtered_ngrams
 
         # Add current n-grams to the larger n-grams set
-        all_larger_ngrams.update(ngram_entry["ngram"] for ngram_entry in ngrams_dict[key])
+        all_larger_ngrams.update(
+            ngram_entry["ngram"] for ngram_entry in ngrams_dict[key]
+        )
 
-    #remove empty entries
-    ngrams_dict = {k: v for k, v in ngrams_dict.items() if v}  # Remove empty entries in place
+    # remove empty entries
+    ngrams_dict = {
+        k: v for k, v in ngrams_dict.items() if v
+    }  # Remove empty entries in place
     return {k: ngrams_dict[k] for k in sorted(ngrams_dict.keys(), reverse=True)}
-
 
 
 @app.function(cpu=8, timeout=600, retries=3)
 def assess(assessment: Union[Assessment, dict], AQUA_DB: str, **kwargs):
-    import json
-
     if isinstance(assessment, dict):
         assessment = Assessment(**assessment)
 
     reference = get_text.remote(assessment.revision_id, AQUA_DB)
 
     assert len(reference) == 41899
-
 
     print("searching for ngrams")
     ngrams_dict = return_as_dict.remote(reference, min_n=assessment.min_n)

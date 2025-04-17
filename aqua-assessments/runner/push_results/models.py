@@ -15,6 +15,3 @@ class Result(BaseModel):
 # Results is a list of results to push to the DB
 class Results(BaseModel):
     results: List[Result]
-
-
-

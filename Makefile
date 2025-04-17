@@ -30,7 +30,7 @@ project-up:
 	make localdb-up
 	make localapi-up
 	@export PYTHONPATH=${PWD} && \
-	python test/conftest.py
+	python3 test/conftest.py
 
 
 down:
@@ -52,7 +52,6 @@ push-release:
 	docker tag ${REGISTRY}/${IMAGENAME}:latest ${REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
 	docker push ${REGISTRY}/${IMAGENAME}:${RELEASE_VERSION}
 
-
 linting:
 	@echo "Running linting"
 	@black --check .
@@ -61,3 +60,10 @@ linting:
 	@echo "Isort passed"
 	@flake8 . --exclude='**/v1/**,**/v2/**,./venv,./alembic' --ignore=E501,W503,E203,E228,E226
 	@echo "Linting passed"
+
+format:
+	@echo "Running formatting"
+	@isort .
+	@echo "Isort completed"
+	@black .
+	@echo "Black completed"

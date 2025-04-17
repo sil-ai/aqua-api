@@ -1,5 +1,5 @@
-from pathlib import Path
 import time
+from pathlib import Path
 
 import modal
 import pytest
@@ -69,23 +69,26 @@ def test_add_revision(base_url, header, filepath: Path):
 app = modal.App(
     name="run-sentence-length-test",
     image=modal.Image.debian_slim()
-        .apt_install("libpq-dev", "gcc")
-        .pip_install(
-            "pandas~=1.5.0",
-            "psycopg2-binary~=2.9.0",
-            "pydantic~=1.10.0",
-            "pytest~=8.0.0",
-            "requests~=2.31.0",
-            "sqlalchemy~=1.4.0",
-            "asyncpg~=0.27.0"
-        )
+    .apt_install("libpq-dev", "gcc")
+    .pip_install(
+        "pandas~=1.5.0",
+        "psycopg2-binary~=2.9.0",
+        "pydantic~=1.10.0",
+        "pytest~=8.0.0",
+        "requests~=2.31.0",
+        "sqlalchemy~=1.4.0",
+        "asyncpg~=0.27.0",
+    ),
 )
 
-get_words_per_sentence = modal.Function.lookup("sentence-length-test", "get_words_per_sentence")
+get_words_per_sentence = modal.Function.lookup(
+    "sentence-length-test", "get_words_per_sentence"
+)
 get_long_words = modal.Function.lookup("sentence-length-test", "get_long_words")
 # run_sentence_length = modal.Function.lookup("sentence-length-test", "assess")
 
 run_sentence_length = modal.Function.lookup("sentence-length-test", "assess")
+
 
 def test_metrics():
     # Bee Movie intro
@@ -102,10 +105,12 @@ def test_metrics():
         assert round(get_words_per_sentence.remote(test_text), 2) == 5.31
         assert round(get_long_words.remote(test_text), 2) == 2.90
 
+
 # @app.function(timeout=3600)
 # def run_sentence_length_from_app(config, AQUA_DB: str):
 #     with app.run():
 #         return run_sentence_length.remote(config, AQUA_DB)
+
 
 @app.function(secrets=[modal.Secret.from_name("aqua-pytest")], timeout=3600)
 def run_assess_draft(config):
@@ -125,8 +130,9 @@ def run_assess_draft(config):
 
 
 def test_assess_draft(base_url, header):
+    from typing import Literal, Optional
+
     from pydantic import BaseModel
-    from typing import Optional, Literal
 
     class Assessment(BaseModel):
         id: Optional[int] = None
@@ -144,7 +150,7 @@ def test_assess_draft(base_url, header):
     response = requests.get(url, params={"version_id": version_id}, headers=header)
     revision_id = response.json()[0]["id"]
     config = Assessment(id=1, revision_id=revision_id, type="sentence-length")
-    #run_assess_draft(config.dict())
+    # run_assess_draft(config.dict())
 
     with app.run():
         run_assess_draft.remote(config.dict())
@@ -167,6 +173,7 @@ def test_delete_version(base_url, header):
     test_response = requests.delete(url, params=test_delete_version, headers=header)
     assert test_response.status_code == 200
 
+
 # @app.function()
 # def test_asyncpg_installation():
 #     try:
@@ -185,7 +192,7 @@ if __name__ == "__main__":
     base_url = AQUA_URL
 
     response = requests.post(
-            base_url+"/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
+        base_url + "/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
     )
 
     token = response.json()["access_token"]

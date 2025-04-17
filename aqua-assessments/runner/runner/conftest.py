@@ -1,9 +1,11 @@
 import os
-import requests
+
 import pytest
+import requests
 from dotenv import load_dotenv
 
-load_dotenv('../../.env')
+load_dotenv("../../.env")
+
 
 @pytest.fixture
 def base_url():
@@ -18,7 +20,7 @@ def header():
     base_url = AQUA_URL
 
     response = requests.post(
-            base_url+"/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
+        base_url + "/token", data={"username": TEST_USER, "password": TEST_PASSWORD}
     )
 
     token = response.json()["access_token"]

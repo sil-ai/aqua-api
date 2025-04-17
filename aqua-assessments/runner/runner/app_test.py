@@ -3,10 +3,9 @@ from pathlib import Path
 
 import pytest
 import requests
-
 from dotenv import load_dotenv
 
-load_dotenv('../../.env')
+load_dotenv("../../.env")
 
 version_abbreviation = "RN-DEL"
 version_name = "runner runner delete"
@@ -73,12 +72,10 @@ def test_runner(base_url, header):
     config = {
         "type": "word-alignment",
         "reference_id": reference_id,
-        "revision_id": revision_id
-        }
-
-    options = {
-        "modal_suffix": "-test"
+        "revision_id": revision_id,
     }
+
+    options = {"modal_suffix": "-test"}
     url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
     response = requests.post(url, headers=headers, json=config, params=options)
     assert response.status_code == 200
@@ -104,9 +101,7 @@ def test_runner_bad_auth(base_url, header):
         "reference_id": reference_id,
         "revision_id": revision_id,
     }
-    options = {
-        "modal_suffix": "-test"
-    }
+    options = {"modal_suffix": "-test"}
     url = "https://sil-ai--runner-test-assessment-runner.modal.run/"
     response = requests.post(url, headers=headers, json=config, params=options)
     assert response.status_code == 401

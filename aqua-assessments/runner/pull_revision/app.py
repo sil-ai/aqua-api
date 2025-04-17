@@ -3,9 +3,7 @@ import os
 from pathlib import Path
 
 import modal
-
 from db_connect import get_session
-
 
 logging.basicConfig(level=logging.INFO)
 
@@ -68,8 +66,8 @@ class PullRevision:
 
     def get_verses(self):
         import pandas as pd
-        from sqlalchemy.orm import declarative_base
         from sqlalchemy import Column, Integer, String
+        from sqlalchemy.orm import declarative_base
 
         Base = declarative_base()
 
@@ -102,9 +100,10 @@ class PullRevision:
         revision_verses = self.get_verses()
         if not revision_verses.empty:
             # checks that the version doesn't have duplicated verse references
-            if 'versereference' in revision_verses.columns:
-                revision_verses.rename(columns={'versereference': 'verse_reference'}, inplace=True)
-
+            if "versereference" in revision_verses.columns:
+                revision_verses.rename(
+                    columns={"versereference": "verse_reference"}, inplace=True
+                )
 
             print("checking-")
             print(revision_verses.columns)
@@ -123,8 +122,8 @@ class PullRevision:
             )
 
     def prepare_output(self):
-        import pandas as pd
         import numpy as np
+        import pandas as pd
 
         # outer merges the vref list on the revision verses
         all_verses = pd.merge(

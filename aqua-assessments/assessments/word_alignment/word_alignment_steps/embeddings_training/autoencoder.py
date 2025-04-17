@@ -1,12 +1,13 @@
 import argparse
+import asyncio
 import json
-from pathlib import Path
 import pickle
 import random
 import sys
 import time
-from typing import Optional, Dict, List, Generator, Tuple
-import asyncio
+from pathlib import Path
+from typing import Dict, Generator, List, Optional, Tuple
+
 import clearml
 import numpy as np
 import pandas as pd
@@ -14,10 +15,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-
 sys.path.append("../../")
 from word_alignment_steps import prepare_data  # noqa
-
 
 pd.set_option("display.max_rows", 500)
 
@@ -352,4 +351,3 @@ if __name__ == "__main__":
     args, unknown = parser.parse_known_args()
     # RUn async main with asyncio
     asyncio.run(main(args))
-

@@ -3,7 +3,7 @@ import os
 import modal
 import pytest
 
-from app import RecordNotFoundError, DuplicateVersesError
+from app import DuplicateVersesError, RecordNotFoundError
 
 app = modal.App(
     name="run-pull-revision-test",
@@ -64,9 +64,10 @@ def test_record_not_found(revision_id):
 
 @app.function(secrets=[modal.Secret.from_name("aqua-pytest")])
 def create_dup_verses(revision_id):
-    from app import PullRevision
     import pandas as pd
     from _pytest.monkeypatch import MonkeyPatch
+
+    from app import PullRevision
 
     monkeypatch = MonkeyPatch()
 
@@ -89,9 +90,10 @@ def test_duplicated_verses(revision_id=10):
 
 @app.function(secrets=[modal.Secret.from_name("aqua-pytest")])
 def create_empty_revision(revision_id):
-    from app import PullRevision
     import pandas as pd
     from _pytest.monkeypatch import MonkeyPatch
+
+    from app import PullRevision
 
     monkeypatch = MonkeyPatch()
 
@@ -147,9 +149,9 @@ def test_conn():
 def bad_connection(bad_connection_string):
     from sqlalchemy import create_engine
     from sqlalchemy.exc import (
+        ArgumentError,
         NoSuchModuleError,
         OperationalError,
-        ArgumentError,
         ProgrammingError,
     )
 

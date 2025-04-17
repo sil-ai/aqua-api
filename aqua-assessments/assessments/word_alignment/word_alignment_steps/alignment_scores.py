@@ -1,10 +1,9 @@
-from typing import List, Tuple, Optional
+from typing import List, Optional, Tuple
 
+import pandas as pd
+import word_alignment_steps.train_fa_model as train_fa_model
 from machine.corpora import TextFileTextCorpus
 from machine.translation.thot import ThotSymmetrizedWordAlignmentModel
-import pandas as pd
-
-import word_alignment_steps.train_fa_model as train_fa_model
 
 
 def get_best_alignment_scores(

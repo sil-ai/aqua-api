@@ -1,6 +1,6 @@
 def get_session(AQUA_DB: str):
-    from sqlalchemy.orm import Session
     from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
 
     # ??? Should this yield only session?
     # Need engine in testing but maybe I can pull out of session?

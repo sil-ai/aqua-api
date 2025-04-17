@@ -2,7 +2,6 @@ import logging
 
 import pandas as pd
 
-
 logging.getLogger().setLevel("INFO")
 
 
@@ -10,7 +9,7 @@ def condense_df(df: pd.DataFrame) -> pd.DataFrame:
     """
     Takes an input dataframe with revision and reference columns, and outputs
     a dataframe which only include those lines that are not blank in both input files.
-    Also condenses <range> lines into the previous line in both revision and reference, 
+    Also condenses <range> lines into the previous line in both revision and reference,
     and removes the vref for that line, adding the removed indices into the 'indices'
     column, so you know which indices have been combined.
 

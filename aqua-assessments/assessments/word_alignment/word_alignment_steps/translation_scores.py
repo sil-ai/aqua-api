@@ -1,15 +1,13 @@
 import math
 import os
-from shutil import rmtree
 import time
+from shutil import rmtree
 from typing import Optional
 
-from machine.corpora import TextFileTextCorpus
 import modal
 import pandas as pd
-
 import word_alignment_steps.train_fa_model as train_fa_model
-
+from machine.corpora import TextFileTextCorpus
 
 # Manage deployment suffix on modal endpoint if testing.
 suffix = ""
@@ -67,7 +65,6 @@ async def get_translation_scores(
     ):
         for k, v in batch.items():
             data[k].extend(v)
-
 
     df = pd.DataFrame(data)
     return df

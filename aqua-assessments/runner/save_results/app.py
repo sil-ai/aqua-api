@@ -3,7 +3,6 @@ from pathlib import Path
 
 import modal
 
-
 word_alignment_results_volume = modal.NetworkFileSystem.from_name(
     "word_alignment_results", create_if_missing=True
 )

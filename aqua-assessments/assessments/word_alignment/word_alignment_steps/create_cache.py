@@ -4,9 +4,7 @@ from typing import Dict
 
 import modal
 import pandas as pd
-
 import word_alignment_steps.prepare_data as prepare_data
-
 
 # Manage deployment suffix on modal endpoint if testing.
 suffix = ""
@@ -26,7 +24,9 @@ async def create_index_cache(tokenized_df):
     return index_cache
 
 
-async def get_indices_from_df(tokenized_df: pd.DataFrame) -> Dict[str, prepare_data.Word]:
+async def get_indices_from_df(
+    tokenized_df: pd.DataFrame,
+) -> Dict[str, prepare_data.Word]:
     """
     Takes a DataFrame and constructs a dictionary of Words from all the words in a column of that dataframe.
     Inputs:
@@ -57,7 +57,9 @@ async def get_indices_from_df(tokenized_df: pd.DataFrame) -> Dict[str, prepare_d
     # Run batches in parallel
     get_indices = modal.Function.lookup(f"word-alignment{suffix}", "get_indices")
     word_dict = {}
-    async for words in get_indices.map.aio(words_batched, kwargs={"word_series": word_series}):
+    async for words in get_indices.map.aio(
+        words_batched, kwargs={"word_series": word_series}
+    ):
         for word in words:
             word_dict[word.word] = word
 
