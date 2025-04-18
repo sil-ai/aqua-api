@@ -2,7 +2,6 @@ version: '3'
 services:
   api:
     build: .
-    image: local/aqua-api:latest
     ports:
       - "8000:8000"
       - "5678:5678" # Expose the debug port

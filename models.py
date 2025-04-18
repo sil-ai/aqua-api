@@ -205,6 +205,7 @@ class AssessmentIn(BaseModel):
     revision_id: int
     reference_id: Optional[int] = None
     type: AssessmentType
+    train: Optional[bool] = None
 
     model_config = {
         "json_schema_extra": {

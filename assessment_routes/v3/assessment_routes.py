@@ -142,7 +142,7 @@ async def get_assessments(
 
 # Helper function to call assessment runner
 async def call_assessment_runner(assessment: AssessmentIn, return_all_results: bool):
-    if os.getenv("MODAL_ENV") == "main":
+    if os.getenv("MODAL_ENV", "main") == "main":
         runner_url = "https://sil-ai--runner-assessment-runner.modal.run"
     else:
         runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"
@@ -151,6 +151,8 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
         "return_all_results": return_all_results,
     }
     headers = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
+
+    print(f'{assessment.dict()=}')
 
     # Asynchronously post the request to the runner
     async with httpx.AsyncClient() as client:
@@ -222,6 +224,8 @@ async def add_assessment(
         requested_time=datetime.now(),
         owner_id=current_user.id,
     )
+
+    print(f'{assessment=}')
 
     db.add(assessment)
     await db.commit()
