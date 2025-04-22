@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import time
 from datetime import date
@@ -222,7 +221,13 @@ async def upload_revision(
         await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    revision_out = create_revision_out(new_revision, db)
+    version = await db.scalar(
+        select(BibleVersionModel).where(
+            BibleVersionModel.id == new_revision.bible_version_id
+        )
+    )
+    version_map = {new_revision.bible_version_id: version} if version else {}
+    revision_out = create_revision_out(new_revision, version_map)
 
     end_time = time.time()
     processing_time = end_time - start_time

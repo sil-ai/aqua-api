@@ -57,6 +57,7 @@ async def list_version(
                 BibleVersionModel.deleted.is_(False),
                 BibleVersionAccess.group_id.in_(user_groups_subq),
             )
+            .order_by(BibleVersionModel.id)
         )
         result = await db.execute(stmt)
         versions = result.scalars().all()
