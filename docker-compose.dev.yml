@@ -1,0 +1,16 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
+      - AWS_SECRET_KEY=${AWS_SECRET_KEY}
+      - AQUA_DB=${AQUA_DB}
+      - TEST_KEY=${TEST_KEY}
+      - FAIL_KEY=${FAIL_KEY}
+      - KEY_VAULT=${KEY_VAULT}
+      - MODAL_WEBHOOK_TOKEN=${MODAL_WEBHOOK_TOKEN}
+      - SECRET_KEY=${SECRET_KEY}
+      - MODAL_ENV=${MODAL_ENV}

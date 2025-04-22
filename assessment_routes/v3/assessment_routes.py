@@ -142,7 +142,7 @@ async def get_assessments(
 
 # Helper function to call assessment runner
 async def call_assessment_runner(assessment: AssessmentIn, return_all_results: bool):
-    if os.getenv("MODAL_ENV") == "main":
+    if os.getenv("MODAL_ENV", "main") == "main":
         runner_url = "https://sil-ai--runner-assessment-runner.modal.run"
     else:
         runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"

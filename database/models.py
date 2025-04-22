@@ -125,6 +125,19 @@ class AssessmentResult(Base):
     assessment_id = Column(Integer, ForeignKey("assessment.id"))
     assessment = relationship("Assessment", back_populates="results")
 
+    __table_args__ = (
+        Index(
+            "idx_assessment_result_main",
+            "assessment_id",
+            "book",
+            "chapter",
+            "verse",
+            "id",
+        ),
+        Index("idx_assessment_id", "assessment_id"),
+        Index("idx_book_chapter_verse", "book", "chapter", "verse"),
+    )
+
 
 class BibleRevision(Base):
     __tablename__ = "bible_revision"
@@ -159,6 +172,11 @@ class BibleRevision(Base):
         foreign_keys="[Assessment.reference_id]",
     )
 
+    __table_args__ = (
+        Index("ix_bible_revision_version_id", "bible_version_id"),
+        Index("ix_bible_revision_deleted", "deleted"),
+    )
+
 
 class BibleVersion(Base):
     __tablename__ = "bible_version"
@@ -188,6 +206,8 @@ class BibleVersion(Base):
         "BibleRevision", cascade="all, delete", back_populates="bible_version"
     )
 
+    __table_args__ = (Index("ix_bible_version_deleted", "deleted"),)
+
 
 class BibleVersionAccess(Base):
     __tablename__ = "bible_version_access"
@@ -199,6 +219,12 @@ class BibleVersionAccess(Base):
     # Relationships
     bible_version = relationship("BibleVersion", back_populates="accessible_by")
     group = relationship("Group", back_populates="bible_versions_access")
+
+    __table_args__ = (
+        Index("ix_bible_version_access_group", "group_id"),
+        Index("ix_bible_version_access_version", "bible_version_id"),
+        Index("ix_bible_version_access_version_group", "bible_version_id", "group_id"),
+    )
 
 
 class BookReference(Base):
@@ -288,6 +314,9 @@ class UserGroup(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
+
+    __table_args__ = (Index("ix_user_group_user_id", "user_id"),)
+
     # Relationships
     user = relationship("UserDB", back_populates="groups")
     group = relationship("Group", back_populates="users")
