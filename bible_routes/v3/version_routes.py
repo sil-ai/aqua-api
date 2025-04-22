@@ -2,6 +2,7 @@ __version__ = "v3"
 
 from datetime import date
 from typing import List
+from collections import defaultdict
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -32,67 +33,55 @@ async def list_version(
 ):
     """
     Get a list of all versions that the current user is authorized to access.
-
-    Returns:
-    Fields(Version):
-    - name: str
-    Description: The name of the version.
-    - iso_language: str
-    Description: The ISO 639-2 language code. e.g 'eng' for English. 'swa' for Swahili.
-    - iso_script: str
-    Description: The ISO 15924 script code. e.g 'Latn' for Latin. 'Cyrl' for Cyrillic.
-    - abbreviation: str
-    Description: The abbreviation of the version.
-    - rights: str
-    Description: The rights of the version.
-    - forwardTranslation: Optional[int]
-    Description: The ID of the forward translation version.
-    - backTranslation: Optional[int]
-    Description: The ID of the back translation version.
-    - machineTranslation: bool
-    Description: Whether the version is machine translated.
-    - is_reference: bool
-    Description: Whether the version is a reference version.
-    - add_to_groups: Optional[List[int]]
-    Description: The IDs of the groups to add the version to,
-    the version will only be added to this groups, not to all tha groups of the user as usual.
     """
+
+    # Step 1: Fetch all versions the user can access
     if current_user.is_admin:
-        # Admin users can access all versions
         result = await db.execute(select(BibleVersionModel))
         versions = result.scalars().all()
     else:
-        # Fetch the groups the user belongs to
+        user_groups_subq = (
+            select(UserGroup.group_id)
+            .where(UserGroup.user_id == current_user.id)
+            .subquery()
+        )
 
-        stmt = select(UserGroup.group_id).where(UserGroup.user_id == current_user.id)
-        user_group_ids = stmt.subquery()
-        # Get versions that the user has access to through their groups
         stmt = (
             select(BibleVersionModel)
-            .distinct(BibleVersionModel.id)
+            .distinct()
             .join(
                 BibleVersionAccess,
                 BibleVersionModel.id == BibleVersionAccess.bible_version_id,
             )
             .where(
                 BibleVersionModel.deleted.is_(False),
-                BibleVersionAccess.group_id.in_(user_group_ids),
+                BibleVersionAccess.group_id.in_(user_groups_subq),
             )
         )
         result = await db.execute(stmt)
         versions = result.scalars().all()
-        # Get the groups for each version and add them to the response
-    version_result = []
-    for version in versions:
-        stmt = select(BibleVersionAccess.group_id).where(
-            BibleVersionAccess.bible_version_id == version.id
-        )
+
+    # Step 2: Batch load all group_ids for the version_ids
+    version_ids = [v.id for v in versions]
+    group_map: dict[int, list[int]] = defaultdict(list)
+
+    if version_ids:
+        stmt = select(
+            BibleVersionAccess.bible_version_id, BibleVersionAccess.group_id
+        ).where(BibleVersionAccess.bible_version_id.in_(version_ids))
         result = await db.execute(stmt)
-        group_ids = result.scalars().all()
-        version_out = VersionOut.model_validate(version)
-        version_out.group_ids = group_ids
-        if version_out not in version_result:
+        for version_id, group_id in result.all():
+            group_map[version_id].append(group_id)
+
+    # Step 3: Build VersionOut list
+    version_result = []
+    seen_ids = set()
+    for version in versions:
+        if version.id not in seen_ids:
+            version_out = VersionOut.model_validate(version)
+            version_out.group_ids = group_map.get(version.id, [])
             version_result.append(version_out)
+            seen_ids.add(version.id)
 
     return version_result
 

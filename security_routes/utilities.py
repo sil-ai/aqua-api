@@ -5,6 +5,8 @@ import bcrypt
 from sqlalchemy import or_
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from database.models import (  # Your SQLAlchemy model
     Assessment,
@@ -88,35 +90,29 @@ async def is_user_authorized_for_revision(user_id, revision_id, db):
     return accessible is not None
 
 
-async def get_revisions_authorized_for_user(user_id, db):
-    # Admins have access to all revisions
+async def get_authorized_revision_ids(user_id: int, db: AsyncSession) -> set[int]:
     result = await db.execute(select(UserDB).where(UserDB.id == user_id))
     user = result.scalars().first()
     if user and user.is_admin:
-        # Just return all revisions
-        result = await db.execute(select(BibleRevision))
-        return result.scalars().all()
+        result = await db.execute(select(BibleRevision.id))
+        return set(result.scalars().all())
 
-    # Fetch the groups the user belongs to
-    user_groups = (
+    user_groups_subq = (
         select(UserGroup.group_id).where(UserGroup.user_id == user_id)
     ).subquery()
 
-    # return the revision associated to the BibleVersion
     stmt = (
-        select(BibleRevision)
+        select(BibleRevision.id)
         .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
         .join(
-            BibleVersionAccess, BibleVersionAccess.bible_version_id == BibleVersion.id
+            BibleVersionAccess,
+            BibleVersionAccess.bible_version_id == BibleVersion.id,
         )
-        .where(
-            BibleVersionAccess.group_id.in_(user_groups),
-        )
+        .where(BibleVersionAccess.group_id.in_(user_groups_subq))
     )
 
     result = await db.execute(stmt)
-
-    return result.scalars().all()
+    return set(result.scalars().all())
 
 
 async def is_user_authorized_for_assessment(user_id, assessment_id, db):

@@ -102,7 +102,7 @@ def calculate_z_score(row):
         return (row["score"] - row["average_of_avg_score"]) / row["stddev_of_avg_score"]
     else:
         return None
-    
+
 
 async def execute_query(query, count_query, db):
     """Executes a given query and count query asynchronously."""
@@ -246,8 +246,10 @@ async def build_ngrams_query(
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
-    count_query = select(func.count()).select_from(NgramsTable).where(
-        NgramsTable.assessment_id == assessment_id
+    count_query = (
+        select(func.count())
+        .select_from(NgramsTable)
+        .where(NgramsTable.assessment_id == assessment_id)
     )
 
     return base_query, count_query
@@ -304,8 +306,12 @@ async def get_result(
     logger.info(f"⏱️ validate_parameters: {time.perf_counter() - start:.2f}s")
 
     start = time.perf_counter()
-    authorized = await is_user_authorized_for_assessment(current_user.id, assessment_id, db)
-    logger.info(f"⏱️ is_user_authorized_for_assessment: {time.perf_counter() - start:.2f}s")
+    authorized = await is_user_authorized_for_assessment(
+        current_user.id, assessment_id, db
+    )
+    logger.info(
+        f"⏱️ is_user_authorized_for_assessment: {time.perf_counter() - start:.2f}s"
+    )
     if not authorized:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -353,7 +359,9 @@ async def get_result(
             flag=row.flag if hasattr(row, "flag") else None,
             note=row.note if hasattr(row, "note") else None,
             revision_text=row.revision_text if hasattr(row, "revision_text") else None,
-            reference_text=row.reference_text if hasattr(row, "reference_text") else None,
+            reference_text=(
+                row.reference_text if hasattr(row, "reference_text") else None
+            ),
             hide=row.hide if hasattr(row, "hide") else None,
         )
         result_list.append(result_obj)
@@ -364,7 +372,9 @@ async def get_result(
 
 @router.get(
     "/ngrams_result",
-    response_model=Dict[str, Union[List[NgramResult], int]],  # ✅ Use correct response model
+    response_model=Dict[
+        str, Union[List[NgramResult], int]
+    ],  # ✅ Use correct response model
 )
 async def get_ngrams_result(
     assessment_id: int,
@@ -378,7 +388,7 @@ async def get_ngrams_result(
 
     Parameters
     ----------
-    assessment_id : int 
+    assessment_id : int
         The ID of the assessment to get results for.
     page : int, optional
         The page of results to return. If set, page_size must also be set.
@@ -411,7 +421,9 @@ async def get_ngrams_result(
             assessment_id=row.assessment_id,
             ngram=row.ngram,
             ngram_size=row.ngram_size,
-            vrefs=row.vrefs if row.vrefs is not None else [],  # Ensure it's always a list
+            vrefs=(
+                row.vrefs if row.vrefs is not None else []
+            ),  # Ensure it's always a list
         )
         for row in result_data
     ]
@@ -845,8 +857,12 @@ async def get_compare_results(
         verse,
         db,
     )
-    main_assessment_results, _ = await execute_query(main_assessments_query, select(func.count()), db)
-    baseline_assessment_results, _ = await execute_query(baseline_assessments_query, select(func.count()), db)
+    main_assessment_results, _ = await execute_query(
+        main_assessments_query, select(func.count()), db
+    )
+    baseline_assessment_results, _ = await execute_query(
+        baseline_assessments_query, select(func.count()), db
+    )
 
     df_main = pd.DataFrame(main_assessment_results)
     if baseline_assessment_results:
