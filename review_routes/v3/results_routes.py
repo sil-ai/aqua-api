@@ -3,6 +3,7 @@ __version__ = "v3"
 import ast
 import os
 from enum import Enum
+import logging
 from typing import Dict, List, Optional, Tuple, Union
 import time
 
@@ -29,6 +30,9 @@ from database.models import (
 from models import MultipleResult, Result_v2 as Result, WordAlignment, NgramResult
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -86,6 +90,27 @@ async def validate_parameters(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If aggregate is 'text', book, chapter, and verse must not be set.",
         )
+
+
+def calculate_z_score(row):
+    if (
+        row["stddev_of_avg_score"]
+        and row["stddev_of_avg_score"] != 0
+        and not pd.isna(row["average_of_avg_score"])
+        and not pd.isna(row["score"])
+    ):
+        return (row["score"] - row["average_of_avg_score"]) / row["stddev_of_avg_score"]
+    else:
+        return None
+    
+
+async def execute_query(query, count_query, db):
+    """Executes a given query and count query asynchronously."""
+    result_data = await db.execute(query)
+    result_data = result_data.fetchall()
+    total_count = await db.scalar(count_query)
+
+    return result_data, total_count
 
 
 async def build_results_query(
@@ -276,11 +301,11 @@ async def get_result(
     """
     start = time.perf_counter()
     await validate_parameters(book, chapter, verse, aggregate)
-    print(f"⏱️ validate_parameters: {time.perf_counter() - start:.2f}s")
+    logger.info(f"⏱️ validate_parameters: {time.perf_counter() - start:.2f}s")
 
     start = time.perf_counter()
     authorized = await is_user_authorized_for_assessment(current_user.id, assessment_id, db)
-    print(f"⏱️ is_user_authorized_for_assessment: {time.perf_counter() - start:.2f}s")
+    logger.info(f"⏱️ is_user_authorized_for_assessment: {time.perf_counter() - start:.2f}s")
     if not authorized:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -299,11 +324,11 @@ async def get_result(
         reverse,
         db,
     )
-    print(f"⏱️ build_results_query: {time.perf_counter() - start:.2f}s")
+    logger.info(f"⏱️ build_results_query: {time.perf_counter() - start:.2f}s")
 
     start = time.perf_counter()
     result_data, total_count = await execute_query(query, count_query, db)
-    print(f"⏱️ execute_query: {time.perf_counter() - start:.2f}s")
+    logger.info(f"⏱️ execute_query: {time.perf_counter() - start:.2f}s")
 
     start = time.perf_counter()
     result_list = []
@@ -332,7 +357,7 @@ async def get_result(
             hide=row.hide if hasattr(row, "hide") else None,
         )
         result_list.append(result_obj)
-    print(f"⏱️ Result formatting: {time.perf_counter() - start:.2f}s")
+    logger.info(f"⏱️ Result formatting: {time.perf_counter() - start:.2f}s")
 
     return {"results": result_list, "total_count": total_count}
 
@@ -367,7 +392,7 @@ async def get_ngrams_result(
     Dict[str, Union[List[NgramResult], int]]
         A dictionary containing the list of results and the total count of results.
     """
-    print("Assessment ID:", assessment_id)
+    logger.info("Assessment ID:", assessment_id)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -376,8 +401,6 @@ async def get_ngrams_result(
 
     # ✅ Build and execute the query for ngrams
     query, count_query = await build_ngrams_query(assessment_id, page, page_size, db)
-    print("Query:", query)
-    print("Count Query:", count_query)
 
     result_data, total_count = await execute_query(query, count_query, db)
 
@@ -730,27 +753,6 @@ async def build_missing_words_baseline_query(
         )
 
     return baseline_assessments_query
-
-
-def calculate_z_score(row):
-    if (
-        row["stddev_of_avg_score"]
-        and row["stddev_of_avg_score"] != 0
-        and not pd.isna(row["average_of_avg_score"])
-        and not pd.isna(row["score"])
-    ):
-        return (row["score"] - row["average_of_avg_score"]) / row["stddev_of_avg_score"]
-    else:
-        return None
-    
-
-async def execute_query(query, count_query, db):
-    """Executes a given query and count query asynchronously."""
-    result_data = await db.execute(query)
-    result_data = result_data.fetchall()
-    total_count = await db.scalar(count_query)
-
-    return result_data, total_count
 
 
 @router.get(

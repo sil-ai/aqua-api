@@ -152,8 +152,6 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
     }
     headers = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
 
-    print(f'{assessment.dict()=}')
-
     # Asynchronously post the request to the runner
     async with httpx.AsyncClient() as client:
         response = await client.post(
@@ -224,8 +222,6 @@ async def add_assessment(
         requested_time=datetime.now(),
         owner_id=current_user.id,
     )
-
-    print(f'{assessment=}')
 
     db.add(assessment)
     await db.commit()
