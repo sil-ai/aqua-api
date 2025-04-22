@@ -4,6 +4,7 @@ import ast
 import os
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
+import time
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -18,14 +19,14 @@ from database.models import (
     Assessment,
     AssessmentResult,
     BibleRevision,
+    NgramsTable,
+    NgramVrefTable,
 )
 from database.models import UserDB as UserModel
 from database.models import (
     VerseText,
 )
-from models import MultipleResult
-from models import Result_v2 as Result
-from models import WordAlignment
+from models import MultipleResult, Result_v2 as Result, WordAlignment, NgramResult
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 
@@ -182,6 +183,51 @@ async def build_results_query(
     )
 
 
+async def build_ngrams_query(
+    assessment_id: int,
+    page: Optional[int],
+    page_size: Optional[int],
+    db: AsyncSession,
+):
+    """
+    Builds a query to fetch n-gram results for an assessment.
+
+    Args:
+        assessment_id (int): The ID of the assessment to fetch n-gram results for.
+        page (Optional[int]): The page number for pagination. Default is None.
+        page_size (Optional[int]): The number of results per page. Default is None.
+        db (Session): The database session object to execute queries against.
+
+    Returns:
+        Tuple: A tuple containing the base query object and the count query object.
+    """
+
+    # Select ngrams and their corresponding vrefs
+    base_query = (
+        select(
+            NgramsTable.id,
+            NgramsTable.assessment_id,
+            NgramsTable.ngram,
+            NgramsTable.ngram_size,
+            func.array_agg(NgramVrefTable.vref).label("vrefs"),
+        )
+        .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
+        .where(NgramsTable.assessment_id == assessment_id)
+        .group_by(NgramsTable.id)
+        .order_by(NgramsTable.id)
+    )
+
+    # Apply pagination
+    if page is not None and page_size is not None:
+        base_query = base_query.offset((page - 1) * page_size).limit(page_size)
+
+    count_query = select(func.count()).select_from(NgramsTable).where(
+        NgramsTable.assessment_id == assessment_id
+    )
+
+    return base_query, count_query
+
+
 @router.get(
     "/result",
     response_model=Dict[str, Union[List[Result], int]],
@@ -228,14 +274,20 @@ async def get_result(
     missing word appears in the baseline reference texts, and so there is a higher likelihood that it is a word that should
     be included in the text being assessed.
     """
+    start = time.perf_counter()
     await validate_parameters(book, chapter, verse, aggregate)
+    print(f"⏱️ validate_parameters: {time.perf_counter() - start:.2f}s")
 
-    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+    start = time.perf_counter()
+    authorized = await is_user_authorized_for_assessment(current_user.id, assessment_id, db)
+    print(f"⏱️ is_user_authorized_for_assessment: {time.perf_counter() - start:.2f}s")
+    if not authorized:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to see this assessment",
         )
 
+    start = time.perf_counter()
     query, count_query = await build_results_query(
         assessment_id,
         book,
@@ -247,23 +299,21 @@ async def get_result(
         reverse,
         db,
     )
+    print(f"⏱️ build_results_query: {time.perf_counter() - start:.2f}s")
 
-    # Execute the query and fetch results
-    result_data = await db.execute(query)
-    result_data = result_data.fetchall()
-    result_agg_data = await db.scalar(count_query)
+    start = time.perf_counter()
+    result_data, total_count = await execute_query(query, count_query, db)
+    print(f"⏱️ execute_query: {time.perf_counter() - start:.2f}s")
 
-    # Process and format results
+    start = time.perf_counter()
     result_list = []
     for row in result_data:
-        # Constructing the verse reference string
         vref = f"{row.book}"
         if hasattr(row, "chapter") and row.chapter is not None:
             vref += f" {row.chapter}"
             if hasattr(row, "verse") and row.verse is not None:
                 vref += f":{row.verse}"
 
-        # Building the Result object
         result_obj = Result(
             id=row.id if hasattr(row, "id") else None,
             assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
@@ -278,14 +328,70 @@ async def get_result(
             flag=row.flag if hasattr(row, "flag") else None,
             note=row.note if hasattr(row, "note") else None,
             revision_text=row.revision_text if hasattr(row, "revision_text") else None,
-            reference_text=(
-                row.reference_text if hasattr(row, "reference_text") else None
-            ),
+            reference_text=row.reference_text if hasattr(row, "reference_text") else None,
             hide=row.hide if hasattr(row, "hide") else None,
         )
-        # Add the Result object to the result list
         result_list.append(result_obj)
-    total_count = result_agg_data  # Get the total count from the aggregation query
+    print(f"⏱️ Result formatting: {time.perf_counter() - start:.2f}s")
+
+    return {"results": result_list, "total_count": total_count}
+
+
+@router.get(
+    "/ngrams_result",
+    response_model=Dict[str, Union[List[NgramResult], int]],  # ✅ Use correct response model
+)
+async def get_ngrams_result(
+    assessment_id: int,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Returns a list of n-gram results for a given assessment.
+
+    Parameters
+    ----------
+    assessment_id : int 
+        The ID of the assessment to get results for.
+    page : int, optional
+        The page of results to return. If set, page_size must also be set.
+    page_size : int, optional
+        The number of results to return per page. If set, page must also be set.
+    db : Session
+        The database session object to execute queries against.
+
+    Returns
+    -------
+    Dict[str, Union[List[NgramResult], int]]
+        A dictionary containing the list of results and the total count of results.
+    """
+    print("Assessment ID:", assessment_id)
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+
+    # ✅ Build and execute the query for ngrams
+    query, count_query = await build_ngrams_query(assessment_id, page, page_size, db)
+    print("Query:", query)
+    print("Count Query:", count_query)
+
+    result_data, total_count = await execute_query(query, count_query, db)
+
+    # ✅ Process and format the results
+    result_list = [
+        NgramResult(
+            id=row.id,
+            assessment_id=row.assessment_id,
+            ngram=row.ngram,
+            ngram_size=row.ngram_size,
+            vrefs=row.vrefs if row.vrefs is not None else [],  # Ensure it's always a list
+        )
+        for row in result_data
+    ]
 
     return {"results": result_list, "total_count": total_count}
 
@@ -636,6 +742,15 @@ def calculate_z_score(row):
         return (row["score"] - row["average_of_avg_score"]) / row["stddev_of_avg_score"]
     else:
         return None
+    
+
+async def execute_query(query, count_query, db):
+    """Executes a given query and count query asynchronously."""
+    result_data = await db.execute(query)
+    result_data = result_data.fetchall()
+    total_count = await db.scalar(count_query)
+
+    return result_data, total_count
 
 
 @router.get(
@@ -728,10 +843,8 @@ async def get_compare_results(
         verse,
         db,
     )
-    main_assessment_results = await db.execute(main_assessments_query)
-    main_assessment_results = main_assessment_results.all()
-    baseline_assessment_results = await db.execute(baseline_assessments_query)
-    baseline_assessment_results = baseline_assessment_results.all()
+    main_assessment_results, _ = await execute_query(main_assessments_query, select(func.count()), db)
+    baseline_assessment_results, _ = await execute_query(baseline_assessments_query, select(func.count()), db)
 
     df_main = pd.DataFrame(main_assessment_results)
     if baseline_assessment_results:
