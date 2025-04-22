@@ -1,11 +1,11 @@
 __version__ = "v3"
 
 import ast
-import os
-from enum import Enum
 import logging
-from typing import Dict, List, Optional, Tuple, Union
+import os
 import time
+from enum import Enum
+from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -27,7 +27,9 @@ from database.models import UserDB as UserModel
 from database.models import (
     VerseText,
 )
-from models import MultipleResult, Result_v2 as Result, WordAlignment, NgramResult
+from models import MultipleResult, NgramResult
+from models import Result_v2 as Result
+from models import WordAlignment
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 

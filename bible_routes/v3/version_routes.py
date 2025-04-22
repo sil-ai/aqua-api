@@ -1,8 +1,8 @@
 __version__ = "v3"
 
+from collections import defaultdict
 from datetime import date
 from typing import List
-from collections import defaultdict
 
 import fastapi
 from fastapi import Depends, HTTPException, status

@@ -59,7 +59,7 @@ linting:
 	@echo "Running linting"
 	@black --check .
 	@echo "Black passed"
-	@isort --check .
+	@isort --check . --skip .venv
 	@echo "Isort passed"
 	@flake8 . --exclude='**/v1/**,**/v2/**,./venv,./alembic' --ignore=E501,W503,E203,E228,E226
 	@echo "Linting passed"

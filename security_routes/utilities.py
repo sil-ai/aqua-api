@@ -3,10 +3,9 @@ import os
 
 import bcrypt
 from sqlalchemy import or_
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 
 from database.models import (  # Your SQLAlchemy model
     Assessment,
