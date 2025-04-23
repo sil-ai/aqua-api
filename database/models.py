@@ -53,6 +53,11 @@ class AlignmentTopSourceScores(Base):
 
     book_score_idx = Index("book_score_idx", book, score)
 
+    __table_args__ = (
+        Index("ix_alignment_scores_assessment_score", "assessment_id", "score"),
+        Index("ix_alignment_scores_grouping", "book", "chapter", "verse", "source"),
+    )
+
 
 class NgramsTable(Base):
     __tablename__ = "ngrams_table"
@@ -105,6 +110,11 @@ class Assessment(Base):
         back_populates="assessments_as_reference",
     )
 
+    __table_args__ = (
+        Index("ix_assessment_rev_ref_type_status_end", "revision_id", "reference_id", "type", "status", "end_time"),
+    )
+
+
 
 class AssessmentResult(Base):
     __tablename__ = "assessment_result"
@@ -124,6 +134,19 @@ class AssessmentResult(Base):
 
     assessment_id = Column(Integer, ForeignKey("assessment.id"))
     assessment = relationship("Assessment", back_populates="results")
+
+    __table_args__ = (
+        Index(
+            "idx_assessment_result_main",
+            "assessment_id",
+            "book",
+            "chapter",
+            "verse",
+            "id",
+        ),
+        Index("idx_assessment_id", "assessment_id"),
+        Index("idx_book_chapter_verse", "book", "chapter", "verse"),
+    )
 
 
 class BibleRevision(Base):
@@ -159,6 +182,11 @@ class BibleRevision(Base):
         foreign_keys="[Assessment.reference_id]",
     )
 
+    __table_args__ = (
+        Index("ix_bible_revision_version_id", "bible_version_id"),
+        Index("ix_bible_revision_deleted", "deleted"),
+    )
+
 
 class BibleVersion(Base):
     __tablename__ = "bible_version"
@@ -188,6 +216,8 @@ class BibleVersion(Base):
         "BibleRevision", cascade="all, delete", back_populates="bible_version"
     )
 
+    __table_args__ = (Index("ix_bible_version_deleted", "deleted"),)
+
 
 class BibleVersionAccess(Base):
     __tablename__ = "bible_version_access"
@@ -199,6 +229,12 @@ class BibleVersionAccess(Base):
     # Relationships
     bible_version = relationship("BibleVersion", back_populates="accessible_by")
     group = relationship("Group", back_populates="bible_versions_access")
+
+    __table_args__ = (
+        Index("ix_bible_version_access_group", "group_id"),
+        Index("ix_bible_version_access_version", "bible_version_id"),
+        Index("ix_bible_version_access_version_group", "bible_version_id", "group_id"),
+    )
 
 
 class BookReference(Base):
@@ -255,6 +291,12 @@ class VerseText(Base):
         "BibleRevision", back_populates="verse_text", cascade="all, delete"
     )
 
+    __table_args__ = (
+        Index("ix_verse_text_revision_id", "revision_id"),
+        Index("ix_verse_text_revision_book", "revision_id", "book"),
+        Index("ix_verse_text_verse_reference_revision", "verse_reference", "revision_id"),
+    )
+
 
 class UserDB(Base):
     __tablename__ = "users"
@@ -288,6 +330,9 @@ class UserGroup(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     group_id = Column(Integer, ForeignKey("groups.id"), nullable=False)
+
+    __table_args__ = (Index("ix_user_group_user_id", "user_id"),)
+
     # Relationships
     user = relationship("UserDB", back_populates="groups")
     group = relationship("Group", back_populates="users")
