@@ -1,8 +1,8 @@
 import asyncio
-from logging.config import fileConfig
 import os
-from pathlib import Path
 import sys
+from logging.config import fileConfig
+from pathlib import Path
 
 from dotenv import load_dotenv
 from sqlalchemy import pool
@@ -47,6 +47,7 @@ config.set_main_option("sqlalchemy.url", DATABASE_URL)
 sys.path.append(str(Path(__file__).parents[2]))
 
 from dotenv import load_dotenv
+
 from database.database import Base  # adjust the path as needed
 
 # add your model's MetaData object here

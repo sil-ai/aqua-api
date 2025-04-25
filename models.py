@@ -205,6 +205,7 @@ class AssessmentIn(BaseModel):
     revision_id: int
     reference_id: Optional[int] = None
     type: AssessmentType
+    train: Optional[bool] = None
 
     model_config = {
         "json_schema_extra": {
@@ -302,6 +303,14 @@ class MultipleResult(BaseModel):
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
     hide: bool = False
+
+
+class NgramResult(BaseModel):
+    id: int
+    assessment_id: int
+    ngram: str
+    ngram_size: int
+    vrefs: List[str]  # ✅ Store multiple verse references for the n-gram
 
 
 class WordAlignment(BaseModel):

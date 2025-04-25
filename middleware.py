@@ -2,6 +2,7 @@ import http
 import json
 import logging
 import time
+from jose import jwt, JWTError
 
 from jose import JWTError, jwt
 from pythonjsonlogger import jsonlogger
@@ -11,6 +12,7 @@ from starlette.types import Message
 
 from security_routes.utilities import ALGORITHM, SECRET_KEY
 
+from security_routes.utilities import SECRET_KEY, ALGORITHM
 
 class LoggingMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
@@ -25,6 +27,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             handler = logging.StreamHandler()
             handler.setFormatter(
                 jsonlogger.JsonFormatter(
+                    fmt='{"host": "%(host)s", "port": "%(port)s", "method": "%(method)s", "url": "%(url)s", "status_code": %(status_code)s, "status_phrase": "%(status_phrase)s", "processing_time_ms": "%(formatted_process_time)s", "body": "%(body_str)s", "username": "%(username)s"}'
                     fmt='{"host": "%(host)s", "port": "%(port)s", "method": "%(method)s", "url": "%(url)s", "status_code": %(status_code)s, "status_phrase": "%(status_phrase)s", "processing_time_ms": "%(formatted_process_time)s", "body": "%(body_str)s", "username": "%(username)s"}'
                 )
             )
@@ -51,6 +54,18 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         except JWTError:
             return "invalid_token"
 
+    def extract_username_from_token(self, authorization_header):
+        if not authorization_header or not authorization_header.startswith("Bearer "):
+            return "anonymous"
+
+        try:
+            token = authorization_header.replace("Bearer ", "")
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            username = payload.get("sub")
+            return username if username else "anonymous"
+        except JWTError:
+            return "invalid_token"
+
     async def dispatch(self, request, call_next):
         logger = logging.getLogger(__name__)
 
@@ -60,6 +75,10 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             else request.url.path
         )
         start_time = time.time()
+
+        # Extract username from Authorization header if present
+        authorization_header = request.headers.get("Authorization", "")
+        username = self.extract_username_from_token(authorization_header)
 
         # Extract username from Authorization header if present
         authorization_header = request.headers.get("Authorization", "")
@@ -106,6 +125,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 "status_phrase": status_phrase,
                 "formatted_process_time": formatted_process_time,
                 "body_str": body_str,
+                "username": username,
                 "username": username,
             },
         )
