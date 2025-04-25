@@ -2,7 +2,6 @@ import http
 import json
 import logging
 import time
-from jose import jwt, JWTError
 
 from jose import JWTError, jwt
 from pythonjsonlogger import jsonlogger
@@ -12,7 +11,6 @@ from starlette.types import Message
 
 from security_routes.utilities import ALGORITHM, SECRET_KEY
 
-from security_routes.utilities import SECRET_KEY, ALGORITHM
 
 class LoggingMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
@@ -27,7 +25,6 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             handler = logging.StreamHandler()
             handler.setFormatter(
                 jsonlogger.JsonFormatter(
-                    fmt='{"host": "%(host)s", "port": "%(port)s", "method": "%(method)s", "url": "%(url)s", "status_code": %(status_code)s, "status_phrase": "%(status_phrase)s", "processing_time_ms": "%(formatted_process_time)s", "body": "%(body_str)s", "username": "%(username)s"}'
                     fmt='{"host": "%(host)s", "port": "%(port)s", "method": "%(method)s", "url": "%(url)s", "status_code": %(status_code)s, "status_phrase": "%(status_phrase)s", "processing_time_ms": "%(formatted_process_time)s", "body": "%(body_str)s", "username": "%(username)s"}'
                 )
             )
