@@ -107,7 +107,6 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 "formatted_process_time": formatted_process_time,
                 "body_str": body_str,
                 "username": username,
-                "username": username,
             },
         )
 
