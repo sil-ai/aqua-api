@@ -138,6 +138,7 @@ dmypy.json
 
 # API keys
 *.env
+39venv
 
 # Scripts folder
 Scripts
