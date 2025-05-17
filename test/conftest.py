@@ -1,28 +1,29 @@
 # version_id conftest.py
+from datetime import date
+
+import bcrypt
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy import create_engine, select
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy import select
+
+from app import app
 from database.models import (
     Base,
-    UserDB,
-    Group,
-    UserGroup,
-    IsoLanguage,
-    IsoScript,
-    BibleVersion,
     BibleRevision,
+    BibleVersion,
+    BibleVersionAccess,
     BookReference,
     ChapterReference,
+    Group,
+    IsoLanguage,
+    IsoScript,
+    UserDB,
+    UserGroup,
     VerseReference,
-    BibleVersionAccess,
 )
-import bcrypt
-from datetime import date
-import pandas as pd
-from app import app
 
 engine = create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

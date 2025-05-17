@@ -1,31 +1,29 @@
 __version__ = "v1"
 
-from pathlib import Path
-import os
 import ast
+import os
+from pathlib import Path
 
-import app
-import pytest
 import fastapi
+import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from pydantic.error_wrappers import ValidationError
 
-import bible_routes.v2.language_routes as language_routes_v2
-import bible_routes.v1.language_routes as language_routes_v1
-import bible_routes.v1.version_routes as version_routes_v1
-import bible_routes.v2.version_routes as version_routes_v2
-import bible_routes.v1.revision_routes as revision_routes_v1
-import bible_routes.v2.revision_routes as revision_routes_v2
-import bible_routes.v1.verse_routes as verse_routes_v1
-import bible_routes.v2.verse_routes as verse_routes_v2
+import app
 import assessment_routes.v1.assessment_routes as assessment_routes_v1
 import assessment_routes.v2.assessment_routes as assessment_routes_v2
+import bible_routes.v1.language_routes as language_routes_v1
+import bible_routes.v1.revision_routes as revision_routes_v1
+import bible_routes.v1.verse_routes as verse_routes_v1
+import bible_routes.v1.version_routes as version_routes_v1
+import bible_routes.v2.language_routes as language_routes_v2
+import bible_routes.v2.revision_routes as revision_routes_v2
+import bible_routes.v2.verse_routes as verse_routes_v2
+import bible_routes.v2.version_routes as version_routes_v2
 import review_routes.v1.results_routes as results_routes_v1
 import review_routes.v2.results_routes as results_routes_v2
-
-from models import VersionIn, RevisionIn, AssessmentIn
-
+from models import AssessmentIn, RevisionIn, VersionIn
 
 version_name = "App delete test"
 version_abbreviation = "APP-DEL"

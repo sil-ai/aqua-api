@@ -1,10 +1,12 @@
 __version__ = "v2"
 
-import re
 import importlib
 import inspect
+import re
+
 import pytest
 from dotenv import load_dotenv
+
 import app
 
 load_dotenv(".env.pytest")

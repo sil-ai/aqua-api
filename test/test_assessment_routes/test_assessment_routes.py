@@ -1,14 +1,16 @@
 # test_revision_flows.py
 from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
+
 from database.models import (
     Assessment,
     BibleVersionAccess,
-    UserGroup,
-    UserDB,
-    UserDB as UserModel,
 )
-
-from unittest.mock import Mock, patch, MagicMock
+from database.models import UserDB
+from database.models import UserDB as UserModel
+from database.models import (
+    UserGroup,
+)
 
 prefix = "v3"
 

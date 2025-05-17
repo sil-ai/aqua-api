@@ -1,12 +1,11 @@
-import shutil
 import os
+import shutil
 import urllib.request
 import zipfile
-from typing import Optional, Dict
+from typing import Dict, Optional
 
-import sqlalchemy as db
 import pandas as pd
-
+import sqlalchemy as db
 
 # ISO639-3 code tables
 iso_code_link = "https://iso639-3.sil.org/sites/iso639-3/files/downloads/iso-639-3_Code_Tables_20220311.zip"

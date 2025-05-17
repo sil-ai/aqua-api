@@ -1,18 +1,18 @@
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi import Depends, HTTPException, status, APIRouter
 from jose import jwt
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from .utilities import hash_password
-from models import User, Group
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database.dependencies import get_db
+from database.models import Group as GroupDB
 from database.models import (
     UserDB,
     UserGroup,
-    Group as GroupDB,
 )
-from database.dependencies import get_db
+from models import Group, User
 
-from .utilities import SECRET_KEY, ALGORITHM
+from .utilities import ALGORITHM, SECRET_KEY, hash_password
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="latest/token")

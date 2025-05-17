@@ -1,27 +1,30 @@
 # auth_routes.py
+import logging
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import List, Optional
 
-from fastapi import Depends, HTTPException, status, APIRouter
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models import Token, User, Group
-from database.models import UserDB, Group as GroupDB, UserGroup
-
-
 from database.dependencies import get_db  # Function to get the database session
+from database.models import Group as GroupDB
+from database.models import UserDB, UserGroup
+from models import Group, Token, User
+
 from .utilities import (
-    verify_password,
-    SECRET_KEY,
-    ALGORITHM,
     ACCESS_TOKEN_EXPIRE_MINUTES,
+    ALGORITHM,
+    SECRET_KEY,
+    verify_password,
 )
 
 router = APIRouter()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="latest/token")
 
@@ -67,6 +70,8 @@ async def get_current_user(
         user = result.scalars().first()
         if user is None:
             raise credentials_exception
+        logger.info(f"User {user.username} logged in.")
+        logger.info(f"Date {datetime.now()}.")
         return user
     except JWTError:
         raise credentials_exception
@@ -83,6 +88,7 @@ async def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.username, "is_admin": user.is_admin},

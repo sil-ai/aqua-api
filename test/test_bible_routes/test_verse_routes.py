@@ -1,8 +1,7 @@
-from database.models import (
-    BibleRevision as BibleRevisionModel,
-    BibleVersion as BibleVersionModel,
-)
 from pathlib import Path
+
+from database.models import BibleRevision as BibleRevisionModel
+from database.models import BibleVersion as BibleVersionModel
 
 prefix = "v3"
 

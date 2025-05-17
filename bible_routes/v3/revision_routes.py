@@ -1,50 +1,40 @@
+import logging
+import time
+from datetime import date
 from typing import List, Optional
-from fastapi import Depends, HTTPException, status, APIRouter, UploadFile, File
+
+import numpy as np
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-import numpy as np
-import time
-import logging
-import asyncio
-from datetime import date
 
 from bible_loading import async_text_dataframe, text_loading
-from models import RevisionOut_v3 as RevisionOut, RevisionIn
-from database.models import (
-    BibleRevision as BibleRevisionModel,
-    BibleVersion as BibleVersionModel,
-    UserDB as UserModel,
-)
+from database.dependencies import get_db
+from database.models import BibleRevision as BibleRevisionModel
+from database.models import BibleVersion as BibleVersionModel
+from database.models import UserDB as UserModel
+from models import RevisionIn
+from models import RevisionOut_v3 as RevisionOut
+from security_routes.auth_routes import get_current_user
 from security_routes.utilities import (
-    get_revisions_authorized_for_user,
+    get_authorized_revision_ids,
     is_user_authorized_for_bible_version,
 )
-from security_routes.auth_routes import get_current_user
-from database.dependencies import get_db
 
 router = APIRouter()
 
 
-async def create_revision_out(
-    revision: BibleVersionModel, db: AsyncSession
+def create_revision_out(
+    revision: BibleRevisionModel, version_map: dict[int, BibleVersionModel]
 ) -> RevisionOut:
-    # Fetch related BibleVersionModel data
-    result = await db.execute(
-        select(BibleVersionModel).where(
-            BibleVersionModel.id == revision.bible_version_id
-        )
-    )
-    version = result.scalars().first()
-
-    version_abbreviation = version.abbreviation if version else None
-    iso_language = version.iso_language if version else None
-
-    # Prepare the data for RevisionOut
+    version = version_map.get(revision.bible_version_id)
     revision_out_data = revision.__dict__.copy()
     revision_out_data.pop("_sa_instance_state", None)
 
-    revision_out_data["version_abbreviation"] = version_abbreviation
-    revision_out_data["iso_language"] = iso_language
+    revision_out_data["version_abbreviation"] = (
+        version.abbreviation if version else None
+    )
+    revision_out_data["iso_language"] = version.iso_language if version else None
 
     return RevisionOut(**revision_out_data)
 
@@ -80,18 +70,17 @@ async def list_revisions(
     Description: The file containing the revision text.
     """
     if version_id:
-        # Check if version exists
-        result = await db.execute(
+        # Step 1: Check version existence
+        version = await db.scalar(
             select(BibleVersionModel).where(BibleVersionModel.id == version_id)
         )
-        version = result.scalars().first()
-
         if not version:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="Version id is invalid"
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Version id is invalid",
             )
 
-        # Check if user is authorized to access the version
+        # Step 2: Check authorization
         if not await is_user_authorized_for_bible_version(
             current_user.id, version_id, db
         ):
@@ -100,6 +89,7 @@ async def list_revisions(
                 detail="User not authorized to access this bible version.",
             )
 
+        # Step 3: Load revisions for that version
         result = await db.execute(
             select(BibleRevisionModel).where(
                 BibleRevisionModel.bible_version_id == version_id
@@ -108,21 +98,28 @@ async def list_revisions(
         revisions = result.scalars().all()
 
     else:
-        # List all revisions, but filter based on user authorization and filter based on deleted status
+        # Step 1: Load all undeleted revisions
         result = await db.execute(
             select(BibleRevisionModel).where(BibleRevisionModel.deleted.is_(False))
         )
-        revisions = result.scalars().all()
-        revisions_for_user = await get_revisions_authorized_for_user(
-            current_user.id, db
+        all_revisions = result.scalars().all()
+
+        # Step 2: Get only those revisions the user is authorized for
+        authorized_ids = await get_authorized_revision_ids(current_user.id, db)
+        revisions = [r for r in all_revisions if r.id in authorized_ids]
+
+    # Step 4: Convert to response models
+    # Preload all versions for the revisions
+    version_ids = {r.bible_version_id for r in revisions}
+    version_map = {}
+
+    if version_ids:
+        result = await db.execute(
+            select(BibleVersionModel).where(BibleVersionModel.id.in_(version_ids))
         )
+        version_map = {v.id: v for v in result.scalars().all()}
 
-        # Intersect the two lists to get the revisions that are authorized for the user
-        revisions = list(set(revisions).intersection(revisions_for_user))
-
-    revision_out_list = await asyncio.gather(
-        *[create_revision_out(revision, db) for revision in revisions]
-    )
+    revision_out_list = [create_revision_out(rev, version_map) for rev in revisions]
 
     return revision_out_list
 
@@ -224,7 +221,13 @@ async def upload_revision(
         await db.commit()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    revision_out = await create_revision_out(new_revision, db)
+    version = await db.scalar(
+        select(BibleVersionModel).where(
+            BibleVersionModel.id == new_revision.bible_version_id
+        )
+    )
+    version_map = {new_revision.bible_version_id: version} if version else {}
+    revision_out = create_revision_out(new_revision, version_map)
 
     end_time = time.time()
     processing_time = end_time - start_time

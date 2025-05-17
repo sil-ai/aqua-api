@@ -1,16 +1,16 @@
 __version__ = "v2"
 
-import os
-from datetime import datetime
 import base64
-from typing import List
-import requests
+import os
 import re
+from datetime import datetime
+from typing import List
 
 import fastapi
+import psycopg2
+import requests
 from fastapi import Depends, HTTPException, status
 from fastapi.security.api_key import APIKeyHeader
-import psycopg2
 
 import queries
 from key_fetch import get_secret
