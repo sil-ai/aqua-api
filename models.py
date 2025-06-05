@@ -195,9 +195,11 @@ class AssessmentType(Enum):
     sentence_length = "sentence-length"
     semantic_similarity = "semantic-similarity"
     model_config = ConfigDict(from_attributes=True)
-    question_answering = "question-answering"
-    translation_similarity = "translation-similarity"
+    # question_answering = "question-answering"
+    # translation_similarity = "translation-similarity"
     ngrams = "ngrams"
+    tfidf = 'tfidf'
+    text_proportions = 'text-proportions'
 
 
 class AssessmentIn(BaseModel):

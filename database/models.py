@@ -75,6 +75,20 @@ class NgramVrefTable(Base):
     ngram = relationship("NgramsTable", back_populates="vrefs")
 
 
+class TfidfComponent(Base):
+    __tablename__ = "tfidf_component"
+
+    id = Column(Integer, primary_key=True)
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
+    vref = Column(Text, ForeignKey("verse_reference.full_verse_id"))
+    feature_index = Column(Integer, index=True)
+    weight = Column(Numeric)
+
+    __table_args__ = (
+        Index("ix_tfidf_feature_vref", "feature_index", "vref"),
+    )
+
+
 class Assessment(Base):
     __tablename__ = "assessment"
 
