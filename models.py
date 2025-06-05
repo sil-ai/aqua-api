@@ -195,8 +195,6 @@ class AssessmentType(Enum):
     sentence_length = "sentence-length"
     semantic_similarity = "semantic-similarity"
     model_config = ConfigDict(from_attributes=True)
-    # question_answering = "question-answering"
-    # translation_similarity = "translation-similarity"
     ngrams = "ngrams"
     tfidf = 'tfidf'
     text_proportions = 'text-proportions'
@@ -308,17 +306,45 @@ class MultipleResult(BaseModel):
 
 
 class NgramResult(BaseModel):
-    id: int
-    assessment_id: int
+    id: Optional[int] = None
+    assessment_id: Optional[int] = None
     ngram: str
     ngram_size: int
     vrefs: List[str]  # ✅ Store multiple verse references for the n-gram
 
 
+class TextProportionsResult(BaseModel):
+    id: Optional[int] = None
+    assessment_id: Optional[int] = None
+    vref: Optional[str] = None
+    word_proportions: float
+    char_proportions: float
+    word_proportions_z: float
+    char_proportions_z: float
+
+
+class TfidfResult(BaseModel):
+    id: Optional[int] = None
+    assessment_id: Optional[int] = None
+    vref: Optional[str] = None
+    similarity: float  # or cosine_distance: float
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "vref": "GEN 1:2",
+                "similarity": 0.0835,
+                "assessment_id": 1
+            }
+        }
+    }
+
+
+
 class WordAlignment(BaseModel):
     id: Optional[int] = None
     assessment_id: int
-    vref: str = None
+    vref: Optional[str] = None
     source: str
     target: str
     score: float
@@ -328,25 +354,6 @@ class WordAlignment(BaseModel):
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
 
-
-# # Results model to record in the DB.
-# class MissingWord(BaseModel):
-#     assessment_id: int
-#     vref: str
-#     source: str
-#     target: str
-#     score: float
-#     flag: bool = False
-#     note: Optional[str] = None
-
-
-# # Results is a list of results to push to the DB
-# class Results(BaseModel):
-#     results: List[Result]
-
-# # Results is a list of missing words to push to the DB
-# class MissingWords(BaseModel):
-#     missing_words: List[MissingWord]
 
 
 class Language(BaseModel):

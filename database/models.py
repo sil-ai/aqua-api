@@ -10,7 +10,7 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import VECTOR, JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import backref, relationship
 from sqlalchemy.sql import func
@@ -75,18 +75,25 @@ class NgramVrefTable(Base):
     ngram = relationship("NgramsTable", back_populates="vrefs")
 
 
-class TfidfComponent(Base):
-    __tablename__ = "tfidf_component"
+class TfidfPcaVector(Base):
+    __tablename__ = "tfidf_pca_vector"
 
     id = Column(Integer, primary_key=True)
     assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
-    vref = Column(Text, ForeignKey("verse_reference.full_verse_id"))
-    feature_index = Column(Integer, index=True)
-    weight = Column(Numeric)
+    vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
+    vector = Column(VECTOR(300))  # Dense vector of fixed length
 
-    __table_args__ = (
-        Index("ix_tfidf_feature_vref", "feature_index", "vref"),
-    )
+
+class TextProportionsTable(Base):
+    __tablename__ = "text_proportions_table"
+
+    id = Column(Integer, primary_key=True)
+    assessment_id = Column(Integer, ForeignKey("assessment.id"))
+    vref = Column(Text, ForeignKey("verse_reference.full_verse_id"))
+    word_proportions = Column(Numeric)
+    char_propotions = Column(Numeric)
+    word_proportions_z = Column(Numeric)
+    char_proportions_z = Column(Numeric)
 
 
 class Assessment(Base):

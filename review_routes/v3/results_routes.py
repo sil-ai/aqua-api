@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Text, case, func
+from sqlalchemy import Text, case, func, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
@@ -22,12 +22,14 @@ from database.models import (
     BibleRevision,
     NgramsTable,
     NgramVrefTable,
+    TextProportionsTable,
+    TfidfPcaVector,
 )
 from database.models import UserDB as UserModel
 from database.models import (
     VerseText,
 )
-from models import MultipleResult, NgramResult
+from models import MultipleResult, NgramResult, TextProportionsResult, TfidfResult
 from models import Result_v2 as Result
 from models import WordAlignment
 from security_routes.auth_routes import get_current_user
@@ -257,6 +259,97 @@ async def build_ngrams_query(
     return base_query, count_query
 
 
+async def build_text_proportions_query(
+    assessment_id: int,
+    book: Optional[str],
+    chapter: Optional[int],
+    verse: Optional[int],
+    page: Optional[int],
+    page_size: Optional[int],
+    aggregate: Optional[aggType],
+) -> Tuple:
+
+    base_query = select(TextProportionsTable).where(
+        TextProportionsTable.assessment_id == assessment_id
+    )
+
+    if book:
+        base_query = base_query.where(func.upper(TextProportionsTable.vref.like(f"{book.upper()}%")))
+    if chapter:
+        base_query = base_query.where(
+            func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
+        )
+    if verse:
+        base_query = base_query.where(
+            func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
+        )
+
+    if aggregate == aggType.chapter:
+        group_by = [func.split_part(TextProportionsTable.vref, " ", 1),  # book
+                    func.split_part(func.split_part(TextProportionsTable.vref, " ", 2), ":", 1)]  # chapter
+    elif aggregate == aggType.book:
+        group_by = [func.split_part(TextProportionsTable.vref, " ", 1)]
+    elif aggregate == aggType.text:
+        group_by = []
+    else:
+        group_by = [TextProportionsTable.vref]
+
+    select_fields = [
+        func.min(TextProportionsTable.id).label("id"),
+        TextProportionsTable.assessment_id,
+        func.avg(TextProportionsTable.word_proportions).label("word_proportions"),
+        func.avg(TextProportionsTable.char_propotions).label("char_propotions"),
+        func.avg(TextProportionsTable.word_proportions_z).label("word_proportions_z"),
+        func.avg(TextProportionsTable.char_proportions_z).label("char_proportions_z"),
+    ]
+
+    if group_by:
+        select_fields += group_by
+        base_query = select(*select_fields).group_by(*group_by).order_by(*group_by)
+    else:
+        base_query = select(*select_fields)
+
+    if page is not None and page_size is not None:
+        base_query = base_query.offset((page - 1) * page_size).limit(page_size)
+
+    count_query = select(func.count()).select_from(TextProportionsTable).where(
+        TextProportionsTable.assessment_id == assessment_id
+    )
+
+    return base_query, count_query
+
+
+async def build_tfidf_similarity_query(
+    assessment_id: int,
+    vref: str,
+    limit: int = 10,
+) -> Tuple:
+
+    # Subquery to get the query vector
+    query_vector_subq = (
+        select(TfidfPcaVector.vector)
+        .where(TfidfPcaVector.assessment_id == assessment_id)
+        .where(TfidfPcaVector.vref == vref)
+        .limit(1)
+        .scalar_subquery()
+    )
+
+    similarity_expr = TfidfPcaVector.vector.op("<#>")(query_vector_subq).label("cosine_distance")
+
+    base_query = (
+        select(
+            TfidfPcaVector.vref,
+            similarity_expr,
+        )
+        .where(TfidfPcaVector.assessment_id == assessment_id)
+        .where(TfidfPcaVector.vref != vref)
+        .order_by(similarity_expr)
+        .limit(limit)
+    )
+
+    return base_query, None  # no count query needed
+
+
 @router.get(
     "/result",
     response_model=Dict[str, Union[List[Result], int]],
@@ -431,6 +524,141 @@ async def get_ngrams_result(
     ]
 
     return {"results": result_list, "total_count": total_count}
+
+
+@router.get(
+    "/text_proportions_result",
+    response_model=Dict[str, Union[List["TextProportionsResult"], int]],
+)
+async def get_text_proportions(
+    assessment_id: int,
+    book: Optional[str] = None,
+    chapter: Optional[int] = None,
+    verse: Optional[int] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    aggregate: Optional[aggType] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Returns text proportions (word and character proportions and z-scores) for a given assessment.
+
+    Parameters
+    ----------
+    assessment_id : int
+        The ID of the assessment to get results for.
+    book : str, optional
+        Restrict results to one book.
+    chapter : int, optional
+        Restrict results to one chapter. If set, book must also be set.
+    verse : int, optional
+        Restrict results to one verse. If set, book and chapter must also be set.
+    page : int, optional
+        The page of results to return. If set, page_size must also be set.
+    page_size : int, optional
+        The number of results to return per page. If set, page must also be set.
+    aggregate : str, optional
+        If set to "chapter", results will be aggregated by chapter.
+        If set to "book", results will be aggregated by book.
+        If set to "text", a single result will be returned for the whole text.
+        Otherwise results will be returned at the verse level.
+
+    Returns
+    -------
+    Dict[str, Union[List[TextProportionsResult], int]]
+        A dictionary containing the list of results and the total count of results.
+    """
+    await validate_parameters(book, chapter, verse, aggregate)
+
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+
+    query, count_query = await build_text_proportions_query(
+        assessment_id, book, chapter, verse, page, page_size, aggregate
+    )
+
+    result_data, total_count = await execute_query(query, count_query, db)
+
+    result_list = []
+    for row in result_data:
+        # Compose vref based on aggregation
+        if aggregate == aggType.chapter:
+            vref = f"{row[3]} {row[4]}"
+        elif aggregate == aggType.book:
+            vref = f"{row[3]}"
+        elif aggregate == aggType.text:
+            vref = None
+        else:
+            vref = getattr(row, "vref", None) if hasattr(row, "vref") else None
+
+        result_obj = TextProportionsResult(
+            id=row[0] if hasattr(row, "__getitem__") else row.id,
+            assessment_id=row[1] if hasattr(row, "__getitem__") else row.assessment_id,
+            vref=vref,
+            word_proportions=float(row[2]) if row[2] is not None else None,
+            char_proportions=float(row[3]) if aggregate is None else (float(row[5]) if aggregate == aggType.chapter else (float(row[4]) if aggregate == aggType.book else float(row[5]) if aggregate == aggType.text else None)),
+            word_proportions_z=float(row[4]) if aggregate is None else (float(row[6]) if aggregate == aggType.chapter else (float(row[5]) if aggregate == aggType.book else float(row[6]) if aggregate == aggType.text else None)),
+            char_proportions_z=float(row[5]) if aggregate is None else (float(row[7]) if aggregate == aggType.chapter else (float(row[6]) if aggregate == aggType.book else float(row[7]) if aggregate == aggType.text else None)),
+        )
+        result_list.append(result_obj)
+
+    return {"results": result_list, "total_count": total_count}
+
+
+@router.get(
+    "/tfidf_result",
+    response_model=Dict[str, Union[List[TfidfResult], int]],
+)
+async def get_tfidf_result(
+    assessment_id: int,
+    vref: str,
+    limit: int = 10,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Returns the most similar verses to the given vref based on TF-IDF PCA vector similarity.
+
+    Parameters
+    ----------
+    assessment_id : int
+        The ID of the assessment to get results for.
+    vref : str
+        The verse reference to compare against.
+    limit : int, optional
+        The number of similar verses to return (default is 10).
+
+    Returns
+    -------
+    Dict[str, Union[List[TfidfResult], int]]
+        A dictionary containing the list of results and the total count of results.
+    """
+    # Authorization check
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+
+    query, _ = await build_tfidf_similarity_query(assessment_id, vref, limit)
+    result_data = await db.execute(query)
+    result_data = result_data.all()
+
+    result_list = [
+        TfidfResult(
+            vref=row.vref,
+            similarity=float(row.cosine_distance),
+            assessment_id=assessment_id,
+        )
+        for row in result_data
+    ]
+
+    return {"results": result_list, "total_count": len(result_list)}
+
 
 
 async def build_compare_results_baseline_query(
