@@ -298,7 +298,7 @@ async def build_text_proportions_query(
         func.min(TextProportionsTable.id).label("id"),
         TextProportionsTable.assessment_id,
         func.avg(TextProportionsTable.word_proportions).label("word_proportions"),
-        func.avg(TextProportionsTable.char_propotions).label("char_propotions"),
+        func.avg(TextProportionsTable.char_proportions).label("char_proportions"),
         func.avg(TextProportionsTable.word_proportions_z).label("word_proportions_z"),
         func.avg(TextProportionsTable.char_proportions_z).label("char_proportions_z"),
     ]
