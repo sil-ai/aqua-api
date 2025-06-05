@@ -55,6 +55,8 @@ async def get_assessments(
     - word-alignment (requires reference)
     - translation-similarity (requires reference)
     - ngrams
+    - tfidf
+    - text-propotions
 
 
     Returns:
@@ -179,6 +181,8 @@ async def add_assessment(
     - word-alignment (requires reference)
     - translation-similarity (requires reference)
     - ngrams
+    - tfidf
+    - text-proportions
 
     For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
 
