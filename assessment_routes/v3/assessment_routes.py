@@ -56,7 +56,7 @@ async def get_assessments(
     - translation-similarity (requires reference)
     - ngrams
     - tfidf
-    - text-propotions
+    - text-proportions
 
 
     Returns:
