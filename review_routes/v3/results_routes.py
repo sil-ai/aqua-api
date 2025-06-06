@@ -285,8 +285,8 @@ async def build_text_proportions_query(
         )
 
     if aggregate == aggType.chapter:
-        group_by = [func.split_part(TextProportionsTable.vref, " ", 1),  # book
-                    func.split_part(func.split_part(TextProportionsTable.vref, " ", 2), ":", 1)]  # chapter
+        group_by = [func.split_part(TextProportionsTable.vref, " ", 1).label("book"),  # book
+                    func.split_part(func.split_part(TextProportionsTable.vref, " ", 2), ":", 1).label("chapter")]  # chapter
     elif aggregate == aggType.book:
         group_by = [func.split_part(TextProportionsTable.vref, " ", 1)]
     elif aggregate == aggType.text:
@@ -312,20 +312,8 @@ async def build_text_proportions_query(
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
-    count_query = select(func.count()).select_from(TextProportionsTable).where(
-        TextProportionsTable.assessment_id == assessment_id
-    )
-    
-    if book:
-        count_query = count_query.where(func.upper(TextProportionsTable.vref.like(f"{book.upper()}%")))
-    if chapter:
-        count_query = count_query.where(
-            func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
-        )
-    if verse:
-        count_query = count_query.where(
-            func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
-        )
+    grouped_query = base_query.subquery()
+    count_query = select(func.count()).select_from(grouped_query)
 
     return base_query, count_query
 
