@@ -273,7 +273,7 @@ async def build_text_proportions_query(
         TextProportionsTable.assessment_id == assessment_id
     )
 
-    if book:
+    if book is not None:
         base_query = base_query.where(func.upper(TextProportionsTable.vref.like(f"{book.upper()}%")))
     if chapter:
         base_query = base_query.where(
