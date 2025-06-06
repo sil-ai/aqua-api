@@ -9,7 +9,6 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
-    Numeric
 )
 from sqlalchemy.dialects.postgresql import VECTOR, JSONB
 from sqlalchemy.ext.declarative import declarative_base
