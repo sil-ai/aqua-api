@@ -312,6 +312,10 @@ async def build_text_proportions_query(
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
+    count_query = select(func.count()).select_from(TextProportionsTable).where(
+        TextProportionsTable.assessment_id == assessment_id
+    )
+    
     if book:
         count_query = count_query.where(func.upper(TextProportionsTable.vref.like(f"{book.upper()}%")))
     if chapter:
