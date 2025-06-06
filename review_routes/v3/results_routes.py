@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Text, case, func, literal_column
+from sqlalchemy import Text, case, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
@@ -312,9 +312,16 @@ async def build_text_proportions_query(
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
-    count_query = select(func.count()).select_from(TextProportionsTable).where(
-        TextProportionsTable.assessment_id == assessment_id
-    )
+    if book:
+        count_query = count_query.where(func.upper(TextProportionsTable.vref.like(f"{book.upper()}%")))
+    if chapter:
+        count_query = count_query.where(
+            func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
+        )
+    if verse:
+        count_query = count_query.where(
+            func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
+        )
 
     return base_query, count_query
 
@@ -587,22 +594,21 @@ async def get_text_proportions(
     for row in result_data:
         # Compose vref based on aggregation
         if aggregate == aggType.chapter:
-            vref = f"{row[3]} {row[4]}"
+            vref = f"{row._mapping['book']} {row._mapping['chapter']}"
         elif aggregate == aggType.book:
-            vref = f"{row[3]}"
+            vref = f"{row._mapping['book']}"
         elif aggregate == aggType.text:
             vref = None
         else:
-            vref = getattr(row, "vref", None) if hasattr(row, "vref") else None
-
+            vref = row._mapping.get("vref", None)
         result_obj = TextProportionsResult(
-            id=row[0] if hasattr(row, "__getitem__") else row.id,
-            assessment_id=row[1] if hasattr(row, "__getitem__") else row.assessment_id,
+            id=row._mapping['id'],
+            assessment_id=row._mapping['assessment_id'],
             vref=vref,
-            word_proportions=float(row[2]) if row[2] is not None else None,
-            char_proportions=float(row[3]) if aggregate is None else (float(row[5]) if aggregate == aggType.chapter else (float(row[4]) if aggregate == aggType.book else float(row[5]) if aggregate == aggType.text else None)),
-            word_proportions_z=float(row[4]) if aggregate is None else (float(row[6]) if aggregate == aggType.chapter else (float(row[5]) if aggregate == aggType.book else float(row[6]) if aggregate == aggType.text else None)),
-            char_proportions_z=float(row[5]) if aggregate is None else (float(row[7]) if aggregate == aggType.chapter else (float(row[6]) if aggregate == aggType.book else float(row[7]) if aggregate == aggType.text else None)),
+            word_proportions=float(row._mapping['word_proportions']) if row._mapping['word_proportions'] is not None else None,
+            char_proportions=float(row._mapping['char_proportions']) if row._mapping['char_proportions'] is not None else None,
+            word_proportions_z=float(row._mapping['word_proportions_z']) if row._mapping['word_proportions_z'] is not None else None,
+            char_proportions_z=float(row._mapping['char_proportions_z']) if row._mapping['char_proportions_z'] is not None else None,
         )
         result_list.append(result_obj)
 
@@ -891,15 +897,15 @@ async def build_missing_words_main_query(
     )
 
     # Apply filters based on optional parameters
-    if book:
+    if book is not None:
         main_assessment_query = main_assessment_query.where(
             AlignmentTopSourceScores.book == book
         )
-    if chapter:
+    if chapter is not None:
         main_assessment_query = main_assessment_query.where(
             AlignmentTopSourceScores.chapter == chapter
         )
-    if verse:
+    if verse is not None:
         main_assessment_query = main_assessment_query.where(
             AlignmentTopSourceScores.verse == verse
         )
