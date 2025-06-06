@@ -274,7 +274,7 @@ async def build_text_proportions_query(
     )
 
     if book is not None:
-        base_query = base_query.where(func.upper(TextProportionsTable.vref.like(f"{book.upper()}%")))
+        base_query = base_query.where(TextProportionsTable.vref.ilike(f"{book}%"))
     if chapter:
         base_query = base_query.where(
             func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
