@@ -89,7 +89,7 @@ class TextProportionsTable(Base):
 
     id = Column(Integer, primary_key=True)
     assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
-    vref = Column(Text, ForeignKey("verse_reference.full_verse_id"))
+    vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
     word_proportions = Column(Numeric)
     char_proportions = Column(Numeric)
     word_proportions_z = Column(Numeric)

@@ -134,11 +134,11 @@ async def build_results_query(
     )
 
     # Apply filters based on optional parameters
-    if book:
+    if book is not None:
         base_query = base_query.where(func.upper(AssessmentResult.book) == book.upper())
-    if chapter:
+    if chapter is not None:
         base_query = base_query.where(AssessmentResult.chapter == chapter)
-    if verse:
+    if verse is not None:
         base_query = base_query.where(AssessmentResult.verse == verse)
 
     # Apply 'source_null' logic to filter results
@@ -190,13 +190,13 @@ async def build_results_query(
         .select_from(AssessmentResult)
         .where(AssessmentResult.assessment_id == assessment_id)
     )
-    if book:
+    if book is not None:
         count_query = count_query.where(
             func.upper(AssessmentResult.book) == book.upper()
         )
-    if chapter:
+    if chapter is not None:
         count_query = count_query.where(AssessmentResult.chapter == chapter)
-    if verse:
+    if verse is not None:
         count_query = count_query.where(AssessmentResult.verse == verse)
 
     count_subquery = count_query.group_by(
@@ -275,11 +275,11 @@ async def build_text_proportions_query(
 
     if book is not None:
         base_query = base_query.where(TextProportionsTable.vref.ilike(f"{book}%"))
-    if chapter:
+    if chapter is not None:
         base_query = base_query.where(
             func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
         )
-    if verse:
+    if verse is not None:
         base_query = base_query.where(
             func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
         )
@@ -309,6 +309,11 @@ async def build_text_proportions_query(
     else:
         base_query = select(*select_fields)
 
+    if (page is not None and page_size is None) or (page is None and page_size is not None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both 'page' and 'page_size' must be provided together for pagination."
+        )
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
@@ -979,15 +984,15 @@ async def build_missing_words_baseline_query(
     )
     # Apply filtering based on provided parameters
 
-    if book:
+    if book is not None:
         baseline_assessments_query = baseline_assessments_query.where(
             AlignmentTopSourceScores.book == book
         )
-    if chapter:
+    if chapter is not None:
         baseline_assessments_query = baseline_assessments_query.where(
             AlignmentTopSourceScores.chapter == chapter
         )
-    if verse:
+    if verse is not None:
         baseline_assessments_query = baseline_assessments_query.where(
             AlignmentTopSourceScores.verse == verse
         )
@@ -1195,11 +1200,11 @@ async def get_alignment_scores(
     base_query = select(AlignmentTopSourceScores).where(
         AlignmentTopSourceScores.assessment_id == assessment_id
     )
-    if book:
+    if book is not None:
         base_query = base_query.where(AlignmentTopSourceScores.book == book)
-        if chapter:
+        if chapter is not None:
             base_query = base_query.where(AlignmentTopSourceScores.chapter == chapter)
-            if verse:
+            if verse is not None:
                 base_query = base_query.where(AlignmentTopSourceScores.verse == verse)
 
     # Pagination logic
