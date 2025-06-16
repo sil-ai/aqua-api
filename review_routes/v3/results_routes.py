@@ -29,9 +29,9 @@ from database.models import UserDB as UserModel
 from database.models import (
     VerseText,
 )
-from models import MultipleResult, NgramResult, TextProportionsResult, TfidfResult
+from models import MultipleResult, NgramResult
 from models import Result_v2 as Result
-from models import WordAlignment
+from models import TextProportionsResult, TfidfResult, WordAlignment
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 
@@ -268,7 +268,6 @@ async def build_text_proportions_query(
     page_size: Optional[int],
     aggregate: Optional[aggType],
 ) -> Tuple:
-
     base_query = select(TextProportionsTable).where(
         TextProportionsTable.assessment_id == assessment_id
     )
@@ -285,8 +284,12 @@ async def build_text_proportions_query(
         )
 
     if aggregate == aggType.chapter:
-        group_by = [func.split_part(TextProportionsTable.vref, " ", 1).label("book"),  # book
-                    func.split_part(func.split_part(TextProportionsTable.vref, " ", 2), ":", 1).label("chapter")]  # chapter
+        group_by = [
+            func.split_part(TextProportionsTable.vref, " ", 1).label("book"),  # book
+            func.split_part(
+                func.split_part(TextProportionsTable.vref, " ", 2), ":", 1
+            ).label("chapter"),
+        ]  # chapter
     elif aggregate == aggType.book:
         group_by = [func.split_part(TextProportionsTable.vref, " ", 1)]
     elif aggregate == aggType.text:
@@ -309,10 +312,12 @@ async def build_text_proportions_query(
     else:
         base_query = select(*select_fields)
 
-    if (page is not None and page_size is None) or (page is None and page_size is not None):
+    if (page is not None and page_size is None) or (
+        page is None and page_size is not None
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Both 'page' and 'page_size' must be provided together for pagination."
+            detail="Both 'page' and 'page_size' must be provided together for pagination.",
         )
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
@@ -328,7 +333,6 @@ async def build_tfidf_similarity_query(
     vref: str,
     limit: int = 10,
 ) -> Tuple:
-
     # Subquery to get the query vector
     query_vector_subq = (
         select(TfidfPcaVector.vector)
@@ -338,7 +342,9 @@ async def build_tfidf_similarity_query(
         .scalar_subquery()
     )
 
-    similarity_expr = TfidfPcaVector.vector.op("<#>")(query_vector_subq).label("cosine_distance")
+    similarity_expr = TfidfPcaVector.vector.op("<#>")(query_vector_subq).label(
+        "cosine_distance"
+    )
 
     base_query = (
         select(
@@ -599,13 +605,21 @@ async def get_text_proportions(
         else:
             vref = row._mapping.get("vref", None)
         result_obj = TextProportionsResult(
-            id=row._mapping['id'],
-            assessment_id=row._mapping['assessment_id'],
+            id=row._mapping["id"],
+            assessment_id=row._mapping["assessment_id"],
             vref=vref,
-            word_proportions=float(row._mapping['word_proportions']) if row._mapping['word_proportions'] is not None else None,
-            char_proportions=float(row._mapping['char_proportions']) if row._mapping['char_proportions'] is not None else None,
-            word_proportions_z=float(row._mapping['word_proportions_z']) if row._mapping['word_proportions_z'] is not None else None,
-            char_proportions_z=float(row._mapping['char_proportions_z']) if row._mapping['char_proportions_z'] is not None else None,
+            word_proportions=float(row._mapping["word_proportions"])
+            if row._mapping["word_proportions"] is not None
+            else None,
+            char_proportions=float(row._mapping["char_proportions"])
+            if row._mapping["char_proportions"] is not None
+            else None,
+            word_proportions_z=float(row._mapping["word_proportions_z"])
+            if row._mapping["word_proportions_z"] is not None
+            else None,
+            char_proportions_z=float(row._mapping["char_proportions_z"])
+            if row._mapping["char_proportions_z"] is not None
+            else None,
         )
         result_list.append(result_obj)
 
@@ -661,7 +675,6 @@ async def get_tfidf_result(
     ]
 
     return {"results": result_list, "total_count": len(result_list)}
-
 
 
 async def build_compare_results_baseline_query(

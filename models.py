@@ -196,8 +196,8 @@ class AssessmentType(Enum):
     semantic_similarity = "semantic-similarity"
     model_config = ConfigDict(from_attributes=True)
     ngrams = "ngrams"
-    tfidf = 'tfidf'
-    text_proportions = 'text-proportions'
+    tfidf = "tfidf"
+    text_proportions = "text-proportions"
 
 
 class AssessmentIn(BaseModel):
@@ -331,14 +331,9 @@ class TfidfResult(BaseModel):
 
     model_config = {
         "json_schema_extra": {
-            "example": {
-                "vref": "GEN 1:2",
-                "similarity": 0.0835,
-                "assessment_id": 1
-            }
+            "example": {"vref": "GEN 1:2", "similarity": 0.0835, "assessment_id": 1}
         }
     }
-
 
 
 class WordAlignment(BaseModel):
@@ -353,7 +348,6 @@ class WordAlignment(BaseModel):
     hide: bool = False
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
-
 
 
 class Language(BaseModel):
