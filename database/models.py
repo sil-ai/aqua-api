@@ -1,3 +1,4 @@
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     TIMESTAMP,
     Boolean,
@@ -73,6 +74,27 @@ class NgramVrefTable(Base):
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"))
 
     ngram = relationship("NgramsTable", back_populates="vrefs")
+
+
+class TfidfPcaVector(Base):
+    __tablename__ = "tfidf_pca_vector"
+
+    id = Column(Integer, primary_key=True)
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
+    vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
+    vector = Column(Vector(300))  # Dense vector of fixed length
+
+
+class TextProportionsTable(Base):
+    __tablename__ = "text_proportions_table"
+
+    id = Column(Integer, primary_key=True)
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
+    vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
+    word_proportions = Column(Numeric)
+    char_proportions = Column(Numeric)
+    word_proportions_z = Column(Numeric)
+    char_proportions_z = Column(Numeric)
 
 
 class Assessment(Base):
