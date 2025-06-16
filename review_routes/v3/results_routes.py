@@ -538,7 +538,7 @@ async def get_ngrams_result(
 
 @router.get(
     "/text_proportions_result",
-    response_model=Dict[str, Union[List["TextProportionsResult"], int]],
+    response_model=Dict[str, Union[List[TextProportionsResult], int]],
 )
 async def get_text_proportions(
     assessment_id: int,
@@ -608,18 +608,26 @@ async def get_text_proportions(
             id=row._mapping["id"],
             assessment_id=row._mapping["assessment_id"],
             vref=vref,
-            word_proportions=float(row._mapping["word_proportions"])
-            if row._mapping["word_proportions"] is not None
-            else None,
-            char_proportions=float(row._mapping["char_proportions"])
-            if row._mapping["char_proportions"] is not None
-            else None,
-            word_proportions_z=float(row._mapping["word_proportions_z"])
-            if row._mapping["word_proportions_z"] is not None
-            else None,
-            char_proportions_z=float(row._mapping["char_proportions_z"])
-            if row._mapping["char_proportions_z"] is not None
-            else None,
+            word_proportions=(
+                float(row._mapping["word_proportions"])
+                if row._mapping["word_proportions"] is not None
+                else None
+            ),
+            char_proportions=(
+                float(row._mapping["char_proportions"])
+                if row._mapping["char_proportions"] is not None
+                else None
+            ),
+            word_proportions_z=(
+                float(row._mapping["word_proportions_z"])
+                if row._mapping["word_proportions_z"] is not None
+                else None
+            ),
+            char_proportions_z=(
+                float(row._mapping["char_proportions_z"])
+                if row._mapping["char_proportions_z"] is not None
+                else None
+            ),
         )
         result_list.append(result_obj)
 

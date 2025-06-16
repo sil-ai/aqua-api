@@ -11,7 +11,6 @@ from sqlalchemy import (
     String,
     Text,
 )
-from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import backref, relationship
