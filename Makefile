@@ -10,10 +10,16 @@ build-local:
 build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
+setup-pgvector:
+	@echo "Setting up pgvector extension..."
+	@docker exec -i $$(docker compose ps -q db) psql -U dbuser -d dbname -c "CREATE EXTENSION IF NOT EXISTS vector;" || echo "pgvector extension setup completed"
+	@docker exec -i $$(docker compose ps -q db) psql -U dbuser -d dbname -c "SELECT * FROM pg_extension WHERE extname = 'vector';" || echo "pgvector verification completed"
+
 localdb-up:
 	@export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" && \
 	docker compose up -d db && \
 	sleep 5 && \
+	make setup-pgvector && \
 	cd alembic && AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname" alembic upgrade head && \
 	cd ..
 
