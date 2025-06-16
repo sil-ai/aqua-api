@@ -23,7 +23,7 @@ services:
       - db
 
   db:
-    image: postgres:latest
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: dbuser
       POSTGRES_PASSWORD: dbpassword
