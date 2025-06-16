@@ -10,7 +10,8 @@ from sqlalchemy import (
     String,
     Text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, VECTOR
+from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import backref, relationship
 from sqlalchemy.sql import func
@@ -81,7 +82,7 @@ class TfidfPcaVector(Base):
     id = Column(Integer, primary_key=True)
     assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
-    vector = Column(VECTOR(300))  # Dense vector of fixed length
+    vector = Column(Vector(300))  # Dense vector of fixed length
 
 
 class TextProportionsTable(Base):
