@@ -1,3 +1,4 @@
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     TIMESTAMP,
     Boolean,
@@ -53,6 +54,11 @@ class AlignmentTopSourceScores(Base):
 
     book_score_idx = Index("book_score_idx", book, score)
 
+    __table_args__ = (
+        Index("ix_alignment_scores_assessment_score", "assessment_id", "score"),
+        Index("ix_alignment_scores_grouping", "book", "chapter", "verse", "source"),
+    )
+
 
 class NgramsTable(Base):
     __tablename__ = "ngrams_table"
@@ -73,6 +79,27 @@ class NgramVrefTable(Base):
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"))
 
     ngram = relationship("NgramsTable", back_populates="vrefs")
+
+
+class TfidfPcaVector(Base):
+    __tablename__ = "tfidf_pca_vector"
+
+    id = Column(Integer, primary_key=True)
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
+    vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
+    vector = Column(Vector(300))  # Dense vector of fixed length
+
+
+class TextProportionsTable(Base):
+    __tablename__ = "text_proportions_table"
+
+    id = Column(Integer, primary_key=True)
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
+    vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
+    word_proportions = Column(Numeric)
+    char_proportions = Column(Numeric)
+    word_proportions_z = Column(Numeric)
+    char_proportions_z = Column(Numeric)
 
 
 class Assessment(Base):
@@ -103,6 +130,17 @@ class Assessment(Base):
         "BibleRevision",
         foreign_keys=[reference_id],
         back_populates="assessments_as_reference",
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_assessment_rev_ref_type_status_end",
+            "revision_id",
+            "reference_id",
+            "type",
+            "status",
+            "end_time",
+        ),
     )
 
 
@@ -279,6 +317,14 @@ class VerseText(Base):
 
     bible_revision = relationship(
         "BibleRevision", back_populates="verse_text", cascade="all, delete"
+    )
+
+    __table_args__ = (
+        Index("ix_verse_text_revision_id", "revision_id"),
+        Index("ix_verse_text_revision_book", "revision_id", "book"),
+        Index(
+            "ix_verse_text_verse_reference_revision", "verse_reference", "revision_id"
+        ),
     )
 
 
