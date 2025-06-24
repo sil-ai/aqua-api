@@ -133,9 +133,15 @@ class Assessment(Base):
     )
 
     __table_args__ = (
-        Index("ix_assessment_rev_ref_type_status_end", "revision_id", "reference_id", "type", "status", "end_time"),
+        Index(
+            "ix_assessment_rev_ref_type_status_end",
+            "revision_id",
+            "reference_id",
+            "type",
+            "status",
+            "end_time",
+        ),
     )
-
 
 
 class AssessmentResult(Base):
@@ -316,7 +322,9 @@ class VerseText(Base):
     __table_args__ = (
         Index("ix_verse_text_revision_id", "revision_id"),
         Index("ix_verse_text_revision_book", "revision_id", "book"),
-        Index("ix_verse_text_verse_reference_revision", "verse_reference", "revision_id"),
+        Index(
+            "ix_verse_text_verse_reference_revision", "verse_reference", "revision_id"
+        ),
     )
 
 
