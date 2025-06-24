@@ -54,6 +54,11 @@ class AlignmentTopSourceScores(Base):
 
     book_score_idx = Index("book_score_idx", book, score)
 
+    __table_args__ = (
+        Index("ix_alignment_scores_assessment_score", "assessment_id", "score"),
+        Index("ix_alignment_scores_grouping", "book", "chapter", "verse", "source"),
+    )
+
 
 class NgramsTable(Base):
     __tablename__ = "ngrams_table"
@@ -126,6 +131,11 @@ class Assessment(Base):
         foreign_keys=[reference_id],
         back_populates="assessments_as_reference",
     )
+
+    __table_args__ = (
+        Index("ix_assessment_rev_ref_type_status_end", "revision_id", "reference_id", "type", "status", "end_time"),
+    )
+
 
 
 class AssessmentResult(Base):
@@ -301,6 +311,12 @@ class VerseText(Base):
 
     bible_revision = relationship(
         "BibleRevision", back_populates="verse_text", cascade="all, delete"
+    )
+
+    __table_args__ = (
+        Index("ix_verse_text_revision_id", "revision_id"),
+        Index("ix_verse_text_revision_book", "revision_id", "book"),
+        Index("ix_verse_text_verse_reference_revision", "verse_reference", "revision_id"),
     )
 
 
