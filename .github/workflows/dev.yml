@@ -75,5 +75,3 @@ jobs:
       env:
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
         IMAGENAME: ${{ env.IMAGE_NAME }}
-
-

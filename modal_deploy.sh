@@ -5,7 +5,7 @@ currentdir=$(pwd)
 
 # Deploy all Modal apps.
 for dir in runner assessments
-do 
+do
 for app in $dir/*/
 do
 echo ""

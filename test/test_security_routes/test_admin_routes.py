@@ -1,10 +1,7 @@
 from fastapi import status
 
 from database.models import Group as GroupDB
-from database.models import (
-    UserDB,
-    UserGroup,
-)
+from database.models import UserDB, UserGroup
 from security_routes.utilities import verify_password
 
 prefix = "/latest"

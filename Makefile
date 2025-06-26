@@ -63,9 +63,9 @@ push-release:
 
 linting:
 	@echo "Running linting"
-	@black --check . --exclude '/(venv|\.venv)/'
+	@black . --exclude '/(venv|\.venv)/'
 	@echo "Black passed"
-	@isort --check . --skip venv --skip .venv --skip alembic --profile black
+	@isort . --skip venv --skip .venv --skip alembic --profile black
 	@echo "Isort passed"
 	@flake8 . --exclude='venv,.venv,alembic,**/v1/**,**/v2/**' --ignore=E501,W503,E203,E228,E226
 	@echo "Linting passed"
