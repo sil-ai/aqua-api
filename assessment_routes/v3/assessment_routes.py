@@ -154,11 +154,18 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
     }
     headers = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
 
-    # Asynchronously post the request to the runner
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            runner_url, params=params, headers=headers, json=assessment.dict()
+    try:
+        # Asynchronously post the request to the runner
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                runner_url, params=params, headers=headers, json=assessment.dict()
         )
+    except (httpx.RequestError, httpx.HTTPStatusError) as e:
+        logger.error(f"Error calling Modal runner for assessment {assessment.id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Assessment runner service is unavailable or failed.",
+        ) from e
 
     return response
 
