@@ -159,7 +159,7 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 runner_url, params=params, headers=headers, json=assessment.dict()
-        )
+            )
     except (httpx.RequestError, httpx.HTTPStatusError) as e:
         logger.error(f"Error calling Modal runner for assessment {assessment.id}: {e}")
         raise HTTPException(
