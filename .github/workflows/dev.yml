@@ -15,7 +15,7 @@ jobs:
     name: Building and pushing main branch images
     runs-on: ubuntu-latest
     env:
-      MODAL_ENV: main
+      MODAL_ENV: dev
     steps:
     - name: Checkout
       uses: actions/checkout@v2
@@ -56,7 +56,7 @@ jobs:
         MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
         SECRET_KEY: ${{ secrets.SECRET_KEY }}
         AIOHTTP_NO_EXTENSIONS: 1
-        MODAL_ENV: main
+        MODAL_ENV: dev
       run: |
         pip install -r requirements.txt
         make test
@@ -78,4 +78,4 @@ jobs:
       env:
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
         IMAGENAME: ${{ env.IMAGE_NAME }}
-        MODAL_ENV: main
+        MODAL_ENV: dev
