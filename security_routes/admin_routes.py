@@ -6,10 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
 from database.models import Group as GroupDB
-from database.models import (
-    UserDB,
-    UserGroup,
-)
+from database.models import UserDB, UserGroup
 from models import Group, User
 
 from .utilities import ALGORITHM, SECRET_KEY, hash_password

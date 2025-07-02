@@ -8,10 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
-from database.models import (
-    IsoLanguage,
-    IsoScript,
-)
+from database.models import IsoLanguage, IsoScript
 from database.models import UserDB as UserModel
 from models import Language, Script
 from security_routes.auth_routes import get_current_user

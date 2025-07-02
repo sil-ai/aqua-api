@@ -11,7 +11,7 @@ Ensure you have the following installed on your machine:
 - Alembic
 
 
-The database target for the migration is defined by the AQUA_DB env var, for local db it should be 
+The database target for the migration is defined by the AQUA_DB env var, for local db it should be
 
 ```
 export AQUA_DB="postgresql://dbuser:dbpassword@localhost:5432/dbname"

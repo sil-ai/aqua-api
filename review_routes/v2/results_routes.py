@@ -542,7 +542,7 @@ async def get_compare_results(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"""
                 Assessment for {assessment_type.value} from {revision_id} to {reference_id} not found.
-                Please run this assessment first. 
+                Please run this assessment first.
                 """,
         )
     baseline_assessment_ids = [
@@ -606,7 +606,7 @@ async def get_compare_results(
         AND vt1.bible_revision = {revision_id}
         JOIN "verse_text" vt2 ON vt2.book = ar.book AND vt2.chapter = ar.chapter AND vt2.verse = ar.verse
         AND vt2.bible_revision = {reference_id}
-         ''' 
+         '''
          if include_text else ''}
         WHERE assessment IN ({', '.join([str(assessment_id) for assessment_id in baseline_assessment_ids])})
         {"AND ar.book = '" + book + "'" if book is not None else ''}
@@ -631,18 +631,18 @@ async def get_compare_results(
                 GROUP BY book {', chapter' if aggregate in ['chapter', None] else ''} {', verse' if aggregate is None else ''}
                 ) AS revision
                 ON baseline.book = revision.book {'and baseline.chapter = revision.chapter ' if aggregate in ['chapter', None] else ''} {'and baseline.verse = revision.verse ' if aggregate is None else ''}
-                
+
         """
     else:
         query += f"""
-            SELECT 
+            SELECT
                 (row_number() OVER ())::integer AS id,
                 {'book' if aggregate in ['book', 'chapter', None] else 'NULL::text AS book'},
                 {'chapter' if aggregate in ['chapter', None] else 'NULL::integer AS chapter'},
                 {'verse' if aggregate is None else 'NULL::integer AS verse'},
-            COALESCE(avg(NULLIF(score, 'NaN')::numeric), 0) AS score, 
-            NULL::float as mean_score, 
-            0::float as stdev_score, 
+            COALESCE(avg(NULLIF(score, 'NaN')::numeric), 0) AS score,
+            NULL::float as mean_score,
+            0::float as stdev_score,
             0::float as z_score,
             {'vt1.text as revision_text' if include_text else 'NULL::text AS revision_text'},
             {'vt2.text as reference_text' if include_text else 'NULL::text AS reference_text'}
@@ -653,7 +653,7 @@ async def get_compare_results(
             AND vt1.bible_revision = {revision_id}
             JOIN "verse_text" vt2 ON vt2.book = ar.book AND vt2.chapter = ar.chapter AND vt2.verse = ar.verse
             AND vt2.bible_revision = {reference_id}
-            ''' 
+            '''
          if include_text else ''}
             WHERE assessment={assessment_id}
                     {"AND book = '" + book + "'" if book is not None else ''}
@@ -883,9 +883,9 @@ async def get_average_results(
                 """
         query_from = """
         "assessment_result" AS ar
-                            INNER JOIN "verse_text" AS vt ON ar.book = vt.book 
-                            AND ar.chapter = vt.chapter 
-                            AND ar.verse = vt.verse 
+                            INNER JOIN "verse_text" AS vt ON ar.book = vt.book
+                            AND ar.chapter = vt.chapter
+                            AND ar.verse = vt.verse
                             """
         if revision_id:
             query_from += f"""
@@ -943,7 +943,7 @@ async def get_average_results(
             """
     if include_text:
         query += """
-               , vt.text 
+               , vt.text
             """
     if query_order_by:
         query += f"ORDER BY {query_order_by}\n"

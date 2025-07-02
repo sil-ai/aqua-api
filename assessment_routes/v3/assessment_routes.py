@@ -17,15 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from database.dependencies import get_db
-from database.models import (
-    Assessment,
-    BibleRevision,
-    BibleVersionAccess,
-)
+from database.models import Assessment, BibleRevision, BibleVersionAccess
 from database.models import UserDB as UserModel
-from database.models import (
-    UserGroup,
-)
+from database.models import UserGroup
 
 # Local application imports
 from models import AssessmentIn, AssessmentOut

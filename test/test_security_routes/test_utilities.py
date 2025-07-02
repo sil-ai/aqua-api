@@ -4,10 +4,7 @@ import bcrypt
 import pytest
 from sqlalchemy import select
 
-from database.models import (
-    BibleRevision,
-    UserDB,
-)
+from database.models import BibleRevision, UserDB
 from security_routes.utilities import get_authorized_revision_ids, verify_password
 
 

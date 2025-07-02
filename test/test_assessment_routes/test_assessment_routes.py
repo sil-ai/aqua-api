@@ -2,15 +2,10 @@
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
-from database.models import (
-    Assessment,
-    BibleVersionAccess,
-)
+from database.models import Assessment, BibleVersionAccess
 from database.models import UserDB
 from database.models import UserDB as UserModel
-from database.models import (
-    UserGroup,
-)
+from database.models import UserGroup
 
 prefix = "v3"
 

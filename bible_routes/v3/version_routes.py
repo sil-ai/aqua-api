@@ -11,13 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
 from database.models import BibleVersion as BibleVersionModel
-from database.models import (
-    BibleVersionAccess,
-)
+from database.models import BibleVersionAccess
 from database.models import UserDB as UserModel
-from database.models import (
-    UserGroup,
-)
+from database.models import UserGroup
 from models import VersionIn
 from models import VersionOut_v3 as VersionOut
 from models import VersionUpdate

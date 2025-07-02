@@ -11,9 +11,7 @@ from sqlalchemy.future import select
 from bible_routes.v3.revision_routes import process_and_upload_revision
 from database.models import BibleRevision as BibleRevisionModel
 from database.models import BibleVersion as BibleVersionModel
-from database.models import (
-    UserDB,
-)
+from database.models import UserDB
 from database.models import VerseText as VerseText
 
 
