@@ -55,6 +55,8 @@ async def get_assessments(
     - word-alignment (requires reference)
     - translation-similarity (requires reference)
     - ngrams
+    - tfidf
+    - text-proportions (requires reference)
 
 
     Returns:
@@ -147,16 +149,24 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
     else:
         runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"
 
+    logger.info(f"Calling runner at {os.getenv('MODAL_ENV', 'main')}")
     params = {
         "return_all_results": return_all_results,
     }
     headers = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
 
-    # Asynchronously post the request to the runner
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            runner_url, params=params, headers=headers, json=assessment.dict()
-        )
+    try:
+        # Asynchronously post the request to the runner
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                runner_url, params=params, headers=headers, json=assessment.dict()
+            )
+    except (httpx.RequestError, httpx.HTTPStatusError) as e:
+        logger.error(f"Error calling Modal runner for assessment {assessment.id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Assessment runner service is unavailable or failed.",
+        ) from e
 
     return response
 
@@ -179,6 +189,8 @@ async def add_assessment(
     - word-alignment (requires reference)
     - translation-similarity (requires reference)
     - ngrams
+    - tfidf
+    - text-proportions (requires reference)
 
     For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
 
@@ -207,7 +219,7 @@ async def add_assessment(
     Description: The unique identifier for the owner of the assessment.
     """
     if (
-        a.type in ["semantic-similarity", "word-alignment", "translation-similarity"]
+        a.type in ["semantic-similarity", "word-alignment", "text-proportions"]
         and a.reference_id is None
     ):
         raise HTTPException(
