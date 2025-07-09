@@ -126,6 +126,43 @@ This will perform a formatting with the tool black, and a linting verification w
 7. Other commands like push-branch are used on GitHub workflows, to push
 to the runners, but this are used automatically when you push to main.
 
+## Pre-commit
+This project uses `pre-commit` to ensure code quality before commits. It automatically runs checks like `black` and `isort`.
+### First-time Setup
+Before you commit for the first time, you need to install `pre-commit` and set it up:
+1.  Install `pre-commit`:
+    ```bash
+    pip install pre-commit
+    ```
+2.  Set up the git hooks:
+    ```bash
+    pre-commit install
+    ```
+### How it works
+Now, `pre-commit` will run automatically on `git commit`. If any of the checks fail, the commit will be aborted. You will see the files that were modified by the hooks.
+For example, if `isort` modifies a file, you'll see a message like:
+```
+isort....................................................................Failed
+- hook id: isort
+- files were modified by this hook
+
+Fixing /path/to/your/file.py
+```
+If this happens, you just need to `git add` the files that were modified by the pre-commit hooks and commit again.
+```bash
+git add .
+git commit -m "Your commit message"
+```
+
+### Running checks manually
+
+You can also run the checks on all files at any time:
+
+```bash
+pre-commit run --all-files
+```
+
+This is useful to check the whole project at once.
 
 ## Environment Variables
 
