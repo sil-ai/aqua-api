@@ -5,13 +5,12 @@ Revises: 2d4fcff5485c
 Create Date: 2025-06-18 12:39:03.290769
 
 """
-
 from typing import Sequence, Union
-
 import pgvector
-import sqlalchemy as sa
 
 from alembic import op
+import sqlalchemy as sa
+
 
 # revision identifiers, used by Alembic.
 revision: str = "7b250817a39a"
