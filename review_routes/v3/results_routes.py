@@ -8,11 +8,13 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
 import pandas as pd
+import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Text, case, func
+from sqlalchemy import Text, case, func, cast, literal, Float, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
+from pgvector.sqlalchemy import Vector
 
 from database.dependencies import get_db
 from database.models import (
@@ -328,36 +330,36 @@ async def build_text_proportions_query(
     return base_query, count_query
 
 
+def build_vector_literal(query_vector: np.ndarray) -> str:
+    return f"'[{','.join(f'{x:.6f}' for x in query_vector.tolist())}]'::vector"
+
 async def build_tfidf_similarity_query(
     assessment_id: int,
     vref: str,
+    query_vector: np.ndarray,
     limit: int = 10,
 ) -> Tuple:
-    # Subquery to get the query vector
-    query_vector_subq = (
-        select(TfidfPcaVector.vector)
-        .where(TfidfPcaVector.assessment_id == assessment_id)
-        .where(TfidfPcaVector.vref == vref)
-        .limit(1)
-        .scalar_subquery()
-    )
 
-    similarity_expr = TfidfPcaVector.vector.op("<#>")(query_vector_subq).label(
-        "cosine_distance"
-    )
+    vector_str = build_vector_literal(query_vector)
+
+    similarity_expr = cast(
+        text(f"inner_product(tfidf_pca_vector.vector, {vector_str})"),
+        Float
+    ).label("cosine_similarity")
 
     base_query = (
         select(
+            TfidfPcaVector.id,
             TfidfPcaVector.vref,
             similarity_expr,
         )
         .where(TfidfPcaVector.assessment_id == assessment_id)
         .where(TfidfPcaVector.vref != vref)
-        .order_by(similarity_expr)
+        .order_by(similarity_expr.desc())
         .limit(limit)
     )
 
-    return base_query, None  # no count query needed
+    return base_query, None
 
 
 @router.get(
@@ -669,14 +671,29 @@ async def get_tfidf_result(
             detail="User not authorized to see this assessment",
         )
 
-    query, _ = await build_tfidf_similarity_query(assessment_id, vref, limit)
+    query_vector = await db.scalar(
+        select(TfidfPcaVector.vector)
+        .where(TfidfPcaVector.assessment_id == assessment_id)
+        .where(TfidfPcaVector.vref == vref)
+        .limit(1)
+    )
+
+    if query_vector is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No TF-IDF vector found for vref {vref} in assessment {assessment_id}",
+        )
+
+    query, _ = await build_tfidf_similarity_query(assessment_id, vref, query_vector, limit)
+
     result_data = await db.execute(query)
     result_data = result_data.all()
 
     result_list = [
         TfidfResult(
+            id=row.id,
             vref=row.vref,
-            similarity=float(row.cosine_distance),
+            similarity=float(row.cosine_similarity),
             assessment_id=assessment_id,
         )
         for row in result_data
