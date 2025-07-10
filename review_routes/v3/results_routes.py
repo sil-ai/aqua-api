@@ -729,9 +729,6 @@ async def get_tfidf_result(
         reference_text_results = await db.execute(reference_text_query)
         reference_texts = {row.verse_reference: row.text for row in reference_text_results.all()}
 
-    print(f"revision_texts: {revision_texts}")
-    print(f"reference_texts: {reference_texts}")
-
     result_list = [
         TfidfResult(
             id=row.id,
