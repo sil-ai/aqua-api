@@ -6,7 +6,7 @@ services:
     ports:
       - "8000:8000"
       - "5678:5678" # Expose the debug port
-   # command: pytest -v
+    # command: pytest -v
     environment:
       - DATABASE_URL=postgresql+asyncpg://dbuser:dbpassword@db:5432/dbname
       - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
@@ -19,6 +19,7 @@ services:
       - KEY_VAULT=${KEY_VAULT}
       - MODAL_WEBHOOK_TOKEN=${MODAL_WEBHOOK_TOKEN}
       - SECRET_KEY=${SECRET_KEY}
+      - MODAL_ENV=${MODAL_ENV}
     depends_on:
       - db
 
