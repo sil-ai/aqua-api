@@ -7,9 +7,10 @@ import time
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Text, case, func
+from sqlalchemy import Float, Text, case, cast, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
@@ -328,36 +329,35 @@ async def build_text_proportions_query(
     return base_query, count_query
 
 
+def build_vector_literal(query_vector: np.ndarray) -> str:
+    return f"'[{','.join(f'{x:.6f}' for x in query_vector.tolist())}]'::vector"
+
+
 async def build_tfidf_similarity_query(
     assessment_id: int,
     vref: str,
+    query_vector: np.ndarray,
     limit: int = 10,
 ) -> Tuple:
-    # Subquery to get the query vector
-    query_vector_subq = (
-        select(TfidfPcaVector.vector)
-        .where(TfidfPcaVector.assessment_id == assessment_id)
-        .where(TfidfPcaVector.vref == vref)
-        .limit(1)
-        .scalar_subquery()
-    )
+    vector_str = build_vector_literal(query_vector)
 
-    similarity_expr = TfidfPcaVector.vector.op("<#>")(query_vector_subq).label(
-        "cosine_distance"
-    )
+    similarity_expr = cast(
+        text(f"inner_product(tfidf_pca_vector.vector, {vector_str})"), Float
+    ).label("cosine_similarity")
 
     base_query = (
         select(
+            TfidfPcaVector.id,
             TfidfPcaVector.vref,
             similarity_expr,
         )
         .where(TfidfPcaVector.assessment_id == assessment_id)
         .where(TfidfPcaVector.vref != vref)
-        .order_by(similarity_expr)
+        .order_by(similarity_expr.desc())
         .limit(limit)
     )
 
-    return base_query, None  # no count query needed
+    return base_query, None
 
 
 @router.get(
@@ -642,6 +642,7 @@ async def get_tfidf_result(
     assessment_id: int,
     vref: str,
     limit: int = 10,
+    reference_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -656,6 +657,9 @@ async def get_tfidf_result(
         The verse reference to compare against.
     limit : int, optional
         The number of similar verses to return (default is 10).
+    reference_id : Optional[int]
+        Not used in the assessment, but optionally to also return the reference text
+        for the given vrefs.
 
     Returns
     -------
@@ -669,15 +673,72 @@ async def get_tfidf_result(
             detail="User not authorized to see this assessment",
         )
 
-    query, _ = await build_tfidf_similarity_query(assessment_id, vref, limit)
+    # Get the assessment details to find revision_id and reference_id
+    assessment = await db.scalar(
+        select(Assessment).where(Assessment.id == assessment_id).limit(1)
+    )
+
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assessment {assessment_id} not found",
+        )
+
+    query_vector = await db.scalar(
+        select(TfidfPcaVector.vector)
+        .where(TfidfPcaVector.assessment_id == assessment_id)
+        .where(TfidfPcaVector.vref == vref)
+        .limit(1)
+    )
+
+    if query_vector is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No TF-IDF vector found for vref {vref} in assessment {assessment_id}",
+        )
+
+    query, _ = await build_tfidf_similarity_query(
+        assessment_id, vref, query_vector, limit
+    )
+
     result_data = await db.execute(query)
     result_data = result_data.all()
 
+    # Get verse texts for all vrefs in the results
+    vrefs_to_fetch = [row.vref for row in result_data]
+
+    # Fetch revision texts
+    revision_texts = {}
+    if assessment.revision_id:
+        revision_text_query = select(VerseText.verse_reference, VerseText.text).where(
+            VerseText.revision_id == assessment.revision_id,
+            VerseText.verse_reference.in_(vrefs_to_fetch),
+        )
+        revision_text_results = await db.execute(revision_text_query)
+        revision_texts = {
+            row.verse_reference: row.text for row in revision_text_results.all()
+        }
+
+    # Fetch reference texts
+    reference_texts = {}
+    if reference_id:
+        reference_text_query = select(VerseText.verse_reference, VerseText.text).where(
+            VerseText.revision_id == reference_id,
+            VerseText.verse_reference.in_(vrefs_to_fetch),
+        )
+        reference_text_results = await db.execute(reference_text_query)
+        reference_texts = {
+            row.verse_reference: row.text for row in reference_text_results.all()
+        }
+
     result_list = [
         TfidfResult(
+            id=row.id,
             vref=row.vref,
-            similarity=float(row.cosine_distance),
+            similarity=float(row.cosine_similarity),
             assessment_id=assessment_id,
+            revision_text=revision_texts.get(row.vref),
+            reference_text=reference_texts.get(row.vref),
         )
         for row in result_data
     ]

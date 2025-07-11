@@ -89,6 +89,16 @@ class TfidfPcaVector(Base):
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
     vector = Column(Vector(300))  # Dense vector of fixed length
 
+    __table_args__ = (
+        Index(
+            "tfidf_pca_vector_ivfflat_idx",
+            "vector",
+            postgresql_using="ivfflat",
+            postgresql_ops={"vector": "vector_ip_ops"},
+            postgresql_with={"lists": "100"},
+        ),
+    )
+
 
 class TextProportionsTable(Base):
     __tablename__ = "text_proportions_table"
