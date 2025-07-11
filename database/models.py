@@ -100,7 +100,6 @@ class TfidfPcaVector(Base):
     )
 
 
-
 class TextProportionsTable(Base):
     __tablename__ = "text_proportions_table"
 
