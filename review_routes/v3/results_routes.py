@@ -10,8 +10,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pgvector.sqlalchemy import Vector
-from sqlalchemy import Float, Text, case, cast, func, literal, text
+from sqlalchemy import Float, Text, case, cast, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
