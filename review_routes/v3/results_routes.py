@@ -333,18 +333,17 @@ async def build_text_proportions_query(
 def build_vector_literal(query_vector: np.ndarray) -> str:
     return f"'[{','.join(f'{x:.6f}' for x in query_vector.tolist())}]'::vector"
 
+
 async def build_tfidf_similarity_query(
     assessment_id: int,
     vref: str,
     query_vector: np.ndarray,
     limit: int = 10,
 ) -> Tuple:
-
     vector_str = build_vector_literal(query_vector)
 
     similarity_expr = cast(
-        text(f"inner_product(tfidf_pca_vector.vector, {vector_str})"),
-        Float
+        text(f"inner_product(tfidf_pca_vector.vector, {vector_str})"), Float
     ).label("cosine_similarity")
 
     base_query = (
@@ -677,9 +676,7 @@ async def get_tfidf_result(
 
     # Get the assessment details to find revision_id and reference_id
     assessment = await db.scalar(
-        select(Assessment)
-        .where(Assessment.id == assessment_id)
-        .limit(1)
+        select(Assessment).where(Assessment.id == assessment_id).limit(1)
     )
 
     if assessment is None:
@@ -701,7 +698,9 @@ async def get_tfidf_result(
             detail=f"No TF-IDF vector found for vref {vref} in assessment {assessment_id}",
         )
 
-    query, _ = await build_tfidf_similarity_query(assessment_id, vref, query_vector, limit)
+    query, _ = await build_tfidf_similarity_query(
+        assessment_id, vref, query_vector, limit
+    )
 
     result_data = await db.execute(query)
     result_data = result_data.all()
@@ -714,20 +713,24 @@ async def get_tfidf_result(
     if assessment.revision_id:
         revision_text_query = select(VerseText.verse_reference, VerseText.text).where(
             VerseText.revision_id == assessment.revision_id,
-            VerseText.verse_reference.in_(vrefs_to_fetch)
+            VerseText.verse_reference.in_(vrefs_to_fetch),
         )
         revision_text_results = await db.execute(revision_text_query)
-        revision_texts = {row.verse_reference: row.text for row in revision_text_results.all()}
+        revision_texts = {
+            row.verse_reference: row.text for row in revision_text_results.all()
+        }
 
     # Fetch reference texts
     reference_texts = {}
     if reference_id:
         reference_text_query = select(VerseText.verse_reference, VerseText.text).where(
             VerseText.revision_id == reference_id,
-            VerseText.verse_reference.in_(vrefs_to_fetch)
+            VerseText.verse_reference.in_(vrefs_to_fetch),
         )
         reference_text_results = await db.execute(reference_text_query)
-        reference_texts = {row.verse_reference: row.text for row in reference_text_results.all()}
+        reference_texts = {
+            row.verse_reference: row.text for row in reference_text_results.all()
+        }
 
     result_list = [
         TfidfResult(
