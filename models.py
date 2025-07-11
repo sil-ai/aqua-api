@@ -328,6 +328,8 @@ class TfidfResult(BaseModel):
     assessment_id: Optional[int] = None
     vref: Optional[str] = None
     similarity: float  # or cosine_distance: float
+    revision_text: Optional[str] = None
+    reference_text: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
