@@ -7,14 +7,14 @@ import time
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Text, case, func, cast, literal, Float, text
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import Float, Text, case, cast, func, literal, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
-from pgvector.sqlalchemy import Vector
 
 from database.dependencies import get_db
 from database.models import (
