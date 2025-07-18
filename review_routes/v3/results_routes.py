@@ -300,7 +300,7 @@ async def build_text_proportions_query(
 
     select_fields = [
         func.min(TextProportionsTable.id).label("id"),
-        TextProportionsTable.assessment_id,
+        func.min(TextProportionsTable.assessment_id).label("assessment_id"),
         func.avg(TextProportionsTable.word_proportions).label("word_proportions"),
         func.avg(TextProportionsTable.char_proportions).label("char_proportions"),
         func.avg(TextProportionsTable.word_proportions_z).label("word_proportions_z"),
@@ -309,7 +309,7 @@ async def build_text_proportions_query(
 
     if group_by:
         select_fields += group_by
-        base_query = select(*select_fields).group_by(*group_by).order_by(*group_by)
+        base_query = select(*select_fields).group_by(*group_by).order_by("id")
     else:
         base_query = select(*select_fields)
 
