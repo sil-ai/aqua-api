@@ -64,7 +64,7 @@ class NgramsTable(Base):
     __tablename__ = "ngrams_table"
 
     id = Column(Integer, primary_key=True)
-    assessment_id = Column(Integer, ForeignKey("assessment.id"))
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
     ngram = Column(Text)
     ngram_size = Column(Integer)
 
@@ -75,7 +75,7 @@ class NgramVrefTable(Base):
     __tablename__ = "ngram_vref_table"
 
     id = Column(Integer, primary_key=True)
-    ngram_id = Column(Integer, ForeignKey("ngrams_table.id"))
+    ngram_id = Column(Integer, ForeignKey("ngrams_table.id"), index=True)
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"))
 
     ngram = relationship("NgramsTable", back_populates="vrefs")
