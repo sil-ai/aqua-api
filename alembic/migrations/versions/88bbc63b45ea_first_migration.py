@@ -1,20 +1,19 @@
-"""init_migration
+"""first_migration
 
-Revision ID: 63a9ad3b1b82
-Revises: 
-Create Date: 2024-02-08 16:50:30.923087
+Revision ID: 88bbc63b45ea
+Revises:
+Create Date: 2025-09-15 15:26:13.015083
 
 """
 
 from typing import Sequence, Union
-
+import pgvector
+from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-from alembic import op
-
 # revision identifiers, used by Alembic.
-revision: str = "63a9ad3b1b82"
+revision: str = "88bbc63b45ea"
 down_revision: Union[str, None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -55,11 +54,10 @@ def upgrade() -> None:
         "users",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("username", sa.String(length=50), nullable=False),
-        sa.Column("email", sa.String(length=50), nullable=False),
+        sa.Column("email", sa.String(length=50), nullable=True),
         sa.Column("hashed_password", sa.String(length=100), nullable=False),
         sa.Column("is_admin", sa.Boolean(), nullable=True),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("email"),
         sa.UniqueConstraint("username"),
     )
     op.create_table(
@@ -73,8 +71,10 @@ def upgrade() -> None:
         sa.Column("forward_translation_id", sa.Integer(), nullable=True),
         sa.Column("back_translation_id", sa.Integer(), nullable=True),
         sa.Column("machine_translation", sa.Boolean(), nullable=True),
+        sa.Column("is_reference", sa.Boolean(), nullable=True),
         sa.Column("deleted", sa.Boolean(), nullable=True),
         sa.Column("deletedAt", sa.TIMESTAMP(), nullable=True),
+        sa.Column("owner_id", sa.Integer(), nullable=True),
         sa.ForeignKeyConstraint(
             ["back_translation_id"],
             ["bible_version.id"],
@@ -87,7 +87,14 @@ def upgrade() -> None:
             ["iso_script"],
             ["iso_script.iso15924"],
         ),
+        sa.ForeignKeyConstraint(
+            ["owner_id"],
+            ["users.id"],
+        ),
         sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_bible_version_deleted", "bible_version", ["deleted"], unique=False
     )
     op.create_table(
         "chapter_reference",
@@ -115,6 +122,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_index("ix_user_group_user_id", "user_groups", ["user_id"], unique=False)
     op.create_table(
         "bible_revision",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -136,6 +144,15 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_index(
+        "ix_bible_revision_deleted", "bible_revision", ["deleted"], unique=False
+    )
+    op.create_index(
+        "ix_bible_revision_version_id",
+        "bible_revision",
+        ["bible_version_id"],
+        unique=False,
+    )
     op.create_table(
         "bible_version_access",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -150,6 +167,24 @@ def upgrade() -> None:
             ["groups.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_bible_version_access_group",
+        "bible_version_access",
+        ["group_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_bible_version_access_version",
+        "bible_version_access",
+        ["bible_version_id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_bible_version_access_version_group",
+        "bible_version_access",
+        ["bible_version_id", "group_id"],
+        unique=False,
     )
     op.create_table(
         "verse_reference",
@@ -181,6 +216,11 @@ def upgrade() -> None:
         sa.Column("assessment_version", sa.String(), nullable=True),
         sa.Column("deleted", sa.Boolean(), nullable=True),
         sa.Column("deletedAt", sa.TIMESTAMP(), nullable=True),
+        sa.Column("owner_id", sa.Integer(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["owner_id"],
+            ["users.id"],
+        ),
         sa.ForeignKeyConstraint(
             ["reference_id"],
             ["bible_revision.id"],
@@ -190,6 +230,12 @@ def upgrade() -> None:
             ["bible_revision.id"],
         ),
         sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_assessment_rev_ref_type_status_end",
+        "assessment",
+        ["revision_id", "reference_id", "type", "status", "end_time"],
+        unique=False,
     )
     op.create_table(
         "verse_text",
@@ -210,6 +256,21 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_index(
+        "ix_verse_text_revision_book",
+        "verse_text",
+        ["revision_id", "book"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_verse_text_revision_id", "verse_text", ["revision_id"], unique=False
+    )
+    op.create_index(
+        "ix_verse_text_verse_reference_revision",
+        "verse_text",
+        ["verse_reference", "revision_id"],
+        unique=False,
+    )
     op.create_table(
         "alignment_threshold_scores",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -221,6 +282,9 @@ def upgrade() -> None:
         sa.Column("source", sa.Text(), nullable=True),
         sa.Column("target", sa.Text(), nullable=True),
         sa.Column("hide", sa.Boolean(), nullable=True),
+        sa.Column("book", sa.Text(), nullable=True),
+        sa.Column("chapter", sa.Integer(), nullable=True),
+        sa.Column("verse", sa.Integer(), nullable=True),
         sa.ForeignKeyConstraint(
             ["assessment_id"],
             ["assessment.id"],
@@ -242,6 +306,9 @@ def upgrade() -> None:
         sa.Column("source", sa.Text(), nullable=True),
         sa.Column("target", sa.Text(), nullable=True),
         sa.Column("hide", sa.Boolean(), nullable=True),
+        sa.Column("book", sa.Text(), nullable=True),
+        sa.Column("chapter", sa.Integer(), nullable=True),
+        sa.Column("verse", sa.Integer(), nullable=True),
         sa.ForeignKeyConstraint(
             ["assessment_id"],
             ["assessment.id"],
@@ -252,20 +319,26 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_table(
-        "assessment_access",
-        sa.Column("id", sa.Integer(), nullable=False),
-        sa.Column("assessment_id", sa.Integer(), nullable=False),
-        sa.Column("group_id", sa.Integer(), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["assessment_id"],
-            ["assessment.id"],
-        ),
-        sa.ForeignKeyConstraint(
-            ["group_id"],
-            ["groups.id"],
-        ),
-        sa.PrimaryKeyConstraint("id"),
+    op.create_index(
+        "book_score_idx", "alignment_top_source_scores", ["book", "score"], unique=False
+    )
+    op.create_index(
+        "ix_alignment_scores_assessment_score",
+        "alignment_top_source_scores",
+        ["assessment_id", "score"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_alignment_scores_grouping",
+        "alignment_top_source_scores",
+        ["book", "chapter", "verse", "source"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_alignment_top_source_scores_assessment_id"),
+        "alignment_top_source_scores",
+        ["assessment_id"],
+        unique=False,
     )
     op.create_table(
         "assessment_result",
@@ -291,22 +364,177 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
+    op.create_index(
+        "idx_assessment_id", "assessment_result", ["assessment_id"], unique=False
+    )
+    op.create_index(
+        "idx_assessment_result_main",
+        "assessment_result",
+        ["assessment_id", "book", "chapter", "verse", "id"],
+        unique=False,
+    )
+    op.create_index(
+        "idx_book_chapter_verse",
+        "assessment_result",
+        ["book", "chapter", "verse"],
+        unique=False,
+    )
+    op.create_table(
+        "ngrams_table",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("assessment_id", sa.Integer(), nullable=True),
+        sa.Column("ngram", sa.Text(), nullable=True),
+        sa.Column("ngram_size", sa.Integer(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["assessment_id"],
+            ["assessment.id"],
+        ),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_table(
+        "text_proportions_table",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("assessment_id", sa.Integer(), nullable=True),
+        sa.Column("vref", sa.Text(), nullable=True),
+        sa.Column("word_proportions", sa.Numeric(), nullable=True),
+        sa.Column("char_proportions", sa.Numeric(), nullable=True),
+        sa.Column("word_proportions_z", sa.Numeric(), nullable=True),
+        sa.Column("char_proportions_z", sa.Numeric(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["assessment_id"],
+            ["assessment.id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["vref"],
+            ["verse_reference.full_verse_id"],
+        ),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        op.f("ix_text_proportions_table_assessment_id"),
+        "text_proportions_table",
+        ["assessment_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_text_proportions_table_vref"),
+        "text_proportions_table",
+        ["vref"],
+        unique=False,
+    )
+    op.create_table(
+        "tfidf_pca_vector",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("assessment_id", sa.Integer(), nullable=True),
+        sa.Column("vref", sa.Text(), nullable=True),
+        sa.Column("vector", pgvector.sqlalchemy.Vector(dim=300), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["assessment_id"],
+            ["assessment.id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["vref"],
+            ["verse_reference.full_verse_id"],
+        ),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        op.f("ix_tfidf_pca_vector_assessment_id"),
+        "tfidf_pca_vector",
+        ["assessment_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_tfidf_pca_vector_vref"), "tfidf_pca_vector", ["vref"], unique=False
+    )
+    op.create_index(
+        "tfidf_pca_vector_ivfflat_idx",
+        "tfidf_pca_vector",
+        ["vector"],
+        unique=False,
+        postgresql_using="ivfflat",
+        postgresql_ops={"vector": "vector_ip_ops"},
+        postgresql_with={"lists": "100"},
+    )
+    op.create_table(
+        "ngram_vref_table",
+        sa.Column("id", sa.Integer(), nullable=False),
+        sa.Column("ngram_id", sa.Integer(), nullable=True),
+        sa.Column("vref", sa.Text(), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["ngram_id"],
+            ["ngrams_table.id"],
+        ),
+        sa.ForeignKeyConstraint(
+            ["vref"],
+            ["verse_reference.full_verse_id"],
+        ),
+        sa.PrimaryKeyConstraint("id"),
+    )
     # ### end Alembic commands ###
 
 
 def downgrade() -> None:
     # ### commands auto generated by Alembic - please adjust! ###
+    op.drop_table("ngram_vref_table")
+    op.drop_index(
+        "tfidf_pca_vector_ivfflat_idx",
+        table_name="tfidf_pca_vector",
+        postgresql_using="ivfflat",
+        postgresql_ops={"vector": "vector_ip_ops"},
+        postgresql_with={"lists": "100"},
+    )
+    op.drop_index(op.f("ix_tfidf_pca_vector_vref"), table_name="tfidf_pca_vector")
+    op.drop_index(
+        op.f("ix_tfidf_pca_vector_assessment_id"), table_name="tfidf_pca_vector"
+    )
+    op.drop_table("tfidf_pca_vector")
+    op.drop_index(
+        op.f("ix_text_proportions_table_vref"), table_name="text_proportions_table"
+    )
+    op.drop_index(
+        op.f("ix_text_proportions_table_assessment_id"),
+        table_name="text_proportions_table",
+    )
+    op.drop_table("text_proportions_table")
+    op.drop_table("ngrams_table")
+    op.drop_index("idx_book_chapter_verse", table_name="assessment_result")
+    op.drop_index("idx_assessment_result_main", table_name="assessment_result")
+    op.drop_index("idx_assessment_id", table_name="assessment_result")
     op.drop_table("assessment_result")
-    op.drop_table("assessment_access")
+    op.drop_index(
+        op.f("ix_alignment_top_source_scores_assessment_id"),
+        table_name="alignment_top_source_scores",
+    )
+    op.drop_index(
+        "ix_alignment_scores_grouping", table_name="alignment_top_source_scores"
+    )
+    op.drop_index(
+        "ix_alignment_scores_assessment_score", table_name="alignment_top_source_scores"
+    )
+    op.drop_index("book_score_idx", table_name="alignment_top_source_scores")
     op.drop_table("alignment_top_source_scores")
     op.drop_table("alignment_threshold_scores")
+    op.drop_index("ix_verse_text_verse_reference_revision", table_name="verse_text")
+    op.drop_index("ix_verse_text_revision_id", table_name="verse_text")
+    op.drop_index("ix_verse_text_revision_book", table_name="verse_text")
     op.drop_table("verse_text")
+    op.drop_index("ix_assessment_rev_ref_type_status_end", table_name="assessment")
     op.drop_table("assessment")
     op.drop_table("verse_reference")
+    op.drop_index(
+        "ix_bible_version_access_version_group", table_name="bible_version_access"
+    )
+    op.drop_index("ix_bible_version_access_version", table_name="bible_version_access")
+    op.drop_index("ix_bible_version_access_group", table_name="bible_version_access")
     op.drop_table("bible_version_access")
+    op.drop_index("ix_bible_revision_version_id", table_name="bible_revision")
+    op.drop_index("ix_bible_revision_deleted", table_name="bible_revision")
     op.drop_table("bible_revision")
+    op.drop_index("ix_user_group_user_id", table_name="user_groups")
     op.drop_table("user_groups")
     op.drop_table("chapter_reference")
+    op.drop_index("ix_bible_version_deleted", table_name="bible_version")
     op.drop_table("bible_version")
     op.drop_table("users")
     op.drop_table("iso_script")
