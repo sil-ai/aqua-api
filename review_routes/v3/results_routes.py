@@ -277,6 +277,9 @@ async def build_text_proportions_query(
     page_size: Optional[int],
     aggregate: Optional[aggType],
 ) -> Tuple:
+    
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
+    
     # Initialize the base query
     base_query = select(TextProportionsTable).where(
         TextProportionsTable.assessment_id == assessment_id
@@ -468,7 +471,6 @@ async def build_text_proportions_query(
 
     final_count_query = select(func.count()).select_from(count_subquery)
 
-    logger.info("🐛 build_text_proportions_query completed successfully")
     return base_query, final_count_query
 
 
@@ -730,16 +732,12 @@ async def get_text_proportions(
 
     try:
         result_data, total_count = await execute_query(query, count_query, db)
-        logger.info(f"🐛 execute_query completed, got {len(result_data)} results, total_count={total_count}")
     except Exception as e:
-        logger.error(f"🐛 SQL ERROR: {str(e)}")
-        logger.error(f"🐛 Query type: {type(query)}")
-        # Try to log the compiled SQL if possible
         try:
             compiled_query = str(query.compile(compile_kwargs={"literal_binds": True}))
-            logger.error(f"🐛 Compiled SQL: {compiled_query}")
+            logger.error(f"Compiled SQL: {compiled_query}")
         except:
-            logger.error("🐛 Could not compile SQL for logging")
+            logger.error("Could not compile SQL for logging")
         raise
 
     result_list = []
