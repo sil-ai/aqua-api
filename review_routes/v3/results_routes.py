@@ -286,8 +286,6 @@ async def build_text_proportions_query(
             func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
         )
 
-    subquery = base_query.subquery()
-
     # Determine grouping based on aggregation type (same as /result endpoint)
     if aggregate == aggType.chapter:
         # Create a different subquery that first extracts the book and chapter info
@@ -383,7 +381,6 @@ async def build_text_proportions_query(
             .order_by("id")
         )
     elif aggregate == aggType.text:
-        group_by_columns = []
         # For text aggregation, we still need the original subquery approach
         original_subquery = base_query.subquery()
         base_query = (
@@ -399,8 +396,6 @@ async def build_text_proportions_query(
             .order_by("id")
         )
     else:
-        # No aggregation - use vref as grouping column
-        group_by_columns = ["vref"]
         # For no aggregation, we still need the original subquery approach
         original_subquery = base_query.subquery()
         base_query = (
@@ -421,6 +416,13 @@ async def build_text_proportions_query(
         )
 
     # Apply pagination (same as /result endpoint)
+
+    if (page is not None and page_size is None) or (page is None and page_size is not None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both 'page' and 'page_size' must be provided together for pagination.",
+        )
+    
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
