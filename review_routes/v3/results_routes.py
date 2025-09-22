@@ -53,6 +53,8 @@ async def validate_parameters(
     chapter: Optional[int],
     verse: Optional[int],
     aggregate: Optional[aggType] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None
 ):
     if book and len(book) > 3:
         raise HTTPException(
@@ -94,6 +96,12 @@ async def validate_parameters(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If aggregate is 'text', book, chapter, and verse must not be set.",
+        )
+    
+    if (page is not None and page_size is None) or (page is None and page_size is not None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both 'page' and 'page_size' must be provided together for pagination.",
         )
 
 
@@ -416,13 +424,6 @@ async def build_text_proportions_query(
         )
 
     # Apply pagination (same as /result endpoint)
-
-    if (page is not None and page_size is None) or (page is None and page_size is not None):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Both 'page' and 'page_size' must be provided together for pagination.",
-        )
-    
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
@@ -549,7 +550,7 @@ async def get_result(
     be included in the text being assessed.
     """
     start = time.perf_counter()
-    await validate_parameters(book, chapter, verse, aggregate)
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     start = time.perf_counter()
     authorized = await is_user_authorized_for_assessment(
@@ -715,7 +716,7 @@ async def get_text_proportions(
         A dictionary containing the list of results and the total count of results.
     """
     
-    await validate_parameters(book, chapter, verse, aggregate)
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -1286,7 +1287,7 @@ async def get_compare_results(
         containing the score, average score and standard deviation for the baseline
         assessments, and z-score of the score with respect to this baseline average and standard deviation.
     """
-    await validate_parameters(book, chapter, verse, aggregate)
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     (
         main_assessments_query,
@@ -1420,7 +1421,7 @@ async def get_alignment_scores(
     Dict[str, Union[List[WordAlignment], int]]
         A dictionary containing the list of results and the total count of results.
     """
-    await validate_parameters(book, chapter, verse)
+    await validate_parameters(book, chapter, verse, None, page, page_size)
 
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
