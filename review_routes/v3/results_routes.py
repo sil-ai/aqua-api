@@ -53,6 +53,8 @@ async def validate_parameters(
     chapter: Optional[int],
     verse: Optional[int],
     aggregate: Optional[aggType] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None
 ):
     if book and len(book) > 3:
         raise HTTPException(
@@ -94,6 +96,12 @@ async def validate_parameters(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If aggregate is 'text', book, chapter, and verse must not be set.",
+        )
+    
+    if (page is not None and page_size is None) or (page is None and page_size is not None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both 'page' and 'page_size' must be provided together for pagination.",
         )
 
 
@@ -269,10 +277,15 @@ async def build_text_proportions_query(
     page_size: Optional[int],
     aggregate: Optional[aggType],
 ) -> Tuple:
+    
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
+    
+    # Initialize the base query
     base_query = select(TextProportionsTable).where(
         TextProportionsTable.assessment_id == assessment_id
     )
 
+    # Apply filters based on optional parameters
     if book is not None:
         base_query = base_query.where(TextProportionsTable.vref.ilike(f"{book}%"))
     if chapter is not None:
@@ -284,49 +297,181 @@ async def build_text_proportions_query(
             func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
         )
 
+    # Determine grouping based on aggregation type (same as /result endpoint)
     if aggregate == aggType.chapter:
-        group_by = [
-            func.split_part(TextProportionsTable.vref, " ", 1).label("book"),  # book
-            func.split_part(
-                func.split_part(TextProportionsTable.vref, " ", 2), ":", 1
-            ).label("chapter"),
-        ]  # chapter
-    elif aggregate == aggType.book:
-        group_by = [func.split_part(TextProportionsTable.vref, " ", 1)]
-    elif aggregate == aggType.text:
-        group_by = []
-    else:
-        group_by = [TextProportionsTable.vref]
-
-    select_fields = [
-        func.min(TextProportionsTable.id).label("id"),
-        func.min(TextProportionsTable.assessment_id).label("assessment_id"),
-        func.avg(TextProportionsTable.word_proportions).label("word_proportions"),
-        func.avg(TextProportionsTable.char_proportions).label("char_proportions"),
-        func.avg(TextProportionsTable.word_proportions_z).label("word_proportions_z"),
-        func.avg(TextProportionsTable.char_proportions_z).label("char_proportions_z"),
-    ]
-
-    if group_by:
-        select_fields += group_by
-        base_query = select(*select_fields).group_by(*group_by).order_by("id")
-    else:
-        base_query = select(*select_fields)
-
-    if (page is not None and page_size is None) or (
-        page is None and page_size is not None
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Both 'page' and 'page_size' must be provided together for pagination.",
+        # Create a different subquery that first extracts the book and chapter info
+        extraction_query = (
+            select(
+                TextProportionsTable.id,
+                TextProportionsTable.assessment_id,
+                func.split_part(TextProportionsTable.vref, " ", 1).label("book"),
+                func.split_part(func.split_part(TextProportionsTable.vref, " ", 2), ":", 1).label("chapter"),
+                TextProportionsTable.word_proportions,
+                TextProportionsTable.char_proportions,
+                TextProportionsTable.word_proportions_z,
+                TextProportionsTable.char_proportions_z,
+            )
+            .where(TextProportionsTable.assessment_id == assessment_id)
         )
+        
+        # Apply filters
+        if book is not None:
+            extraction_query = extraction_query.where(TextProportionsTable.vref.ilike(f"{book}%"))
+        if chapter is not None:
+            extraction_query = extraction_query.where(
+                func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
+            )
+        if verse is not None:
+            extraction_query = extraction_query.where(
+                func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
+            )
+        
+        subquery = extraction_query.subquery()
+        
+        base_query = (
+            select(
+                func.min(subquery.c.id).label("id"),
+                subquery.c.assessment_id,
+                subquery.c.book,
+                subquery.c.chapter,
+                func.avg(subquery.c.word_proportions).label("word_proportions"),
+                func.avg(subquery.c.char_proportions).label("char_proportions"),
+                func.avg(subquery.c.word_proportions_z).label("word_proportions_z"),
+                func.avg(subquery.c.char_proportions_z).label("char_proportions_z"),
+            )
+            .group_by(
+                subquery.c.assessment_id,
+                subquery.c.book,
+                subquery.c.chapter,
+            )
+            .order_by("id")
+        )
+    elif aggregate == aggType.book:
+        # Create a different subquery that first extracts the book info
+        extraction_query = (
+            select(
+                TextProportionsTable.id,
+                TextProportionsTable.assessment_id,
+                func.split_part(TextProportionsTable.vref, " ", 1).label("book"),
+                TextProportionsTable.word_proportions,
+                TextProportionsTable.char_proportions,
+                TextProportionsTable.word_proportions_z,
+                TextProportionsTable.char_proportions_z,
+            )
+            .where(TextProportionsTable.assessment_id == assessment_id)
+        )
+        
+        # Apply filters
+        if book is not None:
+            extraction_query = extraction_query.where(TextProportionsTable.vref.ilike(f"{book}%"))
+        if chapter is not None:
+            extraction_query = extraction_query.where(
+                func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
+            )
+        if verse is not None:
+            extraction_query = extraction_query.where(
+                func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
+            )
+        
+        subquery = extraction_query.subquery()
+        
+        base_query = (
+            select(
+                func.min(subquery.c.id).label("id"),
+                subquery.c.assessment_id,
+                subquery.c.book,
+                func.avg(subquery.c.word_proportions).label("word_proportions"),
+                func.avg(subquery.c.char_proportions).label("char_proportions"),
+                func.avg(subquery.c.word_proportions_z).label("word_proportions_z"),
+                func.avg(subquery.c.char_proportions_z).label("char_proportions_z"),
+            )
+            .group_by(
+                subquery.c.assessment_id,
+                subquery.c.book,
+            )
+            .order_by("id")
+        )
+    elif aggregate == aggType.text:
+        # For text aggregation, we still need the original subquery approach
+        original_subquery = base_query.subquery()
+        base_query = (
+            select(
+                func.min(original_subquery.c.id).label("id"),
+                original_subquery.c.assessment_id,
+                func.avg(original_subquery.c.word_proportions).label("word_proportions"),
+                func.avg(original_subquery.c.char_proportions).label("char_proportions"),
+                func.avg(original_subquery.c.word_proportions_z).label("word_proportions_z"),
+                func.avg(original_subquery.c.char_proportions_z).label("char_proportions_z"),
+            )
+            .group_by(original_subquery.c.assessment_id)
+            .order_by("id")
+        )
+    else:
+        # For no aggregation, we still need the original subquery approach
+        original_subquery = base_query.subquery()
+        base_query = (
+            select(
+                func.min(original_subquery.c.id).label("id"),
+                original_subquery.c.assessment_id,
+                original_subquery.c.vref,
+                func.avg(original_subquery.c.word_proportions).label("word_proportions"),
+                func.avg(original_subquery.c.char_proportions).label("char_proportions"),
+                func.avg(original_subquery.c.word_proportions_z).label("word_proportions_z"),
+                func.avg(original_subquery.c.char_proportions_z).label("char_proportions_z"),
+            )
+            .group_by(
+                original_subquery.c.assessment_id,
+                original_subquery.c.vref,
+            )
+            .order_by("id")
+        )
+
+    # Apply pagination (same as /result endpoint)
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
-    grouped_query = base_query.subquery()
-    count_query = select(func.count()).select_from(grouped_query)
+    # Build count query (same pattern as /result endpoint)
+    count_query = (
+        select(func.count())
+        .select_from(TextProportionsTable)
+        .where(TextProportionsTable.assessment_id == assessment_id)
+    )
+    if book is not None:
+        count_query = count_query.where(TextProportionsTable.vref.ilike(f"{book}%"))
+    if chapter is not None:
+        count_query = count_query.where(
+            func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
+        )
+    if verse is not None:
+        count_query = count_query.where(
+            func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
+        )
 
-    return base_query, count_query
+    # For aggregated results, count distinct groups (same pattern as /result endpoint)
+    if aggregate == aggType.chapter:
+        count_subquery = count_query.group_by(
+            TextProportionsTable.assessment_id,
+            func.split_part(TextProportionsTable.vref, " ", 1),
+            func.split_part(func.split_part(TextProportionsTable.vref, " ", 2), ":", 1),
+        ).subquery()
+    elif aggregate == aggType.book:
+        count_subquery = count_query.group_by(
+            TextProportionsTable.assessment_id,
+            func.split_part(TextProportionsTable.vref, " ", 1),
+        ).subquery()
+    elif aggregate == aggType.text:
+        count_subquery = count_query.group_by(
+            TextProportionsTable.assessment_id,
+        ).subquery()
+    else:
+        count_subquery = count_query.group_by(
+            TextProportionsTable.assessment_id,
+            TextProportionsTable.vref,
+        ).subquery()
+
+    final_count_query = select(func.count()).select_from(count_subquery)
+
+    return base_query, final_count_query
 
 
 def build_vector_literal(query_vector: np.ndarray) -> str:
@@ -407,15 +552,11 @@ async def get_result(
     be included in the text being assessed.
     """
     start = time.perf_counter()
-    await validate_parameters(book, chapter, verse, aggregate)
-    logger.info(f"⏱️ validate_parameters: {time.perf_counter() - start:.2f}s")
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     start = time.perf_counter()
     authorized = await is_user_authorized_for_assessment(
         current_user.id, assessment_id, db
-    )
-    logger.info(
-        f"⏱️ is_user_authorized_for_assessment: {time.perf_counter() - start:.2f}s"
     )
     if not authorized:
         raise HTTPException(
@@ -435,11 +576,9 @@ async def get_result(
         reverse,
         db,
     )
-    logger.info(f"⏱️ build_results_query: {time.perf_counter() - start:.2f}s")
 
     start = time.perf_counter()
     result_data, total_count = await execute_query(query, count_query, db)
-    logger.info(f"⏱️ execute_query: {time.perf_counter() - start:.2f}s")
 
     start = time.perf_counter()
     result_list = []
@@ -470,7 +609,6 @@ async def get_result(
             hide=row.hide if hasattr(row, "hide") else None,
         )
         result_list.append(result_obj)
-    logger.info(f"⏱️ Result formatting: {time.perf_counter() - start:.2f}s")
 
     return {"results": result_list, "total_count": total_count}
 
@@ -579,7 +717,8 @@ async def get_text_proportions(
     Dict[str, Union[List[TextProportionsResult], int]]
         A dictionary containing the list of results and the total count of results.
     """
-    await validate_parameters(book, chapter, verse, aggregate)
+    
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -591,41 +730,50 @@ async def get_text_proportions(
         assessment_id, book, chapter, verse, page, page_size, aggregate
     )
 
-    result_data, total_count = await execute_query(query, count_query, db)
+    try:
+        result_data, total_count = await execute_query(query, count_query, db)
+    except Exception as e:
+        try:
+            compiled_query = str(query.compile(compile_kwargs={"literal_binds": True}))
+            logger.error(f"Compiled SQL: {compiled_query}")
+        except:
+            logger.error("Could not compile SQL for logging")
+        raise
 
     result_list = []
     for row in result_data:
         # Compose vref based on aggregation
         if aggregate == aggType.chapter:
-            vref = f"{row._mapping['book']} {row._mapping['chapter']}"
+            vref = f"{row.book} {row.chapter}"
         elif aggregate == aggType.book:
-            vref = f"{row._mapping['book']}"
+            vref = f"{row.book}"
         elif aggregate == aggType.text:
             vref = None
         else:
-            vref = row._mapping.get("vref", None)
+            vref = getattr(row, "vref", None)
+        
         result_obj = TextProportionsResult(
-            id=row._mapping["id"],
-            assessment_id=row._mapping["assessment_id"],
+            id=row.id if hasattr(row, "id") else None,
+            assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
             vref=vref,
             word_proportions=(
-                float(row._mapping["word_proportions"])
-                if row._mapping["word_proportions"] is not None
+                int(row.word_proportions)
+                if hasattr(row, "word_proportions") and row.word_proportions is not None
                 else None
             ),
             char_proportions=(
-                float(row._mapping["char_proportions"])
-                if row._mapping["char_proportions"] is not None
+                int(row.char_proportions)
+                if hasattr(row, "char_proportions") and row.char_proportions is not None
                 else None
             ),
             word_proportions_z=(
-                float(row._mapping["word_proportions_z"])
-                if row._mapping["word_proportions_z"] is not None
+                float(row.word_proportions_z)
+                if hasattr(row, "word_proportions_z") and row.word_proportions_z is not None
                 else None
             ),
             char_proportions_z=(
-                float(row._mapping["char_proportions_z"])
-                if row._mapping["char_proportions_z"] is not None
+                float(row.char_proportions_z)
+                if hasattr(row, "char_proportions_z") and row.char_proportions_z is not None
                 else None
             ),
         )
@@ -1137,7 +1285,7 @@ async def get_compare_results(
         containing the score, average score and standard deviation for the baseline
         assessments, and z-score of the score with respect to this baseline average and standard deviation.
     """
-    await validate_parameters(book, chapter, verse, aggregate)
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     (
         main_assessments_query,
@@ -1271,7 +1419,7 @@ async def get_alignment_scores(
     Dict[str, Union[List[WordAlignment], int]]
         A dictionary containing the list of results and the total count of results.
     """
-    await validate_parameters(book, chapter, verse)
+    await validate_parameters(book, chapter, verse, None, page, page_size)
 
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
