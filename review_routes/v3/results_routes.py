@@ -570,11 +570,17 @@ async def get_result(
     """
     start = time.perf_counter()
     await validate_parameters(book, chapter, verse, aggregate, page, page_size)
+    logger.info(f"⏱️ validate_parameters: {time.perf_counter() - start:.2f}s")
 
     start = time.perf_counter()
     authorized = await is_user_authorized_for_assessment(
         current_user.id, assessment_id, db
     )
+
+    logger.info(
+        f"⏱️ is_user_authorized_for_assessment: {time.perf_counter() - start:.2f}s"
+    )
+
     if not authorized:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -593,9 +599,11 @@ async def get_result(
         reverse,
         db,
     )
+    logger.info(f"⏱️ build_results_query: {time.perf_counter() - start:.2f}s")
 
     start = time.perf_counter()
     result_data, total_count = await execute_query(query, count_query, db)
+    logger.info(f"⏱️ execute_query: {time.perf_counter() - start:.2f}s")
 
     start = time.perf_counter()
     result_list = []
@@ -626,6 +634,7 @@ async def get_result(
             hide=row.hide if hasattr(row, "hide") else None,
         )
         result_list.append(result_obj)
+        logger.info(f"⏱️ Result formatting: {time.perf_counter() - start:.2f}s")
 
     return {"results": result_list, "total_count": total_count}
 
@@ -750,12 +759,16 @@ async def get_text_proportions(
     try:
         result_data, total_count = await execute_query(query, count_query, db)
     except Exception as e:
+        logger.error(f"Error executing query: {e}")
         try:
             compiled_query = str(query.compile(compile_kwargs={"literal_binds": True}))
             logger.error(f"Compiled SQL: {compiled_query}")
-        except:
-            logger.error("Could not compile SQL for logging")
-        raise
+        except Exception as compile_error:
+            logger.error(f"Could not compile SQL for logging: {compile_error}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error executing query",
+            )
 
     result_list = []
     for row in result_data:
