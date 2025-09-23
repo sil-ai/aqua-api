@@ -23,7 +23,7 @@ from database.models import (
     BibleRevision,
     NgramsTable,
     NgramVrefTable,
-    TextProportionsTable,
+    TextLengthsTable,
     TfidfPcaVector,
 )
 from database.models import UserDB as UserModel
@@ -32,7 +32,7 @@ from database.models import (
 )
 from models import MultipleResult, NgramResult
 from models import Result_v2 as Result
-from models import TextProportionsResult, TfidfResult, WordAlignment
+from models import TextLengthsResult, TfidfResult, WordAlignment
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 
@@ -270,7 +270,7 @@ async def build_ngrams_query(
     return base_query, count_query
 
 
-async def build_text_proportions_query(
+async def build_text_lengths_query(
     assessment_id: int,
     book: Optional[str],
     chapter: Optional[int],
@@ -282,50 +282,50 @@ async def build_text_proportions_query(
     await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     # Initialize the base query
-    base_query = select(TextProportionsTable).where(
-        TextProportionsTable.assessment_id == assessment_id
+    base_query = select(TextLengthsTable).where(
+        TextLengthsTable.assessment_id == assessment_id
     )
 
     # Apply filters based on optional parameters
     if book is not None:
-        base_query = base_query.where(TextProportionsTable.vref.ilike(f"{book}%"))
+        base_query = base_query.where(TextLengthsTable.vref.ilike(f"{book}%"))
     if chapter is not None:
         base_query = base_query.where(
-            func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
+            func.split_part(TextLengthsTable.vref, " ", 2).like(f"{chapter}:%")
         )
     if verse is not None:
         base_query = base_query.where(
-            func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
+            func.split_part(TextLengthsTable.vref, ":", 2) == str(verse)
         )
 
     # Determine grouping based on aggregation type (same as /result endpoint)
     if aggregate == aggType.chapter:
         # Create a different subquery that first extracts the book and chapter info
         extraction_query = select(
-            TextProportionsTable.id,
-            TextProportionsTable.assessment_id,
-            func.split_part(TextProportionsTable.vref, " ", 1).label("book"),
+            TextLengthsTable.id,
+            TextLengthsTable.assessment_id,
+            func.split_part(TextLengthsTable.vref, " ", 1).label("book"),
             func.split_part(
-                func.split_part(TextProportionsTable.vref, " ", 2), ":", 1
+                func.split_part(TextLengthsTable.vref, " ", 2), ":", 1
             ).label("chapter"),
-            TextProportionsTable.word_proportions,
-            TextProportionsTable.char_proportions,
-            TextProportionsTable.word_proportions_z,
-            TextProportionsTable.char_proportions_z,
-        ).where(TextProportionsTable.assessment_id == assessment_id)
+            TextLengthsTable.word_lengths,
+            TextLengthsTable.char_lengths,
+            TextLengthsTable.word_lengths_z,
+            TextLengthsTable.char_lengths_z,
+        ).where(TextLengthsTable.assessment_id == assessment_id)
 
         # Apply filters
         if book is not None:
             extraction_query = extraction_query.where(
-                TextProportionsTable.vref.ilike(f"{book}%")
+                TextLengthsTable.vref.ilike(f"{book}%")
             )
         if chapter is not None:
             extraction_query = extraction_query.where(
-                func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
+                func.split_part(TextLengthsTable.vref, " ", 2).like(f"{chapter}:%")
             )
         if verse is not None:
             extraction_query = extraction_query.where(
-                func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
+                func.split_part(TextLengthsTable.vref, ":", 2) == str(verse)
             )
 
         subquery = extraction_query.subquery()
@@ -336,10 +336,10 @@ async def build_text_proportions_query(
                 subquery.c.assessment_id,
                 subquery.c.book,
                 subquery.c.chapter,
-                func.avg(subquery.c.word_proportions).label("word_proportions"),
-                func.avg(subquery.c.char_proportions).label("char_proportions"),
-                func.avg(subquery.c.word_proportions_z).label("word_proportions_z"),
-                func.avg(subquery.c.char_proportions_z).label("char_proportions_z"),
+                func.avg(subquery.c.word_lengths).label("word_lengths"),
+                func.avg(subquery.c.char_lengths).label("char_lengths"),
+                func.avg(subquery.c.word_lengths_z).label("word_lengths_z"),
+                func.avg(subquery.c.char_lengths_z).label("char_lengths_z"),
             )
             .group_by(
                 subquery.c.assessment_id,
@@ -351,27 +351,27 @@ async def build_text_proportions_query(
     elif aggregate == aggType.book:
         # Create a different subquery that first extracts the book info
         extraction_query = select(
-            TextProportionsTable.id,
-            TextProportionsTable.assessment_id,
-            func.split_part(TextProportionsTable.vref, " ", 1).label("book"),
-            TextProportionsTable.word_proportions,
-            TextProportionsTable.char_proportions,
-            TextProportionsTable.word_proportions_z,
-            TextProportionsTable.char_proportions_z,
-        ).where(TextProportionsTable.assessment_id == assessment_id)
+            TextLengthsTable.id,
+            TextLengthsTable.assessment_id,
+            func.split_part(TextLengthsTable.vref, " ", 1).label("book"),
+            TextLengthsTable.word_lengths,
+            TextLengthsTable.char_lengths,
+            TextLengthsTable.word_lengths_z,
+            TextLengthsTable.char_lengths_z,
+        ).where(TextLengthsTable.assessment_id == assessment_id)
 
         # Apply filters
         if book is not None:
             extraction_query = extraction_query.where(
-                TextProportionsTable.vref.ilike(f"{book}%")
+                TextLengthsTable.vref.ilike(f"{book}%")
             )
         if chapter is not None:
             extraction_query = extraction_query.where(
-                func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
+                func.split_part(TextLengthsTable.vref, " ", 2).like(f"{chapter}:%")
             )
         if verse is not None:
             extraction_query = extraction_query.where(
-                func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
+                func.split_part(TextLengthsTable.vref, ":", 2) == str(verse)
             )
 
         subquery = extraction_query.subquery()
@@ -381,10 +381,10 @@ async def build_text_proportions_query(
                 func.min(subquery.c.id).label("id"),
                 subquery.c.assessment_id,
                 subquery.c.book,
-                func.avg(subquery.c.word_proportions).label("word_proportions"),
-                func.avg(subquery.c.char_proportions).label("char_proportions"),
-                func.avg(subquery.c.word_proportions_z).label("word_proportions_z"),
-                func.avg(subquery.c.char_proportions_z).label("char_proportions_z"),
+                func.avg(subquery.c.word_lengths).label("word_lengths"),
+                func.avg(subquery.c.char_lengths).label("char_lengths"),
+                func.avg(subquery.c.word_lengths_z).label("word_lengths_z"),
+                func.avg(subquery.c.char_lengths_z).label("char_lengths_z"),
             )
             .group_by(
                 subquery.c.assessment_id,
@@ -399,17 +399,17 @@ async def build_text_proportions_query(
             select(
                 func.min(original_subquery.c.id).label("id"),
                 original_subquery.c.assessment_id,
-                func.avg(original_subquery.c.word_proportions).label(
-                    "word_proportions"
+                func.avg(original_subquery.c.word_lengths).label(
+                    "word_lengths"
                 ),
-                func.avg(original_subquery.c.char_proportions).label(
-                    "char_proportions"
+                func.avg(original_subquery.c.char_lengths).label(
+                    "char_lengths"
                 ),
-                func.avg(original_subquery.c.word_proportions_z).label(
-                    "word_proportions_z"
+                func.avg(original_subquery.c.word_lengths_z).label(
+                    "word_lengths_z"
                 ),
-                func.avg(original_subquery.c.char_proportions_z).label(
-                    "char_proportions_z"
+                func.avg(original_subquery.c.char_lengths_z).label(
+                    "char_lengths_z"
                 ),
             )
             .group_by(original_subquery.c.assessment_id)
@@ -423,17 +423,17 @@ async def build_text_proportions_query(
                 func.min(original_subquery.c.id).label("id"),
                 original_subquery.c.assessment_id,
                 original_subquery.c.vref,
-                func.avg(original_subquery.c.word_proportions).label(
-                    "word_proportions"
+                func.avg(original_subquery.c.word_lengths).label(
+                    "word_lengths"
                 ),
-                func.avg(original_subquery.c.char_proportions).label(
-                    "char_proportions"
+                func.avg(original_subquery.c.char_lengths).label(
+                    "char_lengths"
                 ),
-                func.avg(original_subquery.c.word_proportions_z).label(
-                    "word_proportions_z"
+                func.avg(original_subquery.c.word_lengths_z).label(
+                    "word_lengths_z"
                 ),
-                func.avg(original_subquery.c.char_proportions_z).label(
-                    "char_proportions_z"
+                func.avg(original_subquery.c.char_lengths_z).label(
+                    "char_lengths_z"
                 ),
             )
             .group_by(
@@ -450,40 +450,40 @@ async def build_text_proportions_query(
     # Build count query (same pattern as /result endpoint)
     count_query = (
         select(func.count())
-        .select_from(TextProportionsTable)
-        .where(TextProportionsTable.assessment_id == assessment_id)
+        .select_from(TextLengthsTable)
+        .where(TextLengthsTable.assessment_id == assessment_id)
     )
     if book is not None:
-        count_query = count_query.where(TextProportionsTable.vref.ilike(f"{book}%"))
+        count_query = count_query.where(TextLengthsTable.vref.ilike(f"{book}%"))
     if chapter is not None:
         count_query = count_query.where(
-            func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
+            func.split_part(TextLengthsTable.vref, " ", 2).like(f"{chapter}:%")
         )
     if verse is not None:
         count_query = count_query.where(
-            func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
+            func.split_part(TextLengthsTable.vref, ":", 2) == str(verse)
         )
 
     # For aggregated results, count distinct groups (same pattern as /result endpoint)
     if aggregate == aggType.chapter:
         count_subquery = count_query.group_by(
-            TextProportionsTable.assessment_id,
-            func.split_part(TextProportionsTable.vref, " ", 1),
-            func.split_part(func.split_part(TextProportionsTable.vref, " ", 2), ":", 1),
+            TextLengthsTable.assessment_id,
+            func.split_part(TextLengthsTable.vref, " ", 1),
+            func.split_part(func.split_part(TextLengthsTable.vref, " ", 2), ":", 1),
         ).subquery()
     elif aggregate == aggType.book:
         count_subquery = count_query.group_by(
-            TextProportionsTable.assessment_id,
-            func.split_part(TextProportionsTable.vref, " ", 1),
+            TextLengthsTable.assessment_id,
+            func.split_part(TextLengthsTable.vref, " ", 1),
         ).subquery()
     elif aggregate == aggType.text:
         count_subquery = count_query.group_by(
-            TextProportionsTable.assessment_id,
+            TextLengthsTable.assessment_id,
         ).subquery()
     else:
         count_subquery = count_query.group_by(
-            TextProportionsTable.assessment_id,
-            TextProportionsTable.vref,
+            TextLengthsTable.assessment_id,
+            TextLengthsTable.vref,
         ).subquery()
 
     final_count_query = select(func.count()).select_from(count_subquery)
@@ -701,10 +701,10 @@ async def get_ngrams_result(
 
 
 @router.get(
-    "/text_proportions_result",
-    response_model=Dict[str, Union[List[TextProportionsResult], int]],
+    "/text_lengths_result",
+    response_model=Dict[str, Union[List[TextLengthsResult], int]],
 )
-async def get_text_proportions(
+async def get_text_lengths(
     assessment_id: int,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
@@ -716,7 +716,7 @@ async def get_text_proportions(
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Returns text proportions (word and character proportions and z-scores) for a given assessment.
+    Returns text lengths (word and character lengths and z-scores) for a given assessment.
 
     Parameters
     ----------
@@ -740,7 +740,7 @@ async def get_text_proportions(
 
     Returns
     -------
-    Dict[str, Union[List[TextProportionsResult], int]]
+    Dict[str, Union[List[TextLengthsResult], int]]
         A dictionary containing the list of results and the total count of results.
     """
 
@@ -752,7 +752,7 @@ async def get_text_proportions(
             detail="User not authorized to see this assessment",
         )
 
-    query, count_query = await build_text_proportions_query(
+    query, count_query = await build_text_lengths_query(
         assessment_id, book, chapter, verse, page, page_size, aggregate
     )
 
@@ -782,30 +782,30 @@ async def get_text_proportions(
         else:
             vref = getattr(row, "vref", None)
 
-        result_obj = TextProportionsResult(
+        result_obj = TextLengthsResult(
             id=row.id if hasattr(row, "id") else None,
             assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
             vref=vref,
-            word_proportions=(
-                int(row.word_proportions)
-                if hasattr(row, "word_proportions") and row.word_proportions is not None
+            word_lengths=(
+                int(row.word_lengths)
+                if hasattr(row, "word_lengths") and row.word_lengths is not None
                 else None
             ),
-            char_proportions=(
-                int(row.char_proportions)
-                if hasattr(row, "char_proportions") and row.char_proportions is not None
+            char_lengths=(
+                int(row.char_lengths)
+                if hasattr(row, "char_lengths") and row.char_lengths is not None
                 else None
             ),
-            word_proportions_z=(
-                float(row.word_proportions_z)
-                if hasattr(row, "word_proportions_z")
-                and row.word_proportions_z is not None
+            word_lengths_z=(
+                float(row.word_lengths_z)
+                if hasattr(row, "word_lengths_z")
+                and row.word_lengths_z is not None
                 else None
             ),
-            char_proportions_z=(
-                float(row.char_proportions_z)
-                if hasattr(row, "char_proportions_z")
-                and row.char_proportions_z is not None
+            char_lengths_z=(
+                float(row.char_lengths_z)
+                if hasattr(row, "char_lengths_z")
+                and row.char_lengths_z is not None
                 else None
             ),
         )

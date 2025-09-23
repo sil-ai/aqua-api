@@ -392,14 +392,14 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_table(
-        "text_proportions_table",
+        "text_lengths_table",
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("assessment_id", sa.Integer(), nullable=True),
         sa.Column("vref", sa.Text(), nullable=True),
-        sa.Column("word_proportions", sa.Numeric(), nullable=True),
-        sa.Column("char_proportions", sa.Numeric(), nullable=True),
-        sa.Column("word_proportions_z", sa.Numeric(), nullable=True),
-        sa.Column("char_proportions_z", sa.Numeric(), nullable=True),
+        sa.Column("word_lengths", sa.Numeric(), nullable=True),
+        sa.Column("char_lengths", sa.Numeric(), nullable=True),
+        sa.Column("word_lengths_z", sa.Numeric(), nullable=True),
+        sa.Column("char_lengths_z", sa.Numeric(), nullable=True),
         sa.ForeignKeyConstraint(
             ["assessment_id"],
             ["assessment.id"],
@@ -411,14 +411,14 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
-        op.f("ix_text_proportions_table_assessment_id"),
-        "text_proportions_table",
+        op.f("ix_text_lengths_table_assessment_id"),
+        "text_lengths_table",
         ["assessment_id"],
         unique=False,
     )
     op.create_index(
-        op.f("ix_text_proportions_table_vref"),
-        "text_proportions_table",
+        op.f("ix_text_lengths_table_vref"),
+        "text_lengths_table",
         ["vref"],
         unique=False,
     )
@@ -490,13 +490,13 @@ def downgrade() -> None:
     )
     op.drop_table("tfidf_pca_vector")
     op.drop_index(
-        op.f("ix_text_proportions_table_vref"), table_name="text_proportions_table"
+        op.f("ix_text_lengths_table_vref"), table_name="text_lengths_table"
     )
     op.drop_index(
-        op.f("ix_text_proportions_table_assessment_id"),
-        table_name="text_proportions_table",
+        op.f("ix_text_lengths_table_assessment_id"),
+        table_name="text_lengths_table",
     )
-    op.drop_table("text_proportions_table")
+    op.drop_table("text_lengths_table")
     op.drop_table("ngrams_table")
     op.drop_index("idx_book_chapter_verse", table_name="assessment_result")
     op.drop_index("idx_assessment_result_main", table_name="assessment_result")
