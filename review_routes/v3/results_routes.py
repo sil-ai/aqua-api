@@ -399,18 +399,10 @@ async def build_text_lengths_query(
             select(
                 func.min(original_subquery.c.id).label("id"),
                 original_subquery.c.assessment_id,
-                func.avg(original_subquery.c.word_lengths).label(
-                    "word_lengths"
-                ),
-                func.avg(original_subquery.c.char_lengths).label(
-                    "char_lengths"
-                ),
-                func.avg(original_subquery.c.word_lengths_z).label(
-                    "word_lengths_z"
-                ),
-                func.avg(original_subquery.c.char_lengths_z).label(
-                    "char_lengths_z"
-                ),
+                func.avg(original_subquery.c.word_lengths).label("word_lengths"),
+                func.avg(original_subquery.c.char_lengths).label("char_lengths"),
+                func.avg(original_subquery.c.word_lengths_z).label("word_lengths_z"),
+                func.avg(original_subquery.c.char_lengths_z).label("char_lengths_z"),
             )
             .group_by(original_subquery.c.assessment_id)
             .order_by("id")
@@ -423,18 +415,10 @@ async def build_text_lengths_query(
                 func.min(original_subquery.c.id).label("id"),
                 original_subquery.c.assessment_id,
                 original_subquery.c.vref,
-                func.avg(original_subquery.c.word_lengths).label(
-                    "word_lengths"
-                ),
-                func.avg(original_subquery.c.char_lengths).label(
-                    "char_lengths"
-                ),
-                func.avg(original_subquery.c.word_lengths_z).label(
-                    "word_lengths_z"
-                ),
-                func.avg(original_subquery.c.char_lengths_z).label(
-                    "char_lengths_z"
-                ),
+                func.avg(original_subquery.c.word_lengths).label("word_lengths"),
+                func.avg(original_subquery.c.char_lengths).label("char_lengths"),
+                func.avg(original_subquery.c.word_lengths_z).label("word_lengths_z"),
+                func.avg(original_subquery.c.char_lengths_z).label("char_lengths_z"),
             )
             .group_by(
                 original_subquery.c.assessment_id,
@@ -798,14 +782,12 @@ async def get_text_lengths(
             ),
             word_lengths_z=(
                 float(row.word_lengths_z)
-                if hasattr(row, "word_lengths_z")
-                and row.word_lengths_z is not None
+                if hasattr(row, "word_lengths_z") and row.word_lengths_z is not None
                 else None
             ),
             char_lengths_z=(
                 float(row.char_lengths_z)
-                if hasattr(row, "char_lengths_z")
-                and row.char_lengths_z is not None
+                if hasattr(row, "char_lengths_z") and row.char_lengths_z is not None
                 else None
             ),
         )
