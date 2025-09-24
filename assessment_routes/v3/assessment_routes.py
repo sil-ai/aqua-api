@@ -56,7 +56,7 @@ async def get_assessments(
     - translation-similarity (requires reference)
     - ngrams
     - tfidf
-    - text-proportions (requires reference)
+    - text-lengths (requires reference)
 
 
     Returns:
@@ -190,7 +190,7 @@ async def add_assessment(
     - translation-similarity (requires reference)
     - ngrams
     - tfidf
-    - text-proportions (requires reference)
+    - text-lengths (requires reference)
 
     For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
 
@@ -219,7 +219,7 @@ async def add_assessment(
     Description: The unique identifier for the owner of the assessment.
     """
     if (
-        a.type in ["semantic-similarity", "word-alignment", "text-proportions"]
+        a.type in ["semantic-similarity", "word-alignment", "text-lengths"]
         and a.reference_id is None
     ):
         raise HTTPException(
