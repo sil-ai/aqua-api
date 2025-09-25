@@ -100,16 +100,16 @@ class TfidfPcaVector(Base):
     )
 
 
-class TextProportionsTable(Base):
-    __tablename__ = "text_proportions_table"
+class TextLengthsTable(Base):
+    __tablename__ = "text_lengths_table"
 
     id = Column(Integer, primary_key=True)
     assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
-    word_proportions = Column(Numeric)
-    char_proportions = Column(Numeric)
-    word_proportions_z = Column(Numeric)
-    char_proportions_z = Column(Numeric)
+    word_lengths = Column(Numeric)
+    char_lengths = Column(Numeric)
+    word_lengths_z = Column(Numeric)
+    char_lengths_z = Column(Numeric)
 
 
 class Assessment(Base):
