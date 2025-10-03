@@ -771,12 +771,20 @@ async def get_text_lengths(
             assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
             vref=vref,
             word_lengths=(
-                float((int(row.word_lengths)) if aggregate is None else float(row.word_lengths))
+                float(
+                    (int(row.word_lengths))
+                    if aggregate is None
+                    else float(row.word_lengths)
+                )
                 if hasattr(row, "word_lengths") and row.word_lengths is not None
                 else None
             ),
             char_lengths=(
-                float((int(row.char_lengths)) if aggregate is None else float(row.char_lengths))
+                float(
+                    (int(row.char_lengths))
+                    if aggregate is None
+                    else float(row.char_lengths)
+                )
                 if hasattr(row, "char_lengths") and row.char_lengths is not None
                 else None
             ),
