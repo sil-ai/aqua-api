@@ -464,3 +464,113 @@ def test_search_with_admin_token(client, admin_token, test_db_session):
     assert "results" in response_data
     assert "total_count" in response_data
     assert response_data["total_count"] > 0, "Expected to find verses containing 'God'"
+
+
+def test_search_multi_word_phrase(client, regular_token1, test_db_session):
+    """Test search with multi-word phrases."""
+    main_revision_id, _ = setup_search_test_data(test_db_session)
+
+    # Test a two-word phrase that appears in our test data
+    params = {
+        "revision_id": main_revision_id,
+        "term": "the beginning",
+        "limit": 10,
+    }
+
+    response = client.get(
+        "/v3/textsearch",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    assert "results" in response_data
+    assert (
+        response_data["total_count"] > 0
+    ), "Expected to find verses containing 'the beginning'"
+
+    # Verify the phrase appears in the results
+    result = response_data["results"][0]
+    assert "the beginning" in result["main_text"].lower()
+
+    # Test a longer phrase
+    params["term"] = "only begotten Son"
+    response = client.get(
+        "/v3/textsearch",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+    assert (
+        response_data["total_count"] > 0
+    ), "Expected to find verses containing 'only begotten Son'"
+
+    result = response_data["results"][0]
+    assert "only begotten son" in result["main_text"].lower()
+
+
+def test_search_no_subword_matches(client, regular_token1, test_db_session):
+    """Test that subword matches are NOT returned (only whole word matches)."""
+    main_revision_id, _ = setup_search_test_data(test_db_session)
+
+    # Search for "ear" which appears as part of "earth" but not as a standalone word
+    params = {
+        "revision_id": main_revision_id,
+        "term": "ear",
+        "limit": 10,
+    }
+
+    response = client.get(
+        "/v3/textsearch",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # "ear" should not match "earth" - should return 0 results
+    assert (
+        response_data["total_count"] == 0
+    ), "Expected no results for 'ear' (should not match 'earth')"
+
+    # Search for "son" which appears in "Son" but also could be in other words
+    # We have "Son" as a whole word, so this should match
+    params["term"] = "Son"
+    response = client.get(
+        "/v3/textsearch",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+    assert response_data["total_count"] > 0, "Expected to find 'Son' as a whole word"
+
+    # Search for "love" which appears in "loved" - should still match as whole word "love" exists
+    params["term"] = "love"
+    response = client.get(
+        "/v3/textsearch",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # We have both "love" and "loved" in our text, so results should be found
+    assert response_data["total_count"] > 0, "Expected to find verses containing 'love'"
+
+    # Verify that all results contain "love" as a whole word
+    import re
+
+    for result in response_data["results"]:
+        text_lower = result["main_text"].lower()
+        pattern = r"\blove\b"
+        assert re.search(
+            pattern, text_lower
+        ), f"'love' not found as whole word in: {result['main_text']}"
