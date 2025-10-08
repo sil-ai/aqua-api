@@ -30,7 +30,7 @@ from database.models import UserDB as UserModel
 from database.models import (
     VerseText,
 )
-from models import MultipleResult, NgramResult
+from models import AlignmentMatch, MultipleResult, NgramResult
 from models import Result_v2 as Result
 from models import TextLengthsResult, TfidfResult, WordAlignment
 from security_routes.auth_routes import get_current_user
@@ -1746,6 +1746,170 @@ async def get_word_alignments(
             score=result.score,
         )
         for result in alignment_data
+    ]
+
+    return {"results": result_list, "total_count": len(result_list)}
+
+
+@router.get(
+    "/textalignmentmatches", response_model=Dict[str, Union[List[AlignmentMatch], int]]
+)
+async def get_text_alignment_matches(
+    revision_id: int,
+    reference_id: int,
+    top_k: int = 3,
+    min_support: float = 20.0,
+    min_probability: float = 0.4,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Returns aggregated alignment statistics across the entire text for a word alignment assessment.
+
+    This endpoint provides a summary of the top alignment matches for each source word,
+    ranked by probability and including various strength metrics.
+
+    Parameters
+    ----------
+    revision_id : int
+        The ID of the revision to get results for.
+    reference_id : int
+        The ID of the reference to get results for.
+    top_k : int, optional
+        The maximum number of top target words to return per source word (default: 3).
+    min_support : float, optional
+        Minimum support mass threshold to include a source word (default: 20.0).
+    min_probability : float, optional
+        Minimum probability threshold to include an alignment (default: 0.4).
+
+    Returns
+    -------
+    Dict[str, Union[List[AlignmentMatch], int]]
+        A dictionary containing the list of alignment matches and the total count.
+
+    Notes
+    -----
+    The results include several strength metrics:
+    - strength_mass: Expected alignment mass (probability * support_mass)
+    - strength_margin_mass: Margin over next best match, weighted by support
+    - strength_confidence: Confidence based on entropy and support
+    """
+    # Get the latest finished word-alignment assessment for the given revision and reference
+    assessment_result = await db.execute(
+        select(Assessment)
+        .filter(
+            Assessment.revision_id == revision_id,
+            Assessment.reference_id == reference_id,
+            Assessment.type == "word-alignment",
+            Assessment.status == "finished",
+        )
+        .order_by(Assessment.end_time.desc())
+    )
+    assessment = assessment_result.scalars().first()
+
+    if not assessment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed word-alignment assessment found for the given revision_id and reference_id",
+        )
+
+    assessment_id = assessment.id
+
+    # Authorization check
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )  # Build the SQL query with the provided parameters
+    query = text(
+        """
+        WITH c AS (
+          SELECT source, target, SUM(score) AS s, COUNT(*) AS n
+          FROM alignment_top_source_scores
+          WHERE assessment_id = :assessment_id
+          GROUP BY source, target
+        ),
+        z AS (
+          SELECT source,
+                 SUM(s)  AS s_sum,     -- total alignment mass for this source
+                 SUM(n)  AS n_sum      -- total hit count for this source
+          FROM c GROUP BY source
+        ),
+        p AS (
+          SELECT c.source, c.target, c.s, c.n, z.s_sum, z.n_sum,
+                 c.s / NULLIF(z.s_sum,0) AS p
+          FROM c JOIN z USING (source)
+        ),
+        ranked AS (
+          SELECT *,
+                 ROW_NUMBER() OVER (PARTITION BY source ORDER BY p DESC) AS r,
+                 LEAD(p, 1, 0) OVER (PARTITION BY source ORDER BY p DESC) AS p2,
+                 -- entropy over targets for this source
+                 SUM( CASE WHEN p>0 THEN -p*LN(p) ELSE 0 END )
+                   OVER (PARTITION BY source) AS H,
+                 COUNT(*) OVER (PARTITION BY source) AS k
+          FROM p
+        )
+        SELECT
+          source AS source_word,
+          target AS target_word,
+          r AS rank,
+          p AS probability,
+          s_sum AS support_mass,
+          n_sum AS support_hits,
+          -- 1) Expected mass: favors high p and many observations
+          (p * s_sum)                              AS strength_mass,
+          -- 2) Margin * support: favors clear winners with many obs
+          ((p - COALESCE(p2,0)) * s_sum)           AS strength_margin_mass,
+          -- 3) Confidence from (1 - normalized entropy) * log support
+          ((1 - (H / NULLIF(LN(NULLIF(k,1)),0))) * LN(1 + s_sum)) AS strength_confidence
+        FROM ranked
+        WHERE r <= :top_k           -- keep top-k per source
+          AND s_sum >= :min_support -- filter very low-support sources
+          AND p > :min_probability
+        ORDER BY p DESC
+    """
+    )
+
+    # Execute the query
+    result = await db.execute(
+        query,
+        {
+            "assessment_id": assessment_id,
+            "top_k": top_k,
+            "min_support": min_support,
+            "min_probability": min_probability,
+        },
+    )
+
+    result_data = result.fetchall()
+
+    # Build the result list
+    result_list = [
+        AlignmentMatch(
+            source_word=row.source_word,
+            target_word=row.target_word,
+            rank=row.rank,
+            probability=float(row.probability) if row.probability is not None else 0.0,
+            support_mass=(
+                float(row.support_mass) if row.support_mass is not None else 0.0
+            ),
+            support_hits=int(row.support_hits) if row.support_hits is not None else 0,
+            strength_mass=(
+                float(row.strength_mass) if row.strength_mass is not None else 0.0
+            ),
+            strength_margin_mass=(
+                float(row.strength_margin_mass)
+                if row.strength_margin_mass is not None
+                else 0.0
+            ),
+            strength_confidence=(
+                float(row.strength_confidence)
+                if row.strength_confidence is not None
+                else 0.0
+            ),
+        )
+        for row in result_data
     ]
 
     return {"results": result_list, "total_count": len(result_list)}
