@@ -352,6 +352,18 @@ class WordAlignment(BaseModel):
     reference_text: Optional[str] = None
 
 
+class AlignmentMatch(BaseModel):
+    source_word: str
+    target_word: str
+    rank: int
+    probability: float
+    support_mass: float
+    support_hits: int
+    strength_mass: float
+    strength_margin_mass: float
+    strength_confidence: float
+
+
 class Language(BaseModel):
     iso639: str
     name: str
