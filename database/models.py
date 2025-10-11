@@ -64,7 +64,7 @@ class NgramsTable(Base):
     __tablename__ = "ngrams_table"
 
     id = Column(Integer, primary_key=True)
-    assessment_id = Column(Integer, ForeignKey("assessment.id"))
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
     ngram = Column(Text)
     ngram_size = Column(Integer)
 
@@ -75,7 +75,7 @@ class NgramVrefTable(Base):
     __tablename__ = "ngram_vref_table"
 
     id = Column(Integer, primary_key=True)
-    ngram_id = Column(Integer, ForeignKey("ngrams_table.id"))
+    ngram_id = Column(Integer, ForeignKey("ngrams_table.id"), index=True)
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"))
 
     ngram = relationship("NgramsTable", back_populates="vrefs")
@@ -89,17 +89,27 @@ class TfidfPcaVector(Base):
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
     vector = Column(Vector(300))  # Dense vector of fixed length
 
+    __table_args__ = (
+        Index(
+            "tfidf_pca_vector_ivfflat_idx",
+            "vector",
+            postgresql_using="ivfflat",
+            postgresql_ops={"vector": "vector_ip_ops"},
+            postgresql_with={"lists": "100"},
+        ),
+    )
 
-class TextProportionsTable(Base):
-    __tablename__ = "text_proportions_table"
+
+class TextLengthsTable(Base):
+    __tablename__ = "text_lengths_table"
 
     id = Column(Integer, primary_key=True)
     assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"), index=True)
-    word_proportions = Column(Numeric)
-    char_proportions = Column(Numeric)
-    word_proportions_z = Column(Numeric)
-    char_proportions_z = Column(Numeric)
+    word_lengths = Column(Numeric)
+    char_lengths = Column(Numeric)
+    word_lengths_z = Column(Numeric)
+    char_lengths_z = Column(Numeric)
 
 
 class Assessment(Base):

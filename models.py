@@ -197,7 +197,7 @@ class AssessmentType(Enum):
     model_config = ConfigDict(from_attributes=True)
     ngrams = "ngrams"
     tfidf = "tfidf"
-    text_proportions = "text-proportions"
+    text_lengths = "text-lengths"
 
 
 class AssessmentIn(BaseModel):
@@ -313,14 +313,14 @@ class NgramResult(BaseModel):
     vrefs: List[str]  # ✅ Store multiple verse references for the n-gram
 
 
-class TextProportionsResult(BaseModel):
+class TextLengthsResult(BaseModel):
     id: Optional[int] = None
     assessment_id: Optional[int] = None
     vref: Optional[str] = None
-    word_proportions: float
-    char_proportions: float
-    word_proportions_z: float
-    char_proportions_z: float
+    word_lengths: float
+    char_lengths: float
+    word_lengths_z: float
+    char_lengths_z: float
 
 
 class TfidfResult(BaseModel):
@@ -328,6 +328,8 @@ class TfidfResult(BaseModel):
     assessment_id: Optional[int] = None
     vref: Optional[str] = None
     similarity: float  # or cosine_distance: float
+    revision_text: Optional[str] = None
+    reference_text: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
@@ -348,6 +350,18 @@ class WordAlignment(BaseModel):
     hide: bool = False
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
+
+
+class AlignmentMatch(BaseModel):
+    source_word: str
+    target_word: str
+    rank: int
+    probability: float
+    support_mass: float
+    support_hits: int
+    strength_mass: float
+    strength_margin_mass: float
+    strength_confidence: float
 
 
 class Language(BaseModel):

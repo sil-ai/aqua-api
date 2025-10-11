@@ -7,9 +7,10 @@ import time
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
+import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Text, case, func
+from sqlalchemy import Float, Text, case, cast, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
@@ -22,16 +23,16 @@ from database.models import (
     BibleRevision,
     NgramsTable,
     NgramVrefTable,
-    TextProportionsTable,
+    TextLengthsTable,
     TfidfPcaVector,
 )
 from database.models import UserDB as UserModel
 from database.models import (
     VerseText,
 )
-from models import MultipleResult, NgramResult
+from models import AlignmentMatch, MultipleResult, NgramResult
 from models import Result_v2 as Result
-from models import TextProportionsResult, TfidfResult, WordAlignment
+from models import TextLengthsResult, TfidfResult, WordAlignment
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 
@@ -52,6 +53,8 @@ async def validate_parameters(
     chapter: Optional[int],
     verse: Optional[int],
     aggregate: Optional[aggType] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
 ):
     if book and len(book) > 3:
         raise HTTPException(
@@ -93,6 +96,14 @@ async def validate_parameters(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="If aggregate is 'text', book, chapter, and verse must not be set.",
+        )
+
+    if (page is not None and page_size is None) or (
+        page is None and page_size is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both 'page' and 'page_size' must be provided together for pagination.",
         )
 
 
@@ -259,7 +270,7 @@ async def build_ngrams_query(
     return base_query, count_query
 
 
-async def build_text_proportions_query(
+async def build_text_lengths_query(
     assessment_id: int,
     book: Optional[str],
     chapter: Optional[int],
@@ -268,96 +279,231 @@ async def build_text_proportions_query(
     page_size: Optional[int],
     aggregate: Optional[aggType],
 ) -> Tuple:
-    base_query = select(TextProportionsTable).where(
-        TextProportionsTable.assessment_id == assessment_id
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
+
+    # Initialize the base query
+    base_query = select(TextLengthsTable).where(
+        TextLengthsTable.assessment_id == assessment_id
     )
 
+    # Apply filters based on optional parameters
     if book is not None:
-        base_query = base_query.where(TextProportionsTable.vref.ilike(f"{book}%"))
+        base_query = base_query.where(TextLengthsTable.vref.ilike(f"{book}%"))
     if chapter is not None:
         base_query = base_query.where(
-            func.split_part(TextProportionsTable.vref, " ", 2).like(f"{chapter}:%")
+            func.split_part(TextLengthsTable.vref, " ", 2).like(f"{chapter}:%")
         )
     if verse is not None:
         base_query = base_query.where(
-            func.split_part(TextProportionsTable.vref, ":", 2) == str(verse)
+            func.split_part(TextLengthsTable.vref, ":", 2) == str(verse)
         )
 
+    # Determine grouping based on aggregation type (same as /result endpoint)
     if aggregate == aggType.chapter:
-        group_by = [
-            func.split_part(TextProportionsTable.vref, " ", 1).label("book"),  # book
+        # Create a different subquery that first extracts the book and chapter info
+        extraction_query = select(
+            TextLengthsTable.id,
+            TextLengthsTable.assessment_id,
+            func.split_part(TextLengthsTable.vref, " ", 1).label("book"),
             func.split_part(
-                func.split_part(TextProportionsTable.vref, " ", 2), ":", 1
+                func.split_part(TextLengthsTable.vref, " ", 2), ":", 1
             ).label("chapter"),
-        ]  # chapter
-    elif aggregate == aggType.book:
-        group_by = [func.split_part(TextProportionsTable.vref, " ", 1)]
-    elif aggregate == aggType.text:
-        group_by = []
-    else:
-        group_by = [TextProportionsTable.vref]
+            TextLengthsTable.word_lengths,
+            TextLengthsTable.char_lengths,
+            TextLengthsTable.word_lengths_z,
+            TextLengthsTable.char_lengths_z,
+        ).where(TextLengthsTable.assessment_id == assessment_id)
 
-    select_fields = [
-        func.min(TextProportionsTable.id).label("id"),
-        TextProportionsTable.assessment_id,
-        func.avg(TextProportionsTable.word_proportions).label("word_proportions"),
-        func.avg(TextProportionsTable.char_proportions).label("char_proportions"),
-        func.avg(TextProportionsTable.word_proportions_z).label("word_proportions_z"),
-        func.avg(TextProportionsTable.char_proportions_z).label("char_proportions_z"),
-    ]
+        # Apply filters
+        if book is not None:
+            extraction_query = extraction_query.where(
+                TextLengthsTable.vref.ilike(f"{book}%")
+            )
+        if chapter is not None:
+            extraction_query = extraction_query.where(
+                func.split_part(TextLengthsTable.vref, " ", 2).like(f"{chapter}:%")
+            )
+        if verse is not None:
+            extraction_query = extraction_query.where(
+                func.split_part(TextLengthsTable.vref, ":", 2) == str(verse)
+            )
 
-    if group_by:
-        select_fields += group_by
-        base_query = select(*select_fields).group_by(*group_by).order_by(*group_by)
-    else:
-        base_query = select(*select_fields)
+        subquery = extraction_query.subquery()
 
-    if (page is not None and page_size is None) or (
-        page is None and page_size is not None
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Both 'page' and 'page_size' must be provided together for pagination.",
+        base_query = (
+            select(
+                func.min(subquery.c.id).label("id"),
+                subquery.c.assessment_id,
+                subquery.c.book,
+                subquery.c.chapter,
+                func.avg(subquery.c.word_lengths).label("word_lengths"),
+                func.avg(subquery.c.char_lengths).label("char_lengths"),
+                func.avg(subquery.c.word_lengths_z).label("word_lengths_z"),
+                func.avg(subquery.c.char_lengths_z).label("char_lengths_z"),
+            )
+            .group_by(
+                subquery.c.assessment_id,
+                subquery.c.book,
+                subquery.c.chapter,
+            )
+            .order_by("id")
         )
+    elif aggregate == aggType.book:
+        # Create a different subquery that first extracts the book info
+        extraction_query = select(
+            TextLengthsTable.id,
+            TextLengthsTable.assessment_id,
+            func.split_part(TextLengthsTable.vref, " ", 1).label("book"),
+            TextLengthsTable.word_lengths,
+            TextLengthsTable.char_lengths,
+            TextLengthsTable.word_lengths_z,
+            TextLengthsTable.char_lengths_z,
+        ).where(TextLengthsTable.assessment_id == assessment_id)
+
+        # Apply filters
+        if book is not None:
+            extraction_query = extraction_query.where(
+                TextLengthsTable.vref.ilike(f"{book}%")
+            )
+        if chapter is not None:
+            extraction_query = extraction_query.where(
+                func.split_part(TextLengthsTable.vref, " ", 2).like(f"{chapter}:%")
+            )
+        if verse is not None:
+            extraction_query = extraction_query.where(
+                func.split_part(TextLengthsTable.vref, ":", 2) == str(verse)
+            )
+
+        subquery = extraction_query.subquery()
+
+        base_query = (
+            select(
+                func.min(subquery.c.id).label("id"),
+                subquery.c.assessment_id,
+                subquery.c.book,
+                func.avg(subquery.c.word_lengths).label("word_lengths"),
+                func.avg(subquery.c.char_lengths).label("char_lengths"),
+                func.avg(subquery.c.word_lengths_z).label("word_lengths_z"),
+                func.avg(subquery.c.char_lengths_z).label("char_lengths_z"),
+            )
+            .group_by(
+                subquery.c.assessment_id,
+                subquery.c.book,
+            )
+            .order_by("id")
+        )
+    elif aggregate == aggType.text:
+        # For text aggregation, we still need the original subquery approach
+        original_subquery = base_query.subquery()
+        base_query = (
+            select(
+                func.min(original_subquery.c.id).label("id"),
+                original_subquery.c.assessment_id,
+                func.avg(original_subquery.c.word_lengths).label("word_lengths"),
+                func.avg(original_subquery.c.char_lengths).label("char_lengths"),
+                func.avg(original_subquery.c.word_lengths_z).label("word_lengths_z"),
+                func.avg(original_subquery.c.char_lengths_z).label("char_lengths_z"),
+            )
+            .group_by(original_subquery.c.assessment_id)
+            .order_by("id")
+        )
+    else:
+        # For no aggregation, we still need the original subquery approach
+        original_subquery = base_query.subquery()
+        base_query = (
+            select(
+                func.min(original_subquery.c.id).label("id"),
+                original_subquery.c.assessment_id,
+                original_subquery.c.vref,
+                func.avg(original_subquery.c.word_lengths).label("word_lengths"),
+                func.avg(original_subquery.c.char_lengths).label("char_lengths"),
+                func.avg(original_subquery.c.word_lengths_z).label("word_lengths_z"),
+                func.avg(original_subquery.c.char_lengths_z).label("char_lengths_z"),
+            )
+            .group_by(
+                original_subquery.c.assessment_id,
+                original_subquery.c.vref,
+            )
+            .order_by("id")
+        )
+
+    # Apply pagination (same as /result endpoint)
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
-    grouped_query = base_query.subquery()
-    count_query = select(func.count()).select_from(grouped_query)
+    # Build count query (same pattern as /result endpoint)
+    count_query = (
+        select(func.count())
+        .select_from(TextLengthsTable)
+        .where(TextLengthsTable.assessment_id == assessment_id)
+    )
+    if book is not None:
+        count_query = count_query.where(TextLengthsTable.vref.ilike(f"{book}%"))
+    if chapter is not None:
+        count_query = count_query.where(
+            func.split_part(TextLengthsTable.vref, " ", 2).like(f"{chapter}:%")
+        )
+    if verse is not None:
+        count_query = count_query.where(
+            func.split_part(TextLengthsTable.vref, ":", 2) == str(verse)
+        )
 
-    return base_query, count_query
+    # For aggregated results, count distinct groups (same pattern as /result endpoint)
+    if aggregate == aggType.chapter:
+        count_subquery = count_query.group_by(
+            TextLengthsTable.assessment_id,
+            func.split_part(TextLengthsTable.vref, " ", 1),
+            func.split_part(func.split_part(TextLengthsTable.vref, " ", 2), ":", 1),
+        ).subquery()
+    elif aggregate == aggType.book:
+        count_subquery = count_query.group_by(
+            TextLengthsTable.assessment_id,
+            func.split_part(TextLengthsTable.vref, " ", 1),
+        ).subquery()
+    elif aggregate == aggType.text:
+        count_subquery = count_query.group_by(
+            TextLengthsTable.assessment_id,
+        ).subquery()
+    else:
+        count_subquery = count_query.group_by(
+            TextLengthsTable.assessment_id,
+            TextLengthsTable.vref,
+        ).subquery()
+
+    final_count_query = select(func.count()).select_from(count_subquery)
+
+    return base_query, final_count_query
+
+
+def build_vector_literal(query_vector: np.ndarray) -> str:
+    return f"'[{','.join(f'{x:.6f}' for x in query_vector.tolist())}]'::vector"
 
 
 async def build_tfidf_similarity_query(
     assessment_id: int,
     vref: str,
+    query_vector: np.ndarray,
     limit: int = 10,
 ) -> Tuple:
-    # Subquery to get the query vector
-    query_vector_subq = (
-        select(TfidfPcaVector.vector)
-        .where(TfidfPcaVector.assessment_id == assessment_id)
-        .where(TfidfPcaVector.vref == vref)
-        .limit(1)
-        .scalar_subquery()
-    )
+    vector_str = build_vector_literal(query_vector)
 
-    similarity_expr = TfidfPcaVector.vector.op("<#>")(query_vector_subq).label(
-        "cosine_distance"
-    )
+    similarity_expr = cast(
+        text(f"inner_product(tfidf_pca_vector.vector, {vector_str})"), Float
+    ).label("cosine_similarity")
 
     base_query = (
         select(
+            TfidfPcaVector.id,
             TfidfPcaVector.vref,
             similarity_expr,
         )
         .where(TfidfPcaVector.assessment_id == assessment_id)
         .where(TfidfPcaVector.vref != vref)
-        .order_by(similarity_expr)
+        .order_by(similarity_expr.desc())
         .limit(limit)
     )
 
-    return base_query, None  # no count query needed
+    return base_query, None
 
 
 @router.get(
@@ -407,16 +553,18 @@ async def get_result(
     be included in the text being assessed.
     """
     start = time.perf_counter()
-    await validate_parameters(book, chapter, verse, aggregate)
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
     logger.info(f"⏱️ validate_parameters: {time.perf_counter() - start:.2f}s")
 
     start = time.perf_counter()
     authorized = await is_user_authorized_for_assessment(
         current_user.id, assessment_id, db
     )
+
     logger.info(
         f"⏱️ is_user_authorized_for_assessment: {time.perf_counter() - start:.2f}s"
     )
+
     if not authorized:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -470,7 +618,7 @@ async def get_result(
             hide=row.hide if hasattr(row, "hide") else None,
         )
         result_list.append(result_obj)
-    logger.info(f"⏱️ Result formatting: {time.perf_counter() - start:.2f}s")
+        logger.info(f"⏱️ Result formatting: {time.perf_counter() - start:.2f}s")
 
     return {"results": result_list, "total_count": total_count}
 
@@ -537,10 +685,10 @@ async def get_ngrams_result(
 
 
 @router.get(
-    "/text_proportions_result",
-    response_model=Dict[str, Union[List[TextProportionsResult], int]],
+    "/text_lengths_result",
+    response_model=Dict[str, Union[List[TextLengthsResult], int]],
 )
-async def get_text_proportions(
+async def get_text_lengths(
     assessment_id: int,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
@@ -552,7 +700,7 @@ async def get_text_proportions(
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Returns text proportions (word and character proportions and z-scores) for a given assessment.
+    Returns text lengths (word and character lengths and z-scores) for a given assessment.
 
     Parameters
     ----------
@@ -576,10 +724,11 @@ async def get_text_proportions(
 
     Returns
     -------
-    Dict[str, Union[List[TextProportionsResult], int]]
+    Dict[str, Union[List[TextLengthsResult], int]]
         A dictionary containing the list of results and the total count of results.
     """
-    await validate_parameters(book, chapter, verse, aggregate)
+
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -587,45 +736,66 @@ async def get_text_proportions(
             detail="User not authorized to see this assessment",
         )
 
-    query, count_query = await build_text_proportions_query(
+    query, count_query = await build_text_lengths_query(
         assessment_id, book, chapter, verse, page, page_size, aggregate
     )
 
-    result_data, total_count = await execute_query(query, count_query, db)
+    try:
+        result_data, total_count = await execute_query(query, count_query, db)
+    except Exception as e:
+        logger.error(f"Error executing query: {e}")
+        try:
+            compiled_query = str(query.compile(compile_kwargs={"literal_binds": True}))
+            logger.error(f"Compiled SQL: {compiled_query}")
+        except Exception as compile_error:
+            logger.error(f"Could not compile SQL for logging: {compile_error}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Error executing query",
+            )
 
     result_list = []
     for row in result_data:
         # Compose vref based on aggregation
         if aggregate == aggType.chapter:
-            vref = f"{row._mapping['book']} {row._mapping['chapter']}"
+            vref = f"{row.book} {row.chapter}"
         elif aggregate == aggType.book:
-            vref = f"{row._mapping['book']}"
+            vref = f"{row.book}"
         elif aggregate == aggType.text:
             vref = None
         else:
-            vref = row._mapping.get("vref", None)
-        result_obj = TextProportionsResult(
-            id=row._mapping["id"],
-            assessment_id=row._mapping["assessment_id"],
+            vref = getattr(row, "vref", None)
+
+        result_obj = TextLengthsResult(
+            id=row.id if hasattr(row, "id") else None,
+            assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
             vref=vref,
-            word_proportions=(
-                float(row._mapping["word_proportions"])
-                if row._mapping["word_proportions"] is not None
+            word_lengths=(
+                float(
+                    (int(row.word_lengths))
+                    if aggregate is None
+                    else float(row.word_lengths)
+                )
+                if hasattr(row, "word_lengths") and row.word_lengths is not None
                 else None
             ),
-            char_proportions=(
-                float(row._mapping["char_proportions"])
-                if row._mapping["char_proportions"] is not None
+            char_lengths=(
+                float(
+                    (int(row.char_lengths))
+                    if aggregate is None
+                    else float(row.char_lengths)
+                )
+                if hasattr(row, "char_lengths") and row.char_lengths is not None
                 else None
             ),
-            word_proportions_z=(
-                float(row._mapping["word_proportions_z"])
-                if row._mapping["word_proportions_z"] is not None
+            word_lengths_z=(
+                float(row.word_lengths_z)
+                if hasattr(row, "word_lengths_z") and row.word_lengths_z is not None
                 else None
             ),
-            char_proportions_z=(
-                float(row._mapping["char_proportions_z"])
-                if row._mapping["char_proportions_z"] is not None
+            char_lengths_z=(
+                float(row.char_lengths_z)
+                if hasattr(row, "char_lengths_z") and row.char_lengths_z is not None
                 else None
             ),
         )
@@ -642,6 +812,7 @@ async def get_tfidf_result(
     assessment_id: int,
     vref: str,
     limit: int = 10,
+    reference_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -656,6 +827,9 @@ async def get_tfidf_result(
         The verse reference to compare against.
     limit : int, optional
         The number of similar verses to return (default is 10).
+    reference_id : Optional[int]
+        Not used in the assessment, but optionally to also return the reference text
+        for the given vrefs.
 
     Returns
     -------
@@ -669,15 +843,72 @@ async def get_tfidf_result(
             detail="User not authorized to see this assessment",
         )
 
-    query, _ = await build_tfidf_similarity_query(assessment_id, vref, limit)
+    # Get the assessment details to find revision_id and reference_id
+    assessment = await db.scalar(
+        select(Assessment).where(Assessment.id == assessment_id).limit(1)
+    )
+
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assessment {assessment_id} not found",
+        )
+
+    query_vector = await db.scalar(
+        select(TfidfPcaVector.vector)
+        .where(TfidfPcaVector.assessment_id == assessment_id)
+        .where(TfidfPcaVector.vref == vref)
+        .limit(1)
+    )
+
+    if query_vector is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No TF-IDF vector found for vref {vref} in assessment {assessment_id}",
+        )
+
+    query, _ = await build_tfidf_similarity_query(
+        assessment_id, vref, query_vector, limit
+    )
+
     result_data = await db.execute(query)
     result_data = result_data.all()
 
+    # Get verse texts for all vrefs in the results
+    vrefs_to_fetch = [row.vref for row in result_data]
+
+    # Fetch revision texts
+    revision_texts = {}
+    if assessment.revision_id:
+        revision_text_query = select(VerseText.verse_reference, VerseText.text).where(
+            VerseText.revision_id == assessment.revision_id,
+            VerseText.verse_reference.in_(vrefs_to_fetch),
+        )
+        revision_text_results = await db.execute(revision_text_query)
+        revision_texts = {
+            row.verse_reference: row.text for row in revision_text_results.all()
+        }
+
+    # Fetch reference texts
+    reference_texts = {}
+    if reference_id:
+        reference_text_query = select(VerseText.verse_reference, VerseText.text).where(
+            VerseText.revision_id == reference_id,
+            VerseText.verse_reference.in_(vrefs_to_fetch),
+        )
+        reference_text_results = await db.execute(reference_text_query)
+        reference_texts = {
+            row.verse_reference: row.text for row in reference_text_results.all()
+        }
+
     result_list = [
         TfidfResult(
+            id=row.id,
             vref=row.vref,
-            similarity=float(row.cosine_distance),
+            similarity=float(row.cosine_similarity),
             assessment_id=assessment_id,
+            revision_text=revision_texts.get(row.vref),
+            reference_text=reference_texts.get(row.vref),
         )
         for row in result_data
     ]
@@ -1076,7 +1307,7 @@ async def get_compare_results(
         containing the score, average score and standard deviation for the baseline
         assessments, and z-score of the score with respect to this baseline average and standard deviation.
     """
-    await validate_parameters(book, chapter, verse, aggregate)
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     (
         main_assessments_query,
@@ -1210,7 +1441,7 @@ async def get_alignment_scores(
     Dict[str, Union[List[WordAlignment], int]]
         A dictionary containing the list of results and the total count of results.
     """
-    await validate_parameters(book, chapter, verse)
+    await validate_parameters(book, chapter, verse, None, page, page_size)
 
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -1515,6 +1746,170 @@ async def get_word_alignments(
             score=result.score,
         )
         for result in alignment_data
+    ]
+
+    return {"results": result_list, "total_count": len(result_list)}
+
+
+@router.get(
+    "/textalignmentmatches", response_model=Dict[str, Union[List[AlignmentMatch], int]]
+)
+async def get_text_alignment_matches(
+    revision_id: int,
+    reference_id: int,
+    top_k: int = 3,
+    min_support: float = 20.0,
+    min_probability: float = 0.4,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Returns aggregated alignment statistics across the entire text for a word alignment assessment.
+
+    This endpoint provides a summary of the top alignment matches for each source word,
+    ranked by probability and including various strength metrics.
+
+    Parameters
+    ----------
+    revision_id : int
+        The ID of the revision to get results for.
+    reference_id : int
+        The ID of the reference to get results for.
+    top_k : int, optional
+        The maximum number of top target words to return per source word (default: 3).
+    min_support : float, optional
+        Minimum support mass threshold to include a source word (default: 20.0).
+    min_probability : float, optional
+        Minimum probability threshold to include an alignment (default: 0.4).
+
+    Returns
+    -------
+    Dict[str, Union[List[AlignmentMatch], int]]
+        A dictionary containing the list of alignment matches and the total count.
+
+    Notes
+    -----
+    The results include several strength metrics:
+    - strength_mass: Expected alignment mass (probability * support_mass)
+    - strength_margin_mass: Margin over next best match, weighted by support
+    - strength_confidence: Confidence based on entropy and support
+    """
+    # Get the latest finished word-alignment assessment for the given revision and reference
+    assessment_result = await db.execute(
+        select(Assessment)
+        .filter(
+            Assessment.revision_id == revision_id,
+            Assessment.reference_id == reference_id,
+            Assessment.type == "word-alignment",
+            Assessment.status == "finished",
+        )
+        .order_by(Assessment.end_time.desc())
+    )
+    assessment = assessment_result.scalars().first()
+
+    if not assessment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed word-alignment assessment found for the given revision_id and reference_id",
+        )
+
+    assessment_id = assessment.id
+
+    # Authorization check
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )  # Build the SQL query with the provided parameters
+    query = text(
+        """
+        WITH c AS (
+          SELECT source, target, SUM(score) AS s, COUNT(*) AS n
+          FROM alignment_top_source_scores
+          WHERE assessment_id = :assessment_id
+          GROUP BY source, target
+        ),
+        z AS (
+          SELECT source,
+                 SUM(s)  AS s_sum,     -- total alignment mass for this source
+                 SUM(n)  AS n_sum      -- total hit count for this source
+          FROM c GROUP BY source
+        ),
+        p AS (
+          SELECT c.source, c.target, c.s, c.n, z.s_sum, z.n_sum,
+                 c.s / NULLIF(z.s_sum,0) AS p
+          FROM c JOIN z USING (source)
+        ),
+        ranked AS (
+          SELECT *,
+                 ROW_NUMBER() OVER (PARTITION BY source ORDER BY p DESC) AS r,
+                 LEAD(p, 1, 0) OVER (PARTITION BY source ORDER BY p DESC) AS p2,
+                 -- entropy over targets for this source
+                 SUM( CASE WHEN p>0 THEN -p*LN(p) ELSE 0 END )
+                   OVER (PARTITION BY source) AS H,
+                 COUNT(*) OVER (PARTITION BY source) AS k
+          FROM p
+        )
+        SELECT
+          source AS source_word,
+          target AS target_word,
+          r AS rank,
+          p AS probability,
+          s_sum AS support_mass,
+          n_sum AS support_hits,
+          -- 1) Expected mass: favors high p and many observations
+          (p * s_sum)                              AS strength_mass,
+          -- 2) Margin * support: favors clear winners with many obs
+          ((p - COALESCE(p2,0)) * s_sum)           AS strength_margin_mass,
+          -- 3) Confidence from (1 - normalized entropy) * log support
+          ((1 - (H / NULLIF(LN(NULLIF(k,1)),0))) * LN(1 + s_sum)) AS strength_confidence
+        FROM ranked
+        WHERE r <= :top_k           -- keep top-k per source
+          AND s_sum >= :min_support -- filter very low-support sources
+          AND p > :min_probability
+        ORDER BY p DESC
+    """
+    )
+
+    # Execute the query
+    result = await db.execute(
+        query,
+        {
+            "assessment_id": assessment_id,
+            "top_k": top_k,
+            "min_support": min_support,
+            "min_probability": min_probability,
+        },
+    )
+
+    result_data = result.fetchall()
+
+    # Build the result list
+    result_list = [
+        AlignmentMatch(
+            source_word=row.source_word,
+            target_word=row.target_word,
+            rank=row.rank,
+            probability=float(row.probability) if row.probability is not None else 0.0,
+            support_mass=(
+                float(row.support_mass) if row.support_mass is not None else 0.0
+            ),
+            support_hits=int(row.support_hits) if row.support_hits is not None else 0,
+            strength_mass=(
+                float(row.strength_mass) if row.strength_mass is not None else 0.0
+            ),
+            strength_margin_mass=(
+                float(row.strength_margin_mass)
+                if row.strength_margin_mass is not None
+                else 0.0
+            ),
+            strength_confidence=(
+                float(row.strength_confidence)
+                if row.strength_confidence is not None
+                else 0.0
+            ),
+        )
+        for row in result_data
     ]
 
     return {"results": result_list, "total_count": len(result_list)}
