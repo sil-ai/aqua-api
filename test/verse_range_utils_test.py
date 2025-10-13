@@ -2,8 +2,6 @@
 Tests for verse range merging utilities.
 """
 
-import pytest
-
 from utils.verse_range_utils import merge_verse_ranges
 
 
@@ -15,7 +13,7 @@ def test_basic_range_merge():
         {"vrefs": ["GAL 1:3"], "target_text": "Text 3", "source_text": "<range>"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     assert len(result) == 1
     assert result[0]["vrefs"] == ["GAL 1:1", "GAL 1:2", "GAL 1:3"]
@@ -32,7 +30,7 @@ def test_multiple_separate_ranges():
         {"vrefs": ["GAL 1:4"], "target_text": "<range>", "source_text": "Source 4"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     assert len(result) == 2
     # First range: verses 1-2
@@ -53,7 +51,7 @@ def test_no_ranges():
         {"vrefs": ["GAL 1:3"], "target_text": "Text 3", "source_text": "Source 3"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     assert len(result) == 3
     assert result[0]["vrefs"] == ["GAL 1:1"]
@@ -69,7 +67,7 @@ def test_range_at_beginning():
         {"vrefs": ["GAL 1:2"], "target_text": "Text 2", "source_text": "Source 2"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     assert len(result) == 2
     assert result[0]["vrefs"] == ["GAL 1:1"]
@@ -84,7 +82,7 @@ def test_range_at_end():
         {"vrefs": ["GAL 1:2"], "target_text": "<range>", "source_text": "<range>"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     assert len(result) == 1
     assert result[0]["vrefs"] == ["GAL 1:1", "GAL 1:2"]
@@ -97,7 +95,7 @@ def test_all_ranges():
         {"vrefs": ["GAL 1:2"], "target_text": "<range>", "source_text": "<range>"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     assert len(result) == 2
     assert result[0]["vrefs"] == ["GAL 1:1"]
@@ -114,7 +112,7 @@ def test_long_range():
         {"vrefs": ["GAL 1:5"], "target_text": "Text 5", "source_text": "<range>"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     assert len(result) == 1
     assert result[0]["vrefs"] == ["GAL 1:1", "GAL 1:2", "GAL 1:3", "GAL 1:4", "GAL 1:5"]
@@ -131,7 +129,7 @@ def test_asymmetric_ranges():
         {"vrefs": ["GAL 1:4"], "target_text": "Text 4", "source_text": "Source 4"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     # Verse 2 has <range> in target, so 1-2 merge
     # Verse 3 has <range> in source, so 2-3 merge (but 2 already part of 1-2)
@@ -145,7 +143,7 @@ def test_asymmetric_ranges():
 
 def test_empty_input():
     """Test that empty input returns empty output."""
-    result = merge_verse_ranges([], text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges([], combine_fields=["target_text", "source_text"])
     assert result == []
 
 
@@ -155,21 +153,21 @@ def test_single_verse():
         {"vrefs": ["GAL 1:1"], "target_text": "Text 1", "source_text": "Source 1"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     assert len(result) == 1
     assert result[0]["vrefs"] == ["GAL 1:1"]
     assert result[0]["target_text"] == "Text 1"
 
 
-def test_auto_detect_text_fields():
-    """Test that text fields are auto-detected when not specified."""
+def test_auto_detect_combine_fields():
+    """Test that combine fields are auto-detected when not specified."""
     verses = [
         {"vrefs": ["GAL 1:1"], "target_text": "Text 1", "source_text": "Source 1"},
         {"vrefs": ["GAL 1:2"], "target_text": "<range>", "source_text": "Source 2"},
     ]
 
-    # Don't specify text_fields
+    # Don't specify combine_fields
     result = merge_verse_ranges(verses)
 
     assert len(result) == 1
@@ -186,7 +184,7 @@ def test_custom_verse_ref_field():
         {"vref": ["GAL 1:3"], "text": "Text 3"},
     ]
 
-    result = merge_verse_ranges(verses, verse_ref_field="vref", text_fields=["text"])
+    result = merge_verse_ranges(verses, verse_ref_field="vref", combine_fields=["text"])
 
     assert len(result) == 2
     assert result[0]["vref"] == ["GAL 1:1", "GAL 1:2"]
@@ -194,7 +192,7 @@ def test_custom_verse_ref_field():
 
 
 def test_only_specified_fields_in_output():
-    """Test that only verse_ref and text_fields appear in output."""
+    """Test that only verse_ref and combine_fields appear in output."""
     verses = [
         {
             "vrefs": ["GAL 1:1"],
@@ -210,7 +208,7 @@ def test_only_specified_fields_in_output():
         },
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text"])
 
     assert len(result) == 1
     assert "vrefs" in result[0]
@@ -227,7 +225,7 @@ def test_different_books():
         {"vrefs": ["EPH 1:1"], "target_text": "Text 3", "source_text": "<range>"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     # Should get GAL 1:1-2 merged, then EPH 1:1 separate
     assert len(result) == 2
@@ -254,7 +252,7 @@ def test_complex_scenario():
         {"vrefs": ["GAL 1:7"], "target_text": "T7", "source_text": "S7"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["target_text", "source_text"])
+    result = merge_verse_ranges(verses, combine_fields=["target_text", "source_text"])
 
     assert len(result) == 4
     # First group: 1-2 (range in target at v2)
@@ -278,7 +276,7 @@ def test_custom_range_marker_zero():
     ]
 
     result = merge_verse_ranges(
-        verses, text_fields=["score", "count"], is_range_marker=lambda x: x == 0
+        verses, combine_fields=["score", "count"], is_range_marker=lambda x: x == 0
     )
 
     assert len(result) == 1
@@ -296,7 +294,7 @@ def test_custom_range_marker_negative():
     ]
 
     result = merge_verse_ranges(
-        verses, text_fields=["value"], is_range_marker=lambda x: x < 0
+        verses, combine_fields=["value"], is_range_marker=lambda x: x < 0
     )
 
     assert len(result) == 2
@@ -315,7 +313,7 @@ def test_custom_range_marker_empty_string():
     ]
 
     result = merge_verse_ranges(
-        verses, text_fields=["text"], is_range_marker=lambda x: x == ""
+        verses, combine_fields=["text"], is_range_marker=lambda x: x == ""
     )
 
     assert len(result) == 2
@@ -334,7 +332,7 @@ def test_custom_range_marker_none():
     ]
 
     result = merge_verse_ranges(
-        verses, text_fields=["data", "value"], is_range_marker=lambda x: x is None
+        verses, combine_fields=["data", "value"], is_range_marker=lambda x: x is None
     )
 
     assert len(result) == 2
@@ -356,7 +354,7 @@ def test_custom_range_marker_multiple_separate_ranges():
     ]
 
     result = merge_verse_ranges(
-        verses, text_fields=["score"], is_range_marker=lambda x: x == 0
+        verses, combine_fields=["score"], is_range_marker=lambda x: x == 0
     )
 
     assert len(result) == 2
@@ -374,7 +372,7 @@ def test_custom_range_marker_all_zeros():
     ]
 
     result = merge_verse_ranges(
-        verses, text_fields=["score", "value"], is_range_marker=lambda x: x == 0
+        verses, combine_fields=["score", "value"], is_range_marker=lambda x: x == 0
     )
 
     assert len(result) == 2
@@ -390,7 +388,7 @@ def test_custom_range_marker_at_end():
     ]
 
     result = merge_verse_ranges(
-        verses, text_fields=["score"], is_range_marker=lambda x: x == 0
+        verses, combine_fields=["score"], is_range_marker=lambda x: x == 0
     )
 
     assert len(result) == 1
@@ -406,7 +404,7 @@ def test_default_range_marker_still_works():
         {"vrefs": ["GAL 1:3"], "text": "World"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["text"])
+    result = merge_verse_ranges(verses, combine_fields=["text"])
 
     assert len(result) == 2
     assert result[0]["vrefs"] == ["GAL 1:1", "GAL 1:2"]
@@ -431,9 +429,9 @@ def test_combine_fields_filter_range_markers():
 
     result = merge_verse_ranges(
         verses,
-        text_fields=["score"],
+        combine_fields=["score"],
         is_range_marker=lambda x: x == 0,
-        combine_fields=average_non_zeros,
+        combine_function=average_non_zeros,
     )
 
     assert len(result) == 2
@@ -454,9 +452,9 @@ def test_combine_fields_sum():
 
     result = merge_verse_ranges(
         verses,
-        text_fields=["count", "score"],
+        combine_fields=["count", "score"],
         is_range_marker=lambda x: x == 0,
-        combine_fields=lambda field, values: sum(values),
+        combine_function=lambda field, values: sum(values),
     )
 
     assert len(result) == 1
@@ -484,7 +482,7 @@ def test_combine_fields_per_field():
             return " ".join(str(v) for v in non_range)
 
     result = merge_verse_ranges(
-        verses, text_fields=["text", "count"], combine_fields=combine
+        verses, combine_fields=["text", "count"], combine_function=combine
     )
 
     assert len(result) == 2
@@ -505,9 +503,11 @@ def test_combine_fields_average():
 
     result = merge_verse_ranges(
         verses,
-        text_fields=["score"],
+        combine_fields=["score"],
         is_range_marker=lambda x: x == 0,
-        combine_fields=lambda field, values: sum(values) / len(values) if values else 0,
+        combine_function=lambda field, values: (
+            sum(values) / len(values) if values else 0
+        ),
     )
 
     assert len(result) == 2
@@ -529,9 +529,9 @@ def test_combine_fields_max():
 
     result = merge_verse_ranges(
         verses,
-        text_fields=["score"],
+        combine_fields=["score"],
         is_range_marker=lambda x: x == 0,
-        combine_fields=lambda field, values: max(values) if values else 0,
+        combine_function=lambda field, values: max(values) if values else 0,
     )
 
     assert len(result) == 2
@@ -554,8 +554,8 @@ def test_combine_fields_custom_separator():
 
     result = merge_verse_ranges(
         verses,
-        text_fields=["text"],
-        combine_fields=lambda field, values: " | ".join(
+        combine_fields=["text"],
+        combine_function=lambda field, values: " | ".join(
             str(v) for v in values if v != "<range>"
         ),
     )
@@ -577,7 +577,7 @@ def test_default_combine_still_works():
         {"vrefs": ["GAL 1:3"], "text": "World"},
     ]
 
-    result = merge_verse_ranges(verses, text_fields=["text"])
+    result = merge_verse_ranges(verses, combine_fields=["text"])
 
     assert len(result) == 2
     assert result[0]["vrefs"] == ["GAL 1:1", "GAL 1:2"]

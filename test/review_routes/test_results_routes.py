@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from database.models import (
     AlignmentTopSourceScores,
@@ -887,7 +888,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths": 0,
             "word_lengths_z": 0.0,
             "char_lengths_z": 0.0,
-        },  # Zero in reference (different from revision)
+        },  # Zero in reference (and in revision)
         {
             "assessment_id": 1002,
             "vref": "GAL 1:4",
@@ -1025,7 +1026,8 @@ def test_compare_text_lengths_basic(client, regular_token1, test_db_session):
 
     # Check that results contain differences
     for result in response_data["results"]:
-        assert "vref" in result or "vrefs" in result
+        assert "vref" in result
+        assert "vrefs" in result
         assert "word_lengths" in result  # This is the difference
         assert "char_lengths" in result  # This is the difference
         assert "word_lengths_z" in result  # Z-score of the difference
@@ -1042,8 +1044,7 @@ def test_compare_text_lengths_verse_range_merging(
     The reference has zeros at verses 3, 5, 9
 
     After merging:
-    - Revision will merge: 1:1-3 (1:1 + 1:2 + 1:3), 1:6-7 (1:6 + 1:7)
-    - Reference will merge: 1:1-3 (1:1 + 1:2 + 1:3), 1:4-5 (1:4 + 1:5), 1:8-9 (1:8 + 1:9)
+    - 1:1-3 (1:1 + 1:2 + 1:3), 1:4-5 (1:4 + 1:5), 1:6-7 (1:6 + 1:7), 1:8-9 (1:8 + 1:9)
 
     The final comparison will show merged ranges where either has zeros.
     """
@@ -1065,27 +1066,52 @@ def test_compare_text_lengths_verse_range_merging(
     response_data = response.json()
 
     # Check that we have results with vrefs (merged verses should have multiple vrefs)
-    has_merged_verse = False
-    merged_ranges_found = []
-
     for result in response_data["results"]:
-        if "vrefs" in result and result["vrefs"] and len(result["vrefs"]) > 1:
-            has_merged_verse = True
-            merged_ranges_found.append(result["vrefs"])
+        assert "vrefs" in result and "vref" in result
 
-            # Check for specific merged ranges
-            # Both revision and reference should have merged 1:1-3
-            if "GAL 1:1" in result["vrefs"] and len(result["vrefs"]) == 3:
-                assert "GAL 1:2" in result["vrefs"]
-                assert "GAL 1:3" in result["vrefs"]
-                # The difference should be the sum of differences
-                # Revision: 10 + 0 + 0 = 10, Reference: 9 + 8 + 0 = 17, Diff = -7
-                assert result["word_lengths"] is not None
+    assert response_data["results"][0]["vref"] == "GAL 1:1"
+    assert response_data["results"][0]["vrefs"] == ["GAL 1:1", "GAL 1:2", "GAL 1:3"]
+    assert response_data["results"][0]["word_lengths"] == (10 + 0 + 0) - (9 + 8 + 0)
+    assert response_data["results"][0]["char_lengths"] == (50 + 0 + 0) - (45 + 40 + 0)
+    assert response_data["results"][0]["word_lengths_z"] == pytest.approx(
+        -1.0782472811532828, abs=0.001
+    )
+    assert response_data["results"][0]["char_lengths_z"] == pytest.approx(
+        -1.0782472811532833, abs=0.001
+    )
 
-    # We should have at least one merged verse range
-    assert (
-        has_merged_verse
-    ), f"Expected to find merged verse ranges due to zero values. Found ranges: {merged_ranges_found}"
+    assert response_data["results"][1]["vref"] == "GAL 1:4"
+    assert response_data["results"][1]["vrefs"] == ["GAL 1:4", "GAL 1:5"]
+    assert response_data["results"][1]["word_lengths"] == (15 + 12) - (14 + 0)
+    assert response_data["results"][1]["char_lengths"] == (75 + 60) - (70 + 0)
+    assert response_data["results"][1]["word_lengths_z"] == pytest.approx(
+        1.3565046440315498, abs=0.001
+    )
+    assert response_data["results"][1]["char_lengths_z"] == pytest.approx(
+        1.3565046440315496, abs=0.001
+    )
+
+    assert response_data["results"][2]["vref"] == "GAL 1:6"
+    assert response_data["results"][2]["vrefs"] == ["GAL 1:6", "GAL 1:7"]
+    assert response_data["results"][2]["word_lengths"] == (8 + 0) - (7 + 9)
+    assert response_data["results"][2]["char_lengths"] == (40 + 0) - (35 + 45)
+    assert response_data["results"][2]["word_lengths_z"] == pytest.approx(
+        -1.199984877412525, abs=0.001
+    )
+    assert response_data["results"][2]["char_lengths_z"] == pytest.approx(
+        -1.1999848774125246, abs=0.001
+    )
+
+    assert response_data["results"][3]["vref"] == "GAL 1:8"
+    assert response_data["results"][3]["vrefs"] == ["GAL 1:8", "GAL 1:9"]
+    assert response_data["results"][3]["word_lengths"] == (14 + 11) - (13 + 0)
+    assert response_data["results"][3]["char_lengths"] == (70 + 55) - (65 + 0)
+    assert response_data["results"][3]["word_lengths_z"] == pytest.approx(
+        1.234767047772308, abs=0.001
+    )
+    assert response_data["results"][3]["char_lengths_z"] == pytest.approx(
+        1.2347670477723078, abs=0.001
+    )
 
 
 def test_compare_text_lengths_book_filter(client, regular_token1, test_db_session):

@@ -990,24 +990,24 @@ async def compare_text_lengths(
             if "vref" in record and not isinstance(record["vref"], list):
                 record["vrefs"] = [record["vref"]]
 
-        # Create text fields list with both _rev and _ref suffixes
-        text_fields = [
+        # All fields that need to be summed when merging (including z-scores)
+        merge_fields_base = [
             "word_lengths",
             "char_lengths",
-            "word_lengths_z",
-            "char_lengths_z",
         ]
-        combined_text_fields = []
-        for field in text_fields:
-            combined_text_fields.extend([f"{field}_rev", f"{field}_ref"])
+        merge_fields_combined = []
+        for field in merge_fields_base:
+            merge_fields_combined.extend([f"{field}_rev", f"{field}_ref"])
 
-        # Merge verse ranges based on zeros in EITHER column
+        # Merge verse ranges based on zeros in word_lengths or char_lengths ONLY
+        # But combine ALL fields (including z-scores) when merging
         merged_records = merge_verse_ranges(
             combined_records,
             verse_ref_field="vrefs",
-            text_fields=combined_text_fields,
+            combine_fields=merge_fields_combined,  # All fields to merge/sum
+            check_fields=merge_fields_combined,  # Only check these for zeros
             is_range_marker=lambda x: x == 0 or x == 0.0,
-            combine_fields=lambda field, values: sum(
+            combine_function=lambda field, values: sum(
                 values
             ),  # Sum all values in the group
         )
