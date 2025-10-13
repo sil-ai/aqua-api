@@ -810,8 +810,10 @@ async def get_text_lengths(
     response_model=Dict[str, Union[List[TextLengthsResult], int]],
 )
 async def compare_text_lengths(
-    revision_id: int,
-    reference_id: int,
+    revision_id: Optional[int] = None,
+    reference_id: Optional[int] = None,
+    revision_assessment_id: Optional[int] = None,
+    reference_assessment_id: Optional[int] = None,
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
@@ -830,10 +832,14 @@ async def compare_text_lengths(
 
     Parameters
     ----------
-    revision_id : int
-        The ID of the revision to compare.
-    reference_id : int
-        The ID of the reference to compare against.
+    revision_id : int, optional
+        The ID of the revision to compare. Must be provided with reference_id if using revision/reference mode.
+    reference_id : int, optional
+        The ID of the reference to compare against. Must be provided with revision_id if using revision/reference mode.
+    revision_assessment_id : int, optional
+        The ID of the revision assessment to compare. Must be provided with reference_assessment_id if using assessment mode.
+    reference_assessment_id : int, optional
+        The ID of the reference assessment to compare against. Must be provided with revision_assessment_id if using assessment mode.
     book : str, optional
         Restrict results to one book.
     chapter : int, optional
@@ -857,41 +863,103 @@ async def compare_text_lengths(
     """
     await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
-    # Get the revision assessment
-    revision_assessment = await db.scalar(
-        select(Assessment)
-        .where(
-            Assessment.revision_id == revision_id,
-            Assessment.type == "text-lengths",
-            Assessment.status == "finished",
-        )
-        .order_by(Assessment.end_time.desc())
-        .limit(1)
+    # Validate that exactly one pair of IDs is provided
+    has_revision_pair = revision_id is not None and reference_id is not None
+    has_assessment_pair = (
+        revision_assessment_id is not None and reference_assessment_id is not None
     )
 
-    if not revision_assessment:
+    if not has_revision_pair and not has_assessment_pair:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No completed text-lengths assessment found for revision_id {revision_id}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Must provide either (revision_id and reference_id) or (revision_assessment_id and reference_assessment_id)",
         )
 
-    # Get the reference assessment
-    reference_assessment = await db.scalar(
-        select(Assessment)
-        .where(
-            Assessment.revision_id == reference_id,
-            Assessment.type == "text-lengths",
-            Assessment.status == "finished",
-        )
-        .order_by(Assessment.end_time.desc())
-        .limit(1)
-    )
-
-    if not reference_assessment:
+    if has_revision_pair and has_assessment_pair:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"No completed text-lengths assessment found for reference_id {reference_id}",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot provide both revision/reference IDs and assessment IDs. Choose one pair.",
         )
+
+    # Validate that both IDs in a pair are provided
+    if (revision_id is None) != (reference_id is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both revision_id and reference_id must be provided together",
+        )
+
+    if (revision_assessment_id is None) != (reference_assessment_id is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both revision_assessment_id and reference_assessment_id must be provided together",
+        )
+
+    # Get the assessments based on the provided IDs
+    if has_revision_pair:
+        # Get the revision assessment by revision_id
+        revision_assessment = await db.scalar(
+            select(Assessment)
+            .where(
+                Assessment.revision_id == revision_id,
+                Assessment.type == "text-lengths",
+                Assessment.status == "finished",
+            )
+            .order_by(Assessment.end_time.desc())
+            .limit(1)
+        )
+
+        if not revision_assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No completed text-lengths assessment found for revision_id {revision_id}",
+            )
+
+        # Get the reference assessment by reference_id
+        reference_assessment = await db.scalar(
+            select(Assessment)
+            .where(
+                Assessment.revision_id == reference_id,
+                Assessment.type == "text-lengths",
+                Assessment.status == "finished",
+            )
+            .order_by(Assessment.end_time.desc())
+            .limit(1)
+        )
+
+        if not reference_assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No completed text-lengths assessment found for reference_id {reference_id}",
+            )
+    else:
+        # Get the assessments directly by assessment_id
+        revision_assessment = await db.scalar(
+            select(Assessment).where(
+                Assessment.id == revision_assessment_id,
+                Assessment.type == "text-lengths",
+                Assessment.status == "finished",
+            )
+        )
+
+        if not revision_assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No completed text-lengths assessment found with id {revision_assessment_id}",
+            )
+
+        reference_assessment = await db.scalar(
+            select(Assessment).where(
+                Assessment.id == reference_assessment_id,
+                Assessment.type == "text-lengths",
+                Assessment.status == "finished",
+            )
+        )
+
+        if not reference_assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No completed text-lengths assessment found with id {reference_assessment_id}",
+            )
 
     # Authorization check for revision assessment
     if not await is_user_authorized_for_assessment(

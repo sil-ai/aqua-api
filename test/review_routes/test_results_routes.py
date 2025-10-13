@@ -1394,3 +1394,128 @@ def test_compare_text_lengths_difference_calculation(
     # Z-scores should be calculated
     assert "word_lengths_z" in result
     assert "char_lengths_z" in result
+
+
+def test_compare_text_lengths_with_assessment_ids(
+    client, regular_token1, test_db_session
+):
+    """Test compare_text_lengths with assessment IDs instead of revision IDs."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    # Use assessment IDs directly (1001 for revision, 1002 for reference)
+    params = {
+        "revision_assessment_id": 1001,
+        "reference_assessment_id": 1002,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Check basic structure
+    assert "results" in response_data
+    assert "total_count" in response_data
+    assert response_data["total_count"] > 0
+    assert len(response_data["results"]) > 0
+
+    # Check that results contain differences
+    for result in response_data["results"]:
+        assert "vref" in result
+        assert "vrefs" in result
+        assert "word_lengths" in result
+        assert "char_lengths" in result
+        assert "word_lengths_z" in result
+        assert "char_lengths_z" in result
+        assert "assessment_id" in result
+
+
+def test_compare_text_lengths_mixed_id_types_error(
+    client, regular_token1, test_db_session
+):
+    """Test that providing both revision IDs and assessment IDs raises an error."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+        "revision_assessment_id": 1001,
+        "reference_assessment_id": 1002,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Cannot provide both" in response.json()["detail"]
+
+
+def test_compare_text_lengths_incomplete_revision_pair_error(
+    client, regular_token1, test_db_session
+):
+    """Test that providing only one ID from the revision pair raises an error."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    # Test with only revision_id (no reference_id)
+    params = {
+        "revision_id": 115,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    # The first check catches incomplete pairs
+    assert "Must provide either" in response.json()["detail"]
+
+
+def test_compare_text_lengths_incomplete_assessment_pair_error(
+    client, regular_token1, test_db_session
+):
+    """Test that providing only one ID from the assessment pair raises an error."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    # Test with only revision_assessment_id (no reference_assessment_id)
+    params = {
+        "revision_assessment_id": 1001,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Must provide either" in response.json()["detail"]
+
+
+def test_compare_text_lengths_no_ids_error(client, regular_token1, test_db_session):
+    """Test that providing no IDs raises an error."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {}
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Must provide either" in response.json()["detail"]
