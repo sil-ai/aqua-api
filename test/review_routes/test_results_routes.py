@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from database.models import (
     AlignmentTopSourceScores,
@@ -709,3 +710,812 @@ def test_textalignmentmatches_strength_metrics(client, regular_token1, test_db_s
 
         # strength_confidence should be a reasonable value
         assert isinstance(result["strength_confidence"], (int, float))
+
+
+def setup_text_lengths_data(db_session):
+    """Setup text lengths assessments and data for testing compare_text_lengths."""
+    from database.models import TextLengthsTable
+
+    # Check if data already exists
+    existing_data = db_session.query(TextLengthsTable).first()
+    if existing_data:
+        return
+
+    # Get existing revisions from setup_assessments_results
+    revision = db_session.query(BibleRevision).filter(BibleRevision.id == 115).first()
+    reference = db_session.query(BibleRevision).filter(BibleRevision.id == 505).first()
+
+    if not revision or not reference:
+        # Create minimal revision and reference if they don't exist
+        user = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+        if not revision:
+            # Check if BibleVersion already exists
+            existing_version = (
+                db_session.query(BibleVersion).filter(BibleVersion.id == 115).first()
+            )
+            if not existing_version:
+                version = BibleVersion(
+                    id=115, abbreviation="REV", name="Revision", owner_id=user.id
+                )
+                db_session.add(version)
+            revision = BibleRevision(id=115, bible_version_id=115)
+            db_session.add(revision)
+        if not reference:
+            # Check if BibleVersion already exists
+            existing_version = (
+                db_session.query(BibleVersion).filter(BibleVersion.id == 505).first()
+            )
+            if not existing_version:
+                version = BibleVersion(
+                    id=505, abbreviation="REF", name="Reference", owner_id=user.id
+                )
+                db_session.add(version)
+            reference = BibleRevision(id=505, bible_version_id=505)
+            db_session.add(reference)
+        db_session.commit()
+
+    # Create text-lengths assessments for revision and reference
+    revision_assessment = Assessment(
+        id=1001,
+        revision_id=115,
+        reference_id=None,
+        type="text-lengths",
+        status="finished",
+        assessment_version="1",
+    )
+
+    reference_assessment = Assessment(
+        id=1002,
+        revision_id=505,
+        reference_id=None,
+        type="text-lengths",
+        status="finished",
+        assessment_version="1",
+    )
+
+    db_session.add(revision_assessment)
+    db_session.add(reference_assessment)
+    db_session.commit()
+
+    # Create text lengths data with some zero values to test verse range merging
+    # Note: Revision and reference have zeros in DIFFERENT places to test realistic scenarios
+    # Revision data (GAL 1:1-10)
+    revision_data = [
+        {
+            "assessment_id": 1001,
+            "vref": "GAL 1:1",
+            "word_lengths": 10,
+            "char_lengths": 50,
+            "word_lengths_z": 0.5,
+            "char_lengths_z": 0.3,
+        },
+        {
+            "assessment_id": 1001,
+            "vref": "GAL 1:2",
+            "word_lengths": 0,
+            "char_lengths": 0,
+            "word_lengths_z": 0.0,
+            "char_lengths_z": 0.0,
+        },  # Zero in revision
+        {
+            "assessment_id": 1001,
+            "vref": "GAL 1:3",
+            "word_lengths": 0,
+            "char_lengths": 0,
+            "word_lengths_z": 0.0,
+            "char_lengths_z": 0.0,
+        },  # Zero in revision
+        {
+            "assessment_id": 1001,
+            "vref": "GAL 1:4",
+            "word_lengths": 15,
+            "char_lengths": 75,
+            "word_lengths_z": 1.0,
+            "char_lengths_z": 0.8,
+        },
+        {
+            "assessment_id": 1001,
+            "vref": "GAL 1:5",
+            "word_lengths": 12,
+            "char_lengths": 60,
+            "word_lengths_z": 0.7,
+            "char_lengths_z": 0.5,
+        },
+        {
+            "assessment_id": 1001,
+            "vref": "GAL 1:6",
+            "word_lengths": 8,
+            "char_lengths": 40,
+            "word_lengths_z": 0.2,
+            "char_lengths_z": 0.1,
+        },
+        {
+            "assessment_id": 1001,
+            "vref": "GAL 1:7",
+            "word_lengths": 0,
+            "char_lengths": 0,
+            "word_lengths_z": 0.0,
+            "char_lengths_z": 0.0,
+        },  # Zero in revision
+        {
+            "assessment_id": 1001,
+            "vref": "GAL 1:8",
+            "word_lengths": 14,
+            "char_lengths": 70,
+            "word_lengths_z": 0.9,
+            "char_lengths_z": 0.7,
+        },
+        {
+            "assessment_id": 1001,
+            "vref": "GAL 1:9",
+            "word_lengths": 11,
+            "char_lengths": 55,
+            "word_lengths_z": 0.6,
+            "char_lengths_z": 0.4,
+        },
+        {
+            "assessment_id": 1001,
+            "vref": "GAL 1:10",
+            "word_lengths": 13,
+            "char_lengths": 65,
+            "word_lengths_z": 0.8,
+            "char_lengths_z": 0.6,
+        },
+    ]
+
+    # Reference data (GAL 1:1-10) - zeros in DIFFERENT verses than revision
+    reference_data = [
+        {
+            "assessment_id": 1002,
+            "vref": "GAL 1:1",
+            "word_lengths": 9,
+            "char_lengths": 45,
+            "word_lengths_z": 0.4,
+            "char_lengths_z": 0.2,
+        },
+        {
+            "assessment_id": 1002,
+            "vref": "GAL 1:2",
+            "word_lengths": 8,
+            "char_lengths": 40,
+            "word_lengths_z": 0.3,
+            "char_lengths_z": 0.1,
+        },  # Non-zero in reference
+        {
+            "assessment_id": 1002,
+            "vref": "GAL 1:3",
+            "word_lengths": 0,
+            "char_lengths": 0,
+            "word_lengths_z": 0.0,
+            "char_lengths_z": 0.0,
+        },  # Zero in reference (and in revision)
+        {
+            "assessment_id": 1002,
+            "vref": "GAL 1:4",
+            "word_lengths": 14,
+            "char_lengths": 70,
+            "word_lengths_z": 0.9,
+            "char_lengths_z": 0.7,
+        },
+        {
+            "assessment_id": 1002,
+            "vref": "GAL 1:5",
+            "word_lengths": 0,
+            "char_lengths": 0,
+            "word_lengths_z": 0.0,
+            "char_lengths_z": 0.0,
+        },  # Zero in reference (not in revision)
+        {
+            "assessment_id": 1002,
+            "vref": "GAL 1:6",
+            "word_lengths": 7,
+            "char_lengths": 35,
+            "word_lengths_z": 0.1,
+            "char_lengths_z": 0.0,
+        },
+        {
+            "assessment_id": 1002,
+            "vref": "GAL 1:7",
+            "word_lengths": 9,
+            "char_lengths": 45,
+            "word_lengths_z": 0.4,
+            "char_lengths_z": 0.2,
+        },  # Non-zero in reference
+        {
+            "assessment_id": 1002,
+            "vref": "GAL 1:8",
+            "word_lengths": 13,
+            "char_lengths": 65,
+            "word_lengths_z": 0.8,
+            "char_lengths_z": 0.6,
+        },
+        {
+            "assessment_id": 1002,
+            "vref": "GAL 1:9",
+            "word_lengths": 0,
+            "char_lengths": 0,
+            "word_lengths_z": 0.0,
+            "char_lengths_z": 0.0,
+        },  # Zero in reference (not in revision)
+        {
+            "assessment_id": 1002,
+            "vref": "GAL 1:10",
+            "word_lengths": 12,
+            "char_lengths": 60,
+            "word_lengths_z": 0.7,
+            "char_lengths_z": 0.5,
+        },
+    ]
+
+    # Add EPH data for book aggregation testing
+    revision_data.extend(
+        [
+            {
+                "assessment_id": 1001,
+                "vref": "EPH 1:1",
+                "word_lengths": 9,
+                "char_lengths": 45,
+                "word_lengths_z": 0.4,
+                "char_lengths_z": 0.2,
+            },
+            {
+                "assessment_id": 1001,
+                "vref": "EPH 1:2",
+                "word_lengths": 10,
+                "char_lengths": 50,
+                "word_lengths_z": 0.5,
+                "char_lengths_z": 0.3,
+            },
+        ]
+    )
+
+    reference_data.extend(
+        [
+            {
+                "assessment_id": 1002,
+                "vref": "EPH 1:1",
+                "word_lengths": 8,
+                "char_lengths": 40,
+                "word_lengths_z": 0.3,
+                "char_lengths_z": 0.1,
+            },
+            {
+                "assessment_id": 1002,
+                "vref": "EPH 1:2",
+                "word_lengths": 9,
+                "char_lengths": 45,
+                "word_lengths_z": 0.4,
+                "char_lengths_z": 0.2,
+            },
+        ]
+    )
+
+    for data in revision_data:
+        db_session.add(TextLengthsTable(**data))
+
+    for data in reference_data:
+        db_session.add(TextLengthsTable(**data))
+
+    db_session.commit()
+
+
+def test_compare_text_lengths_basic(client, regular_token1, test_db_session):
+    """Test basic functionality of compare_text_lengths endpoint."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Check basic structure
+    assert "results" in response_data
+    assert "total_count" in response_data
+    assert response_data["total_count"] > 0
+    assert len(response_data["results"]) > 0
+
+    # Check that results contain differences
+    for result in response_data["results"]:
+        assert "vref" in result
+        assert "vrefs" in result
+        assert "word_lengths" in result  # This is the difference
+        assert "char_lengths" in result  # This is the difference
+        assert "word_lengths_z" in result  # Z-score of the difference
+        assert "char_lengths_z" in result  # Z-score of the difference
+        assert "assessment_id" in result
+
+
+def test_compare_text_lengths_verse_range_merging(
+    client, regular_token1, test_db_session
+):
+    """Test that zero values trigger verse range merging and summing.
+
+    Note: The revision has zeros at verses 2, 3, 7
+    The reference has zeros at verses 3, 5, 9
+
+    After merging:
+    - 1:1-3 (1:1 + 1:2 + 1:3), 1:4-5 (1:4 + 1:5), 1:6-7 (1:6 + 1:7), 1:8-9 (1:8 + 1:9)
+
+    The final comparison will show merged ranges where either has zeros.
+    """
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Check that we have results with vrefs (merged verses should have multiple vrefs)
+    for result in response_data["results"]:
+        assert "vrefs" in result and "vref" in result
+
+    assert response_data["results"][0]["vref"] == "GAL 1:1"
+    assert response_data["results"][0]["vrefs"] == ["GAL 1:1", "GAL 1:2", "GAL 1:3"]
+    assert response_data["results"][0]["word_lengths"] == (10 + 0 + 0) - (9 + 8 + 0)
+    assert response_data["results"][0]["char_lengths"] == (50 + 0 + 0) - (45 + 40 + 0)
+    assert response_data["results"][0]["word_lengths_z"] == pytest.approx(
+        -1.0782472811532828, abs=0.001
+    )
+    assert response_data["results"][0]["char_lengths_z"] == pytest.approx(
+        -1.0782472811532833, abs=0.001
+    )
+
+    assert response_data["results"][1]["vref"] == "GAL 1:4"
+    assert response_data["results"][1]["vrefs"] == ["GAL 1:4", "GAL 1:5"]
+    assert response_data["results"][1]["word_lengths"] == (15 + 12) - (14 + 0)
+    assert response_data["results"][1]["char_lengths"] == (75 + 60) - (70 + 0)
+    assert response_data["results"][1]["word_lengths_z"] == pytest.approx(
+        1.3565046440315498, abs=0.001
+    )
+    assert response_data["results"][1]["char_lengths_z"] == pytest.approx(
+        1.3565046440315496, abs=0.001
+    )
+
+    assert response_data["results"][2]["vref"] == "GAL 1:6"
+    assert response_data["results"][2]["vrefs"] == ["GAL 1:6", "GAL 1:7"]
+    assert response_data["results"][2]["word_lengths"] == (8 + 0) - (7 + 9)
+    assert response_data["results"][2]["char_lengths"] == (40 + 0) - (35 + 45)
+    assert response_data["results"][2]["word_lengths_z"] == pytest.approx(
+        -1.199984877412525, abs=0.001
+    )
+    assert response_data["results"][2]["char_lengths_z"] == pytest.approx(
+        -1.1999848774125246, abs=0.001
+    )
+
+    assert response_data["results"][3]["vref"] == "GAL 1:8"
+    assert response_data["results"][3]["vrefs"] == ["GAL 1:8", "GAL 1:9"]
+    assert response_data["results"][3]["word_lengths"] == (14 + 11) - (13 + 0)
+    assert response_data["results"][3]["char_lengths"] == (70 + 55) - (65 + 0)
+    assert response_data["results"][3]["word_lengths_z"] == pytest.approx(
+        1.234767047772308, abs=0.001
+    )
+    assert response_data["results"][3]["char_lengths_z"] == pytest.approx(
+        1.2347670477723078, abs=0.001
+    )
+
+
+def test_compare_text_lengths_book_filter(client, regular_token1, test_db_session):
+    """Test filtering results by book."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    # Test with GAL book
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+        "book": "GAL",
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # All results should be from GAL
+    for result in response_data["results"]:
+        vref = result.get("vref") or (
+            result.get("vrefs")[0] if result.get("vrefs") else None
+        )
+        if vref:
+            assert vref.startswith("GAL"), f"Expected GAL verse, got {vref}"
+
+    # Test with EPH book
+    params["book"] = "EPH"
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # All results should be from EPH
+    for result in response_data["results"]:
+        vref = result.get("vref") or (
+            result.get("vrefs")[0] if result.get("vrefs") else None
+        )
+        if vref:
+            assert vref.startswith("EPH"), f"Expected EPH verse, got {vref}"
+
+
+def test_compare_text_lengths_chapter_aggregation(
+    client, regular_token1, test_db_session
+):
+    """Test chapter-level aggregation."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+        "aggregate": "chapter",
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Results should be aggregated by chapter
+    chapter_vrefs = set()
+    for result in response_data["results"]:
+        vref = result.get("vref")
+        if vref:
+            # Chapter aggregation should return "BOOK CHAPTER" format (e.g., "GAL 1")
+            assert vref.count(" ") == 1, f"Expected chapter-level vref, got {vref}"
+            assert (
+                ":" not in vref
+            ), f"Expected no verse number in chapter aggregation, got {vref}"
+            chapter_vrefs.add(vref)
+
+    # Should have at least GAL 1 and EPH 1
+    assert len(chapter_vrefs) >= 2
+
+
+def test_compare_text_lengths_book_aggregation(client, regular_token1, test_db_session):
+    """Test book-level aggregation."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+        "aggregate": "book",
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Results should be aggregated by book
+    book_vrefs = set()
+    for result in response_data["results"]:
+        vref = result.get("vref")
+        if vref:
+            # Book aggregation should return just the book name (e.g., "GAL")
+            assert " " not in vref, f"Expected book-level vref, got {vref}"
+            book_vrefs.add(vref)
+
+    # Should have at least GAL and EPH
+    assert "GAL" in book_vrefs
+    assert "EPH" in book_vrefs
+
+
+def test_compare_text_lengths_text_aggregation(client, regular_token1, test_db_session):
+    """Test text-level aggregation (entire text)."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+        "aggregate": "text",
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Should return only one result for the entire text
+    assert response_data["total_count"] == 1
+    assert len(response_data["results"]) == 1
+
+    result = response_data["results"][0]
+    # Text aggregation should have None for vref
+    assert result.get("vref") is None
+
+
+def test_compare_text_lengths_pagination(client, regular_token1, test_db_session):
+    """Test pagination of results."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    # Get first page
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+        "page": 1,
+        "page_size": 3,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    total_count = response_data["total_count"]
+    assert len(response_data["results"]) <= 3
+    first_page_results = response_data["results"]
+
+    # Get second page if there are enough results
+    if total_count > 3:
+        params["page"] = 2
+        response = client.get(
+            "/v3/compare_text_lengths",
+            params=params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+        assert response.status_code == 200
+        second_page_data = response.json()
+
+        # Second page should have different results
+        assert second_page_data["results"] != first_page_results
+        assert second_page_data["total_count"] == total_count
+
+
+def test_compare_text_lengths_authorization(
+    client, regular_token1, regular_token2, test_db_session
+):
+    """Test that authorization is properly enforced."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+    }
+
+    # First user should have access
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+
+    # Second user should NOT have access
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+
+
+def test_compare_text_lengths_no_assessment_found(
+    client, regular_token1, test_db_session
+):
+    """Test that 404 is returned when no matching assessment exists."""
+    setup_assessments_results(test_db_session)
+
+    # Use non-existent revision/reference combination
+    params = {
+        "revision_id": 99999,
+        "reference_id": 99999,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 404
+    assert "No completed text-lengths assessment found" in response.json()["detail"]
+
+
+def test_compare_text_lengths_difference_calculation(
+    client, regular_token1, test_db_session
+):
+    """Test that differences are correctly calculated (revision - reference)."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+        "book": "GAL",
+        "chapter": 1,
+        "verse": 4,  # A verse with no zeros
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    assert len(response_data["results"]) > 0
+    result = response_data["results"][0]
+
+    # GAL 1:4 has revision: word_lengths=15, char_lengths=75
+    # GAL 1:4 has reference: word_lengths=14, char_lengths=70
+    # Difference should be: word_lengths=1, char_lengths=5
+    assert result["word_lengths"] == 1.0
+    assert result["char_lengths"] == 5.0
+
+    # Z-scores should be calculated
+    assert "word_lengths_z" in result
+    assert "char_lengths_z" in result
+
+
+def test_compare_text_lengths_with_assessment_ids(
+    client, regular_token1, test_db_session
+):
+    """Test compare_text_lengths with assessment IDs instead of revision IDs."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    # Use assessment IDs directly (1001 for revision, 1002 for reference)
+    params = {
+        "revision_assessment_id": 1001,
+        "reference_assessment_id": 1002,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Check basic structure
+    assert "results" in response_data
+    assert "total_count" in response_data
+    assert response_data["total_count"] > 0
+    assert len(response_data["results"]) > 0
+
+    # Check that results contain differences
+    for result in response_data["results"]:
+        assert "vref" in result
+        assert "vrefs" in result
+        assert "word_lengths" in result
+        assert "char_lengths" in result
+        assert "word_lengths_z" in result
+        assert "char_lengths_z" in result
+        assert "assessment_id" in result
+
+
+def test_compare_text_lengths_mixed_id_types_error(
+    client, regular_token1, test_db_session
+):
+    """Test that providing both revision IDs and assessment IDs raises an error."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {
+        "revision_id": 115,
+        "reference_id": 505,
+        "revision_assessment_id": 1001,
+        "reference_assessment_id": 1002,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Cannot provide both" in response.json()["detail"]
+
+
+def test_compare_text_lengths_incomplete_revision_pair_error(
+    client, regular_token1, test_db_session
+):
+    """Test that providing only one ID from the revision pair raises an error."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    # Test with only revision_id (no reference_id)
+    params = {
+        "revision_id": 115,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    # The first check catches incomplete pairs
+    assert "Must provide either" in response.json()["detail"]
+
+
+def test_compare_text_lengths_incomplete_assessment_pair_error(
+    client, regular_token1, test_db_session
+):
+    """Test that providing only one ID from the assessment pair raises an error."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    # Test with only revision_assessment_id (no reference_assessment_id)
+    params = {
+        "revision_assessment_id": 1001,
+    }
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Must provide either" in response.json()["detail"]
+
+
+def test_compare_text_lengths_no_ids_error(client, regular_token1, test_db_session):
+    """Test that providing no IDs raises an error."""
+    setup_assessments_results(test_db_session)
+    setup_text_lengths_data(test_db_session)
+
+    params = {}
+
+    response = client.get(
+        "/v3/compare_text_lengths",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Must provide either" in response.json()["detail"]

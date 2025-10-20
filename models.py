@@ -317,6 +317,7 @@ class TextLengthsResult(BaseModel):
     id: Optional[int] = None
     assessment_id: Optional[int] = None
     vref: Optional[str] = None
+    vrefs: Optional[List[str]] = None
     word_lengths: float
     char_lengths: float
     word_lengths_z: float
