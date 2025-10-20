@@ -26,6 +26,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install isort
         pip install flake8
+        pip install black==23.12.1
         isort --check .
         flake8 . --exclude='**/v1/**,**/v2/**,./venv,./alembic' --ignore=E501,W503,E203,E228,E226
 
