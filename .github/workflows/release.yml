@@ -3,11 +3,11 @@ name: branch-build
 on:
   push:
     branches:
-      - development
+      - release
 
 env:
   AWS_REGISTRY: 279795702643.dkr.ecr.us-east-1.amazonaws.com
-  IMAGE_NAME: aqua-api-dev
+  IMAGE_NAME: aqua-api-aws
 
 jobs:
 
@@ -15,10 +15,11 @@ jobs:
     name: Building and pushing main branch images
     runs-on: ubuntu-latest
     env:
-      MODAL_ENV: dev
+      MODAL_ENV: main
     steps:
     - name: Checkout
       uses: actions/checkout@v2
+
     - name: Set up Python 3.11
       uses: actions/setup-python@v2
       with:
@@ -30,17 +31,11 @@ jobs:
         sudo chmod +x /usr/local/bin/docker-compose
         docker-compose --version
 
-    - name: Install Docker Compose
-      run: |
-        sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
-        sudo chmod +x /usr/local/bin/docker-compose
-        docker-compose --version
-
     - name: Linting (Flake8 and isort)
       run: |
         python -m pip install --upgrade pip
-        pip install isort
         pip install flake8
+        pip install isort
         isort --check .
         flake8 . --exclude='**/v1/**,**/v2/**,./venv,./alembic' --ignore=E501,W503,E203,E228,E226
 
@@ -56,11 +51,10 @@ jobs:
         MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
         SECRET_KEY: ${{ secrets.SECRET_KEY }}
         AIOHTTP_NO_EXTENSIONS: 1
-        MODAL_ENV: dev
+        MODAL_ENV: main
       run: |
         pip install -r requirements.txt
         make test
-
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
@@ -78,4 +72,4 @@ jobs:
       env:
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
         IMAGENAME: ${{ env.IMAGE_NAME }}
-        MODAL_ENV: dev
+        MODAL_ENV: main

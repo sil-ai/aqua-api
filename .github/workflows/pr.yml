@@ -3,7 +3,8 @@ name: branch-build
 on:
   pull_request:
     branches:
-      - master
+      - release
+      - main
 
 jobs:
 
