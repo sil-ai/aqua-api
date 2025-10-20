@@ -26,10 +26,11 @@ jobs:
         sudo chmod +x /usr/local/bin/docker-compose
         docker-compose --version
 
-    - name: Linting (Run Ruff)
+    - name: Linting (Flake8 and isort)
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        pip install isort
+        pip install flake8
         isort --check .
         flake8 . --exclude='**/v1/**,**/v2/**,./venv,./alembic' --ignore=E501,W503,E203,E228,E226
 
@@ -40,4 +41,12 @@ jobs:
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
 
     - name: Test API
-      run: make test
+      env:
+        OMIT_PREVIOUS_VERSIONS: true
+        MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
+        SECRET_KEY: ${{ secrets.SECRET_KEY }}
+        AIOHTTP_NO_EXTENSIONS: 1
+        MODAL_ENV: dev
+      run: |
+        pip install -r requirements.txt
+        make test
