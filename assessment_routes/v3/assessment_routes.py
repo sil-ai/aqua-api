@@ -190,7 +190,7 @@ async def add_assessment(
     - translation-similarity (requires reference)
     - ngrams
     - tfidf
-    - text-lengths (requires reference)
+    - text-lengths
 
     For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
 
