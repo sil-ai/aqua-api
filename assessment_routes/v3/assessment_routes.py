@@ -219,7 +219,7 @@ async def add_assessment(
     Description: The unique identifier for the owner of the assessment.
     """
     if (
-        a.type in ["semantic-similarity", "word-alignment", "text-lengths"]
+        a.type in ["semantic-similarity", "word-alignment"]
         and a.reference_id is None
     ):
         raise HTTPException(
