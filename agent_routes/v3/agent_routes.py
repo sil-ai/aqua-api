@@ -259,3 +259,66 @@ async def get_lexeme_cards(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
         ) from e
+
+
+@router.get("/agent/lexeme-card/check-word")
+async def check_word_in_lexeme_cards(
+    word: str,
+    source_language: str,
+    target_language: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Check if a word exists as a target lemma or in surface_forms of lexeme cards.
+
+    Query Parameters:
+    - word: str (required) - The word to search for
+    - source_language: str (required) - ISO 639-3 code for source language
+    - target_language: str (required) - ISO 639-3 code for target language
+
+    Returns:
+    - count: int - Number of lexeme cards where the word matches (case-insensitive)
+    """
+    try:
+        from sqlalchemy import func, or_, select, text
+
+        # Normalize the word for case-insensitive comparison
+        word_lower = word.strip().lower()
+
+        # Query cards matching by target_lemma (case-insensitive)
+        cards_by_lemma = select(LexemeCard.id).where(
+            LexemeCard.source_language == source_language,
+            LexemeCard.target_language == target_language,
+            func.lower(LexemeCard.target_lemma) == word_lower,
+        )
+
+        # Query cards where word exists in surface_forms JSONB array (case-insensitive)
+        # Use jsonb_typeof to check if it's an array, then jsonb_array_elements_text
+        cards_by_surface = select(LexemeCard.id).where(
+            LexemeCard.source_language == source_language,
+            LexemeCard.target_language == target_language,
+            LexemeCard.surface_forms.isnot(None),
+            text(
+                "jsonb_typeof(agent_lexeme_cards.surface_forms) = 'array' AND "
+                "EXISTS (SELECT 1 FROM jsonb_array_elements_text(agent_lexeme_cards.surface_forms) AS elem "
+                "WHERE LOWER(elem) = :word_lower)"
+            ).bindparams(word_lower=word_lower),
+        )
+
+        # Union the two queries and count distinct IDs
+        union_query = cards_by_lemma.union(cards_by_surface)
+        count_query = select(func.count()).select_from(union_query.subquery())
+
+        # Execute query
+        result = await db.execute(count_query)
+        count = result.scalar()
+
+        return {"word": word, "count": count}
+
+    except SQLAlchemyError as e:
+        logger.error(f"Error checking word in lexeme cards: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e

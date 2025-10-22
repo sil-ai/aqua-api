@@ -859,3 +859,203 @@ def test_get_lexeme_cards_unauthorized(client):
     )
 
     assert response.status_code == 401
+
+
+def test_check_word_matches_target_lemma(client, regular_token1, db_session):
+    """Test checking if a word matches a target lemma."""
+    # Add test data
+    client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "kitabu",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+
+    # Check if word exists
+    response = client.get(
+        "/v3/agent/lexeme-card/check-word?word=kitabu&source_language=eng&target_language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["word"] == "kitabu"
+    assert data["count"] >= 1
+
+
+def test_check_word_matches_surface_form(client, regular_token1, db_session):
+    """Test checking if a word matches a surface form."""
+    # Add test data with surface forms
+    client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "love",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["love", "loves", "loved", "loving"],
+        },
+    )
+
+    # Check if surface form exists
+    response = client.get(
+        "/v3/agent/lexeme-card/check-word?word=loves&source_language=eng&target_language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["word"] == "loves"
+    assert data["count"] >= 1
+
+
+def test_check_word_case_insensitive(client, regular_token1, db_session):
+    """Test that word checking is case-insensitive."""
+    # Add test data
+    client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "Book",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["Book", "Books"],
+        },
+    )
+
+    # Check with different case
+    response = client.get(
+        "/v3/agent/lexeme-card/check-word?word=book&source_language=eng&target_language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["word"] == "book"
+    assert data["count"] >= 1
+
+    # Check surface form with different case
+    response = client.get(
+        "/v3/agent/lexeme-card/check-word?word=BOOKS&source_language=eng&target_language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["word"] == "BOOKS"
+    assert data["count"] >= 1
+
+
+def test_check_word_not_found(client, regular_token1, db_session):
+    """Test checking a word that doesn't exist."""
+    response = client.get(
+        "/v3/agent/lexeme-card/check-word?word=nonexistentword&source_language=eng&target_language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["word"] == "nonexistentword"
+    assert data["count"] == 0
+
+
+def test_check_word_multiple_matches(client, regular_token1, db_session):
+    """Test checking a word that appears in multiple lexeme cards."""
+    # Add multiple cards with the same word
+    client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "run",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["run", "runs"],
+        },
+    )
+    client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "sprint",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["sprint", "run"],
+        },
+    )
+
+    # Check word that appears in multiple cards
+    response = client.get(
+        "/v3/agent/lexeme-card/check-word?word=run&source_language=eng&target_language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["word"] == "run"
+    assert data["count"] >= 2
+
+
+def test_check_word_filters_by_language(client, regular_token1, db_session):
+    """Test that word checking filters by language pair."""
+    # Add card for eng-swh
+    client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "test_eng_swh",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    # Add card for eng-ngq
+    client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "test_eng_ngq",
+            "source_language": "eng",
+            "target_language": "ngq",
+        },
+    )
+
+    # Check word only exists in eng-swh
+    response = client.get(
+        "/v3/agent/lexeme-card/check-word?word=test_eng_swh&source_language=eng&target_language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] >= 1
+
+    # Check same word doesn't appear in eng-ngq
+    response = client.get(
+        "/v3/agent/lexeme-card/check-word?word=test_eng_swh&source_language=eng&target_language=ngq",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["count"] == 0
+
+
+def test_check_word_missing_parameters(client, regular_token1, db_session):
+    """Test that checking word requires all parameters."""
+    response = client.get(
+        "/v3/agent/lexeme-card/check-word?word=test",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 422  # Validation error
+
+
+def test_check_word_unauthorized(client):
+    """Test that checking word requires authentication."""
+    response = client.get(
+        "/v3/agent/lexeme-card/check-word?word=test&source_language=eng&target_language=swh"
+    )
+
+    assert response.status_code == 401
