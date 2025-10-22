@@ -314,14 +314,24 @@ def load_revision_data(db_session):
     # Commit to save the version and retrieve its ID for the revision
     db_session.commit()
 
-    # Add revision
-    revision = BibleRevision(
+    # Add revisions with explicit IDs to ensure tests work consistently
+    revision1 = BibleRevision(
+        id=1,  # Explicitly set ID for test consistency
         date=date.today(),
         bible_version_id=version.id,
         published=False,
         machine_translation=True,
     )
-    db_session.add(revision)
+    db_session.add(revision1)
+
+    revision2 = BibleRevision(
+        id=2,  # Second revision for multi-revision tests
+        date=date.today(),
+        bible_version_id=version.id,
+        published=False,
+        machine_translation=True,
+    )
+    db_session.add(revision2)
     db_session.commit()
 
 
@@ -370,16 +380,27 @@ async def load_revision_data_async(session):
     )
     version_ = result.scalars().first()
 
-    # Add a revision
-    revision = BibleRevision(
+    # Add revisions with explicit IDs for test consistency
+    revision1 = BibleRevision(
+        id=1,  # Explicitly set ID for test consistency
         date=date.today(),
         bible_version_id=version_.id,
         published=False,
         machine_translation=True,
     )
-    session.add(revision)
+    session.add(revision1)
+
+    revision2 = BibleRevision(
+        id=2,  # Second revision for multi-revision tests
+        date=date.today(),
+        bible_version_id=version_.id,
+        published=False,
+        machine_translation=True,
+    )
+    session.add(revision2)
     await session.commit()
-    await session.refresh(revision)
+    await session.refresh(revision1)
+    await session.refresh(revision2)
 
     result = await session.execute(select(Group).where(Group.name == "Group1"))
     group = result.scalars().first()

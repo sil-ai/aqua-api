@@ -8,7 +8,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
-from database.models import AgentLexemeCard, AgentWordAlignment
+from database.models import (
+    AgentLexemeCard,
+    AgentLexemeCardExample,
+    AgentWordAlignment,
+)
 from database.models import UserDB as UserModel
 from models import (
     AgentWordAlignmentIn,
@@ -104,8 +108,7 @@ async def add_lexeme_card(
     - LexemeCardOut: The created or updated lexeme card entry (with examples for the specified revision_id)
     """
     try:
-        from sqlalchemy import select
-        from sqlalchemy.orm.attributes import flag_modified
+        from sqlalchemy import delete, select
         from sqlalchemy.sql import func
 
         # Check if a lexeme card with the same unique constraint already exists
@@ -130,15 +133,31 @@ async def add_lexeme_card(
                 existing_card.surface_forms = card.surface_forms
                 existing_card.senses = card.senses
 
-                # For examples: replace this revision_id's examples
-                examples_dict = existing_card.examples or {}
+                # For examples: delete existing examples for this revision and add new ones
                 if card.examples is not None:
-                    examples_dict[str(revision_id)] = card.examples
+                    # Delete existing examples for this lexeme card + revision
+                    delete_query = delete(AgentLexemeCardExample).where(
+                        AgentLexemeCardExample.lexeme_card_id == existing_card.id,
+                        AgentLexemeCardExample.revision_id == revision_id,
+                    )
+                    await db.execute(delete_query)
+
+                    # Add new examples
+                    for example in card.examples:
+                        example_obj = AgentLexemeCardExample(
+                            lexeme_card_id=existing_card.id,
+                            revision_id=revision_id,
+                            source_text=example.get("source", ""),
+                            target_text=example.get("target", ""),
+                        )
+                        db.add(example_obj)
                 else:
                     # If examples is None and replace_existing=True, remove this revision's examples
-                    examples_dict.pop(str(revision_id), None)
-                existing_card.examples = examples_dict if examples_dict else None
-                flag_modified(existing_card, "examples")
+                    delete_query = delete(AgentLexemeCardExample).where(
+                        AgentLexemeCardExample.lexeme_card_id == existing_card.id,
+                        AgentLexemeCardExample.revision_id == revision_id,
+                    )
+                    await db.execute(delete_query)
             else:
                 # Append new data to existing lists
                 if card.surface_forms:
@@ -152,18 +171,37 @@ async def add_lexeme_card(
                     existing_card.senses = existing_senses + card.senses
 
                 # For examples: append to this revision_id's examples
+                # The unique index will prevent duplicate examples automatically
                 if card.examples:
-                    examples_dict = existing_card.examples or {}
-                    revision_key = str(revision_id)
-                    existing_revision_examples = examples_dict.get(revision_key, [])
-                    examples_dict[revision_key] = (
-                        existing_revision_examples + card.examples
-                    )
-                    existing_card.examples = examples_dict
-                    flag_modified(existing_card, "examples")
+                    for example in card.examples:
+                        example_obj = AgentLexemeCardExample(
+                            lexeme_card_id=existing_card.id,
+                            revision_id=revision_id,
+                            source_text=example.get("source", ""),
+                            target_text=example.get("target", ""),
+                        )
+                        db.add(example_obj)
 
             await db.commit()
             await db.refresh(existing_card)
+
+            # Query examples for this revision_id, ordered by ID (insertion order)
+            examples_query = (
+                select(AgentLexemeCardExample)
+                .where(
+                    AgentLexemeCardExample.lexeme_card_id == existing_card.id,
+                    AgentLexemeCardExample.revision_id == revision_id,
+                )
+                .order_by(AgentLexemeCardExample.id)
+            )
+            examples_result = await db.execute(examples_query)
+            examples_objs = examples_result.scalars().all()
+
+            # Convert to list of dicts
+            examples_list = [
+                {"source": ex.source_text, "target": ex.target_text}
+                for ex in examples_objs
+            ]
 
             # Return card with only the examples for this revision_id
             card_dict = {
@@ -175,7 +213,7 @@ async def add_lexeme_card(
                 "pos": existing_card.pos,
                 "surface_forms": existing_card.surface_forms,
                 "senses": existing_card.senses,
-                "examples": (existing_card.examples or {}).get(str(revision_id), []),
+                "examples": examples_list,
                 "confidence": existing_card.confidence,
                 "created_at": existing_card.created_at,
                 "last_updated": existing_card.last_updated,
@@ -183,11 +221,6 @@ async def add_lexeme_card(
             return LexemeCardOut.model_validate(card_dict)
         else:
             # Create new lexeme card entry
-            # Store examples as a dict with revision_id as key
-            examples_dict = {}
-            if card.examples is not None:
-                examples_dict[str(revision_id)] = card.examples
-
             lexeme_card = AgentLexemeCard(
                 source_lemma=card.source_lemma,
                 target_lemma=card.target_lemma,
@@ -196,13 +229,43 @@ async def add_lexeme_card(
                 pos=card.pos,
                 surface_forms=card.surface_forms,
                 senses=card.senses,
-                examples=examples_dict if examples_dict else None,
                 confidence=card.confidence,
             )
 
             db.add(lexeme_card)
+            await db.flush()  # Flush to get the ID before adding examples
+
+            # Add examples to the separate table
+            if card.examples:
+                for example in card.examples:
+                    example_obj = AgentLexemeCardExample(
+                        lexeme_card_id=lexeme_card.id,
+                        revision_id=revision_id,
+                        source_text=example.get("source", ""),
+                        target_text=example.get("target", ""),
+                    )
+                    db.add(example_obj)
+
             await db.commit()
             await db.refresh(lexeme_card)
+
+            # Query examples for this revision_id, ordered by ID (insertion order)
+            examples_query = (
+                select(AgentLexemeCardExample)
+                .where(
+                    AgentLexemeCardExample.lexeme_card_id == lexeme_card.id,
+                    AgentLexemeCardExample.revision_id == revision_id,
+                )
+                .order_by(AgentLexemeCardExample.id)
+            )
+            examples_result = await db.execute(examples_query)
+            examples_objs = examples_result.scalars().all()
+
+            # Convert to list of dicts
+            examples_list = [
+                {"source": ex.source_text, "target": ex.target_text}
+                for ex in examples_objs
+            ]
 
             # Return card with only the examples for this revision_id
             card_dict = {
@@ -214,7 +277,7 @@ async def add_lexeme_card(
                 "pos": lexeme_card.pos,
                 "surface_forms": lexeme_card.surface_forms,
                 "senses": lexeme_card.senses,
-                "examples": (lexeme_card.examples or {}).get(str(revision_id), []),
+                "examples": examples_list,
                 "confidence": lexeme_card.confidence,
                 "created_at": lexeme_card.created_at,
                 "last_updated": lexeme_card.last_updated,
@@ -364,7 +427,7 @@ async def get_lexeme_cards(
         result = await db.execute(query)
         cards = result.scalars().all()
 
-        # Filter examples by revision_id
+        # Build response cards with examples from the separate table
         response_cards = []
         for card in cards:
             card_dict = {
@@ -383,8 +446,23 @@ async def get_lexeme_cards(
 
             # Only include examples if revision_id is provided
             if revision_id is not None:
-                examples_dict = card.examples or {}
-                card_dict["examples"] = examples_dict.get(str(revision_id), [])
+                # Query examples for this lexeme card and revision, ordered by ID (insertion order)
+                examples_query = (
+                    select(AgentLexemeCardExample)
+                    .where(
+                        AgentLexemeCardExample.lexeme_card_id == card.id,
+                        AgentLexemeCardExample.revision_id == revision_id,
+                    )
+                    .order_by(AgentLexemeCardExample.id)
+                )
+                examples_result = await db.execute(examples_query)
+                examples_objs = examples_result.scalars().all()
+
+                # Convert to list of dicts
+                card_dict["examples"] = [
+                    {"source": ex.source_text, "target": ex.target_text}
+                    for ex in examples_objs
+                ]
             else:
                 card_dict["examples"] = []
 

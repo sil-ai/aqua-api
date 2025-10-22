@@ -1571,3 +1571,113 @@ def test_add_lexeme_card_upsert_empty_lists(client, regular_token1, db_session):
     # Original data should remain (empty lists don't append anything)
     assert len(data2["surface_forms"]) == 2
     assert len(data2["senses"]) == 1
+
+
+def test_add_lexeme_card_multiple_revisions(client, regular_token1, db_session):
+    """Test that examples are properly isolated by revision_id."""
+    # Add lexeme card with examples for revision 1
+    response1 = client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "house",
+            "target_lemma": "nyumba",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "noun",
+            "surface_forms": ["nyumba", "nyumba"],
+            "senses": [{"definition": "dwelling place"}],
+            "examples": [
+                {"source": "My house is big", "target": "Nyumba yangu ni kubwa"},
+                {"source": "The house is old", "target": "Nyumba ni ya zamani"},
+            ],
+            "confidence": 0.90,
+        },
+    )
+
+    assert response1.status_code == 200
+    data1 = response1.json()
+    card_id = data1["id"]
+
+    # Verify revision 1 has 2 examples in insertion order
+    assert len(data1["examples"]) == 2
+    assert data1["examples"][0]["source"] == "My house is big"
+    assert data1["examples"][1]["source"] == "The house is old"
+
+    # Add examples for the SAME lexeme card but for revision 2
+    response2 = client.post(
+        "/v3/agent/lexeme-card?revision_id=2",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "house",
+            "target_lemma": "nyumba",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source": "A red house", "target": "Nyumba nyekundu"},
+                {"source": "Small house", "target": "Nyumba ndogo"},
+                {"source": "New house", "target": "Nyumba mpya"},
+            ],
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+
+    # Should be the same card (same unique constraint)
+    assert data2["id"] == card_id
+
+    # Verify revision 2 has 3 examples in insertion order
+    assert len(data2["examples"]) == 3
+    assert data2["examples"][0]["source"] == "A red house"
+    assert data2["examples"][1]["source"] == "Small house"
+    assert data2["examples"][2]["source"] == "New house"
+
+    # Query the card with revision_id=1 - should only get revision 1 examples
+    response3 = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&revision_id=1&target_lemma=nyumba",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response3.status_code == 200
+    cards = response3.json()
+    assert len(cards) == 1
+    card = cards[0]
+
+    assert card["id"] == card_id
+    assert len(card["examples"]) == 2
+    # Examples should be in insertion order
+    assert card["examples"][0]["source"] == "My house is big"
+    assert card["examples"][1]["source"] == "The house is old"
+
+    # Query the card with revision_id=2 - should only get revision 2 examples
+    response4 = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&revision_id=2&target_lemma=nyumba",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response4.status_code == 200
+    cards = response4.json()
+    assert len(cards) == 1
+    card = cards[0]
+
+    assert card["id"] == card_id
+    assert len(card["examples"]) == 3
+    # Examples should be in insertion order
+    assert card["examples"][0]["source"] == "A red house"
+    assert card["examples"][1]["source"] == "Small house"
+    assert card["examples"][2]["source"] == "New house"
+
+    # Query without revision_id - should get empty examples list
+    response5 = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=nyumba",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response5.status_code == 200
+    cards = response5.json()
+    assert len(cards) == 1
+    card = cards[0]
+
+    assert card["id"] == card_id
+    assert len(card["examples"]) == 0  # No revision_id specified

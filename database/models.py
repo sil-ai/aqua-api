@@ -389,9 +389,7 @@ class AgentLexemeCard(Base):
     pos = Column(Text)
     surface_forms = Column(JSONB)  # JSON array of target language surface forms
     senses = Column(JSONB)  # JSON array of senses
-    examples = Column(
-        JSONB
-    )  # DEPRECATED: JSON object with revision_id as keys - being migrated to separate table
+    # Note: examples are now stored in the agent_lexeme_card_examples table (see examples_rel relationship)
     confidence = Column(Numeric)
     created_at = Column(TIMESTAMP, default=func.now())
     last_updated = Column(TIMESTAMP, default=func.now())
