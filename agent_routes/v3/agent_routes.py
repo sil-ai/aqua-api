@@ -378,8 +378,8 @@ async def get_word_alignments(
 async def get_lexeme_cards(
     source_language: str,
     target_language: str,
-    source_lemma: str = None,
-    target_lemma: str = None,
+    source_word: str = None,
+    target_word: str = None,
     pos: str = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -393,8 +393,8 @@ async def get_lexeme_cards(
     Query Parameters:
     - source_language: str (required) - ISO 639-3 code for source language
     - target_language: str (required) - ISO 639-3 code for target language
-    - source_lemma: str (optional) - Filter by source lemma
-    - target_lemma: str (optional) - Filter by target lemma
+    - source_word: str (optional) - Filter by source lemma or word in source examples
+    - target_word: str (optional) - Filter by target lemma or word in target examples
     - pos: str (optional) - Filter by part of speech
 
     Returns:
@@ -414,18 +414,55 @@ async def get_lexeme_cards(
             AgentLexemeCard.target_language == target_language,
         ]
 
-        # Add optional filters
-        if source_lemma:
-            conditions.append(AgentLexemeCard.source_lemma == source_lemma)
+        # Track if we need to join with examples table
+        lemma_conditions = []
+        example_conditions = []
 
-        if target_lemma:
-            conditions.append(AgentLexemeCard.target_lemma == target_lemma)
+        # Add optional filters for source_word (lemma or in examples)
+        if source_word:
+            lemma_conditions.append(AgentLexemeCard.source_lemma == source_word)
+            if authorized_revision_ids:
+                example_conditions.append(
+                    AgentLexemeCardExample.source_text.ilike(f"%{source_word}%")
+                )
+
+        # Add optional filters for target_word (lemma or in examples)
+        if target_word:
+            lemma_conditions.append(AgentLexemeCard.target_lemma == target_word)
+            if authorized_revision_ids:
+                example_conditions.append(
+                    AgentLexemeCardExample.target_text.ilike(f"%{target_word}%")
+                )
 
         if pos:
             conditions.append(AgentLexemeCard.pos == pos)
 
-        # Apply all conditions and order by confidence descending
-        query = query.where(*conditions).order_by(desc(AgentLexemeCard.confidence))
+        # Build the query based on word search requirements
+        if example_conditions:
+            from sqlalchemy import or_
+
+            # We need to search in examples, so join with the examples table
+            # Use LEFT OUTER JOIN so we also include cards that match by lemma only
+            query = (
+                query.outerjoin(
+                    AgentLexemeCardExample,
+                    (AgentLexemeCard.id == AgentLexemeCardExample.lexeme_card_id)
+                    & (AgentLexemeCardExample.revision_id.in_(authorized_revision_ids)),
+                )
+                .where(*conditions, or_(*lemma_conditions, or_(*example_conditions)))
+                .distinct()
+                .order_by(desc(AgentLexemeCard.confidence))
+            )
+        elif lemma_conditions:
+            from sqlalchemy import or_
+
+            # Only searching by lemma, no need to join
+            query = query.where(*conditions, or_(*lemma_conditions)).order_by(
+                desc(AgentLexemeCard.confidence)
+            )
+        else:
+            # No word filters, just base conditions
+            query = query.where(*conditions).order_by(desc(AgentLexemeCard.confidence))
 
         # Execute query
         result = await db.execute(query)

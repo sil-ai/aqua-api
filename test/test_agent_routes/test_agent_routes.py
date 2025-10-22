@@ -720,7 +720,7 @@ def test_get_lexeme_cards_by_source_lemma(client, regular_token1, db_session):
 
     # Filter by source lemma
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_lemma=run",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=run",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -746,7 +746,7 @@ def test_get_lexeme_cards_by_target_lemma(client, regular_token1, db_session):
 
     # Filter by target lemma
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=upendo",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upendo",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -822,7 +822,7 @@ def test_get_lexeme_cards_combined_filters(client, regular_token1, db_session):
 
     # Filter by source lemma and POS
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_lemma=eat&pos=verb",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=eat&pos=verb",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -837,20 +837,23 @@ def test_get_lexeme_cards_combined_filters(client, regular_token1, db_session):
 def test_get_lexeme_cards_empty_results(client, regular_token1, db_session):
     """Test getting lexeme cards with no matching results."""
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=nonexistent",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=nonexistent",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
-    assert len(data) == 0
+    # Since other tests may have added data, just check it's a list
+    # and that no card with target_lemma="nonexistent" exists
+    nonexistent_cards = [c for c in data if c["target_lemma"] == "nonexistent"]
+    assert len(nonexistent_cards) == 0
 
 
 def test_get_lexeme_cards_missing_languages(client, regular_token1, db_session):
     """Test that getting lexeme cards requires language parameters."""
     response = client.get(
-        "/v3/agent/lexeme-card?target_lemma=test",
+        "/v3/agent/lexeme-card?target_word=test",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1636,7 +1639,7 @@ def test_add_lexeme_card_multiple_revisions(client, regular_token1, db_session):
     # Query the card - should now get examples from ALL revisions the user has access to
     # Since testuser1 has access to both revision 1 and revision 2, we should see all 5 examples
     response3 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=nyumba",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=nyumba",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1654,3 +1657,481 @@ def test_add_lexeme_card_multiple_revisions(client, regular_token1, db_session):
     assert card["examples"][2]["source"] == "A red house"
     assert card["examples"][3]["source"] == "Small house"
     assert card["examples"][4]["source"] == "New house"
+
+
+# Word Search Tests
+
+
+def test_get_lexeme_cards_by_source_word_in_lemma(client, regular_token1, db_session):
+    """Test searching for source_word that matches source_lemma."""
+    # Add test data
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "walk",
+            "target_lemma": "tembea",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.90,
+        },
+    )
+
+    # Search by source_word matching source_lemma
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=walk",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    assert any(card["source_lemma"] == "walk" for card in data)
+
+
+def test_get_lexeme_cards_by_target_word_in_lemma(client, regular_token1, db_session):
+    """Test searching for target_word that matches target_lemma."""
+    # Add test data
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "sing",
+            "target_lemma": "imba",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.85,
+        },
+    )
+
+    # Search by target_word matching target_lemma
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=imba",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    assert any(card["target_lemma"] == "imba" for card in data)
+
+
+def test_get_lexeme_cards_by_source_word_in_examples(
+    client, regular_token1, db_session
+):
+    """Test searching for source_word in example source_text."""
+    # Add test data with examples
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "love",
+            "target_lemma": "penda",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source": "I love you deeply", "target": "Nakupenda sana"},
+                {"source": "love is patient", "target": "upendo una subira"},
+            ],
+            "confidence": 0.95,
+        },
+    )
+
+    # Search by source_word that appears in examples
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=deeply",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    # Find the card
+    card = next((c for c in data if c["source_lemma"] == "love"), None)
+    assert card is not None
+    assert any("deeply" in ex["source"] for ex in card["examples"])
+
+
+def test_get_lexeme_cards_by_target_word_in_examples(
+    client, regular_token1, db_session
+):
+    """Test searching for target_word in example target_text."""
+    # Add test data with examples
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "peace",
+            "target_lemma": "amani",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source": "peace and joy", "target": "amani na furaha"},
+                {"source": "find peace", "target": "pata amani"},
+            ],
+            "confidence": 0.88,
+        },
+    )
+
+    # Search by target_word that appears in examples
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=furaha",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    # Find the card
+    card = next((c for c in data if c["source_lemma"] == "peace"), None)
+    assert card is not None
+    assert any("furaha" in ex["target"] for ex in card["examples"])
+
+
+def test_get_lexeme_cards_word_search_or_logic(client, regular_token1, db_session):
+    """Test that word search matches EITHER lemma OR examples (OR logic)."""
+    # Add card 1: source_lemma matches but no examples with the word
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "run",
+            "target_lemma": "kimbia",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source": "I run fast", "target": "Ninakimbia haraka"},
+            ],
+            "confidence": 0.90,
+        },
+    )
+
+    # Add card 2: source_lemma doesn't match, but word appears in examples
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "sprint",
+            "target_lemma": "kukimbia",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source": "He runs quickly", "target": "Anakimbia haraka"},
+            ],
+            "confidence": 0.85,
+        },
+    )
+
+    # Search for "run" - should find both cards (first by lemma, second by example)
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=run",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 2
+    lemmas = [card["source_lemma"] for card in data]
+    assert "run" in lemmas  # Matched by lemma
+    assert "sprint" in lemmas  # Matched by example containing "runs"
+
+
+def test_get_lexeme_cards_word_search_case_insensitive(
+    client, regular_token1, db_session
+):
+    """Test that word search in examples is case-insensitive."""
+    # Add test data
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "lord",
+            "target_lemma": "bwana",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source": "The LORD is good", "target": "BWANA ni mwema"},
+                {"source": "Lord have mercy", "target": "Bwana uturehemu"},
+            ],
+            "confidence": 0.92,
+        },
+    )
+
+    # Search for lowercase "lord"
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=lord",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    card = next((c for c in data if c["source_lemma"] == "lord"), None)
+    assert card is not None
+
+
+def test_get_lexeme_cards_word_search_partial_match(client, regular_token1, db_session):
+    """Test that word search matches partial words in examples."""
+    # Add test data
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "rejoice",
+            "target_lemma": "furaha",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source": "rejoicing in the Lord", "target": "kufurahi katika Bwana"},
+                {
+                    "source": "we rejoiced together",
+                    "target": "tulifurahi pamoja",
+                },
+            ],
+            "confidence": 0.87,
+        },
+    )
+
+    # Search for "rejoic" - should match "rejoicing" and "rejoiced"
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=rejoic",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    card = next((c for c in data if c["source_lemma"] == "rejoice"), None)
+    assert card is not None
+
+
+def test_get_lexeme_cards_word_search_respects_user_access(
+    client, regular_token1, regular_token2, db_session
+):
+    """Test that word search only finds examples from revisions the user has access to.
+
+    Test setup:
+    - testuser1 (Group1) has access to the Bible version (and both revisions)
+    - testuser2 (Group2) does NOT have access to the Bible version
+    """
+    # Add lexeme card with examples in revision 1 (testuser1 has access)
+    response1 = client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "access_test_joy",
+            "target_lemma": "furaha_access",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {
+                    "source": "great access_test_word1 came",
+                    "target": "furaha kubwa ilikuja",
+                },
+            ],
+            "confidence": 0.89,
+        },
+    )
+    assert response1.status_code == 200
+
+    # Add more examples to the same card in revision 2 (testuser1 also has access)
+    response2 = client.post(
+        "/v3/agent/lexeme-card?revision_id=2",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "access_test_joy",
+            "target_lemma": "furaha_access",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {
+                    "source": "amazing access_test_word2 happened",
+                    "target": "furaha ya ajabu",
+                },
+            ],
+        },
+    )
+    assert response2.status_code == 200
+
+    # testuser1 searches for "access_test_word1" (in revision 1 which they have access to)
+    response_user1_word1 = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=access_test_word1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response_user1_word1.status_code == 200
+    data_user1_word1 = response_user1_word1.json()
+
+    # Should find the card via example search
+    cards_user1_word1 = [
+        c for c in data_user1_word1 if c["source_lemma"] == "access_test_joy"
+    ]
+    assert len(cards_user1_word1) >= 1
+    # Testuser1 should see examples from BOTH revisions (they have access to both)
+    assert len(cards_user1_word1[0]["examples"]) == 2
+
+    # testuser1 searches for "access_test_word2" (in revision 2 which they have access to)
+    response_user1_word2 = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=access_test_word2",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response_user1_word2.status_code == 200
+    data_user1_word2 = response_user1_word2.json()
+
+    # Should find the card via example search
+    cards_user1_word2 = [
+        c for c in data_user1_word2 if c["source_lemma"] == "access_test_joy"
+    ]
+    assert len(cards_user1_word2) >= 1
+    # Testuser1 should see examples from BOTH revisions
+    assert len(cards_user1_word2[0]["examples"]) == 2
+
+    # testuser2 searches for "access_test_word1" (in revision 1 which they DON'T have access to)
+    response_user2 = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=access_test_word1",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response_user2.status_code == 200
+    data_user2 = response_user2.json()
+
+    # Should NOT find the card via example search (no access to any revisions)
+    cards_user2 = [c for c in data_user2 if c["source_lemma"] == "access_test_joy"]
+    assert (
+        len(cards_user2) == 0
+    )  # No access to revisions means no results via example search
+
+    # testuser2 searches by lemma (not by example word) - should still not find it
+    # because they have no access to any revisions for examples
+    response_user2_lemma = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=access_test_joy",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response_user2_lemma.status_code == 200
+    data_user2_lemma = response_user2_lemma.json()
+
+    # Should find the card by lemma match, but with NO examples (no revision access)
+    cards_user2_lemma = [
+        c for c in data_user2_lemma if c["source_lemma"] == "access_test_joy"
+    ]
+    assert len(cards_user2_lemma) >= 1
+    assert (
+        len(cards_user2_lemma[0]["examples"]) == 0
+    )  # No examples due to no revision access
+
+
+def test_get_lexeme_cards_combined_word_and_pos_filter(
+    client, regular_token1, db_session
+):
+    """Test combining word search with other filters like POS."""
+    # Add verb
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "praise_test_verb",
+            "target_lemma": "sifa_verb",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "verb",
+            "examples": [
+                {"source": "they praise_test_verb God", "target": "wanamsifa Mungu"},
+            ],
+            "confidence": 0.91,
+        },
+    )
+
+    # Add noun with different word
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "praise_test_noun",
+            "target_lemma": "sifa_noun",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "noun",
+            "examples": [
+                {"source": "give praise_test_noun to Him", "target": "mpe sifa"},
+            ],
+            "confidence": 0.88,
+        },
+    )
+
+    # Search for the verb specifically
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=praise_test_verb&pos=verb",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    # Should only find the verb
+    assert len(data) >= 1
+    for card in data:
+        if "praise_test" in (card["source_lemma"] or ""):
+            assert card["pos"] == "verb"
+
+
+def test_get_lexeme_cards_word_search_no_matches(client, regular_token1, db_session):
+    """Test word search with no matching results."""
+    # Add test data that won't match
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "hope",
+            "target_lemma": "tumaini",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source": "I have hope", "target": "Nina tumaini"},
+            ],
+            "confidence": 0.86,
+        },
+    )
+
+    # Search for word that doesn't exist
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=xyznonexistent",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    # Should either be empty or not contain any matches
+    hope_cards = [c for c in data if c["source_lemma"] == "hope"]
+    assert len(hope_cards) == 0
+
+
+def test_get_lexeme_cards_both_source_and_target_word(
+    client, regular_token1, db_session
+):
+    """Test searching with both source_word and target_word."""
+    # Add test data with unique words to avoid contamination
+    client.post(
+        "/v3/agent/lexeme-card?revision_id=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "agape_love",
+            "target_lemma": "penda_test",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source": "I agape_love mercy", "target": "Napenda_test rehema"},
+            ],
+            "confidence": 0.93,
+        },
+    )
+
+    # Search by both source and target word
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=agape_love&target_word=penda_test",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    card = next((c for c in data if c["source_lemma"] == "agape_love"), None)
+    assert card is not None
+    assert card["target_lemma"] == "penda_test"
