@@ -468,7 +468,7 @@ class LexemeCardIn(BaseModel):
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
     senses: Optional[list] = None
-    examples: Optional[list] = None
+    examples: Optional[list] = None  # List of example dicts for the given revision_id
     confidence: Optional[float] = None
 
     model_config = {
@@ -513,7 +513,7 @@ class LexemeCardOut(BaseModel):
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
     senses: Optional[list] = None
-    examples: Optional[list] = None
+    examples: Optional[list] = None  # Filtered list for the requested revision_id
     confidence: Optional[float] = None
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None

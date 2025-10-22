@@ -389,7 +389,9 @@ class LexemeCard(Base):
     pos = Column(Text)
     surface_forms = Column(JSONB)  # JSON array of target language surface forms
     senses = Column(JSONB)  # JSON array of senses
-    examples = Column(JSONB)  # JSON array of examples
+    examples = Column(
+        JSONB
+    )  # JSON object with revision_id as keys, each containing array of example dictionaries
     confidence = Column(Numeric)
     created_at = Column(TIMESTAMP, default=func.now())
     last_updated = Column(TIMESTAMP, default=func.now())

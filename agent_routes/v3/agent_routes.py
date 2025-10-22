@@ -71,6 +71,7 @@ async def add_word_alignment(
 @router.post("/agent/lexeme-card", response_model=LexemeCardOut)
 async def add_lexeme_card(
     card: LexemeCardIn,
+    revision_id: int,
     replace_existing: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -83,8 +84,10 @@ async def add_lexeme_card(
 
     Input:
     - card: LexemeCardIn - The lexeme card data
+    - revision_id: int (required) - The Bible revision ID that the examples come from
     - replace_existing: bool (optional, default=False) - If True, replaces list fields
-      (surface_forms, senses, examples) with new data. If False, appends new data to existing lists.
+      (surface_forms, senses) with new data and replaces examples for this revision_id.
+      If False, appends new data to existing lists.
 
     Card fields:
     - source_lemma: str (optional) - The source language lemma for cross-reference
@@ -94,14 +97,15 @@ async def add_lexeme_card(
     - pos: str (optional) - Part of speech
     - surface_forms: list (optional) - JSON array of target language surface forms
     - senses: list (optional) - JSON array of senses with definitions and examples
-    - examples: list (optional) - JSON array of usage examples
+    - examples: list (optional) - JSON array of usage examples for the specified revision_id
     - confidence: float (optional) - Confidence score for the lexeme card
 
     Returns:
-    - LexemeCardOut: The created or updated lexeme card entry
+    - LexemeCardOut: The created or updated lexeme card entry (with examples for the specified revision_id)
     """
     try:
         from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
         from sqlalchemy.sql import func
 
         # Check if a lexeme card with the same unique constraint already exists
@@ -122,10 +126,19 @@ async def add_lexeme_card(
 
             # Handle list fields based on replace_existing flag
             if replace_existing:
-                # Replace with new data
+                # Replace with new data (for surface_forms and senses)
                 existing_card.surface_forms = card.surface_forms
                 existing_card.senses = card.senses
-                existing_card.examples = card.examples
+
+                # For examples: replace this revision_id's examples
+                examples_dict = existing_card.examples or {}
+                if card.examples is not None:
+                    examples_dict[str(revision_id)] = card.examples
+                else:
+                    # If examples is None and replace_existing=True, remove this revision's examples
+                    examples_dict.pop(str(revision_id), None)
+                existing_card.examples = examples_dict if examples_dict else None
+                flag_modified(existing_card, "examples")
             else:
                 # Append new data to existing lists
                 if card.surface_forms:
@@ -138,16 +151,43 @@ async def add_lexeme_card(
                     existing_senses = existing_card.senses or []
                     existing_card.senses = existing_senses + card.senses
 
+                # For examples: append to this revision_id's examples
                 if card.examples:
-                    existing_examples = existing_card.examples or []
-                    existing_card.examples = existing_examples + card.examples
+                    examples_dict = existing_card.examples or {}
+                    revision_key = str(revision_id)
+                    existing_revision_examples = examples_dict.get(revision_key, [])
+                    examples_dict[revision_key] = (
+                        existing_revision_examples + card.examples
+                    )
+                    existing_card.examples = examples_dict
+                    flag_modified(existing_card, "examples")
 
             await db.commit()
             await db.refresh(existing_card)
 
-            return LexemeCardOut.model_validate(existing_card)
+            # Return card with only the examples for this revision_id
+            card_dict = {
+                "id": existing_card.id,
+                "source_lemma": existing_card.source_lemma,
+                "target_lemma": existing_card.target_lemma,
+                "source_language": existing_card.source_language,
+                "target_language": existing_card.target_language,
+                "pos": existing_card.pos,
+                "surface_forms": existing_card.surface_forms,
+                "senses": existing_card.senses,
+                "examples": (existing_card.examples or {}).get(str(revision_id), []),
+                "confidence": existing_card.confidence,
+                "created_at": existing_card.created_at,
+                "last_updated": existing_card.last_updated,
+            }
+            return LexemeCardOut.model_validate(card_dict)
         else:
             # Create new lexeme card entry
+            # Store examples as a dict with revision_id as key
+            examples_dict = {}
+            if card.examples is not None:
+                examples_dict[str(revision_id)] = card.examples
+
             lexeme_card = LexemeCard(
                 source_lemma=card.source_lemma,
                 target_lemma=card.target_lemma,
@@ -156,7 +196,7 @@ async def add_lexeme_card(
                 pos=card.pos,
                 surface_forms=card.surface_forms,
                 senses=card.senses,
-                examples=card.examples,
+                examples=examples_dict if examples_dict else None,
                 confidence=card.confidence,
             )
 
@@ -164,7 +204,22 @@ async def add_lexeme_card(
             await db.commit()
             await db.refresh(lexeme_card)
 
-            return LexemeCardOut.model_validate(lexeme_card)
+            # Return card with only the examples for this revision_id
+            card_dict = {
+                "id": lexeme_card.id,
+                "source_lemma": lexeme_card.source_lemma,
+                "target_lemma": lexeme_card.target_lemma,
+                "source_language": lexeme_card.source_language,
+                "target_language": lexeme_card.target_language,
+                "pos": lexeme_card.pos,
+                "surface_forms": lexeme_card.surface_forms,
+                "senses": lexeme_card.senses,
+                "examples": (lexeme_card.examples or {}).get(str(revision_id), []),
+                "confidence": lexeme_card.confidence,
+                "created_at": lexeme_card.created_at,
+                "last_updated": lexeme_card.last_updated,
+            }
+            return LexemeCardOut.model_validate(card_dict)
 
     except SQLAlchemyError as e:
         await db.rollback()
@@ -259,6 +314,7 @@ async def get_word_alignments(
 async def get_lexeme_cards(
     source_language: str,
     target_language: str,
+    revision_id: int = None,
     source_lemma: str = None,
     target_lemma: str = None,
     pos: str = None,
@@ -272,12 +328,14 @@ async def get_lexeme_cards(
     Query Parameters:
     - source_language: str (required) - ISO 639-3 code for source language
     - target_language: str (required) - ISO 639-3 code for target language
+    - revision_id: int (optional) - Bible revision ID to filter examples. If not provided, no examples are returned.
     - source_lemma: str (optional) - Filter by source lemma
     - target_lemma: str (optional) - Filter by target lemma
     - pos: str (optional) - Filter by part of speech
 
     Returns:
-    - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending)
+    - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending).
+      Examples are only included if revision_id is provided.
     """
     try:
         from sqlalchemy import desc, select
@@ -306,7 +364,33 @@ async def get_lexeme_cards(
         result = await db.execute(query)
         cards = result.scalars().all()
 
-        return [LexemeCardOut.model_validate(card) for card in cards]
+        # Filter examples by revision_id
+        response_cards = []
+        for card in cards:
+            card_dict = {
+                "id": card.id,
+                "source_lemma": card.source_lemma,
+                "target_lemma": card.target_lemma,
+                "source_language": card.source_language,
+                "target_language": card.target_language,
+                "pos": card.pos,
+                "surface_forms": card.surface_forms,
+                "senses": card.senses,
+                "confidence": card.confidence,
+                "created_at": card.created_at,
+                "last_updated": card.last_updated,
+            }
+
+            # Only include examples if revision_id is provided
+            if revision_id is not None:
+                examples_dict = card.examples or {}
+                card_dict["examples"] = examples_dict.get(str(revision_id), [])
+            else:
+                card_dict["examples"] = []
+
+            response_cards.append(LexemeCardOut.model_validate(card_dict))
+
+        return response_cards
 
     except SQLAlchemyError as e:
         logger.error(f"Error fetching lexeme cards: {e}")
