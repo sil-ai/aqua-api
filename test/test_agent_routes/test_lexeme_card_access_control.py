@@ -158,7 +158,7 @@ def test_lexeme_card_access_control_by_user(
 
     # Now query as user1 - should only see examples from revision3
     response3 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=maji",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=maji",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -175,7 +175,7 @@ def test_lexeme_card_access_control_by_user(
 
     # Now query as user2 - should only see examples from revision4
     response4 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=maji",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=maji",
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
 
@@ -194,7 +194,7 @@ def test_lexeme_card_access_control_by_user(
     # Now query as admin - should see ALL examples from both revisions (5 total)
     # Admin has access to all revisions in the system
     response5 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=maji",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=maji",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
 
@@ -305,7 +305,7 @@ def test_single_user_multiple_revisions_same_version(
 
     # Now query the lexeme card - user1 should see ALL 5 examples from both revisions
     response3 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=kitabu",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=kitabu",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
