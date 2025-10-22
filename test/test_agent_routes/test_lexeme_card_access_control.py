@@ -213,3 +213,106 @@ def test_lexeme_card_access_control_by_user(
     assert card["examples"][2]["source"] == "Clean water"
     assert card["examples"][3]["source"] == "Hot water"
     assert card["examples"][4]["source"] == "Cold water"
+
+
+def test_single_user_multiple_revisions_same_version(
+    client, regular_token1, db_session
+):
+    """
+    Test that a single user with access to multiple revisions from the same version
+    can add examples to a lexeme card from both revisions, and sees all examples
+    when retrieving the card.
+
+    Setup:
+    - Uses existing 'loading_test' version with revision 1 and revision 2
+    - testuser1 already has access to this version (via agent conftest fixture)
+    - testuser1 adds examples from revision 1
+    - testuser1 adds more examples from revision 2 to the same card
+    - Verify testuser1 sees examples from both revisions when querying
+    """
+
+    # Use the existing revisions 1 and 2 from the 'loading_test' version
+    # (created by load_revision_data fixture, accessible via agent conftest)
+    revision1_id = 1
+    revision2_id = 2
+
+    # User1 adds a lexeme card with examples from revision 1
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={revision1_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "book",
+            "target_lemma": "kitabu",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "noun",
+            "examples": [
+                {"source": "I read a book", "target": "Ninasoma kitabu"},
+                {"source": "The book is new", "target": "Kitabu ni kipya"},
+            ],
+            "confidence": 0.9,
+        },
+    )
+
+    assert response1.status_code == 200
+    data1 = response1.json()
+    card_id = data1["id"]
+
+    # Verify the first 2 examples are there
+    assert len(data1["examples"]) == 2
+    assert data1["examples"][0]["source"] == "I read a book"
+    assert data1["examples"][1]["source"] == "The book is new"
+
+    # User1 adds more examples to the SAME lexeme card but from revision 2
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={revision2_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "book",
+            "target_lemma": "kitabu",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source": "Buy a book", "target": "Nunua kitabu"},
+                {"source": "Old book", "target": "Kitabu cha zamani"},
+                {"source": "Write a book", "target": "Andika kitabu"},
+            ],
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+
+    # Should be the same card (same unique constraint)
+    assert data2["id"] == card_id
+
+    # Verify the 3 new examples from revision 2 are there
+    assert len(data2["examples"]) == 3
+    assert data2["examples"][0]["source"] == "Buy a book"
+    assert data2["examples"][1]["source"] == "Old book"
+    assert data2["examples"][2]["source"] == "Write a book"
+
+    # Now query the lexeme card - user1 should see ALL 5 examples from both revisions
+    response3 = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=kitabu",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response3.status_code == 200
+    cards = response3.json()
+    assert len(cards) == 1
+    card = cards[0]
+
+    assert card["id"] == card_id
+    # User1 should see all 5 examples from both revisions they have access to
+    assert len(card["examples"]) == 5
+
+    # Check all examples are present (in insertion order)
+    # First the 2 from revision 1
+    assert card["examples"][0]["source"] == "I read a book"
+    assert card["examples"][1]["source"] == "The book is new"
+
+    # Then the 3 from revision 2
+    assert card["examples"][2]["source"] == "Buy a book"
+    assert card["examples"][3]["source"] == "Old book"
+    assert card["examples"][4]["source"] == "Write a book"

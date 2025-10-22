@@ -3,6 +3,7 @@
 Fixtures specific to agent routes tests.
 """
 import pytest
+from sqlalchemy import text
 
 from database.models import BibleVersion, BibleVersionAccess, Group
 
@@ -13,7 +14,16 @@ def setup_agent_test_access(db_session):
     Grant Group1 access to the 'loading_test' Bible version created in the main conftest.
     This is required for agent routes tests that need to access revisions.
     This runs automatically before each test function in this directory.
+    Also fixes the PostgreSQL sequence for bible_revision table.
     """
+    # Fix the PostgreSQL sequence for bible_revision after explicit ID inserts
+    db_session.execute(
+        text(
+            "SELECT setval('bible_revision_id_seq', (SELECT MAX(id) FROM bible_revision))"
+        )
+    )
+    db_session.commit()
+
     # Get the loading_test version
     version = (
         db_session.query(BibleVersion)
