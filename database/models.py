@@ -378,7 +378,7 @@ class UserGroup(Base):
     group = relationship("Group", back_populates="users")
 
 
-class LexemeCard(Base):
+class AgentLexemeCard(Base):
     __tablename__ = "agent_lexeme_cards"
 
     id = Column(Integer, primary_key=True)
@@ -391,7 +391,7 @@ class LexemeCard(Base):
     senses = Column(JSONB)  # JSON array of senses
     examples = Column(
         JSONB
-    )  # JSON object with revision_id as keys, each containing array of example dictionaries
+    )  # DEPRECATED: JSON object with revision_id as keys - being migrated to separate table
     confidence = Column(Numeric)
     created_at = Column(TIMESTAMP, default=func.now())
     last_updated = Column(TIMESTAMP, default=func.now())
@@ -427,6 +427,49 @@ class LexemeCard(Base):
             postgresql_using="gin",
         ),
     )
+
+    # Relationship to examples
+    examples_rel = relationship(
+        "AgentLexemeCardExample",
+        back_populates="lexeme_card",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentLexemeCardExample(Base):
+    __tablename__ = "agent_lexeme_card_examples"
+
+    id = Column(Integer, primary_key=True)
+    lexeme_card_id = Column(
+        Integer, ForeignKey("agent_lexeme_cards.id", ondelete="CASCADE"), nullable=False
+    )
+    revision_id = Column(
+        Integer, ForeignKey("bible_revision.id", ondelete="CASCADE"), nullable=False
+    )
+    source_text = Column(Text, nullable=False)
+    target_text = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        # Prevent duplicate examples for the same lexeme card + revision
+        Index(
+            "ix_agent_lexeme_card_examples_unique",
+            "lexeme_card_id",
+            "revision_id",
+            "source_text",
+            "target_text",
+            unique=True,
+        ),
+        # Index for querying examples by revision
+        Index(
+            "ix_agent_lexeme_card_examples_revision",
+            "revision_id",
+        ),
+    )
+
+    # Relationships
+    lexeme_card = relationship("AgentLexemeCard", back_populates="examples_rel")
+    revision = relationship("BibleRevision")
 
 
 class AgentWordAlignment(Base):
