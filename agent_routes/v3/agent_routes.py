@@ -21,6 +21,7 @@ from models import (
     LexemeCardOut,
 )
 from security_routes.auth_routes import get_current_user
+from security_routes.utilities import get_authorized_revision_ids
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -377,7 +378,6 @@ async def get_word_alignments(
 async def get_lexeme_cards(
     source_language: str,
     target_language: str,
-    revision_id: int = None,
     source_lemma: str = None,
     target_lemma: str = None,
     pos: str = None,
@@ -387,21 +387,25 @@ async def get_lexeme_cards(
     """
     Get lexeme cards filtered by language pair and optionally by other fields.
     Results are ordered by confidence in descending order (highest first).
+    Examples are automatically filtered to only include those from Bible revisions
+    the current user has access to.
 
     Query Parameters:
     - source_language: str (required) - ISO 639-3 code for source language
     - target_language: str (required) - ISO 639-3 code for target language
-    - revision_id: int (optional) - Bible revision ID to filter examples. If not provided, no examples are returned.
     - source_lemma: str (optional) - Filter by source lemma
     - target_lemma: str (optional) - Filter by target lemma
     - pos: str (optional) - Filter by part of speech
 
     Returns:
     - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending).
-      Examples are only included if revision_id is provided.
+      Examples are filtered based on the user's access to Bible revisions.
     """
     try:
         from sqlalchemy import desc, select
+
+        # Get revision IDs the user has access to
+        authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
 
         # Start with base query filtered by languages
         query = select(AgentLexemeCard)
@@ -444,14 +448,13 @@ async def get_lexeme_cards(
                 "last_updated": card.last_updated,
             }
 
-            # Only include examples if revision_id is provided
-            if revision_id is not None:
-                # Query examples for this lexeme card and revision, ordered by ID (insertion order)
+            # Query examples for this lexeme card from all authorized revisions, ordered by ID (insertion order)
+            if authorized_revision_ids:
                 examples_query = (
                     select(AgentLexemeCardExample)
                     .where(
                         AgentLexemeCardExample.lexeme_card_id == card.id,
-                        AgentLexemeCardExample.revision_id == revision_id,
+                        AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
                     )
                     .order_by(AgentLexemeCardExample.id)
                 )

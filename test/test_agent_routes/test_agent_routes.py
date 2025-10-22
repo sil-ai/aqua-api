@@ -1633,9 +1633,10 @@ def test_add_lexeme_card_multiple_revisions(client, regular_token1, db_session):
     assert data2["examples"][1]["source"] == "Small house"
     assert data2["examples"][2]["source"] == "New house"
 
-    # Query the card with revision_id=1 - should only get revision 1 examples
+    # Query the card - should now get examples from ALL revisions the user has access to
+    # Since testuser1 has access to both revision 1 and revision 2, we should see all 5 examples
     response3 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&revision_id=1&target_lemma=nyumba",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=nyumba",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1645,39 +1646,11 @@ def test_add_lexeme_card_multiple_revisions(client, regular_token1, db_session):
     card = cards[0]
 
     assert card["id"] == card_id
-    assert len(card["examples"]) == 2
-    # Examples should be in insertion order
+    assert len(card["examples"]) == 5  # All examples from both revisions
+    # Examples should be in insertion order (by ID)
+    # First the 2 from revision 1, then the 3 from revision 2
     assert card["examples"][0]["source"] == "My house is big"
     assert card["examples"][1]["source"] == "The house is old"
-
-    # Query the card with revision_id=2 - should only get revision 2 examples
-    response4 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&revision_id=2&target_lemma=nyumba",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-    )
-
-    assert response4.status_code == 200
-    cards = response4.json()
-    assert len(cards) == 1
-    card = cards[0]
-
-    assert card["id"] == card_id
-    assert len(card["examples"]) == 3
-    # Examples should be in insertion order
-    assert card["examples"][0]["source"] == "A red house"
-    assert card["examples"][1]["source"] == "Small house"
-    assert card["examples"][2]["source"] == "New house"
-
-    # Query without revision_id - should get empty examples list
-    response5 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_lemma=nyumba",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-    )
-
-    assert response5.status_code == 200
-    cards = response5.json()
-    assert len(cards) == 1
-    card = cards[0]
-
-    assert card["id"] == card_id
-    assert len(card["examples"]) == 0  # No revision_id specified
+    assert card["examples"][2]["source"] == "A red house"
+    assert card["examples"][3]["source"] == "Small house"
+    assert card["examples"][4]["source"] == "New house"

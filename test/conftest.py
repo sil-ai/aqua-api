@@ -296,27 +296,29 @@ async def setup_references_and_isos_async(session):
 
 def load_revision_data(db_session):
     """Load revision data into the database."""
-    # Add version
-    # query the id for testuser1
-    user = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
-    user_id = user.id if user else None
+    # Get users
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
 
+    # Create one Bible version that will contain both revisions
+    # Note: This version is NOT given automatic group access - tests must set up
+    # their own BibleVersionAccess if needed
     version = BibleVersion(
         name="loading_test",
         iso_language="eng",
         iso_script="Latn",
         abbreviation="BLTEST",
-        owner_id=user_id,
+        owner_id=user1.id if user1 else None,
         is_reference=False,
     )
     db_session.add(version)
 
-    # Commit to save the version and retrieve its ID for the revision
+    # Commit to save the version and retrieve its ID
     db_session.commit()
 
     # Add revisions with explicit IDs to ensure tests work consistently
+    # Both revisions belong to the same version
     revision1 = BibleRevision(
-        id=1,  # Explicitly set ID for test consistency
+        id=1,
         date=date.today(),
         bible_version_id=version.id,
         published=False,
@@ -325,7 +327,7 @@ def load_revision_data(db_session):
     db_session.add(revision1)
 
     revision2 = BibleRevision(
-        id=2,  # Second revision for multi-revision tests
+        id=2,
         date=date.today(),
         bible_version_id=version.id,
         published=False,
