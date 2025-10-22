@@ -281,7 +281,7 @@ async def check_word_in_lexeme_cards(
     - count: int - Number of lexeme cards where the word matches (case-insensitive)
     """
     try:
-        from sqlalchemy import func, or_, select, text
+        from sqlalchemy import func, select, text
 
         # Normalize the word for case-insensitive comparison
         word_lower = word.strip().lower()
