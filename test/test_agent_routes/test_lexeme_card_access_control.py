@@ -224,17 +224,28 @@ def test_single_user_multiple_revisions_same_version(
     when retrieving the card.
 
     Setup:
-    - Uses existing 'loading_test' version with revision 1 and revision 2
+    - Uses existing 'loading_test' version with its revisions
     - testuser1 already has access to this version (via agent conftest fixture)
     - testuser1 adds examples from revision 1
     - testuser1 adds more examples from revision 2 to the same card
     - Verify testuser1 sees examples from both revisions when querying
     """
 
-    # Use the existing revisions 1 and 2 from the 'loading_test' version
+    # Query for the revisions from the 'loading_test' version
     # (created by load_revision_data fixture, accessible via agent conftest)
-    revision1_id = 1
-    revision2_id = 2
+    version = (
+        db_session.query(BibleVersion)
+        .filter(BibleVersion.name == "loading_test")
+        .first()
+    )
+    revisions = (
+        db_session.query(BibleRevision)
+        .filter(BibleRevision.bible_version_id == version.id)
+        .order_by(BibleRevision.id)
+        .all()
+    )
+    revision1_id = revisions[0].id
+    revision2_id = revisions[1].id
 
     # User1 adds a lexeme card with examples from revision 1
     response1 = client.post(

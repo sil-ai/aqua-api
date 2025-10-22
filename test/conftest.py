@@ -5,7 +5,7 @@ import bcrypt
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -295,7 +295,7 @@ async def setup_references_and_isos_async(session):
 
 
 def load_revision_data(db_session):
-    """Load revision data into the database."""
+    """Load revision data into the database and return the revision IDs."""
     # Get users
     user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
 
@@ -315,10 +315,16 @@ def load_revision_data(db_session):
     # Commit to save the version and retrieve its ID
     db_session.commit()
 
-    # Add revisions with explicit IDs to ensure tests work consistently
+    # Get the current max ID from bible_revision table
+    max_id_result = db_session.execute(
+        text("SELECT COALESCE(MAX(id), 0) FROM bible_revision")
+    ).scalar()
+    next_id = (max_id_result or 0) + 1
+
+    # Add revisions with explicit IDs based on max ID
     # Both revisions belong to the same version
     revision1 = BibleRevision(
-        id=1,
+        id=next_id,
         date=date.today(),
         bible_version_id=version.id,
         published=False,
@@ -327,7 +333,7 @@ def load_revision_data(db_session):
     db_session.add(revision1)
 
     revision2 = BibleRevision(
-        id=2,
+        id=next_id + 1,
         date=date.today(),
         bible_version_id=version.id,
         published=False,
@@ -335,6 +341,16 @@ def load_revision_data(db_session):
     )
     db_session.add(revision2)
     db_session.commit()
+
+    # Update the sequence to the next available value after our explicit IDs
+    # This ensures subsequent INSERTs without explicit IDs use the correct sequence
+    db_session.execute(
+        text(f"SELECT setval('bible_revision_id_seq', {next_id + 1}, true)")
+    )
+    db_session.commit()
+
+    # Return the revision IDs so tests can use them
+    return revision1.id, revision2.id
 
 
 async def load_revision_data_async(session):
@@ -382,9 +398,15 @@ async def load_revision_data_async(session):
     )
     version_ = result.scalars().first()
 
-    # Add revisions with explicit IDs for test consistency
+    # Get the current max ID from bible_revision table
+    max_id_result = await session.execute(
+        text("SELECT COALESCE(MAX(id), 0) FROM bible_revision")
+    )
+    next_id = (max_id_result.scalar() or 0) + 1
+
+    # Add revisions with explicit IDs based on max ID
     revision1 = BibleRevision(
-        id=1,  # Explicitly set ID for test consistency
+        id=next_id,
         date=date.today(),
         bible_version_id=version_.id,
         published=False,
@@ -393,7 +415,7 @@ async def load_revision_data_async(session):
     session.add(revision1)
 
     revision2 = BibleRevision(
-        id=2,  # Second revision for multi-revision tests
+        id=next_id + 1,
         date=date.today(),
         bible_version_id=version_.id,
         published=False,
@@ -403,6 +425,13 @@ async def load_revision_data_async(session):
     await session.commit()
     await session.refresh(revision1)
     await session.refresh(revision2)
+
+    # Update the sequence to the next available value after our explicit IDs
+    # This ensures subsequent INSERTs without explicit IDs use the correct sequence
+    await session.execute(
+        text(f"SELECT setval('bible_revision_id_seq', {next_id + 1}, true)")
+    )
+    await session.commit()
 
     result = await session.execute(select(Group).where(Group.name == "Group1"))
     group = result.scalars().first()
