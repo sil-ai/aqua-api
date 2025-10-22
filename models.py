@@ -458,3 +458,84 @@ class AgentWordAlignmentOut(BaseModel):
         },
         "from_attributes": True,
     }
+
+
+class LexemeCardIn(BaseModel):
+    source_lemma: Optional[str] = None
+    target_lemma: str
+    source_language: str
+    target_language: str
+    pos: Optional[str] = None
+    surface_forms: Optional[list] = None
+    senses: Optional[list] = None
+    examples: Optional[list] = None
+    confidence: Optional[float] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_lemma": "love",
+                "target_lemma": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "pos": "verb",
+                "surface_forms": ["love", "loves", "loved", "loving"],
+                "senses": [
+                    {
+                        "definition": "to feel deep affection",
+                        "examples": ["I love you"],
+                    },
+                    {"definition": "to enjoy greatly", "examples": ["I love pizza"]},
+                ],
+                "examples": [
+                    {"source": "I love you", "target": "Te amo"},
+                    {"source": "They love music", "target": "Aman la música"},
+                ],
+                "confidence": 0.95,
+            }
+        }
+    }
+
+
+class LexemeCardOut(BaseModel):
+    id: int
+    source_lemma: Optional[str] = None
+    target_lemma: str
+    source_language: str
+    target_language: str
+    pos: Optional[str] = None
+    surface_forms: Optional[list] = None
+    senses: Optional[list] = None
+    examples: Optional[list] = None
+    confidence: Optional[float] = None
+    created_at: Optional[datetime.datetime] = None
+    last_updated: Optional[datetime.datetime] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "source_lemma": "love",
+                "target_lemma": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "pos": "verb",
+                "surface_forms": ["love", "loves", "loved", "loving"],
+                "senses": [
+                    {
+                        "definition": "to feel deep affection",
+                        "examples": ["I love you"],
+                    },
+                    {"definition": "to enjoy greatly", "examples": ["I love pizza"]},
+                ],
+                "examples": [
+                    {"source": "I love you", "target": "Te amo"},
+                    {"source": "They love music", "target": "Aman la música"},
+                ],
+                "confidence": 0.95,
+                "created_at": "2024-06-01T12:00:00",
+                "last_updated": "2024-06-01T12:00:00",
+            }
+        },
+        "from_attributes": True,
+    }

@@ -8,9 +8,14 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
-from database.models import AgentWordAlignment
+from database.models import AgentWordAlignment, LexemeCard
 from database.models import UserDB as UserModel
-from models import AgentWordAlignmentIn, AgentWordAlignmentOut
+from models import (
+    AgentWordAlignmentIn,
+    AgentWordAlignmentOut,
+    LexemeCardIn,
+    LexemeCardOut,
+)
 from security_routes.auth_routes import get_current_user
 
 logging.basicConfig(level=logging.INFO)
@@ -57,6 +62,199 @@ async def add_word_alignment(
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Error adding word alignment: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.post("/agent/lexeme-card", response_model=LexemeCardOut)
+async def add_lexeme_card(
+    card: LexemeCardIn,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Add a new lexeme card entry to the agent_lexeme_cards table.
+
+    Input:
+    - source_lemma: str (optional) - The source language lemma for cross-reference
+    - target_lemma: str (required) - The target language lemma
+    - source_language: str - ISO 639-3 code for source language
+    - target_language: str - ISO 639-3 code for target language
+    - pos: str (optional) - Part of speech
+    - surface_forms: list (optional) - JSON array of all surface forms
+    - senses: list (optional) - JSON array of senses with definitions and examples
+    - examples: list (optional) - JSON array of usage examples
+    - confidence: float (optional) - Confidence score for the lexeme card
+
+    Returns:
+    - LexemeCardOut: The created lexeme card entry
+    """
+    try:
+        # Create new lexeme card entry
+        lexeme_card = LexemeCard(
+            source_lemma=card.source_lemma,
+            target_lemma=card.target_lemma,
+            source_language=card.source_language,
+            target_language=card.target_language,
+            pos=card.pos,
+            surface_forms=card.surface_forms,
+            senses=card.senses,
+            examples=card.examples,
+            confidence=card.confidence,
+        )
+
+        db.add(lexeme_card)
+        await db.commit()
+        await db.refresh(lexeme_card)
+
+        return LexemeCardOut.model_validate(lexeme_card)
+
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error adding lexeme card: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.get("/agent/word-alignment", response_model=list[AgentWordAlignmentOut])
+async def get_word_alignments(
+    source_language: str,
+    target_language: str,
+    source_words: str = None,
+    target_words: str = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Get word alignments filtered by language pair and optionally by source/target words.
+
+    Query Parameters:
+    - source_language: str (required) - ISO 639-3 code for source language
+    - target_language: str (required) - ISO 639-3 code for target language
+    - source_words: str (optional) - Comma-separated list of words to match in source_word
+    - target_words: str (optional) - Comma-separated list of words to match in target_word
+
+    At least one of source_words or target_words must be provided.
+
+    Returns:
+    - List[AgentWordAlignmentOut]: List of matching word alignment entries
+    """
+    try:
+        from sqlalchemy import or_, select
+
+        # Validate that at least one word filter is provided
+        if not source_words and not target_words:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one of source_words or target_words must be provided",
+            )
+
+        # Start with base query filtered by languages
+        query = select(AgentWordAlignment).distinct()
+        conditions = [
+            AgentWordAlignment.source_language == source_language,
+            AgentWordAlignment.target_language == target_language,
+        ]
+
+        # Build word filter conditions
+        word_conditions = []
+
+        # Filter by source words if provided
+        if source_words:
+            source_word_list = [w.strip() for w in source_words.split(",") if w.strip()]
+            if source_word_list:
+                for word in source_word_list:
+                    word_conditions.append(AgentWordAlignment.source_word == word)
+
+        # Filter by target words if provided
+        if target_words:
+            target_word_list = [w.strip() for w in target_words.split(",") if w.strip()]
+            if target_word_list:
+                for word in target_word_list:
+                    word_conditions.append(AgentWordAlignment.target_word == word)
+
+        # Combine word conditions with OR
+        if word_conditions:
+            conditions.append(or_(*word_conditions))
+
+        # Apply all conditions
+        query = query.where(*conditions)
+
+        # Execute query
+        result = await db.execute(query)
+        alignments = result.scalars().all()
+
+        return [AgentWordAlignmentOut.model_validate(a) for a in alignments]
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching word alignments: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.get("/agent/lexeme-card", response_model=list[LexemeCardOut])
+async def get_lexeme_cards(
+    source_language: str,
+    target_language: str,
+    source_lemma: str = None,
+    target_lemma: str = None,
+    pos: str = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Get lexeme cards filtered by language pair and optionally by other fields.
+    Results are ordered by confidence in descending order (highest first).
+
+    Query Parameters:
+    - source_language: str (required) - ISO 639-3 code for source language
+    - target_language: str (required) - ISO 639-3 code for target language
+    - source_lemma: str (optional) - Filter by source lemma
+    - target_lemma: str (optional) - Filter by target lemma
+    - pos: str (optional) - Filter by part of speech
+
+    Returns:
+    - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending)
+    """
+    try:
+        from sqlalchemy import desc, select
+
+        # Start with base query filtered by languages
+        query = select(LexemeCard)
+        conditions = [
+            LexemeCard.source_language == source_language,
+            LexemeCard.target_language == target_language,
+        ]
+
+        # Add optional filters
+        if source_lemma:
+            conditions.append(LexemeCard.source_lemma == source_lemma)
+
+        if target_lemma:
+            conditions.append(LexemeCard.target_lemma == target_lemma)
+
+        if pos:
+            conditions.append(LexemeCard.pos == pos)
+
+        # Apply all conditions and order by confidence descending
+        query = query.where(*conditions).order_by(desc(LexemeCard.confidence))
+
+        # Execute query
+        result = await db.execute(query)
+        cards = result.scalars().all()
+
+        return [LexemeCardOut.model_validate(card) for card in cards]
+
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching lexeme cards: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
