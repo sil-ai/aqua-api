@@ -414,7 +414,7 @@ def test_add_lexeme_card_success(client, regular_token1, db_session):
             "source_language": "eng",
             "target_language": "swh",
             "pos": "noun",
-            "surface_forms": ["love", "loves"],
+            "surface_forms": ["upendo", "mapendo"],  # Target language (Swahili) forms
             "senses": [
                 {"definition": "deep affection", "examples": ["I love you"]},
                 {"definition": "strong liking", "examples": ["love of music"]},
@@ -479,7 +479,12 @@ def test_add_lexeme_card_with_pos_and_forms(client, regular_token1, db_session):
             "source_language": "eng",
             "target_language": "swh",
             "pos": "verb",
-            "surface_forms": ["run", "runs", "running", "ran"],
+            "surface_forms": [
+                "kimbia",
+                "anakimbia",
+                "wanakimbia",
+                "alikimbia",
+            ],  # Target language (Swahili) forms
         },
     )
 
@@ -489,8 +494,8 @@ def test_add_lexeme_card_with_pos_and_forms(client, regular_token1, db_session):
     assert data["target_lemma"] == "kimbia"
     assert data["pos"] == "verb"
     assert len(data["surface_forms"]) == 4
-    assert "run" in data["surface_forms"]
-    assert "ran" in data["surface_forms"]
+    assert "kimbia" in data["surface_forms"]
+    assert "alikimbia" in data["surface_forms"]
 
 
 def test_add_lexeme_card_with_senses(client, regular_token1, db_session):
@@ -893,22 +898,27 @@ def test_check_word_matches_surface_form(client, regular_token1, db_session):
         "/v3/agent/lexeme-card",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "love",
+            "target_lemma": "penda",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["love", "loves", "loved", "loving"],
+            "surface_forms": [
+                "penda",
+                "anapenda",
+                "wanapenda",
+                "alipenda",
+            ],  # Target language (Swahili) forms
         },
     )
 
     # Check if surface form exists
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=loves&source_language=eng&target_language=swh",
+        "/v3/agent/lexeme-card/check-word?word=anapenda&source_language=eng&target_language=swh",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["word"] == "loves"
+    assert data["word"] == "anapenda"
     assert data["count"] >= 1
 
 
@@ -919,33 +929,33 @@ def test_check_word_case_insensitive(client, regular_token1, db_session):
         "/v3/agent/lexeme-card",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "Book",
+            "target_lemma": "Kitabu",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["Book", "Books"],
+            "surface_forms": ["Kitabu", "Vitabu"],  # Target language (Swahili) forms
         },
     )
 
     # Check with different case
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=book&source_language=eng&target_language=swh",
+        "/v3/agent/lexeme-card/check-word?word=kitabu&source_language=eng&target_language=swh",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["word"] == "book"
+    assert data["word"] == "kitabu"
     assert data["count"] >= 1
 
     # Check surface form with different case
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=BOOKS&source_language=eng&target_language=swh",
+        "/v3/agent/lexeme-card/check-word?word=VITABU&source_language=eng&target_language=swh",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["word"] == "BOOKS"
+    assert data["word"] == "VITABU"
     assert data["count"] >= 1
 
 
@@ -969,32 +979,32 @@ def test_check_word_multiple_matches(client, regular_token1, db_session):
         "/v3/agent/lexeme-card",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "run",
+            "target_lemma": "kimbia",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["run", "runs"],
+            "surface_forms": ["kimbia", "anakimbia"],  # Target language (Swahili) forms
         },
     )
     client.post(
         "/v3/agent/lexeme-card",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "sprint",
+            "target_lemma": "kukimbia",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["sprint", "run"],
+            "surface_forms": ["kukimbia", "kimbia"],  # Target language (Swahili) forms
         },
     )
 
     # Check word that appears in multiple cards
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=run&source_language=eng&target_language=swh",
+        "/v3/agent/lexeme-card/check-word?word=kimbia&source_language=eng&target_language=swh",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["word"] == "run"
+    assert data["word"] == "kimbia"
     assert data["count"] >= 2
 
 
@@ -1076,7 +1086,7 @@ def test_add_lexeme_card_upsert_append_default(client, regular_token1, db_sessio
             "source_language": "eng",
             "target_language": "swh",
             "pos": "verb",
-            "surface_forms": ["walk", "walks"],
+            "surface_forms": ["tembea", "anatembea"],  # Target language (Swahili) forms
             "senses": [{"definition": "move on foot", "examples": ["I walk daily"]}],
             "examples": [{"source": "I walk", "target": "Natembea"}],
             "confidence": 0.85,
@@ -1100,7 +1110,10 @@ def test_add_lexeme_card_upsert_append_default(client, regular_token1, db_sessio
             "source_language": "eng",
             "target_language": "swh",
             "pos": "verb",
-            "surface_forms": ["walking", "walked"],
+            "surface_forms": [
+                "wanatembea",
+                "alitembea",
+            ],  # Target language (Swahili) forms
             "senses": [{"definition": "travel by foot", "examples": ["We walk home"]}],
             "examples": [{"source": "We walk", "target": "Tunatembea"}],
             "confidence": 0.90,
@@ -1114,8 +1127,13 @@ def test_add_lexeme_card_upsert_append_default(client, regular_token1, db_sessio
     assert data2["id"] == card_id
 
     # Surface forms should be appended and deduplicated
-    assert len(data2["surface_forms"]) == 4  # walk, walks, walking, walked
-    assert set(data2["surface_forms"]) == {"walk", "walks", "walking", "walked"}
+    assert len(data2["surface_forms"]) == 4  # tembea, anatembea, wanatembea, alitembea
+    assert set(data2["surface_forms"]) == {
+        "tembea",
+        "anatembea",
+        "wanatembea",
+        "alitembea",
+    }
 
     # Senses should be appended
     assert len(data2["senses"]) == 2
@@ -1143,7 +1161,7 @@ def test_add_lexeme_card_upsert_append_explicit(client, regular_token1, db_sessi
             "target_lemma": "imba",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["sing", "sings"],
+            "surface_forms": ["imba", "anaimba"],  # Target language (Swahili) forms
             "senses": [{"definition": "produce musical sounds"}],
             "examples": [{"source": "I sing", "target": "Naimba"}],
         },
@@ -1161,7 +1179,7 @@ def test_add_lexeme_card_upsert_append_explicit(client, regular_token1, db_sessi
             "target_lemma": "imba",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["singing", "sang"],
+            "surface_forms": ["wanaimba", "aliimba"],  # Target language (Swahili) forms
             "senses": [{"definition": "vocalize melodically"}],
             "examples": [{"source": "She sings", "target": "Anaimba"}],
         },
@@ -1188,7 +1206,11 @@ def test_add_lexeme_card_upsert_replace(client, regular_token1, db_session):
             "source_language": "eng",
             "target_language": "swh",
             "pos": "verb",
-            "surface_forms": ["dance", "dances", "dancing"],
+            "surface_forms": [
+                "cheza",
+                "anacheza",
+                "wanacheza",
+            ],  # Target language (Swahili) forms
             "senses": [
                 {"definition": "move rhythmically", "examples": ["I love to dance"]}
             ],
@@ -1212,7 +1234,10 @@ def test_add_lexeme_card_upsert_replace(client, regular_token1, db_session):
             "source_language": "eng",
             "target_language": "swh",
             "pos": "verb",
-            "surface_forms": ["dance", "danced"],  # Completely new list
+            "surface_forms": [
+                "cheza",
+                "alicheza",
+            ],  # Completely new list (Target language)
             "senses": [
                 {"definition": "perform dance"}
             ],  # Completely new list (shorter)
@@ -1232,9 +1257,9 @@ def test_add_lexeme_card_upsert_replace(client, regular_token1, db_session):
 
     # Surface forms should be completely replaced
     assert len(data2["surface_forms"]) == 2
-    assert set(data2["surface_forms"]) == {"dance", "danced"}
-    assert "dancing" not in data2["surface_forms"]
-    assert "dances" not in data2["surface_forms"]
+    assert set(data2["surface_forms"]) == {"cheza", "alicheza"}
+    assert "wanacheza" not in data2["surface_forms"]
+    assert "anacheza" not in data2["surface_forms"]
 
     # Senses should be completely replaced
     assert len(data2["senses"]) == 1
@@ -1262,7 +1287,11 @@ def test_add_lexeme_card_upsert_append_deduplicates_surface_forms(
             "target_lemma": "ruka",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["jump", "jumps", "jumping"],
+            "surface_forms": [
+                "ruka",
+                "anaruka",
+                "wanaruka",
+            ],  # Target language (Swahili) forms
         },
     )
 
@@ -1275,16 +1304,20 @@ def test_add_lexeme_card_upsert_append_deduplicates_surface_forms(
             "target_lemma": "ruka",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["jump", "jumped", "jumping"],  # jump and jumping overlap
+            "surface_forms": [
+                "ruka",
+                "aliruka",
+                "wanaruka",
+            ],  # ruka and wanaruka overlap (Target language)
         },
     )
 
     assert response.status_code == 200
     data = response.json()
 
-    # Should have 4 unique forms (jump, jumps, jumping, jumped)
+    # Should have 4 unique forms (ruka, anaruka, wanaruka, aliruka)
     assert len(data["surface_forms"]) == 4
-    assert set(data["surface_forms"]) == {"jump", "jumps", "jumping", "jumped"}
+    assert set(data["surface_forms"]) == {"ruka", "anaruka", "wanaruka", "aliruka"}
 
 
 def test_add_lexeme_card_upsert_append_with_none_values(
@@ -1318,7 +1351,7 @@ def test_add_lexeme_card_upsert_append_with_none_values(
             "target_lemma": "lala",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["sleep", "sleeps"],
+            "surface_forms": ["lala", "analala"],  # Target language (Swahili) forms
             "senses": None,
             "examples": [{"source": "I sleep", "target": "Nalala"}],
         },
@@ -1349,7 +1382,11 @@ def test_add_lexeme_card_upsert_replace_with_none_values(
             "target_lemma": "kula",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["eat", "eats", "eating"],
+            "surface_forms": [
+                "kula",
+                "anakula",
+                "wanakula",
+            ],  # Target language (Swahili) forms
             "senses": [{"definition": "consume food"}],
             "examples": [{"source": "I eat", "target": "Nakula"}],
         },
@@ -1502,7 +1539,7 @@ def test_add_lexeme_card_upsert_empty_lists(client, regular_token1, db_session):
             "target_lemma": "cheza",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["play", "plays"],
+            "surface_forms": ["cheza", "anacheza"],  # Target language (Swahili) forms
             "senses": [{"definition": "engage in activity"}],
         },
     )

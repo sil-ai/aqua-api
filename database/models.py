@@ -387,7 +387,7 @@ class LexemeCard(Base):
     source_language = Column(String(3), ForeignKey("iso_language.iso639"))
     target_language = Column(String(3), ForeignKey("iso_language.iso639"))
     pos = Column(Text)
-    surface_forms = Column(JSONB)  # JSON array of all surface forms
+    surface_forms = Column(JSONB)  # JSON array of target language surface forms
     senses = Column(JSONB)  # JSON array of senses
     examples = Column(JSONB)  # JSON array of examples
     confidence = Column(Numeric)

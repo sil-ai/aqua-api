@@ -92,7 +92,7 @@ async def add_lexeme_card(
     - source_language: str - ISO 639-3 code for source language
     - target_language: str - ISO 639-3 code for target language
     - pos: str (optional) - Part of speech
-    - surface_forms: list (optional) - JSON array of all surface forms
+    - surface_forms: list (optional) - JSON array of target language surface forms
     - senses: list (optional) - JSON array of senses with definitions and examples
     - examples: list (optional) - JSON array of usage examples
     - confidence: float (optional) - Confidence score for the lexeme card

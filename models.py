@@ -479,7 +479,14 @@ class LexemeCardIn(BaseModel):
                 "source_language": "eng",
                 "target_language": "spa",
                 "pos": "verb",
-                "surface_forms": ["love", "loves", "loved", "loving"],
+                "surface_forms": [
+                    "amor",
+                    "amo",
+                    "amas",
+                    "ama",
+                    "amamos",
+                    "aman",
+                ],  # Target language surface forms
                 "senses": [
                     {
                         "definition": "to feel deep affection",
@@ -520,7 +527,14 @@ class LexemeCardOut(BaseModel):
                 "source_language": "eng",
                 "target_language": "spa",
                 "pos": "verb",
-                "surface_forms": ["love", "loves", "loved", "loving"],
+                "surface_forms": [
+                    "amor",
+                    "amo",
+                    "amas",
+                    "ama",
+                    "amamos",
+                    "aman",
+                ],  # Target language surface forms
                 "senses": [
                     {
                         "definition": "to feel deep affection",
