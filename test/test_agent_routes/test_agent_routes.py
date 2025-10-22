@@ -1059,3 +1059,476 @@ def test_check_word_unauthorized(client):
     )
 
     assert response.status_code == 401
+
+
+# Lexeme Card Upsert Tests (replace_existing parameter)
+
+
+def test_add_lexeme_card_upsert_append_default(client, regular_token1, db_session):
+    """Test that posting duplicate lexeme card appends by default (replace_existing=False)."""
+    # Add initial card
+    response1 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "walk",
+            "target_lemma": "tembea",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "verb",
+            "surface_forms": ["walk", "walks"],
+            "senses": [{"definition": "move on foot", "examples": ["I walk daily"]}],
+            "examples": [{"source": "I walk", "target": "Natembea"}],
+            "confidence": 0.85,
+        },
+    )
+
+    assert response1.status_code == 200
+    data1 = response1.json()
+    card_id = data1["id"]
+    assert len(data1["surface_forms"]) == 2
+    assert len(data1["senses"]) == 1
+    assert len(data1["examples"]) == 1
+
+    # Add duplicate card with new data (default append behavior)
+    response2 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "walk",
+            "target_lemma": "tembea",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "verb",
+            "surface_forms": ["walking", "walked"],
+            "senses": [{"definition": "travel by foot", "examples": ["We walk home"]}],
+            "examples": [{"source": "We walk", "target": "Tunatembea"}],
+            "confidence": 0.90,
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+
+    # Should be same card (same ID)
+    assert data2["id"] == card_id
+
+    # Surface forms should be appended and deduplicated
+    assert len(data2["surface_forms"]) == 4  # walk, walks, walking, walked
+    assert set(data2["surface_forms"]) == {"walk", "walks", "walking", "walked"}
+
+    # Senses should be appended
+    assert len(data2["senses"]) == 2
+    assert data2["senses"][0]["definition"] == "move on foot"
+    assert data2["senses"][1]["definition"] == "travel by foot"
+
+    # Examples should be appended
+    assert len(data2["examples"]) == 2
+    assert data2["examples"][0]["source"] == "I walk"
+    assert data2["examples"][1]["source"] == "We walk"
+
+    # POS and confidence should be updated
+    assert data2["pos"] == "verb"
+    assert data2["confidence"] == 0.90
+
+
+def test_add_lexeme_card_upsert_append_explicit(client, regular_token1, db_session):
+    """Test explicitly setting replace_existing=false appends data."""
+    # Add initial card
+    response1 = client.post(
+        "/v3/agent/lexeme-card?replace_existing=false",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "sing",
+            "target_lemma": "imba",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["sing", "sings"],
+            "senses": [{"definition": "produce musical sounds"}],
+            "examples": [{"source": "I sing", "target": "Naimba"}],
+        },
+    )
+
+    assert response1.status_code == 200
+    card_id = response1.json()["id"]
+
+    # Add duplicate with replace_existing=false
+    response2 = client.post(
+        "/v3/agent/lexeme-card?replace_existing=false",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "sing",
+            "target_lemma": "imba",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["singing", "sang"],
+            "senses": [{"definition": "vocalize melodically"}],
+            "examples": [{"source": "She sings", "target": "Anaimba"}],
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+
+    assert data2["id"] == card_id
+    assert len(data2["surface_forms"]) == 4
+    assert len(data2["senses"]) == 2
+    assert len(data2["examples"]) == 2
+
+
+def test_add_lexeme_card_upsert_replace(client, regular_token1, db_session):
+    """Test that replace_existing=true replaces list fields."""
+    # Add initial card
+    response1 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "dance",
+            "target_lemma": "cheza",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "verb",
+            "surface_forms": ["dance", "dances", "dancing"],
+            "senses": [
+                {"definition": "move rhythmically", "examples": ["I love to dance"]}
+            ],
+            "examples": [{"source": "I dance", "target": "Nacheza"}],
+            "confidence": 0.80,
+        },
+    )
+
+    assert response1.status_code == 200
+    data1 = response1.json()
+    card_id = data1["id"]
+    created_at = data1["created_at"]
+
+    # Add duplicate with replace_existing=true
+    response2 = client.post(
+        "/v3/agent/lexeme-card?replace_existing=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "dance",
+            "target_lemma": "cheza",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "verb",
+            "surface_forms": ["dance", "danced"],  # Completely new list
+            "senses": [
+                {"definition": "perform dance"}
+            ],  # Completely new list (shorter)
+            "examples": [
+                {"source": "They dance", "target": "Wanacheza"}
+            ],  # Completely new list
+            "confidence": 0.95,
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+
+    # Should be same card (same ID)
+    assert data2["id"] == card_id
+    assert data2["created_at"] == created_at
+
+    # Surface forms should be completely replaced
+    assert len(data2["surface_forms"]) == 2
+    assert set(data2["surface_forms"]) == {"dance", "danced"}
+    assert "dancing" not in data2["surface_forms"]
+    assert "dances" not in data2["surface_forms"]
+
+    # Senses should be completely replaced
+    assert len(data2["senses"]) == 1
+    assert data2["senses"][0]["definition"] == "perform dance"
+
+    # Examples should be completely replaced
+    assert len(data2["examples"]) == 1
+    assert data2["examples"][0]["source"] == "They dance"
+
+    # POS and confidence should be updated
+    assert data2["pos"] == "verb"
+    assert data2["confidence"] == 0.95
+
+
+def test_add_lexeme_card_upsert_append_deduplicates_surface_forms(
+    client, regular_token1, db_session
+):
+    """Test that appending surface forms deduplicates entries."""
+    # Add initial card
+    client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "jump",
+            "target_lemma": "ruka",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["jump", "jumps", "jumping"],
+        },
+    )
+
+    # Add duplicate with overlapping surface forms
+    response = client.post(
+        "/v3/agent/lexeme-card?replace_existing=false",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "jump",
+            "target_lemma": "ruka",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["jump", "jumped", "jumping"],  # jump and jumping overlap
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should have 4 unique forms (jump, jumps, jumping, jumped)
+    assert len(data["surface_forms"]) == 4
+    assert set(data["surface_forms"]) == {"jump", "jumps", "jumping", "jumped"}
+
+
+def test_add_lexeme_card_upsert_append_with_none_values(
+    client, regular_token1, db_session
+):
+    """Test appending when some fields are None."""
+    # Add initial card with None values
+    response1 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "sleep",
+            "target_lemma": "lala",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": None,
+            "senses": [{"definition": "rest with eyes closed"}],
+            "examples": None,
+        },
+    )
+
+    assert response1.status_code == 200
+    card_id = response1.json()["id"]
+
+    # Append with new data
+    response2 = client.post(
+        "/v3/agent/lexeme-card?replace_existing=false",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "sleep",
+            "target_lemma": "lala",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["sleep", "sleeps"],
+            "senses": None,
+            "examples": [{"source": "I sleep", "target": "Nalala"}],
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+
+    assert data2["id"] == card_id
+    # Surface forms should be added
+    assert len(data2["surface_forms"]) == 2
+    # Senses should remain from first insert
+    assert len(data2["senses"]) == 1
+    # Examples should be added
+    assert len(data2["examples"]) == 1
+
+
+def test_add_lexeme_card_upsert_replace_with_none_values(
+    client, regular_token1, db_session
+):
+    """Test replacing when new data has None values."""
+    # Add initial card
+    response1 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "eat",
+            "target_lemma": "kula",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["eat", "eats", "eating"],
+            "senses": [{"definition": "consume food"}],
+            "examples": [{"source": "I eat", "target": "Nakula"}],
+        },
+    )
+
+    assert response1.status_code == 200
+    card_id = response1.json()["id"]
+
+    # Replace with None values
+    response2 = client.post(
+        "/v3/agent/lexeme-card?replace_existing=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "eat",
+            "target_lemma": "kula",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": None,
+            "senses": None,
+            "examples": None,
+            "confidence": 0.50,
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+
+    assert data2["id"] == card_id
+    # All list fields should be None (replaced with None)
+    assert data2["surface_forms"] is None
+    assert data2["senses"] is None
+    assert data2["examples"] is None
+    assert data2["confidence"] == 0.50
+
+
+def test_add_lexeme_card_upsert_updates_last_updated(
+    client, regular_token1, db_session
+):
+    """Test that updating a card updates the last_updated timestamp."""
+    import time
+
+    # Add initial card
+    response1 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "fly",
+            "target_lemma": "ruka",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+
+    assert response1.status_code == 200
+    data1 = response1.json()
+    last_updated1 = data1["last_updated"]
+
+    # Wait a moment
+    time.sleep(0.1)
+
+    # Update the card
+    response2 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "fly",
+            "target_lemma": "ruka",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.88,
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+
+    # last_updated should have changed
+    assert data2["last_updated"] != last_updated1
+    # created_at should remain the same
+    assert data2["created_at"] == data1["created_at"]
+
+
+def test_add_lexeme_card_upsert_different_unique_keys(
+    client, regular_token1, db_session
+):
+    """Test that cards with different unique constraint values are treated separately."""
+    # Add card 1
+    response1 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "book",
+            "target_lemma": "kitabu",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["book"],
+        },
+    )
+
+    assert response1.status_code == 200
+    card1_id = response1.json()["id"]
+
+    # Add card 2 with different source_lemma (different unique key)
+    response2 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "novel",  # Different source_lemma
+            "target_lemma": "kitabu",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["novel"],
+        },
+    )
+
+    assert response2.status_code == 200
+    card2_id = response2.json()["id"]
+
+    # Should be different cards
+    assert card1_id != card2_id
+
+    # Add card 3 with different target_language (different unique key)
+    response3 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "book",
+            "target_lemma": "kitabu",
+            "source_language": "eng",
+            "target_language": "ngq",  # Different target_language
+            "surface_forms": ["kitabu"],
+        },
+    )
+
+    assert response3.status_code == 200
+    card3_id = response3.json()["id"]
+
+    # Should be different from first card
+    assert card3_id != card1_id
+
+
+def test_add_lexeme_card_upsert_empty_lists(client, regular_token1, db_session):
+    """Test appending with empty lists."""
+    # Add initial card
+    response1 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "play",
+            "target_lemma": "cheza",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["play", "plays"],
+            "senses": [{"definition": "engage in activity"}],
+        },
+    )
+
+    assert response1.status_code == 200
+    card_id = response1.json()["id"]
+
+    # Append with empty lists
+    response2 = client.post(
+        "/v3/agent/lexeme-card?replace_existing=false",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "play",
+            "target_lemma": "cheza",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": [],  # Empty list
+            "senses": [],  # Empty list
+            "examples": [],  # Empty list
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+
+    assert data2["id"] == card_id
+    # Original data should remain (empty lists don't append anything)
+    assert len(data2["surface_forms"]) == 2
+    assert len(data2["senses"]) == 1

@@ -71,13 +71,22 @@ async def add_word_alignment(
 @router.post("/agent/lexeme-card", response_model=LexemeCardOut)
 async def add_lexeme_card(
     card: LexemeCardIn,
+    replace_existing: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Add a new lexeme card entry to the agent_lexeme_cards table.
+    Add a new lexeme card entry or update an existing one.
+
+    If a lexeme card with the same source_lemma, target_lemma, source_language,
+    and target_language already exists, it will be updated instead of creating a duplicate.
 
     Input:
+    - card: LexemeCardIn - The lexeme card data
+    - replace_existing: bool (optional, default=False) - If True, replaces list fields
+      (surface_forms, senses, examples) with new data. If False, appends new data to existing lists.
+
+    Card fields:
     - source_lemma: str (optional) - The source language lemma for cross-reference
     - target_lemma: str (required) - The target language lemma
     - source_language: str - ISO 639-3 code for source language
@@ -89,31 +98,77 @@ async def add_lexeme_card(
     - confidence: float (optional) - Confidence score for the lexeme card
 
     Returns:
-    - LexemeCardOut: The created lexeme card entry
+    - LexemeCardOut: The created or updated lexeme card entry
     """
     try:
-        # Create new lexeme card entry
-        lexeme_card = LexemeCard(
-            source_lemma=card.source_lemma,
-            target_lemma=card.target_lemma,
-            source_language=card.source_language,
-            target_language=card.target_language,
-            pos=card.pos,
-            surface_forms=card.surface_forms,
-            senses=card.senses,
-            examples=card.examples,
-            confidence=card.confidence,
+        from sqlalchemy import select
+        from sqlalchemy.sql import func
+
+        # Check if a lexeme card with the same unique constraint already exists
+        query = select(LexemeCard).where(
+            LexemeCard.source_lemma == card.source_lemma,
+            LexemeCard.target_lemma == card.target_lemma,
+            LexemeCard.source_language == card.source_language,
+            LexemeCard.target_language == card.target_language,
         )
+        result = await db.execute(query)
+        existing_card = result.scalar_one_or_none()
 
-        db.add(lexeme_card)
-        await db.commit()
-        await db.refresh(lexeme_card)
+        if existing_card:
+            # Update existing card
+            existing_card.pos = card.pos
+            existing_card.confidence = card.confidence
+            existing_card.last_updated = func.now()
 
-        return LexemeCardOut.model_validate(lexeme_card)
+            # Handle list fields based on replace_existing flag
+            if replace_existing:
+                # Replace with new data
+                existing_card.surface_forms = card.surface_forms
+                existing_card.senses = card.senses
+                existing_card.examples = card.examples
+            else:
+                # Append new data to existing lists
+                if card.surface_forms:
+                    existing_forms = existing_card.surface_forms or []
+                    # Combine and deduplicate surface forms
+                    combined_forms = existing_forms + card.surface_forms
+                    existing_card.surface_forms = list(set(combined_forms))
+
+                if card.senses:
+                    existing_senses = existing_card.senses or []
+                    existing_card.senses = existing_senses + card.senses
+
+                if card.examples:
+                    existing_examples = existing_card.examples or []
+                    existing_card.examples = existing_examples + card.examples
+
+            await db.commit()
+            await db.refresh(existing_card)
+
+            return LexemeCardOut.model_validate(existing_card)
+        else:
+            # Create new lexeme card entry
+            lexeme_card = LexemeCard(
+                source_lemma=card.source_lemma,
+                target_lemma=card.target_lemma,
+                source_language=card.source_language,
+                target_language=card.target_language,
+                pos=card.pos,
+                surface_forms=card.surface_forms,
+                senses=card.senses,
+                examples=card.examples,
+                confidence=card.confidence,
+            )
+
+            db.add(lexeme_card)
+            await db.commit()
+            await db.refresh(lexeme_card)
+
+            return LexemeCardOut.model_validate(lexeme_card)
 
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Error adding lexeme card: {e}")
+        logger.error(f"Error adding/updating lexeme card: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
