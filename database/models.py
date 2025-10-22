@@ -376,3 +376,44 @@ class UserGroup(Base):
     # Relationships
     user = relationship("UserDB", back_populates="groups")
     group = relationship("Group", back_populates="users")
+
+
+class LexemeCard(Base):
+    __tablename__ = "agent_lexeme_cards"
+
+    id = Column(Integer, primary_key=True)
+    source_lemma = Column(Text)  # Source language lemma for cross-reference
+    target_lemma = Column(Text, nullable=False)
+    source_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    target_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    pos = Column(Text)
+    surface_forms = Column(JSONB)  # JSON array of all surface forms
+    senses = Column(JSONB)  # JSON array of senses
+    examples = Column(JSONB)  # JSON array of examples
+    confidence = Column(Numeric)
+    created_at = Column(TIMESTAMP, default=func.now())
+    last_updated = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_agent_lexeme_cards_unique",
+            "source_lemma",
+            "target_lemma",
+            "source_language",
+            "target_language",
+            unique=True,
+        ),
+    )
+
+
+class AgentWordAlignment(Base):
+    __tablename__ = "agent_word_alignments"
+
+    id = Column(Integer, primary_key=True)
+    source_word = Column(Text, nullable=False)
+    target_word = Column(Text, nullable=False)
+    source_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    target_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    is_human_verified = Column(Boolean, default=False)  # False until human-verified
+    created_at = Column(TIMESTAMP, default=func.now())
+    last_updated = Column(TIMESTAMP, default=func.now())

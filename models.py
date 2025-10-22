@@ -410,3 +410,51 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+
+# Agent Word Alignment models
+class AgentWordAlignmentIn(BaseModel):
+    source_word: str
+    target_word: str
+    source_language: str
+    target_language: str
+    is_human_verified: bool = False
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_word": "love",
+                "target_word": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "is_human_verified": False,
+            }
+        }
+    }
+
+
+class AgentWordAlignmentOut(BaseModel):
+    id: int
+    source_word: str
+    target_word: str
+    source_language: str
+    target_language: str
+    is_human_verified: bool
+    created_at: Optional[datetime.datetime] = None
+    last_updated: Optional[datetime.datetime] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "source_word": "love",
+                "target_word": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "is_human_verified": False,
+                "created_at": "2024-06-01T12:00:00",
+                "last_updated": "2024-06-01T12:00:00",
+            }
+        },
+        "from_attributes": True,
+    }
