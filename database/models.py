@@ -395,6 +395,7 @@ class LexemeCard(Base):
     last_updated = Column(TIMESTAMP, default=func.now())
 
     __table_args__ = (
+        # Unique constraint to prevent duplicate cards
         Index(
             "ix_agent_lexeme_cards_unique",
             "source_lemma",
@@ -402,6 +403,26 @@ class LexemeCard(Base):
             "source_language",
             "target_language",
             unique=True,
+        ),
+        # Index for common query pattern: language pair + confidence ordering
+        Index(
+            "ix_agent_lexeme_cards_lang_confidence",
+            "source_language",
+            "target_language",
+            "confidence",
+            postgresql_ops={"confidence": "DESC"},
+        ),
+        # Functional index for case-insensitive target_lemma searches
+        Index(
+            "ix_agent_lexeme_cards_target_lemma_lower",
+            func.lower(target_lemma),
+            postgresql_using="btree",
+        ),
+        # GIN index for JSONB array searches in surface_forms
+        Index(
+            "ix_agent_lexeme_cards_surface_forms",
+            "surface_forms",
+            postgresql_using="gin",
         ),
     )
 
@@ -417,3 +438,20 @@ class AgentWordAlignment(Base):
     is_human_verified = Column(Boolean, default=False)  # False until human-verified
     created_at = Column(TIMESTAMP, default=func.now())
     last_updated = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        # Index for source word lookups by language pair
+        Index(
+            "ix_agent_word_alignments_lang_source",
+            "source_language",
+            "target_language",
+            "source_word",
+        ),
+        # Index for target word lookups by language pair
+        Index(
+            "ix_agent_word_alignments_lang_target",
+            "source_language",
+            "target_language",
+            "target_word",
+        ),
+    )
