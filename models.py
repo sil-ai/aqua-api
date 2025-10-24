@@ -317,6 +317,7 @@ class TextLengthsResult(BaseModel):
     id: Optional[int] = None
     assessment_id: Optional[int] = None
     vref: Optional[str] = None
+    vrefs: Optional[List[str]] = None
     word_lengths: float
     char_lengths: float
     word_lengths_z: float
@@ -350,6 +351,18 @@ class WordAlignment(BaseModel):
     hide: bool = False
     revision_text: Optional[str] = None
     reference_text: Optional[str] = None
+
+
+class AlignmentMatch(BaseModel):
+    source_word: str
+    target_word: str
+    rank: int
+    probability: float
+    support_mass: float
+    support_hits: int
+    strength_mass: float
+    strength_margin_mass: float
+    strength_confidence: float
 
 
 class Language(BaseModel):

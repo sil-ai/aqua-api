@@ -15,10 +15,10 @@ ADD review_routes/ /app/review_routes/
 ADD security_routes/ /app/security_routes/
 ADD database/ /app/database
 ADD alembic/ /app/database
+ADD utils/ /app/utils
 
 WORKDIR /app
 ENV PYTHONPATH=/app:$PYTHONPATH
 
 
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "8"]
-

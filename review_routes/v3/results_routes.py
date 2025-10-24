@@ -30,11 +30,12 @@ from database.models import UserDB as UserModel
 from database.models import (
     VerseText,
 )
-from models import MultipleResult, NgramResult
+from models import AlignmentMatch, MultipleResult, NgramResult
 from models import Result_v2 as Result
 from models import TextLengthsResult, TfidfResult, WordAlignment
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
+from utils.verse_range_utils import merge_verse_ranges
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -797,6 +798,380 @@ async def get_text_lengths(
                 float(row.char_lengths_z)
                 if hasattr(row, "char_lengths_z") and row.char_lengths_z is not None
                 else None
+            ),
+        )
+        result_list.append(result_obj)
+
+    return {"results": result_list, "total_count": total_count}
+
+
+@router.get(
+    "/compare_text_lengths",
+    response_model=Dict[str, Union[List[TextLengthsResult], int]],
+)
+async def compare_text_lengths(
+    revision_id: Optional[int] = None,
+    reference_id: Optional[int] = None,
+    revision_assessment_id: Optional[int] = None,
+    reference_assessment_id: Optional[int] = None,
+    book: Optional[str] = None,
+    chapter: Optional[int] = None,
+    verse: Optional[int] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    aggregate: Optional[aggType] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Returns the difference in text lengths between revision and reference assessments.
+
+    This endpoint finds the text-lengths assessments for both the revision and reference,
+    and returns the difference (revision - reference) for each verse. Verses where either
+    the revision or reference has null or zero values are excluded from the results.
+
+    Parameters
+    ----------
+    revision_id : int, optional
+        The ID of the revision to compare. Must be provided with reference_id if using revision/reference mode.
+    reference_id : int, optional
+        The ID of the reference to compare against. Must be provided with revision_id if using revision/reference mode.
+    revision_assessment_id : int, optional
+        The ID of the revision assessment to compare. Must be provided with reference_assessment_id if using assessment mode.
+    reference_assessment_id : int, optional
+        The ID of the reference assessment to compare against. Must be provided with revision_assessment_id if using assessment mode.
+    book : str, optional
+        Restrict results to one book.
+    chapter : int, optional
+        Restrict results to one chapter. If set, book must also be set.
+    verse : int, optional
+        Restrict results to one verse. If set, book and chapter must also be set.
+    page : int, optional
+        The page of results to return. If set, page_size must also be set.
+    page_size : int, optional
+        The number of results to return per page. If set, page must also be set.
+    aggregate : str, optional
+        If set to "chapter", results will be aggregated by chapter.
+        If set to "book", results will be aggregated by book.
+        If set to "text", a single result will be returned for the whole text.
+        Otherwise results will be returned at the verse level.
+
+    Returns
+    -------
+    Dict[str, Union[List[TextLengthsResult], int]]
+        A dictionary containing the list of results (with differences) and the total count.
+    """
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
+
+    # Validate that exactly one pair of IDs is provided
+    has_revision_pair = revision_id is not None and reference_id is not None
+    has_assessment_pair = (
+        revision_assessment_id is not None and reference_assessment_id is not None
+    )
+
+    if not has_revision_pair and not has_assessment_pair:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Must provide either (revision_id and reference_id) or (revision_assessment_id and reference_assessment_id)",
+        )
+
+    if has_revision_pair and has_assessment_pair:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot provide both revision/reference IDs and assessment IDs. Choose one pair.",
+        )
+
+    # Validate that both IDs in a pair are provided
+    if (revision_id is None) != (reference_id is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both revision_id and reference_id must be provided together",
+        )
+
+    if (revision_assessment_id is None) != (reference_assessment_id is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both revision_assessment_id and reference_assessment_id must be provided together",
+        )
+
+    # Get the assessments based on the provided IDs
+    if has_revision_pair:
+        # Get the revision assessment by revision_id
+        revision_assessment = await db.scalar(
+            select(Assessment)
+            .where(
+                Assessment.revision_id == revision_id,
+                Assessment.type == "text-lengths",
+                Assessment.status == "finished",
+            )
+            .order_by(Assessment.end_time.desc())
+            .limit(1)
+        )
+
+        if not revision_assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No completed text-lengths assessment found for revision_id {revision_id}",
+            )
+
+        # Get the reference assessment by reference_id
+        reference_assessment = await db.scalar(
+            select(Assessment)
+            .where(
+                Assessment.revision_id == reference_id,
+                Assessment.type == "text-lengths",
+                Assessment.status == "finished",
+            )
+            .order_by(Assessment.end_time.desc())
+            .limit(1)
+        )
+
+        if not reference_assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No completed text-lengths assessment found for reference_id {reference_id}",
+            )
+    else:
+        # Get the assessments directly by assessment_id
+        revision_assessment = await db.scalar(
+            select(Assessment).where(
+                Assessment.id == revision_assessment_id,
+                Assessment.type == "text-lengths",
+                Assessment.status == "finished",
+            )
+        )
+
+        if not revision_assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No completed text-lengths assessment found with id {revision_assessment_id}",
+            )
+
+        reference_assessment = await db.scalar(
+            select(Assessment).where(
+                Assessment.id == reference_assessment_id,
+                Assessment.type == "text-lengths",
+                Assessment.status == "finished",
+            )
+        )
+
+        if not reference_assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No completed text-lengths assessment found with id {reference_assessment_id}",
+            )
+
+    # Authorization check for revision assessment
+    if not await is_user_authorized_for_assessment(
+        current_user.id, revision_assessment.id, db
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see the revision assessment",
+        )
+
+    # Authorization check for reference assessment
+    if not await is_user_authorized_for_assessment(
+        current_user.id, reference_assessment.id, db
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see the reference assessment",
+        )
+
+    revision_query, _ = await build_text_lengths_query(
+        revision_assessment.id, book, chapter, verse, None, None, aggregate
+    )
+
+    reference_query, _ = await build_text_lengths_query(
+        reference_assessment.id, book, chapter, verse, None, None, aggregate
+    )
+
+    # Execute both queries
+    revision_data = await db.execute(revision_query)
+    revision_data = revision_data.fetchall()
+
+    reference_data = await db.execute(reference_query)
+    reference_data = reference_data.fetchall()
+
+    # Apply verse range merging to handle zero values
+    # Strategy: Combine both datasets, merge once based on zeros in EITHER column
+
+    # Convert Row objects to dicts
+    revision_records = [dict(row._mapping) for row in revision_data]
+    reference_records = [dict(row._mapping) for row in reference_data]
+
+    # Convert to DataFrames
+    df_revision = pd.DataFrame(revision_records) if revision_records else pd.DataFrame()
+    df_reference = (
+        pd.DataFrame(reference_records) if reference_records else pd.DataFrame()
+    )
+
+    # Handle empty results
+    if df_revision.empty or df_reference.empty:
+        return {"results": [], "total_count": 0}
+
+    # Determine merge strategy based on aggregation type
+    if aggregate == aggType.text:
+        # For text aggregation, there's exactly one row from each query
+        # They have different assessment_ids, so we can't merge on that
+        # Instead, do a cross join (cartesian product) which will give us one row
+        df_revision["_merge_key"] = 1
+        df_reference["_merge_key"] = 1
+        merged_df = pd.merge(
+            df_revision,
+            df_reference,
+            on="_merge_key",
+            how="inner",
+            suffixes=("_rev", "_ref"),
+        )
+        merged_df.drop(columns=["_merge_key"], inplace=True)
+    else:
+        # For other aggregations, determine the merge key
+        if aggregate == aggType.book:
+            merge_on = "book"
+        elif aggregate == aggType.chapter:
+            merge_on = ["book", "chapter"]
+        else:
+            merge_on = "vref"
+
+        # Inner merge to get only items that exist in both datasets
+        merged_df = pd.merge(
+            df_revision,
+            df_reference,
+            on=merge_on,
+            how="inner",
+            suffixes=("_rev", "_ref"),
+        )
+
+    # Handle empty merge result
+    if merged_df.empty:
+        return {"results": [], "total_count": 0}
+
+    # For verse-level data (no aggregation), apply verse range merging
+    if aggregate is None:
+        # Convert DataFrame to records for merge_verse_ranges
+        combined_records = merged_df.to_dict("records")
+
+        # Convert vref strings to vrefs lists (required by merge_verse_ranges)
+        for record in combined_records:
+            if "vref" in record and not isinstance(record["vref"], list):
+                record["vrefs"] = [record["vref"]]
+
+        # All fields that need to be summed when merging (including z-scores)
+        merge_fields_base = [
+            "word_lengths",
+            "char_lengths",
+        ]
+        merge_fields_combined = []
+        for field in merge_fields_base:
+            merge_fields_combined.extend([f"{field}_rev", f"{field}_ref"])
+
+        # Merge verse ranges based on zeros in word_lengths or char_lengths ONLY
+        # But combine ALL fields (including z-scores) when merging
+        merged_records = merge_verse_ranges(
+            combined_records,
+            verse_ref_field="vrefs",
+            combine_fields=merge_fields_combined,  # All fields to merge/sum
+            check_fields=merge_fields_combined,  # Only check these for zeros
+            is_range_marker=lambda x: x == 0 or x == 0.0,
+            combine_function=lambda field, values: sum(
+                values
+            ),  # Sum all values in the group
+        )
+
+        # Convert back to DataFrame
+        merged_df = pd.DataFrame(merged_records)
+
+    # Convert numeric columns to float to avoid Decimal type issues from database
+    numeric_cols = [
+        "word_lengths_rev",
+        "word_lengths_ref",
+        "char_lengths_rev",
+        "char_lengths_ref",
+    ]
+    for col in numeric_cols:
+        if col in merged_df.columns:
+            merged_df[col] = pd.to_numeric(merged_df[col], errors="coerce")
+
+    # Note: null/zero filtering now done at DB level for better performance
+
+    # Calculate differences
+    merged_df["word_lengths_diff"] = (
+        merged_df["word_lengths_rev"] - merged_df["word_lengths_ref"]
+    )
+    merged_df["char_lengths_diff"] = (
+        merged_df["char_lengths_rev"] - merged_df["char_lengths_ref"]
+    )
+
+    # Calculate z-scores for the differences
+    word_lengths_mean = merged_df["word_lengths_diff"].mean()
+    word_lengths_std = merged_df["word_lengths_diff"].std()
+    char_lengths_mean = merged_df["char_lengths_diff"].mean()
+    char_lengths_std = merged_df["char_lengths_diff"].std()
+
+    if word_lengths_std and word_lengths_std != 0:
+        merged_df["word_lengths_z"] = (
+            merged_df["word_lengths_diff"] - word_lengths_mean
+        ) / word_lengths_std
+    else:
+        merged_df["word_lengths_z"] = 0.0
+
+    if char_lengths_std and char_lengths_std != 0:
+        merged_df["char_lengths_z"] = (
+            merged_df["char_lengths_diff"] - char_lengths_mean
+        ) / char_lengths_std
+    else:
+        merged_df["char_lengths_z"] = 0.0
+
+    # Apply pagination
+    total_count = len(merged_df)
+    if page is not None and page_size is not None:
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        merged_df = merged_df.iloc[start_idx:end_idx]
+
+    # Build result list
+    result_list = []
+    for _, row in merged_df.iterrows():
+        # Compose vref and vrefs based on aggregation
+        if aggregate == aggType.chapter:
+            vref = f"{row['book']} {row['chapter']}"
+            vrefs = None
+        elif aggregate == aggType.book:
+            vref = f"{row['book']}"
+            vrefs = None
+        elif aggregate == aggType.text:
+            vref = None
+            vrefs = None
+        else:
+            # For verse-level data, we have vrefs after merge_verse_ranges
+            vrefs = row.get("vrefs") if "vrefs" in row and row.get("vrefs") else None
+            vref = vrefs[0] if vrefs else None
+
+        # Get the ID - for aggregated data it's id_rev, for verse-level it might be id
+        result_id = row.get("id_rev") if "id_rev" in row else row.get("id")
+
+        result_obj = TextLengthsResult(
+            id=result_id,
+            assessment_id=revision_assessment.id,
+            vref=vref,
+            vrefs=vrefs,
+            word_lengths=(
+                float(row["word_lengths_diff"])
+                if pd.notna(row["word_lengths_diff"])
+                else 0.0
+            ),
+            char_lengths=(
+                float(row["char_lengths_diff"])
+                if pd.notna(row["char_lengths_diff"])
+                else 0.0
+            ),
+            word_lengths_z=(
+                float(row["word_lengths_z"]) if pd.notna(row["word_lengths_z"]) else 0.0
+            ),
+            char_lengths_z=(
+                float(row["char_lengths_z"]) if pd.notna(row["char_lengths_z"]) else 0.0
             ),
         )
         result_list.append(result_obj)
@@ -1746,6 +2121,170 @@ async def get_word_alignments(
             score=result.score,
         )
         for result in alignment_data
+    ]
+
+    return {"results": result_list, "total_count": len(result_list)}
+
+
+@router.get(
+    "/textalignmentmatches", response_model=Dict[str, Union[List[AlignmentMatch], int]]
+)
+async def get_text_alignment_matches(
+    revision_id: int,
+    reference_id: int,
+    top_k: int = 3,
+    min_support: float = 20.0,
+    min_probability: float = 0.4,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Returns aggregated alignment statistics across the entire text for a word alignment assessment.
+
+    This endpoint provides a summary of the top alignment matches for each source word,
+    ranked by probability and including various strength metrics.
+
+    Parameters
+    ----------
+    revision_id : int
+        The ID of the revision to get results for.
+    reference_id : int
+        The ID of the reference to get results for.
+    top_k : int, optional
+        The maximum number of top target words to return per source word (default: 3).
+    min_support : float, optional
+        Minimum support mass threshold to include a source word (default: 20.0).
+    min_probability : float, optional
+        Minimum probability threshold to include an alignment (default: 0.4).
+
+    Returns
+    -------
+    Dict[str, Union[List[AlignmentMatch], int]]
+        A dictionary containing the list of alignment matches and the total count.
+
+    Notes
+    -----
+    The results include several strength metrics:
+    - strength_mass: Expected alignment mass (probability * support_mass)
+    - strength_margin_mass: Margin over next best match, weighted by support
+    - strength_confidence: Confidence based on entropy and support
+    """
+    # Get the latest finished word-alignment assessment for the given revision and reference
+    assessment_result = await db.execute(
+        select(Assessment)
+        .filter(
+            Assessment.revision_id == revision_id,
+            Assessment.reference_id == reference_id,
+            Assessment.type == "word-alignment",
+            Assessment.status == "finished",
+        )
+        .order_by(Assessment.end_time.desc())
+    )
+    assessment = assessment_result.scalars().first()
+
+    if not assessment:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed word-alignment assessment found for the given revision_id and reference_id",
+        )
+
+    assessment_id = assessment.id
+
+    # Authorization check
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )  # Build the SQL query with the provided parameters
+    query = text(
+        """
+        WITH c AS (
+          SELECT source, target, SUM(score) AS s, COUNT(*) AS n
+          FROM alignment_top_source_scores
+          WHERE assessment_id = :assessment_id
+          GROUP BY source, target
+        ),
+        z AS (
+          SELECT source,
+                 SUM(s)  AS s_sum,     -- total alignment mass for this source
+                 SUM(n)  AS n_sum      -- total hit count for this source
+          FROM c GROUP BY source
+        ),
+        p AS (
+          SELECT c.source, c.target, c.s, c.n, z.s_sum, z.n_sum,
+                 c.s / NULLIF(z.s_sum,0) AS p
+          FROM c JOIN z USING (source)
+        ),
+        ranked AS (
+          SELECT *,
+                 ROW_NUMBER() OVER (PARTITION BY source ORDER BY p DESC) AS r,
+                 LEAD(p, 1, 0) OVER (PARTITION BY source ORDER BY p DESC) AS p2,
+                 -- entropy over targets for this source
+                 SUM( CASE WHEN p>0 THEN -p*LN(p) ELSE 0 END )
+                   OVER (PARTITION BY source) AS H,
+                 COUNT(*) OVER (PARTITION BY source) AS k
+          FROM p
+        )
+        SELECT
+          source AS source_word,
+          target AS target_word,
+          r AS rank,
+          p AS probability,
+          s_sum AS support_mass,
+          n_sum AS support_hits,
+          -- 1) Expected mass: favors high p and many observations
+          (p * s_sum)                              AS strength_mass,
+          -- 2) Margin * support: favors clear winners with many obs
+          ((p - COALESCE(p2,0)) * s_sum)           AS strength_margin_mass,
+          -- 3) Confidence from (1 - normalized entropy) * log support
+          ((1 - (H / NULLIF(LN(NULLIF(k,1)),0))) * LN(1 + s_sum)) AS strength_confidence
+        FROM ranked
+        WHERE r <= :top_k           -- keep top-k per source
+          AND s_sum >= :min_support -- filter very low-support sources
+          AND p > :min_probability
+        ORDER BY p DESC
+    """
+    )
+
+    # Execute the query
+    result = await db.execute(
+        query,
+        {
+            "assessment_id": assessment_id,
+            "top_k": top_k,
+            "min_support": min_support,
+            "min_probability": min_probability,
+        },
+    )
+
+    result_data = result.fetchall()
+
+    # Build the result list
+    result_list = [
+        AlignmentMatch(
+            source_word=row.source_word,
+            target_word=row.target_word,
+            rank=row.rank,
+            probability=float(row.probability) if row.probability is not None else 0.0,
+            support_mass=(
+                float(row.support_mass) if row.support_mass is not None else 0.0
+            ),
+            support_hits=int(row.support_hits) if row.support_hits is not None else 0,
+            strength_mass=(
+                float(row.strength_mass) if row.strength_mass is not None else 0.0
+            ),
+            strength_margin_mass=(
+                float(row.strength_margin_mass)
+                if row.strength_margin_mass is not None
+                else 0.0
+            ),
+            strength_confidence=(
+                float(row.strength_confidence)
+                if row.strength_confidence is not None
+                else 0.0
+            ),
+        )
+        for row in result_data
     ]
 
     return {"results": result_list, "total_count": len(result_list)}
