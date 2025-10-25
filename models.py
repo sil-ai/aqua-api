@@ -410,3 +410,146 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+
+# Agent Word Alignment models
+class AgentWordAlignmentIn(BaseModel):
+    source_word: str
+    target_word: str
+    source_language: str
+    target_language: str
+    is_human_verified: bool = False
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_word": "love",
+                "target_word": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "is_human_verified": False,
+            }
+        }
+    }
+
+
+class AgentWordAlignmentOut(BaseModel):
+    id: int
+    source_word: str
+    target_word: str
+    source_language: str
+    target_language: str
+    is_human_verified: bool
+    created_at: Optional[datetime.datetime] = None
+    last_updated: Optional[datetime.datetime] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "source_word": "love",
+                "target_word": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "is_human_verified": False,
+                "created_at": "2024-06-01T12:00:00",
+                "last_updated": "2024-06-01T12:00:00",
+            }
+        },
+        "from_attributes": True,
+    }
+
+
+class LexemeCardIn(BaseModel):
+    source_lemma: Optional[str] = None
+    target_lemma: str
+    source_language: str
+    target_language: str
+    pos: Optional[str] = None
+    surface_forms: Optional[list] = None
+    senses: Optional[list] = None
+    examples: Optional[list] = None  # List of example dicts for the given revision_id
+    confidence: Optional[float] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_lemma": "love",
+                "target_lemma": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "pos": "verb",
+                "surface_forms": [
+                    "amor",
+                    "amo",
+                    "amas",
+                    "ama",
+                    "amamos",
+                    "aman",
+                ],  # Target language surface forms
+                "senses": [
+                    {
+                        "definition": "to feel deep affection",
+                        "examples": ["I love you"],
+                    },
+                    {"definition": "to enjoy greatly", "examples": ["I love pizza"]},
+                ],
+                "examples": [
+                    {"source": "I love you", "target": "Te amo"},
+                    {"source": "They love music", "target": "Aman la música"},
+                ],
+                "confidence": 0.95,
+            }
+        }
+    }
+
+
+class LexemeCardOut(BaseModel):
+    id: int
+    source_lemma: Optional[str] = None
+    target_lemma: str
+    source_language: str
+    target_language: str
+    pos: Optional[str] = None
+    surface_forms: Optional[list] = None
+    senses: Optional[list] = None
+    examples: Optional[list] = None  # Filtered list for the requested revision_id
+    confidence: Optional[float] = None
+    created_at: Optional[datetime.datetime] = None
+    last_updated: Optional[datetime.datetime] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "source_lemma": "love",
+                "target_lemma": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "pos": "verb",
+                "surface_forms": [
+                    "amor",
+                    "amo",
+                    "amas",
+                    "ama",
+                    "amamos",
+                    "aman",
+                ],  # Target language surface forms
+                "senses": [
+                    {
+                        "definition": "to feel deep affection",
+                        "examples": ["I love you"],
+                    },
+                    {"definition": "to enjoy greatly", "examples": ["I love pizza"]},
+                ],
+                "examples": [
+                    {"source": "I love you", "target": "Te amo"},
+                    {"source": "They love music", "target": "Aman la música"},
+                ],
+                "confidence": 0.95,
+                "created_at": "2024-06-01T12:00:00",
+                "last_updated": "2024-06-01T12:00:00",
+            }
+        },
+        "from_attributes": True,
+    }
