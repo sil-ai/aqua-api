@@ -5,7 +5,7 @@ import bcrypt
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import create_engine, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -104,12 +104,54 @@ def admin_token(client, test_db_session):
 
 
 @pytest.fixture(scope="module")
+def test_revision_id(test_db_session):
+    """Return the ID of the first test revision.
+
+    Automatically grants Group1 access to the test revision for agent tests.
+    """
+    # Grant access when this fixture is used (indicates agent tests)
+    setup_agent_access(test_db_session)
+    return test_db_session.test_revision_id_1
+
+
+@pytest.fixture(scope="module")
+def test_revision_id_2(test_db_session):
+    """Return the ID of the second test revision.
+
+    Automatically grants Group1 access to the test revision for agent tests.
+    """
+    # Grant access when this fixture is used (indicates agent tests)
+    setup_agent_access(test_db_session)
+    return test_db_session.test_revision_id_2
+
+
+@pytest.fixture(scope="module")
+def agent_test_access(test_db_session):
+    """Grant Group1 access to loading_test version for agent tests.
+
+    This fixture should be used by agent tests to ensure they have access
+    to the test revisions. Other tests should not use this fixture to avoid
+    polluting their version lists.
+
+    NOTE: This is automatically called by test_revision_id and test_revision_id_2
+    fixtures, so you typically don't need to use this directly.
+    """
+    setup_agent_access(test_db_session)
+    return test_db_session
+
+
+@pytest.fixture(scope="module")
 def test_db_session():
     Base.metadata.create_all(bind=engine)
     db_session = TestingSessionLocal()
 
     # Add your test data setup here
-    setup_database(db_session)
+    revision_id_1, revision_id_2 = setup_database(db_session)
+
+    # Store revision IDs on the session for tests to access
+    db_session.test_revision_id_1 = revision_id_1
+    db_session.test_revision_id_2 = revision_id_2
+
     try:
         yield db_session
 
@@ -120,7 +162,11 @@ def test_db_session():
 
 
 def setup_database(db_session):
-    """Set up the database for testing with distinct sections for different data types."""
+    """Set up the database for testing with distinct sections for different data types.
+
+    Returns:
+        tuple: (revision_id_1, revision_id_2) - The IDs of the test revisions
+    """
 
     # Section 1: Setting up Users and Groups
     setup_users_and_groups(db_session)
@@ -129,7 +175,14 @@ def setup_database(db_session):
     setup_references_and_isos(db_session)
 
     # Section 3: Loading Revision
-    load_revision_data(db_session)
+    revision_id_1, revision_id_2 = load_revision_data(db_session)
+
+    # Section 4: Grant Group1 access to loading_test version (for agent tests)
+    # NOTE: This is commented out in the base setup to avoid polluting other tests
+    # Agent tests should call setup_agent_access(db_session) in their own fixtures if needed
+    # setup_agent_access(db_session)
+
+    return revision_id_1, revision_id_2
 
 
 async def setup_database_async(session):
@@ -137,10 +190,19 @@ async def setup_database_async(session):
     await setup_users_and_groups_async(session)
     await setup_references_and_isos_async(session)
     await load_revision_data_async(session)
+    await setup_agent_access_async(session)
 
 
 def setup_users_and_groups(db_session):
     """Setup test users and groups."""
+    # Check if users already exist (from previous test module)
+    existing_user = (
+        db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    )
+    if existing_user:
+        # Users already set up by another test module
+        return
+
     # Create users
     test_user1 = UserDB(
         username="testuser1",
@@ -183,6 +245,13 @@ def setup_users_and_groups(db_session):
 
 async def setup_users_and_groups_async(session):
     """Setup test users and groups asynchronously."""
+    # Check if users already exist (from previous test module)
+    result = await session.execute(select(UserDB).where(UserDB.username == "testuser1"))
+    existing_user = result.scalars().first()
+    if existing_user:
+        # Users already set up by another test module
+        return
+
     # Create users
     test_user1 = UserDB(
         username="testuser1",
@@ -244,6 +313,12 @@ async def setup_users_and_groups_async(session):
 
 def setup_references_and_isos(db_session):
     """Setup reference data and ISO codes."""
+    # Check if reference data already exists (from previous test module)
+    existing_book = db_session.query(BookReference).first()
+    if existing_book:
+        # Reference data already set up
+        return
+
     # Load data from CSV files
     book_ref_df = pd.read_csv("fixtures/book_reference.txt", sep="\t")
     chapter_ref_df = pd.read_csv("fixtures/chapter_reference.txt", sep="\t")
@@ -268,6 +343,13 @@ def setup_references_and_isos(db_session):
 
 async def setup_references_and_isos_async(session):
     """Setup reference data and ISO codes asynchronously."""
+    # Check if reference data already exists (from previous test module)
+    result = await session.execute(select(BookReference))
+    existing_book = result.scalars().first()
+    if existing_book:
+        # Reference data already set up
+        return
+
     # Load data from CSV files
     book_ref_df = pd.read_csv("fixtures/book_reference.txt", sep="\t")
     chapter_ref_df = pd.read_csv("fixtures/chapter_reference.txt", sep="\t")
@@ -296,6 +378,23 @@ async def setup_references_and_isos_async(session):
 
 def load_revision_data(db_session):
     """Load revision data into the database and return the revision IDs."""
+    # Check if revisions already exist (from previous test module)
+    existing_version = (
+        db_session.query(BibleVersion)
+        .filter(BibleVersion.name == "loading_test")
+        .first()
+    )
+    if existing_version:
+        # Revisions already set up, return their IDs
+        revisions = (
+            db_session.query(BibleRevision)
+            .filter(BibleRevision.bible_version_id == existing_version.id)
+            .order_by(BibleRevision.id)
+            .all()
+        )
+        if len(revisions) >= 2:
+            return revisions[0].id, revisions[1].id
+
     # Get users
     user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
 
@@ -315,16 +414,9 @@ def load_revision_data(db_session):
     # Commit to save the version and retrieve its ID
     db_session.commit()
 
-    # Get the current max ID from bible_revision table
-    max_id_result = db_session.execute(
-        text("SELECT COALESCE(MAX(id), 0) FROM bible_revision")
-    ).scalar()
-    next_id = (max_id_result or 0) + 1
-
-    # Add revisions with explicit IDs based on max ID
+    # Add revisions - SQLAlchemy will auto-populate their IDs after commit
     # Both revisions belong to the same version
     revision1 = BibleRevision(
-        id=next_id,
         date=date.today(),
         bible_version_id=version.id,
         published=False,
@@ -333,7 +425,6 @@ def load_revision_data(db_session):
     db_session.add(revision1)
 
     revision2 = BibleRevision(
-        id=next_id + 1,
         date=date.today(),
         bible_version_id=version.id,
         published=False,
@@ -342,19 +433,28 @@ def load_revision_data(db_session):
     db_session.add(revision2)
     db_session.commit()
 
-    # Update the sequence to the next available value after our explicit IDs
-    # This ensures subsequent INSERTs without explicit IDs use the correct sequence
-    db_session.execute(
-        text(f"SELECT setval('bible_revision_id_seq', {next_id + 1}, true)")
-    )
-    db_session.commit()
-
-    # Return the revision IDs so tests can use them
+    # Return the revision IDs (auto-populated by SQLAlchemy after commit)
     return revision1.id, revision2.id
 
 
 async def load_revision_data_async(session):
     """Load revision data into the database asynchronously."""
+    # Check if revisions already exist (from previous test module)
+    result = await session.execute(
+        select(BibleVersion).where(BibleVersion.name == "loading_test")
+    )
+    existing_version = result.scalars().first()
+    if existing_version:
+        # Revisions already set up, return their IDs
+        result = await session.execute(
+            select(BibleRevision)
+            .where(BibleRevision.bible_version_id == existing_version.id)
+            .order_by(BibleRevision.id)
+        )
+        revisions = result.scalars().all()
+        if len(revisions) >= 2:
+            return revisions[0].id, revisions[1].id
+
     # Query the ID for testuser1
     result = await session.execute(select(UserDB).where(UserDB.username == "testuser1"))
     user = result.scalars().first()
@@ -398,15 +498,8 @@ async def load_revision_data_async(session):
     )
     version_ = result.scalars().first()
 
-    # Get the current max ID from bible_revision table
-    max_id_result = await session.execute(
-        text("SELECT COALESCE(MAX(id), 0) FROM bible_revision")
-    )
-    next_id = (max_id_result.scalar() or 0) + 1
-
-    # Add revisions with explicit IDs based on max ID
+    # Add revisions - SQLAlchemy will auto-populate their IDs after commit
     revision1 = BibleRevision(
-        id=next_id,
         date=date.today(),
         bible_version_id=version_.id,
         published=False,
@@ -415,7 +508,6 @@ async def load_revision_data_async(session):
     session.add(revision1)
 
     revision2 = BibleRevision(
-        id=next_id + 1,
         date=date.today(),
         bible_version_id=version_.id,
         published=False,
@@ -423,35 +515,72 @@ async def load_revision_data_async(session):
     )
     session.add(revision2)
     await session.commit()
+
+    # Refresh to get the auto-populated IDs in async context
     await session.refresh(revision1)
     await session.refresh(revision2)
 
-    # Update the sequence to the next available value after our explicit IDs
-    # This ensures subsequent INSERTs without explicit IDs use the correct sequence
-    await session.execute(
-        text(f"SELECT setval('bible_revision_id_seq', {next_id + 1}, true)")
-    )
-    await session.commit()
+    # Return the revision IDs (auto-populated by SQLAlchemy after commit)
+    return revision1.id, revision2.id
 
+
+def setup_agent_access(db_session):
+    """Grant Group1 access to loading_test version for agent tests."""
+    # Check if access already exists
+    group = db_session.query(Group).filter(Group.name == "Group1").first()
+    version = (
+        db_session.query(BibleVersion)
+        .filter(BibleVersion.name == "loading_test")
+        .first()
+    )
+
+    if not group or not version:
+        return  # Required data not yet created
+
+    # Check if access already granted
+    existing_access = (
+        db_session.query(BibleVersionAccess)
+        .filter(
+            BibleVersionAccess.bible_version_id == version.id,
+            BibleVersionAccess.group_id == group.id,
+        )
+        .first()
+    )
+
+    if not existing_access:
+        bible_version_access = BibleVersionAccess(
+            bible_version_id=version.id, group_id=group.id
+        )
+        db_session.add(bible_version_access)
+        db_session.commit()
+
+
+async def setup_agent_access_async(session):
+    """Grant Group1 access to loading_test version for agent tests asynchronously."""
+    # Check if access already exists
     result = await session.execute(select(Group).where(Group.name == "Group1"))
     group = result.scalars().first()
 
     result = await session.execute(
         select(BibleVersion).where(BibleVersion.name == "loading_test")
     )
-    version_ = result.scalars().first()
+    version = result.scalars().first()
 
-    # Give Group1 access to the Bible version
+    if not group or not version:
+        return  # Required data not yet created
+
+    # Check if access already granted
     result = await session.execute(
         select(BibleVersionAccess).where(
-            BibleVersionAccess.bible_version_id == version_.id,
+            BibleVersionAccess.bible_version_id == version.id,
             BibleVersionAccess.group_id == group.id,
         )
     )
-    bible_version_access = result.scalars().first()
-    if not bible_version_access:
+    existing_access = result.scalars().first()
+
+    if not existing_access:
         bible_version_access = BibleVersionAccess(
-            bible_version_id=version_.id, group_id=group.id
+            bible_version_id=version.id, group_id=group.id
         )
         session.add(bible_version_access)
         await session.commit()
