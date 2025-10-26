@@ -216,7 +216,7 @@ def test_lexeme_card_access_control_by_user(
 
 
 def test_single_user_multiple_revisions_same_version(
-    client, regular_token1, db_session
+    client, regular_token1, db_session, agent_test_access
 ):
     """
     Test that a single user with access to multiple revisions from the same version
@@ -225,14 +225,14 @@ def test_single_user_multiple_revisions_same_version(
 
     Setup:
     - Uses existing 'loading_test' version with its revisions
-    - testuser1 already has access to this version (via agent conftest fixture)
+    - testuser1 already has access to this version (via agent_test_access fixture)
     - testuser1 adds examples from revision 1
     - testuser1 adds more examples from revision 2 to the same card
     - Verify testuser1 sees examples from both revisions when querying
     """
 
     # Query for the revisions from the 'loading_test' version
-    # (created by load_revision_data fixture, accessible via agent conftest)
+    # (created by load_revision_data fixture, accessible via agent_test_access fixture)
     version = (
         db_session.query(BibleVersion)
         .filter(BibleVersion.name == "loading_test")
