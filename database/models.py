@@ -376,3 +376,125 @@ class UserGroup(Base):
     # Relationships
     user = relationship("UserDB", back_populates="groups")
     group = relationship("Group", back_populates="users")
+
+
+class AgentLexemeCard(Base):
+    __tablename__ = "agent_lexeme_cards"
+
+    id = Column(Integer, primary_key=True)
+    source_lemma = Column(Text)  # Source language lemma for cross-reference
+    target_lemma = Column(Text, nullable=False)
+    source_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    target_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    pos = Column(Text)
+    surface_forms = Column(JSONB)  # JSON array of target language surface forms
+    senses = Column(JSONB)  # JSON array of senses
+    # Note: examples are now stored in the agent_lexeme_card_examples table (see examples_rel relationship)
+    confidence = Column(Numeric)
+    created_at = Column(TIMESTAMP, default=func.now())
+    last_updated = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        # Unique constraint to prevent duplicate cards
+        Index(
+            "ix_agent_lexeme_cards_unique",
+            "source_lemma",
+            "target_lemma",
+            "source_language",
+            "target_language",
+            unique=True,
+        ),
+        # Index for common query pattern: language pair + confidence ordering
+        Index(
+            "ix_agent_lexeme_cards_lang_confidence",
+            "source_language",
+            "target_language",
+            "confidence",
+            postgresql_ops={"confidence": "DESC"},
+        ),
+        # Functional index for case-insensitive target_lemma searches
+        Index(
+            "ix_agent_lexeme_cards_target_lemma_lower",
+            func.lower(target_lemma),
+            postgresql_using="btree",
+        ),
+        # GIN index for JSONB array searches in surface_forms
+        Index(
+            "ix_agent_lexeme_cards_surface_forms",
+            "surface_forms",
+            postgresql_using="gin",
+        ),
+    )
+
+    # Relationship to examples
+    examples_rel = relationship(
+        "AgentLexemeCardExample",
+        back_populates="lexeme_card",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentLexemeCardExample(Base):
+    __tablename__ = "agent_lexeme_card_examples"
+
+    id = Column(Integer, primary_key=True)
+    lexeme_card_id = Column(
+        Integer, ForeignKey("agent_lexeme_cards.id", ondelete="CASCADE"), nullable=False
+    )
+    revision_id = Column(
+        Integer, ForeignKey("bible_revision.id", ondelete="CASCADE"), nullable=False
+    )
+    source_text = Column(Text, nullable=False)
+    target_text = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        # Prevent duplicate examples for the same lexeme card + revision
+        Index(
+            "ix_agent_lexeme_card_examples_unique",
+            "lexeme_card_id",
+            "revision_id",
+            "source_text",
+            "target_text",
+            unique=True,
+        ),
+        # Index for querying examples by revision
+        Index(
+            "ix_agent_lexeme_card_examples_revision",
+            "revision_id",
+        ),
+    )
+
+    # Relationships
+    lexeme_card = relationship("AgentLexemeCard", back_populates="examples_rel")
+    revision = relationship("BibleRevision")
+
+
+class AgentWordAlignment(Base):
+    __tablename__ = "agent_word_alignments"
+
+    id = Column(Integer, primary_key=True)
+    source_word = Column(Text, nullable=False)
+    target_word = Column(Text, nullable=False)
+    source_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    target_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    is_human_verified = Column(Boolean, default=False)  # False until human-verified
+    created_at = Column(TIMESTAMP, default=func.now())
+    last_updated = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        # Index for source word lookups by language pair
+        Index(
+            "ix_agent_word_alignments_lang_source",
+            "source_language",
+            "target_language",
+            "source_word",
+        ),
+        # Index for target word lookups by language pair
+        Index(
+            "ix_agent_word_alignments_lang_target",
+            "source_language",
+            "target_language",
+            "target_word",
+        ),
+    )
