@@ -1,8 +1,8 @@
 import datetime
 from enum import Enum
-from typing import List, Optional, Union
+from typing import List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class VersionUpdate(BaseModel):
@@ -549,6 +549,87 @@ class LexemeCardOut(BaseModel):
                 "confidence": 0.95,
                 "created_at": "2024-06-01T12:00:00",
                 "last_updated": "2024-06-01T12:00:00",
+            }
+        },
+        "from_attributes": True,
+    }
+
+
+class CritiqueIssueIn(BaseModel):
+    """Individual critique issue for input."""
+
+    text: Optional[str] = None
+    comments: Optional[str] = None
+    severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "text": "in the beginning",
+                "comments": "Missing key phrase from source text",
+                "severity": 4,
+            }
+        }
+    }
+
+
+class CritiqueStorageRequest(BaseModel):
+    """Request to store critique results for a verse."""
+
+    assessment_id: int
+    vref: str
+    omissions: list[CritiqueIssueIn] = []
+    additions: list[CritiqueIssueIn] = []
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "assessment_id": 123,
+                "vref": "JHN 1:1",
+                "omissions": [
+                    {
+                        "text": "in the beginning",
+                        "comments": "Missing key phrase",
+                        "severity": 4,
+                    }
+                ],
+                "additions": [
+                    {"text": "extra words", "comments": "Not in source", "severity": 2}
+                ],
+            }
+        }
+    }
+
+
+class CritiqueIssueOut(BaseModel):
+    """Individual critique issue for output."""
+
+    id: int
+    assessment_id: int
+    vref: str
+    book: str
+    chapter: int
+    verse: int
+    issue_type: Literal["omission", "addition"]
+    text: Optional[str] = None
+    comments: Optional[str] = None
+    severity: int
+    created_at: Optional[datetime.datetime] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "assessment_id": 123,
+                "vref": "JHN 1:1",
+                "book": "JHN",
+                "chapter": 1,
+                "verse": 1,
+                "issue_type": "omission",
+                "text": "in the beginning",
+                "comments": "Missing key phrase from source text",
+                "severity": 4,
+                "created_at": "2024-06-01T12:00:00",
             }
         },
         "from_attributes": True,

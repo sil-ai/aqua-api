@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
 from database.models import (
+    AgentCritiqueIssue,
     AgentLexemeCard,
     AgentLexemeCardExample,
     AgentWordAlignment,
@@ -17,6 +18,8 @@ from database.models import UserDB as UserModel
 from models import (
     AgentWordAlignmentIn,
     AgentWordAlignmentOut,
+    CritiqueIssueOut,
+    CritiqueStorageRequest,
     LexemeCardIn,
     LexemeCardOut,
 )
@@ -67,6 +70,96 @@ async def add_word_alignment(
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Error adding word alignment: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.post("/agent/critique", response_model=list[CritiqueIssueOut])
+async def add_critique_issues(
+    critique: CritiqueStorageRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Store critique issues (omissions and additions) for a verse assessment.
+
+    Input:
+    - assessment_id: int - The assessment ID
+    - vref: str - Verse reference (e.g., "JHN 1:1")
+    - omissions: list[CritiqueIssueIn] - List of omission issues
+    - additions: list[CritiqueIssueIn] - List of addition issues
+
+    Each issue contains:
+    - text: str (optional) - The text that was omitted or added
+    - comments: str (optional) - Explanation of why this is an issue
+    - severity: int - Severity level (0=none, 5=critical)
+
+    Returns:
+    - List[CritiqueIssueOut]: List of all created critique issue entries
+    """
+    try:
+        import re
+
+        # Parse vref into book, chapter, verse components
+        match = re.match(r"([A-Z1-3]{3})\s+(\d+):(\d+)", critique.vref)
+        if not match:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid vref format: {critique.vref}. Expected format: 'BBB C:V' (e.g., 'JHN 1:1')",
+            )
+        book, chapter, verse = match.groups()
+        chapter = int(chapter)
+        verse = int(verse)
+
+        created_issues = []
+
+        # Create records for omissions
+        for omission in critique.omissions:
+            issue = AgentCritiqueIssue(
+                assessment_id=critique.assessment_id,
+                vref=critique.vref,
+                book=book,
+                chapter=chapter,
+                verse=verse,
+                issue_type="omission",
+                text=omission.text,
+                comments=omission.comments,
+                severity=omission.severity,
+            )
+            db.add(issue)
+            created_issues.append(issue)
+
+        # Create records for additions
+        for addition in critique.additions:
+            issue = AgentCritiqueIssue(
+                assessment_id=critique.assessment_id,
+                vref=critique.vref,
+                book=book,
+                chapter=chapter,
+                verse=verse,
+                issue_type="addition",
+                text=addition.text,
+                comments=addition.comments,
+                severity=addition.severity,
+            )
+            db.add(issue)
+            created_issues.append(issue)
+
+        await db.commit()
+
+        # Refresh all issues to get their IDs and timestamps
+        for issue in created_issues:
+            await db.refresh(issue)
+
+        return [CritiqueIssueOut.model_validate(issue) for issue in created_issues]
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error adding critique issues: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
@@ -575,6 +668,84 @@ async def check_word_in_lexeme_cards(
 
     except SQLAlchemyError as e:
         logger.error(f"Error checking word in lexeme cards: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.get("/agent/critique", response_model=list[CritiqueIssueOut])
+async def get_critique_issues(
+    assessment_id: int,
+    vref: str = None,
+    book: str = None,
+    issue_type: str = None,
+    min_severity: int = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Get critique issues filtered by assessment and optionally by other criteria.
+
+    Query Parameters:
+    - assessment_id: int (required) - The assessment ID
+    - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
+    - book: str (optional) - Filter by book code (e.g., "JHN")
+    - issue_type: str (optional) - Filter by issue type ("omission" or "addition")
+    - min_severity: int (optional) - Minimum severity level (0-5)
+
+    Returns:
+    - List[CritiqueIssueOut]: List of matching critique issues, ordered by book, chapter, verse, and severity
+    """
+    try:
+        from sqlalchemy import desc, select
+
+        # Start with base query filtered by assessment
+        query = select(AgentCritiqueIssue).where(
+            AgentCritiqueIssue.assessment_id == assessment_id
+        )
+
+        # Add optional filters
+        if vref:
+            query = query.where(AgentCritiqueIssue.vref == vref)
+
+        if book:
+            query = query.where(AgentCritiqueIssue.book == book)
+
+        if issue_type:
+            if issue_type not in ["omission", "addition"]:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="issue_type must be either 'omission' or 'addition'",
+                )
+            query = query.where(AgentCritiqueIssue.issue_type == issue_type)
+
+        if min_severity is not None:
+            if min_severity < 0 or min_severity > 5:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="min_severity must be between 0 and 5",
+                )
+            query = query.where(AgentCritiqueIssue.severity >= min_severity)
+
+        # Order by book, chapter, verse, and severity (descending)
+        query = query.order_by(
+            AgentCritiqueIssue.book,
+            AgentCritiqueIssue.chapter,
+            AgentCritiqueIssue.verse,
+            desc(AgentCritiqueIssue.severity),
+        )
+
+        # Execute query
+        result = await db.execute(query)
+        issues = result.scalars().all()
+
+        return [CritiqueIssueOut.model_validate(issue) for issue in issues]
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching critique issues: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",

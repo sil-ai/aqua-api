@@ -498,3 +498,40 @@ class AgentWordAlignment(Base):
             "target_word",
         ),
     )
+
+
+class AgentCritiqueIssue(Base):
+    __tablename__ = "agent_critique_issue"
+
+    id = Column(Integer, primary_key=True)
+
+    # Assessment metadata
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), nullable=False)
+
+    # Verse information (parsed from vref)
+    vref = Column(String(20), nullable=False)
+    book = Column(String(10), nullable=False)
+    chapter = Column(Integer, nullable=False)
+    verse = Column(Integer, nullable=False)
+
+    # Issue classification
+    issue_type = Column(String(10), nullable=False)  # 'omission' or 'addition'
+
+    # Issue details
+    text = Column(Text, nullable=True)  # The text that was omitted or added
+    comments = Column(Text, nullable=True)  # Explanation of why this is an issue
+    severity = Column(Integer, nullable=False)  # 0=none, 5=critical
+
+    # Timestamp
+    created_at = Column(TIMESTAMP, default=func.now())
+
+    # Relationship to assessment
+    assessment = relationship("Assessment")
+
+    __table_args__ = (
+        Index("ix_agent_critique_issue_assessment", "assessment_id"),
+        Index("ix_agent_critique_issue_vref", "vref"),
+        Index("ix_agent_critique_issue_book_chapter_verse", "book", "chapter", "verse"),
+        Index("ix_agent_critique_issue_type", "issue_type"),
+        Index("ix_agent_critique_issue_severity", "severity"),
+    )
