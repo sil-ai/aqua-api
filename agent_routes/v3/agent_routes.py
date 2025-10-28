@@ -24,7 +24,10 @@ from models import (
     LexemeCardOut,
 )
 from security_routes.auth_routes import get_current_user
-from security_routes.utilities import get_authorized_revision_ids
+from security_routes.utilities import (
+    get_authorized_revision_ids,
+    is_user_authorized_for_assessment,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -699,6 +702,15 @@ async def get_critique_issues(
     """
     try:
         from sqlalchemy import desc, select
+
+        # Check user authorization for this assessment
+        if not await is_user_authorized_for_assessment(
+            current_user.id, assessment_id, db
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized to see this assessment",
+            )
 
         # Start with base query filtered by assessment
         query = select(AgentCritiqueIssue).where(

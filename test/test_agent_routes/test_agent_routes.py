@@ -2800,3 +2800,14 @@ def test_get_critique_issues_unauthorized(client, test_assessment_id):
     )
 
     assert response.status_code == 401
+
+
+def test_get_critique_issues_forbidden(client, regular_token2, test_assessment_id):
+    """Test that users cannot access critique issues for assessments they don't have permission to view."""
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+
+    assert response.status_code == 403
+    assert "not authorized" in response.json()["detail"].lower()
