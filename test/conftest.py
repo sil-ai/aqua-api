@@ -134,7 +134,7 @@ def test_assessment_id(test_db_session, test_revision_id, test_revision_id_2):
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
         type="agent_critique",
-        status="completed",
+        status="finished",
     )
     test_db_session.add(assessment)
     test_db_session.commit()

@@ -2784,13 +2784,14 @@ def test_get_critique_issues_invalid_severity(
 
 
 def test_get_critique_issues_missing_assessment_id(client, regular_token1):
-    """Test that assessment_id is required."""
+    """Test that assessment_id or revision/reference pair is required."""
     response = client.get(
         f"{prefix}/agent/critique",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 400
+    assert "must provide either" in response.json()["detail"].lower()
 
 
 def test_get_critique_issues_unauthorized(client, test_assessment_id):
@@ -2811,3 +2812,86 @@ def test_get_critique_issues_forbidden(client, regular_token2, test_assessment_i
 
     assert response.status_code == 403
     assert "not authorized" in response.json()["detail"].lower()
+
+
+def test_get_critique_issues_by_revision_reference_ids(
+    client, regular_token1, test_assessment_id, test_revision_id, test_revision_id_2
+):
+    """Test getting critique issues using revision_id and reference_id instead of assessment_id."""
+    # First add some test data
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "MAT 1:1",
+            "omissions": [{"text": "test", "comments": "test comment", "severity": 3}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Get using revision_id and reference_id
+    response = client.get(
+        f"{prefix}/agent/critique?revision_id={test_revision_id}&reference_id={test_revision_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    # Filter to our test data
+    test_issues = [d for d in data if d["vref"] == "MAT 1:1"]
+    assert len(test_issues) > 0
+    assert test_issues[0]["issue_type"] == "omission"
+
+
+def test_get_critique_issues_missing_both_id_types(client, regular_token1):
+    """Test that at least one ID type must be provided."""
+    response = client.get(
+        f"{prefix}/agent/critique",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "must provide either" in response.json()["detail"].lower()
+
+
+def test_get_critique_issues_both_id_types_provided(
+    client, regular_token1, test_assessment_id, test_revision_id, test_revision_id_2
+):
+    """Test that both assessment_id and revision/reference IDs cannot be provided together."""
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&revision_id={test_revision_id}&reference_id={test_revision_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "cannot provide both" in response.json()["detail"].lower()
+
+
+def test_get_critique_issues_incomplete_revision_pair(
+    client, regular_token1, test_revision_id
+):
+    """Test that both revision_id and reference_id must be provided together."""
+    response = client.get(
+        f"{prefix}/agent/critique?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"].lower()
+    # The error could be either the first check or the second check
+    assert (
+        "must provide either" in detail or "both revision_id and reference_id" in detail
+    )
+
+
+def test_get_critique_issues_nonexistent_revision_pair(client, regular_token1):
+    """Test that a 404 is returned for nonexistent revision/reference pair."""
+    response = client.get(
+        f"{prefix}/agent/critique?revision_id=99999&reference_id=88888",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 404
+    assert "no completed assessment found" in response.json()["detail"].lower()

@@ -679,7 +679,9 @@ async def check_word_in_lexeme_cards(
 
 @router.get("/agent/critique", response_model=list[CritiqueIssueOut])
 async def get_critique_issues(
-    assessment_id: int,
+    assessment_id: int = None,
+    revision_id: int = None,
+    reference_id: int = None,
     vref: str = None,
     book: str = None,
     issue_type: str = None,
@@ -691,7 +693,9 @@ async def get_critique_issues(
     Get critique issues filtered by assessment and optionally by other criteria.
 
     Query Parameters:
-    - assessment_id: int (required) - The assessment ID
+    - assessment_id: int (optional) - The assessment ID. Must provide either assessment_id OR (revision_id and reference_id).
+    - revision_id: int (optional) - The revision ID. Must be provided with reference_id if not using assessment_id.
+    - reference_id: int (optional) - The reference ID. Must be provided with revision_id if not using assessment_id.
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - book: str (optional) - Filter by book code (e.g., "JHN")
     - issue_type: str (optional) - Filter by issue type ("omission" or "addition")
@@ -702,6 +706,50 @@ async def get_critique_issues(
     """
     try:
         from sqlalchemy import desc, select
+
+        from database.models import Assessment
+
+        # Validate that exactly one identification method is provided
+        has_assessment_id = assessment_id is not None
+        has_revision_pair = revision_id is not None and reference_id is not None
+
+        if not has_assessment_id and not has_revision_pair:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Must provide either assessment_id OR (revision_id and reference_id)",
+            )
+
+        if has_assessment_id and has_revision_pair:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot provide both assessment_id and revision/reference IDs. Choose one.",
+            )
+
+        # Validate that both IDs in the revision pair are provided
+        if (revision_id is None) != (reference_id is None):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Both revision_id and reference_id must be provided together",
+            )
+
+        # Look up assessment_id from revision_id and reference_id if needed
+        if has_revision_pair:
+            assessment = await db.execute(
+                select(Assessment)
+                .filter(
+                    Assessment.revision_id == revision_id,
+                    Assessment.reference_id == reference_id,
+                    Assessment.status == "finished",
+                )
+                .order_by(Assessment.end_time.desc())
+            )
+            assessment = assessment.scalars().first()
+            if not assessment:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No completed assessment found for the given revision_id and reference_id",
+                )
+            assessment_id = assessment.id
 
         # Check user authorization for this assessment
         if not await is_user_authorized_for_assessment(
