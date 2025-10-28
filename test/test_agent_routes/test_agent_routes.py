@@ -2201,7 +2201,6 @@ def test_add_critique_issues_success(
     client, regular_token1, db_session, test_assessment_id
 ):
     """Test successfully adding critique issues for a verse."""
-    from database.models import AgentCritiqueIssue
 
     critique_data = {
         "assessment_id": test_assessment_id,
