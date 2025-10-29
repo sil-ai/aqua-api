@@ -614,6 +614,10 @@ class CritiqueIssueOut(BaseModel):
     text: Optional[str] = None
     comments: Optional[str] = None
     severity: int
+    is_resolved: bool = False
+    resolved_by_id: Optional[int] = None
+    resolved_at: Optional[datetime.datetime] = None
+    resolution_notes: Optional[str] = None
     created_at: Optional[datetime.datetime] = None
 
     model_config = {
@@ -629,7 +633,28 @@ class CritiqueIssueOut(BaseModel):
                 "text": "in the beginning",
                 "comments": "Missing key phrase from source text",
                 "severity": 4,
+                "is_resolved": False,
+                "resolved_by_id": None,
+                "resolved_at": None,
+                "resolution_notes": None,
                 "created_at": "2024-06-01T12:00:00",
+            }
+        },
+        "from_attributes": True,
+    }
+
+
+class CritiqueIssueResolutionRequest(BaseModel):
+    """Request to resolve a critique issue."""
+
+    resolution_notes: Optional[str] = Field(
+        None, description="Optional notes about how the issue was resolved"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "resolution_notes": "Issue was addressed by updating the translation in the revision.",
             }
         },
         "from_attributes": True,

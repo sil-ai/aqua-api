@@ -19,6 +19,7 @@ from models import (
     AgentWordAlignmentIn,
     AgentWordAlignmentOut,
     CritiqueIssueOut,
+    CritiqueIssueResolutionRequest,
     CritiqueStorageRequest,
     LexemeCardIn,
     LexemeCardOut,
@@ -686,6 +687,7 @@ async def get_critique_issues(
     book: str = None,
     issue_type: str = None,
     min_severity: int = None,
+    is_resolved: bool = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -700,6 +702,7 @@ async def get_critique_issues(
     - book: str (optional) - Filter by book code (e.g., "JHN")
     - issue_type: str (optional) - Filter by issue type ("omission" or "addition")
     - min_severity: int (optional) - Minimum severity level (0-5)
+    - is_resolved: bool (optional) - Filter by resolution status (true=resolved, false=unresolved)
 
     Returns:
     - List[CritiqueIssueOut]: List of matching critique issues, ordered by book, chapter, verse, and severity
@@ -788,6 +791,9 @@ async def get_critique_issues(
                 )
             query = query.where(AgentCritiqueIssue.severity >= min_severity)
 
+        if is_resolved is not None:
+            query = query.where(AgentCritiqueIssue.is_resolved == is_resolved)
+
         # Order by book, chapter, verse, and severity (descending)
         query = query.order_by(
             AgentCritiqueIssue.book,
@@ -806,6 +812,145 @@ async def get_critique_issues(
         raise
     except SQLAlchemyError as e:
         logger.error(f"Error fetching critique issues: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.patch("/agent/critique/{issue_id}/resolve", response_model=CritiqueIssueOut)
+async def resolve_critique_issue(
+    issue_id: int,
+    resolution: CritiqueIssueResolutionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Mark a critique issue as resolved.
+
+    Path Parameters:
+    - issue_id: int (required) - The ID of the critique issue to resolve
+
+    Input:
+    - resolution_notes: str (optional) - Notes about how the issue was resolved
+
+    Returns:
+    - CritiqueIssueOut: The updated critique issue with resolution information
+    """
+    try:
+        from sqlalchemy import select
+        from sqlalchemy.sql import func
+
+        # Get the critique issue
+        query = select(AgentCritiqueIssue).where(AgentCritiqueIssue.id == issue_id)
+        result = await db.execute(query)
+        issue = result.scalar_one_or_none()
+
+        if not issue:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Critique issue not found",
+            )
+
+        # Check user authorization for the associated assessment
+        if not await is_user_authorized_for_assessment(
+            current_user.id, issue.assessment_id, db
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized to resolve this critique issue",
+            )
+
+        # Check if already resolved
+        if issue.is_resolved:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Critique issue is already resolved",
+            )
+
+        # Update the issue
+        issue.is_resolved = True
+        issue.resolved_by_id = current_user.id
+        issue.resolved_at = func.now()
+        issue.resolution_notes = resolution.resolution_notes
+
+        await db.commit()
+        await db.refresh(issue)
+
+        return CritiqueIssueOut.model_validate(issue)
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error resolving critique issue: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.patch("/agent/critique/{issue_id}/unresolve", response_model=CritiqueIssueOut)
+async def unresolve_critique_issue(
+    issue_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Mark a resolved critique issue as unresolved.
+
+    Path Parameters:
+    - issue_id: int (required) - The ID of the critique issue to unresolve
+
+    Returns:
+    - CritiqueIssueOut: The updated critique issue with resolution information cleared
+    """
+    try:
+        from sqlalchemy import select
+
+        # Get the critique issue
+        query = select(AgentCritiqueIssue).where(AgentCritiqueIssue.id == issue_id)
+        result = await db.execute(query)
+        issue = result.scalar_one_or_none()
+
+        if not issue:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Critique issue not found",
+            )
+
+        # Check user authorization for the associated assessment
+        if not await is_user_authorized_for_assessment(
+            current_user.id, issue.assessment_id, db
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized to unresolve this critique issue",
+            )
+
+        # Check if not resolved
+        if not issue.is_resolved:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Critique issue is not currently resolved",
+            )
+
+        # Update the issue
+        issue.is_resolved = False
+        issue.resolved_by_id = None
+        issue.resolved_at = None
+        issue.resolution_notes = None
+
+        await db.commit()
+        await db.refresh(issue)
+
+        return CritiqueIssueOut.model_validate(issue)
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error unresolving critique issue: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
