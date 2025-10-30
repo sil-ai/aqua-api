@@ -88,6 +88,7 @@ async def add_assessment(a: AssessmentIn = Depends(), modal_suffix: str = ""):
     - semantic-similarity (requires reference)
     - sentence-length
     - word-alignment (requires reference)
+    - agent-critique (requires reference)
 
     For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
 
@@ -103,7 +104,8 @@ async def add_assessment(a: AssessmentIn = Depends(), modal_suffix: str = ""):
         )  # Give the option of setting the suffix in the environment
 
     if (
-        a.type in ["missing-words", "semantic-similarity", "word-alignment"]
+        a.type
+        in ["missing-words", "semantic-similarity", "word-alignment", "agent-critique"]
         and a.reference_id is None
     ):
         raise HTTPException(
