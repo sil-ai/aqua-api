@@ -51,6 +51,7 @@ async def get_assessments(
     - ngrams
     - tfidf
     - text-lengths (requires reference)
+    - agent-critique (requires reference)
 
 
     Returns:
@@ -185,6 +186,7 @@ async def add_assessment(
     - ngrams
     - tfidf
     - text-lengths
+    - agent-critique (requires reference)
 
     For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
 
@@ -212,7 +214,10 @@ async def add_assessment(
     - owner_id: int
     Description: The unique identifier for the owner of the assessment.
     """
-    if a.type in ["semantic-similarity", "word-alignment"] and a.reference_id is None:
+    if (
+        a.type in ["semantic-similarity", "word-alignment", "agent-critique"]
+        and a.reference_id is None
+    ):
         raise HTTPException(
             status_code=400, detail=f"Assessment type {a.type} requires a reference_id."
         )
