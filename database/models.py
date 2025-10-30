@@ -498,3 +498,49 @@ class AgentWordAlignment(Base):
             "target_word",
         ),
     )
+
+
+class AgentCritiqueIssue(Base):
+    __tablename__ = "agent_critique_issue"
+
+    id = Column(Integer, primary_key=True)
+
+    # Assessment metadata
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), nullable=False)
+
+    # Verse information (parsed from vref)
+    vref = Column(String(20), nullable=False)
+    book = Column(String(10), nullable=False)
+    chapter = Column(Integer, nullable=False)
+    verse = Column(Integer, nullable=False)
+
+    # Issue classification
+    issue_type = Column(String(10), nullable=False)  # 'omission' or 'addition'
+
+    # Issue details
+    text = Column(Text, nullable=True)  # The text that was omitted or added
+    comments = Column(Text, nullable=True)  # Explanation of why this is an issue
+    severity = Column(Integer, nullable=False)  # 0=none, 5=critical
+
+    # Resolution tracking
+    is_resolved = Column(Boolean, default=False, nullable=False)
+    resolved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(TIMESTAMP, nullable=True)
+    resolution_notes = Column(Text, nullable=True)
+
+    # Timestamp
+    created_at = Column(TIMESTAMP, default=func.now())
+
+    # Relationships
+    assessment = relationship("Assessment")
+    resolved_by = relationship("UserDB", foreign_keys=[resolved_by_id])
+
+    __table_args__ = (
+        Index("ix_agent_critique_issue_assessment", "assessment_id"),
+        Index("ix_agent_critique_issue_vref", "vref"),
+        Index("ix_agent_critique_issue_book_chapter_verse", "book", "chapter", "verse"),
+        Index("ix_agent_critique_issue_type", "issue_type"),
+        Index("ix_agent_critique_issue_severity", "severity"),
+        Index("ix_agent_critique_issue_resolved", "is_resolved"),
+        Index("ix_agent_critique_issue_resolved_by", "resolved_by_id"),
+    )

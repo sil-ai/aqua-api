@@ -1,5 +1,5 @@
 # test_agent_routes.py
-from database.models import AgentWordAlignment
+from database.models import AgentCritiqueIssue, AgentWordAlignment
 
 prefix = "v3"
 
@@ -2192,3 +2192,705 @@ def test_get_lexeme_cards_both_source_and_target_word(
     card = next((c for c in data if c["source_lemma"] == "agape_love"), None)
     assert card is not None
     assert card["target_lemma"] == "penda_test"
+
+
+# Critique Issue Tests
+
+
+def test_add_critique_issues_success(
+    client, regular_token1, db_session, test_assessment_id
+):
+    """Test successfully adding critique issues for a verse."""
+
+    critique_data = {
+        "assessment_id": test_assessment_id,
+        "vref": "JHN 1:1",
+        "omissions": [
+            {
+                "text": "in the beginning",
+                "comments": "Missing key phrase from source text",
+                "severity": 4,
+            },
+            {
+                "text": "was the Word",
+                "comments": "Critical theological term missing",
+                "severity": 5,
+            },
+        ],
+        "additions": [
+            {
+                "text": "extra phrase",
+                "comments": "Not present in source",
+                "severity": 2,
+            }
+        ],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/critique",
+        json=critique_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should return 3 issues (2 omissions + 1 addition)
+    assert len(data) == 3
+
+    # Check first omission
+    omission1 = next((d for d in data if d["text"] == "in the beginning"), None)
+    assert omission1 is not None
+    assert omission1["assessment_id"] == test_assessment_id
+    assert omission1["vref"] == "JHN 1:1"
+    assert omission1["book"] == "JHN"
+    assert omission1["chapter"] == 1
+    assert omission1["verse"] == 1
+    assert omission1["issue_type"] == "omission"
+    assert omission1["comments"] == "Missing key phrase from source text"
+    assert omission1["severity"] == 4
+    assert omission1["id"] is not None
+    assert omission1["created_at"] is not None
+
+    # Check second omission
+    omission2 = next((d for d in data if d["text"] == "was the Word"), None)
+    assert omission2 is not None
+    assert omission2["severity"] == 5
+
+    # Check addition
+    addition = next((d for d in data if d["text"] == "extra phrase"), None)
+    assert addition is not None
+    assert addition["issue_type"] == "addition"
+    assert addition["severity"] == 2
+
+    # Verify in database
+    issues = (
+        db_session.query(AgentCritiqueIssue)
+        .filter(
+            AgentCritiqueIssue.assessment_id == test_assessment_id,
+            AgentCritiqueIssue.vref == "JHN 1:1",
+        )
+        .all()
+    )
+    assert len(issues) >= 3
+
+
+def test_add_critique_issues_empty_lists(client, regular_token1, test_assessment_id):
+    """Test adding critique with empty omissions and additions lists."""
+    critique_data = {
+        "assessment_id": test_assessment_id,
+        "vref": "JHN 1:2",
+        "omissions": [],
+        "additions": [],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/critique",
+        json=critique_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 0  # No issues created
+
+
+def test_add_critique_issues_only_omissions(client, regular_token1, test_assessment_id):
+    """Test adding critique with only omissions."""
+    critique_data = {
+        "assessment_id": test_assessment_id,
+        "vref": "GEN 1:1",
+        "omissions": [
+            {
+                "text": "God",
+                "comments": "Missing subject",
+                "severity": 5,
+            }
+        ],
+        "additions": [],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/critique",
+        json=critique_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["issue_type"] == "omission"
+    assert data[0]["book"] == "GEN"
+
+
+def test_add_critique_issues_only_additions(client, regular_token1, test_assessment_id):
+    """Test adding critique with only additions."""
+    critique_data = {
+        "assessment_id": test_assessment_id,
+        "vref": "MAT 5:3",
+        "omissions": [],
+        "additions": [
+            {
+                "text": "blessed are",
+                "comments": "Redundant phrase",
+                "severity": 1,
+            }
+        ],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/critique",
+        json=critique_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["issue_type"] == "addition"
+    assert data[0]["book"] == "MAT"
+    assert data[0]["chapter"] == 5
+    assert data[0]["verse"] == 3
+
+
+def test_add_critique_issues_invalid_vref(client, regular_token1, test_assessment_id):
+    """Test that invalid vref format is rejected."""
+    critique_data = {
+        "assessment_id": test_assessment_id,
+        "vref": "John 1:1",  # Invalid format (should be "JHN 1:1")
+        "omissions": [
+            {
+                "text": "test",
+                "comments": "test",
+                "severity": 1,
+            }
+        ],
+        "additions": [],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/critique",
+        json=critique_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Invalid vref format" in response.json()["detail"]
+
+
+def test_add_critique_issues_unauthorized(client, test_assessment_id):
+    """Test that adding critique issues requires authentication."""
+    critique_data = {
+        "assessment_id": test_assessment_id,
+        "vref": "JHN 1:1",
+        "omissions": [],
+        "additions": [],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/critique",
+        json=critique_data,
+    )
+
+    assert response.status_code == 401
+
+
+def test_add_critique_issues_missing_fields(client, regular_token1):
+    """Test that missing required fields are rejected."""
+    critique_data = {
+        "vref": "JHN 1:1",
+        "omissions": [],
+        # Missing assessment_id
+    }
+
+    response = client.post(
+        f"{prefix}/agent/critique",
+        json=critique_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_add_critique_issues_invalid_severity(
+    client, regular_token1, test_assessment_id
+):
+    """Test that invalid severity values are rejected."""
+    critique_data = {
+        "assessment_id": test_assessment_id,
+        "vref": "JHN 1:1",
+        "omissions": [
+            {
+                "text": "test",
+                "comments": "test",
+                "severity": 10,  # Invalid (should be 0-5)
+            }
+        ],
+        "additions": [],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/critique",
+        json=critique_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_add_critique_issues_nullable_text_and_comments(
+    client, regular_token1, test_assessment_id
+):
+    """Test that text and comments can be null."""
+    critique_data = {
+        "assessment_id": test_assessment_id,
+        "vref": "JHN 1:1",
+        "omissions": [
+            {
+                "text": None,
+                "comments": None,
+                "severity": 3,
+            }
+        ],
+        "additions": [],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/critique",
+        json=critique_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["text"] is None
+    assert data[0]["comments"] is None
+    assert data[0]["severity"] == 3
+
+
+def test_get_critique_issues_by_assessment(client, regular_token1, test_assessment_id):
+    """Test getting all critique issues for an assessment."""
+    # Add some test data
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "JHN 1:1",
+            "omissions": [{"text": "word", "comments": "missing", "severity": 4}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "JHN 1:2",
+            "omissions": [{"text": "light", "comments": "missing", "severity": 3}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Get all issues for assessment
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 2
+    assert all(issue["assessment_id"] == test_assessment_id for issue in data)
+
+
+def test_get_critique_issues_by_vref(client, regular_token1, test_assessment_id):
+    """Test filtering critique issues by specific vref."""
+    # Add test data for different verses
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "JHN 3:16",
+            "omissions": [{"text": "world", "comments": "missing", "severity": 5}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "JHN 3:17",
+            "omissions": [{"text": "condemn", "comments": "missing", "severity": 4}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Filter by specific vref
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&vref=JHN 3:16",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    assert all(issue["vref"] == "JHN 3:16" for issue in data)
+
+
+def test_get_critique_issues_by_book(client, regular_token1, test_assessment_id):
+    """Test filtering critique issues by book."""
+    # Add test data for different books
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "ROM 1:1",
+            "omissions": [{"text": "Paul", "comments": "missing", "severity": 3}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "ROM 1:2",
+            "omissions": [{"text": "gospel", "comments": "missing", "severity": 4}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Filter by book
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&book=ROM",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 2
+    assert all(issue["book"] == "ROM" for issue in data)
+
+
+def test_get_critique_issues_by_issue_type(client, regular_token1, test_assessment_id):
+    """Test filtering critique issues by issue type."""
+    # Add test data with both types
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "EPH 1:1",
+            "omissions": [{"text": "grace", "comments": "missing", "severity": 3}],
+            "additions": [{"text": "extra", "comments": "added", "severity": 2}],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Filter by omissions only
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&issue_type=omission",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    omissions = [d for d in data if d["vref"] == "EPH 1:1"]
+    assert all(issue["issue_type"] == "omission" for issue in omissions)
+
+    # Filter by additions only
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&issue_type=addition",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    additions = [d for d in data if d["vref"] == "EPH 1:1"]
+    assert all(issue["issue_type"] == "addition" for issue in additions)
+
+
+def test_get_critique_issues_by_min_severity(
+    client, regular_token1, test_assessment_id
+):
+    """Test filtering critique issues by minimum severity."""
+    # Add test data with different severities
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "PHP 1:1",
+            "omissions": [
+                {"text": "low", "comments": "low severity", "severity": 1},
+                {"text": "high", "comments": "high severity", "severity": 5},
+            ],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Filter by min_severity=4
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&min_severity=4",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    php_issues = [d for d in data if d["vref"] == "PHP 1:1"]
+    assert all(issue["severity"] >= 4 for issue in php_issues)
+    assert any(issue["text"] == "high" for issue in php_issues)
+    assert not any(issue["text"] == "low" for issue in php_issues)
+
+
+def test_get_critique_issues_combined_filters(
+    client, regular_token1, test_assessment_id
+):
+    """Test combining multiple filters."""
+    # Add test data
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "COL 1:1",
+            "omissions": [
+                {"text": "match", "comments": "should match", "severity": 5},
+                {"text": "nomatch", "comments": "wrong severity", "severity": 2},
+            ],
+            "additions": [
+                {"text": "wrong_type", "comments": "wrong type", "severity": 5},
+            ],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Filter by book, issue_type, and min_severity
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&book=COL&issue_type=omission&min_severity=4",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    col_issues = [d for d in data if d["vref"] == "COL 1:1"]
+    assert all(issue["book"] == "COL" for issue in col_issues)
+    assert all(issue["issue_type"] == "omission" for issue in col_issues)
+    assert all(issue["severity"] >= 4 for issue in col_issues)
+    assert any(issue["text"] == "match" for issue in col_issues)
+    assert not any(issue["text"] == "nomatch" for issue in col_issues)
+    assert not any(issue["text"] == "wrong_type" for issue in col_issues)
+
+
+def test_get_critique_issues_ordered(client, regular_token1, test_assessment_id):
+    """Test that results are ordered by book, chapter, verse, severity."""
+    # Add test data in non-sorted order
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "JHN 2:1",
+            "omissions": [{"text": "low", "comments": "test", "severity": 1}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "JHN 1:3",
+            "omissions": [{"text": "high", "comments": "test", "severity": 5}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "JHN 1:3",
+            "omissions": [{"text": "med", "comments": "test", "severity": 3}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&book=JHN",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Filter to our test data
+    test_issues = [d for d in data if d["text"] in ["low", "high", "med"]]
+
+    # Should be ordered: JHN 1:3 (severity 5), JHN 1:3 (severity 3), JHN 2:1 (severity 1)
+    assert len(test_issues) >= 3
+    assert test_issues[0]["chapter"] == 1
+    assert test_issues[0]["verse"] == 3
+    assert test_issues[0]["severity"] == 5
+    assert test_issues[1]["chapter"] == 1
+    assert test_issues[1]["verse"] == 3
+    assert test_issues[1]["severity"] == 3
+    assert test_issues[2]["chapter"] == 2
+    assert test_issues[2]["verse"] == 1
+
+
+def test_get_critique_issues_empty_results(client, regular_token1, test_assessment_id):
+    """Test getting critique issues with no matching results."""
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&vref=REV 22:21",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    rev_issues = [d for d in data if d["vref"] == "REV 22:21"]
+    assert len(rev_issues) == 0
+
+
+def test_get_critique_issues_invalid_issue_type(
+    client, regular_token1, test_assessment_id
+):
+    """Test that invalid issue_type is rejected."""
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&issue_type=invalid",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "issue_type must be either" in response.json()["detail"]
+
+
+def test_get_critique_issues_invalid_severity(
+    client, regular_token1, test_assessment_id
+):
+    """Test that invalid min_severity is rejected."""
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&min_severity=10",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "min_severity must be between 0 and 5" in response.json()["detail"]
+
+
+def test_get_critique_issues_missing_assessment_id(client, regular_token1):
+    """Test that assessment_id or revision/reference pair is required."""
+    response = client.get(
+        f"{prefix}/agent/critique",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "must provide either" in response.json()["detail"].lower()
+
+
+def test_get_critique_issues_unauthorized(client, test_assessment_id):
+    """Test that getting critique issues requires authentication."""
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}",
+    )
+
+    assert response.status_code == 401
+
+
+def test_get_critique_issues_forbidden(client, regular_token2, test_assessment_id):
+    """Test that users cannot access critique issues for assessments they don't have permission to view."""
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+
+    assert response.status_code == 403
+    assert "not authorized" in response.json()["detail"].lower()
+
+
+def test_get_critique_issues_by_revision_reference_ids(
+    client, regular_token1, test_assessment_id, test_revision_id, test_revision_id_2
+):
+    """Test getting critique issues using revision_id and reference_id instead of assessment_id."""
+    # First add some test data
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "MAT 1:1",
+            "omissions": [{"text": "test", "comments": "test comment", "severity": 3}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Get using revision_id and reference_id
+    response = client.get(
+        f"{prefix}/agent/critique?revision_id={test_revision_id}&reference_id={test_revision_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    # Filter to our test data
+    test_issues = [d for d in data if d["vref"] == "MAT 1:1"]
+    assert len(test_issues) > 0
+    assert test_issues[0]["issue_type"] == "omission"
+
+
+def test_get_critique_issues_missing_both_id_types(client, regular_token1):
+    """Test that at least one ID type must be provided."""
+    response = client.get(
+        f"{prefix}/agent/critique",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "must provide either" in response.json()["detail"].lower()
+
+
+def test_get_critique_issues_both_id_types_provided(
+    client, regular_token1, test_assessment_id, test_revision_id, test_revision_id_2
+):
+    """Test that both assessment_id and revision/reference IDs cannot be provided together."""
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&revision_id={test_revision_id}&reference_id={test_revision_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "cannot provide both" in response.json()["detail"].lower()
+
+
+def test_get_critique_issues_incomplete_revision_pair(
+    client, regular_token1, test_revision_id
+):
+    """Test that both revision_id and reference_id must be provided together."""
+    response = client.get(
+        f"{prefix}/agent/critique?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"].lower()
+    # The error could be either the first check or the second check
+    assert (
+        "must provide either" in detail or "both revision_id and reference_id" in detail
+    )
+
+
+def test_get_critique_issues_nonexistent_revision_pair(client, regular_token1):
+    """Test that a 404 is returned for nonexistent revision/reference pair."""
+    response = client.get(
+        f"{prefix}/agent/critique?revision_id=99999&reference_id=88888",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 404
+    assert "no completed assessment found" in response.json()["detail"].lower()

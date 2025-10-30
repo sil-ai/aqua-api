@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import app
 from database.models import (
+    Assessment,
     Base,
     BibleRevision,
     BibleVersion,
@@ -123,6 +124,23 @@ def test_revision_id_2(test_db_session):
     # Grant access when this fixture is used (indicates agent tests)
     setup_agent_access(test_db_session)
     return test_db_session.test_revision_id_2
+
+
+@pytest.fixture(scope="module")
+def test_assessment_id(test_db_session, test_revision_id, test_revision_id_2):
+    """Create and return a test assessment ID for critique tests."""
+    # Create a test assessment using the test revisions
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+
+    return assessment.id
 
 
 @pytest.fixture(scope="module")
