@@ -198,6 +198,7 @@ class AssessmentType(Enum):
     ngrams = "ngrams"
     tfidf = "tfidf"
     text_lengths = "text-lengths"
+    agent_critique = "agent-critique"
 
 
 class AssessmentIn(BaseModel):
