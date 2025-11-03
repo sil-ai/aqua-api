@@ -207,6 +207,10 @@ class AssessmentIn(BaseModel):
     reference_id: Optional[int] = None
     type: AssessmentType
     train: Optional[bool] = None
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
+    first_vref: Optional[str] = None
+    last_vref: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
