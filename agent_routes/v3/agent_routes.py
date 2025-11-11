@@ -743,6 +743,7 @@ async def get_critique_issues(
                     Assessment.revision_id == revision_id,
                     Assessment.reference_id == reference_id,
                     Assessment.status == "finished",
+                    Assessment.deleted.is_not(True),
                 )
                 .order_by(Assessment.end_time.desc())
             )
