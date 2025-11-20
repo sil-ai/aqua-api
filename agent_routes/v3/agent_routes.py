@@ -683,6 +683,7 @@ async def get_critique_issues(
     assessment_id: int = None,
     revision_id: int = None,
     reference_id: int = None,
+    all_assessments: bool = True,
     vref: str = None,
     book: str = None,
     issue_type: str = None,
@@ -698,6 +699,7 @@ async def get_critique_issues(
     - assessment_id: int (optional) - The assessment ID. Must provide either assessment_id OR (revision_id and reference_id).
     - revision_id: int (optional) - The revision ID. Must be provided with reference_id if not using assessment_id.
     - reference_id: int (optional) - The reference ID. Must be provided with revision_id if not using assessment_id.
+    - all_assessments: bool (optional, default=True) - When using revision_id and reference_id, if True returns issues from all assessments between the revision and reference. If False, returns only issues from the latest assessment.
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - book: str (optional) - Filter by book code (e.g., "JHN")
     - issue_type: str (optional) - Filter by issue type ("omission" or "addition")
@@ -737,23 +739,41 @@ async def get_critique_issues(
 
         # Look up assessment_id from revision_id and reference_id if needed
         if has_revision_pair:
-            assessment = await db.execute(
-                select(Assessment)
-                .filter(
-                    Assessment.revision_id == revision_id,
-                    Assessment.reference_id == reference_id,
-                    Assessment.status == "finished",
-                    Assessment.deleted.is_not(True),
-                )
-                .order_by(Assessment.end_time.desc())
+            assessment_query = select(Assessment).filter(
+                Assessment.revision_id == revision_id,
+                Assessment.reference_id == reference_id,
+                Assessment.status == "finished",
+                Assessment.deleted.is_not(True),
             )
-            assessment = assessment.scalars().first()
-            if not assessment:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No completed assessment found for the given revision_id and reference_id",
+
+            if all_assessments:
+                # Get all assessments for this revision/reference pair
+                assessment_result = await db.execute(assessment_query)
+                assessments = assessment_result.scalars().all()
+                if not assessments:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="No completed assessment found for the given revision_id and reference_id",
+                    )
+                # Collect all assessment IDs
+                assessment_ids = [a.id for a in assessments]
+                # For authorization check, use the first one (they should all have same access)
+                assessment_id = assessment_ids[0]
+            else:
+                # Get only the latest assessment
+                # Use nulls_last() to ensure assessments with NULL end_time don't interfere
+                assessment_query = assessment_query.order_by(
+                    Assessment.end_time.desc().nulls_last()
                 )
-            assessment_id = assessment.id
+                assessment_result = await db.execute(assessment_query)
+                assessment = assessment_result.scalars().first()
+                if not assessment:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="No completed assessment found for the given revision_id and reference_id",
+                    )
+                assessment_id = assessment.id
+                assessment_ids = [assessment_id]
 
         # Check user authorization for this assessment
         if not await is_user_authorized_for_assessment(
@@ -764,10 +784,17 @@ async def get_critique_issues(
                 detail="User not authorized to see this assessment",
             )
 
-        # Start with base query filtered by assessment
-        query = select(AgentCritiqueIssue).where(
-            AgentCritiqueIssue.assessment_id == assessment_id
-        )
+        # Start with base query filtered by assessment(s)
+        if has_revision_pair and all_assessments:
+            # Query for all assessments
+            query = select(AgentCritiqueIssue).where(
+                AgentCritiqueIssue.assessment_id.in_(assessment_ids)
+            )
+        else:
+            # Query for single assessment
+            query = select(AgentCritiqueIssue).where(
+                AgentCritiqueIssue.assessment_id == assessment_id
+            )
 
         # Add optional filters
         if vref:

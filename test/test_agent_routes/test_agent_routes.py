@@ -2894,3 +2894,236 @@ def test_get_critique_issues_nonexistent_revision_pair(client, regular_token1):
 
     assert response.status_code == 404
     assert "no completed assessment found" in response.json()["detail"].lower()
+
+
+def test_get_critique_issues_all_assessments_true(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Test getting critique issues from all assessments when all_assessments=True (default)."""
+    from database.models import Assessment
+
+    # Create multiple assessments for the same revision/reference pair
+    assessment1 = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add(assessment1)
+    db_session.commit()
+    db_session.refresh(assessment1)
+
+    assessment2 = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add(assessment2)
+    db_session.commit()
+    db_session.refresh(assessment2)
+
+    # Add critique issues to both assessments with unique vrefs
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": assessment1.id,
+            "vref": "PHM 1:1",
+            "omissions": [
+                {"text": "first assessment", "comments": "test 1", "severity": 3}
+            ],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": assessment2.id,
+            "vref": "PHM 1:2",
+            "omissions": [
+                {"text": "second assessment", "comments": "test 2", "severity": 4}
+            ],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Get using revision_id and reference_id with all_assessments=True (default)
+    response = client.get(
+        f"{prefix}/agent/critique?revision_id={test_revision_id}&reference_id={test_revision_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+
+    # Should get issues from both assessments - filter by the specific assessment IDs
+    assessment1_issues = [d for d in data if d["assessment_id"] == assessment1.id]
+    assessment2_issues = [d for d in data if d["assessment_id"] == assessment2.id]
+
+    assert len(assessment1_issues) > 0, "Should find issues from first assessment"
+    assert len(assessment2_issues) > 0, "Should find issues from second assessment"
+    assert assessment1_issues[0]["text"] == "first assessment"
+    assert assessment2_issues[0]["text"] == "second assessment"
+
+
+def test_get_critique_issues_all_assessments_false(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Test getting critique issues from only the latest assessment when all_assessments=False."""
+    import time
+    from datetime import datetime, timedelta
+
+    from database.models import Assessment
+
+    # Create two assessments with different end times
+    # Use a very far future time to ensure this is definitely the latest assessment
+    base_time = datetime.now() + timedelta(days=365)
+
+    older_assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+        end_time=base_time,
+    )
+    db_session.add(older_assessment)
+    db_session.commit()
+    db_session.refresh(older_assessment)
+
+    # Small delay to ensure different timestamps
+    time.sleep(0.01)
+
+    newer_assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+        end_time=base_time + timedelta(hours=1),
+    )
+    db_session.add(newer_assessment)
+    db_session.commit()
+    db_session.refresh(newer_assessment)
+
+    # Add critique issues to both assessments with different vrefs
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": older_assessment.id,
+            "vref": "TIT 1:1",
+            "omissions": [
+                {"text": "older assessment", "comments": "old test", "severity": 2}
+            ],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": newer_assessment.id,
+            "vref": "TIT 1:2",
+            "omissions": [
+                {"text": "newer assessment", "comments": "new test", "severity": 5}
+            ],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Get using revision_id and reference_id with all_assessments=False
+    response = client.get(
+        f"{prefix}/agent/critique?revision_id={test_revision_id}&reference_id={test_revision_id_2}&all_assessments=false",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+
+    # Should only get issues from the newer assessment - filter by assessment ID
+    older_assessment_issues = [
+        d for d in data if d["assessment_id"] == older_assessment.id
+    ]
+    newer_assessment_issues = [
+        d for d in data if d["assessment_id"] == newer_assessment.id
+    ]
+
+    assert (
+        len(older_assessment_issues) == 0
+    ), "Should NOT find issues from older assessment when all_assessments=False"
+    assert (
+        len(newer_assessment_issues) > 0
+    ), "Should find issues from newer assessment when all_assessments=False"
+    assert newer_assessment_issues[0]["text"] == "newer assessment"
+
+
+def test_get_critique_issues_all_assessments_explicit_true(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Test explicitly setting all_assessments=True returns issues from all assessments."""
+    from database.models import Assessment
+
+    # Create two assessments
+    assessment1 = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add(assessment1)
+    db_session.commit()
+    db_session.refresh(assessment1)
+
+    assessment2 = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add(assessment2)
+    db_session.commit()
+    db_session.refresh(assessment2)
+
+    # Add issues to both
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": assessment1.id,
+            "vref": "JUD 1:1",
+            "omissions": [{"text": "assessment one", "comments": "a1", "severity": 1}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "assessment_id": assessment2.id,
+            "vref": "JUD 1:2",
+            "omissions": [{"text": "assessment two", "comments": "a2", "severity": 2}],
+            "additions": [],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Explicitly set all_assessments=True
+    response = client.get(
+        f"{prefix}/agent/critique?revision_id={test_revision_id}&reference_id={test_revision_id_2}&all_assessments=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should get issues from both assessments - filter by assessment ID
+    assessment1_issues = [d for d in data if d["assessment_id"] == assessment1.id]
+    assessment2_issues = [d for d in data if d["assessment_id"] == assessment2.id]
+
+    assert len(assessment1_issues) > 0
+    assert len(assessment2_issues) > 0
