@@ -2923,12 +2923,12 @@ def test_get_critique_issues_all_assessments_true(
     db_session.commit()
     db_session.refresh(assessment2)
 
-    # Add critique issues to both assessments
+    # Add critique issues to both assessments with unique vrefs
     client.post(
         f"{prefix}/agent/critique",
         json={
             "assessment_id": assessment1.id,
-            "vref": "JHN 3:16",
+            "vref": "PHM 1:1",
             "omissions": [
                 {"text": "first assessment", "comments": "test 1", "severity": 3}
             ],
@@ -2941,7 +2941,7 @@ def test_get_critique_issues_all_assessments_true(
         f"{prefix}/agent/critique",
         json={
             "assessment_id": assessment2.id,
-            "vref": "JHN 3:17",
+            "vref": "PHM 1:2",
             "omissions": [
                 {"text": "second assessment", "comments": "test 2", "severity": 4}
             ],
@@ -2960,42 +2960,49 @@ def test_get_critique_issues_all_assessments_true(
     data = response.json()
     assert isinstance(data, list)
 
-    # Should get issues from both assessments
-    jhn_3_16_issues = [d for d in data if d["vref"] == "JHN 3:16"]
-    jhn_3_17_issues = [d for d in data if d["vref"] == "JHN 3:17"]
+    # Should get issues from both assessments - filter by the specific assessment IDs
+    assessment1_issues = [d for d in data if d["assessment_id"] == assessment1.id]
+    assessment2_issues = [d for d in data if d["assessment_id"] == assessment2.id]
 
-    assert len(jhn_3_16_issues) > 0, "Should find issues from first assessment"
-    assert len(jhn_3_17_issues) > 0, "Should find issues from second assessment"
-    assert jhn_3_16_issues[0]["text"] == "first assessment"
-    assert jhn_3_17_issues[0]["text"] == "second assessment"
+    assert len(assessment1_issues) > 0, "Should find issues from first assessment"
+    assert len(assessment2_issues) > 0, "Should find issues from second assessment"
+    assert assessment1_issues[0]["text"] == "first assessment"
+    assert assessment2_issues[0]["text"] == "second assessment"
 
 
 def test_get_critique_issues_all_assessments_false(
     client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):
     """Test getting critique issues from only the latest assessment when all_assessments=False."""
+    import time
     from datetime import datetime, timedelta
 
     from database.models import Assessment
 
     # Create two assessments with different end times
+    # Use a very far future time to ensure this is definitely the latest assessment
+    base_time = datetime.now() + timedelta(days=365)
+
     older_assessment = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
         type="agent_critique",
         status="finished",
-        end_time=datetime.now() - timedelta(hours=2),
+        end_time=base_time,
     )
     db_session.add(older_assessment)
     db_session.commit()
     db_session.refresh(older_assessment)
+
+    # Small delay to ensure different timestamps
+    time.sleep(0.01)
 
     newer_assessment = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
         type="agent_critique",
         status="finished",
-        end_time=datetime.now() - timedelta(hours=1),
+        end_time=base_time + timedelta(hours=1),
     )
     db_session.add(newer_assessment)
     db_session.commit()
@@ -3006,7 +3013,7 @@ def test_get_critique_issues_all_assessments_false(
         f"{prefix}/agent/critique",
         json={
             "assessment_id": older_assessment.id,
-            "vref": "ROM 8:28",
+            "vref": "TIT 1:1",
             "omissions": [
                 {"text": "older assessment", "comments": "old test", "severity": 2}
             ],
@@ -3019,7 +3026,7 @@ def test_get_critique_issues_all_assessments_false(
         f"{prefix}/agent/critique",
         json={
             "assessment_id": newer_assessment.id,
-            "vref": "ROM 8:29",
+            "vref": "TIT 1:2",
             "omissions": [
                 {"text": "newer assessment", "comments": "new test", "severity": 5}
             ],
@@ -3038,17 +3045,21 @@ def test_get_critique_issues_all_assessments_false(
     data = response.json()
     assert isinstance(data, list)
 
-    # Should only get issues from the newer assessment
-    rom_8_28_issues = [d for d in data if d["vref"] == "ROM 8:28"]
-    rom_8_29_issues = [d for d in data if d["vref"] == "ROM 8:29"]
+    # Should only get issues from the newer assessment - filter by assessment ID
+    older_assessment_issues = [
+        d for d in data if d["assessment_id"] == older_assessment.id
+    ]
+    newer_assessment_issues = [
+        d for d in data if d["assessment_id"] == newer_assessment.id
+    ]
 
     assert (
-        len(rom_8_28_issues) == 0
+        len(older_assessment_issues) == 0
     ), "Should NOT find issues from older assessment when all_assessments=False"
     assert (
-        len(rom_8_29_issues) > 0
+        len(newer_assessment_issues) > 0
     ), "Should find issues from newer assessment when all_assessments=False"
-    assert rom_8_29_issues[0]["text"] == "newer assessment"
+    assert newer_assessment_issues[0]["text"] == "newer assessment"
 
 
 def test_get_critique_issues_all_assessments_explicit_true(
@@ -3083,7 +3094,7 @@ def test_get_critique_issues_all_assessments_explicit_true(
         f"{prefix}/agent/critique",
         json={
             "assessment_id": assessment1.id,
-            "vref": "GEN 1:1",
+            "vref": "JUD 1:1",
             "omissions": [{"text": "assessment one", "comments": "a1", "severity": 1}],
             "additions": [],
         },
@@ -3094,7 +3105,7 @@ def test_get_critique_issues_all_assessments_explicit_true(
         f"{prefix}/agent/critique",
         json={
             "assessment_id": assessment2.id,
-            "vref": "GEN 1:2",
+            "vref": "JUD 1:2",
             "omissions": [{"text": "assessment two", "comments": "a2", "severity": 2}],
             "additions": [],
         },
@@ -3110,9 +3121,9 @@ def test_get_critique_issues_all_assessments_explicit_true(
     assert response.status_code == 200
     data = response.json()
 
-    # Should get issues from both assessments
-    gen_1_1_issues = [d for d in data if d["vref"] == "GEN 1:1"]
-    gen_1_2_issues = [d for d in data if d["vref"] == "GEN 1:2"]
+    # Should get issues from both assessments - filter by assessment ID
+    assessment1_issues = [d for d in data if d["assessment_id"] == assessment1.id]
+    assessment2_issues = [d for d in data if d["assessment_id"] == assessment2.id]
 
-    assert len(gen_1_1_issues) > 0
-    assert len(gen_1_2_issues) > 0
+    assert len(assessment1_issues) > 0
+    assert len(assessment2_issues) > 0

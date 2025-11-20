@@ -761,7 +761,10 @@ async def get_critique_issues(
                 assessment_id = assessment_ids[0]
             else:
                 # Get only the latest assessment
-                assessment_query = assessment_query.order_by(Assessment.end_time.desc())
+                # Use nulls_last() to ensure assessments with NULL end_time don't interfere
+                assessment_query = assessment_query.order_by(
+                    Assessment.end_time.desc().nulls_last()
+                )
                 assessment_result = await db.execute(assessment_query)
                 assessment = assessment_result.scalars().first()
                 if not assessment:
