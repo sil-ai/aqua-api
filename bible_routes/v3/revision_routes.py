@@ -18,6 +18,7 @@ from models import RevisionOut_v3 as RevisionOut
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import (
     get_authorized_revision_ids,
+    get_bible_version_authorization_details,
     is_user_authorized_for_bible_version,
 )
 
@@ -80,13 +81,55 @@ async def list_revisions(
                 detail="Version id is invalid",
             )
 
-        # Step 2: Check authorization
-        if not await is_user_authorized_for_bible_version(
+        # Step 2: Check authorization with detailed diagnostics
+        auth_details = await get_bible_version_authorization_details(
             current_user.id, version_id, db
-        ):
+        )
+        if not auth_details["authorized"]:
+            # Build detailed error message
+            error_parts = [
+                f"User not authorized to access bible version {version_id}.",
+                f"User ID: {current_user.id}, Username: {current_user.username}",
+            ]
+            
+            if auth_details.get("version_info"):
+                version_info = auth_details["version_info"]
+                if "error" in version_info:
+                    error_parts.append(f"Version status: {version_info['error']}")
+                else:
+                    error_parts.append(
+                        f"Version: {version_info.get('name', 'Unknown')} "
+                        f"(ID: {version_info.get('id')}, Owner ID: {version_info.get('owner_id')})"
+                    )
+                    if version_info.get("deleted"):
+                        error_parts.append("Version is deleted.")
+            
+            if auth_details.get("user_info"):
+                user_info = auth_details["user_info"]
+                if "error" in user_info:
+                    error_parts.append(f"User status: {user_info['error']}")
+                else:
+                    error_parts.append(
+                        f"User admin status: {user_info.get('is_admin', False)}"
+                    )
+            
+            error_parts.append(
+                f"Ownership match: {auth_details.get('ownership_match', False)}"
+            )
+            error_parts.append(
+                f"User groups: {auth_details.get('user_groups', [])}"
+            )
+            error_parts.append(
+                f"Version access groups: {auth_details.get('version_access_groups', [])}"
+            )
+            error_parts.append(
+                f"Matching groups: {auth_details.get('matching_groups', [])}"
+            )
+            
+            detail_message = " | ".join(error_parts)
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="User not authorized to access this bible version.",
+                detail=detail_message,
             )
 
         # Step 3: Load revisions for that version
@@ -183,13 +226,55 @@ async def upload_revision(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Version id is invalid"
         )
-    # Check if user is authorized to upload revision for this version
-    if not await is_user_authorized_for_bible_version(
+    # Check if user is authorized to upload revision for this version with detailed diagnostics
+    auth_details = await get_bible_version_authorization_details(
         current_user.id, revision.version_id, db
-    ):
+    )
+    if not auth_details["authorized"]:
+        # Build detailed error message
+        error_parts = [
+            f"User not authorized to upload revision for bible version {revision.version_id}.",
+            f"User ID: {current_user.id}, Username: {current_user.username}",
+        ]
+        
+        if auth_details.get("version_info"):
+            version_info = auth_details["version_info"]
+            if "error" in version_info:
+                error_parts.append(f"Version status: {version_info['error']}")
+            else:
+                error_parts.append(
+                    f"Version: {version_info.get('name', 'Unknown')} "
+                    f"(ID: {version_info.get('id')}, Owner ID: {version_info.get('owner_id')})"
+                )
+                if version_info.get("deleted"):
+                    error_parts.append("Version is deleted.")
+        
+        if auth_details.get("user_info"):
+            user_info = auth_details["user_info"]
+            if "error" in user_info:
+                error_parts.append(f"User status: {user_info['error']}")
+            else:
+                error_parts.append(
+                    f"User admin status: {user_info.get('is_admin', False)}"
+                )
+        
+        error_parts.append(
+            f"Ownership match: {auth_details.get('ownership_match', False)}"
+        )
+        error_parts.append(
+            f"User groups: {auth_details.get('user_groups', [])}"
+        )
+        error_parts.append(
+            f"Version access groups: {auth_details.get('version_access_groups', [])}"
+        )
+        error_parts.append(
+            f"Matching groups: {auth_details.get('matching_groups', [])}"
+        )
+        
+        detail_message = " | ".join(error_parts)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to upload revision for this version.",
+            detail=detail_message,
         )
     # check if the versions is not del
     if version.deleted:

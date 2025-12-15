@@ -1,5 +1,6 @@
 # utilities.py
 import os
+from typing import Dict, List, Optional, Tuple
 
 import bcrypt
 from sqlalchemy import or_
@@ -32,33 +33,103 @@ def hash_password(password: str) -> str:
 
 
 # Authorization utilities
-async def is_user_authorized_for_bible_version(user_id, bible_version_id, db):
-    # Admins have access to all versions
+async def get_bible_version_authorization_details(
+    user_id: int, bible_version_id: int, db: AsyncSession
+) -> Dict:
+    """
+    Returns detailed diagnostic information about authorization check for a bible version.
+    Returns a dict with:
+    - authorized: bool
+    - user_info: dict with user details
+    - version_info: dict with version details
+    - ownership_match: bool
+    - user_groups: list of group IDs user belongs to
+    - version_access_groups: list of group IDs that have access to version
+    - matching_groups: list of group IDs that match
+    - admin_status: bool
+    """
+    diagnostics = {
+        "authorized": False,
+        "user_info": {},
+        "version_info": {},
+        "ownership_match": False,
+        "user_groups": [],
+        "version_access_groups": [],
+        "matching_groups": [],
+        "admin_status": False,
+    }
+
+    # Get user information
     result = await db.execute(select(UserDB).where(UserDB.id == user_id))
     user = result.scalars().first()
-    if user and user.is_admin:
-        return True
-    # Fetch the groups the user belongs to
-    user_groups = (
+    if user:
+        diagnostics["user_info"] = {
+            "id": user.id,
+            "username": user.username,
+            "is_admin": user.is_admin,
+        }
+        diagnostics["admin_status"] = user.is_admin
+        if user.is_admin:
+            diagnostics["authorized"] = True
+            return diagnostics
+    else:
+        diagnostics["user_info"] = {"error": "User not found in database"}
+        return diagnostics
+
+    # Get version information
+    version_result = await db.execute(
+        select(BibleVersion).where(BibleVersion.id == bible_version_id)
+    )
+    version = version_result.scalars().first()
+    if version:
+        diagnostics["version_info"] = {
+            "id": version.id,
+            "name": version.name,
+            "owner_id": version.owner_id,
+            "deleted": version.deleted,
+        }
+        diagnostics["ownership_match"] = version.owner_id == user_id
+    else:
+        diagnostics["version_info"] = {"error": "Version not found in database"}
+        return diagnostics
+
+    # Get user's groups
+    user_groups_result = await db.execute(
         select(UserGroup.group_id).where(UserGroup.user_id == user_id)
-    ).subquery()
+    )
+    user_group_ids = [gid for gid in user_groups_result.scalars().all()]
+    diagnostics["user_groups"] = user_group_ids
 
-    # Check if the Bible version is accessible by one of the user's groups
-
-    stmt = (
-        select(BibleVersion)
-        .join(
-            BibleVersionAccess, BibleVersion.id == BibleVersionAccess.bible_version_id
-        )
-        .where(
-            BibleVersion.id == bible_version_id,
-            BibleVersionAccess.group_id.in_(user_groups),
+    # Get groups that have access to this version
+    access_result = await db.execute(
+        select(BibleVersionAccess.group_id).where(
+            BibleVersionAccess.bible_version_id == bible_version_id
         )
     )
-    result = await db.execute(stmt)
-    accessible = result.scalars().first()
+    version_access_group_ids = [gid for gid in access_result.scalars().all()]
+    diagnostics["version_access_groups"] = version_access_group_ids
 
-    return accessible is not None
+    # Find matching groups
+    matching_groups = list(set(user_group_ids) & set(version_access_group_ids))
+    diagnostics["matching_groups"] = matching_groups
+
+    # Check authorization: has matching group access (matching original behavior - no ownership check)
+    # Note: Original function only checked group access, not ownership
+    if len(matching_groups) > 0:
+        diagnostics["authorized"] = True
+
+    return diagnostics
+
+
+async def is_user_authorized_for_bible_version(user_id, bible_version_id, db):
+    """
+    Legacy function for backward compatibility.
+    Use get_bible_version_authorization_details for detailed diagnostics.
+    """
+    diagnostics = await get_bible_version_authorization_details(
+        user_id, bible_version_id, db
+    )
+    return diagnostics["authorized"]
 
 
 async def is_user_authorized_for_revision(user_id, revision_id, db):
