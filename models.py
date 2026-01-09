@@ -44,7 +44,7 @@ class VersionIn(BaseModel):
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
     is_reference: Optional[bool] = False
-    add_to_groups: Optional[List[int]] = None
+    add_to_groups: List[int]
 
     model_config = {
         "json_schema_extra": {
@@ -54,6 +54,7 @@ class VersionIn(BaseModel):
                 "iso_script": "Latn",
                 "abbreviation": "english_-_king_james_version",
                 "machineTranslation": False,
+                "add_to_groups": [1],
             }
         },
     }

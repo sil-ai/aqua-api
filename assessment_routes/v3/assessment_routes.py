@@ -47,7 +47,6 @@ async def get_assessments(
     - semantic-similarity (requires reference)
     - sentence-length
     - word-alignment (requires reference)
-    - translation-similarity (requires reference)
     - ngrams
     - tfidf
     - text-lengths (requires reference)
@@ -182,7 +181,6 @@ async def add_assessment(
     - semantic-similarity (requires reference)
     - sentence-length
     - word-alignment (requires reference)
-    - translation-similarity (requires reference)
     - ngrams
     - tfidf
     - text-lengths
