@@ -94,11 +94,11 @@ def create_bible_version(client, regular_token1, db_session):
     # Decode token to get username
     payload = jwt.decode(regular_token1, SECRET_KEY, algorithms=[ALGORITHM])
     username = payload.get("sub")
-    
+
     # Get user and their first group
     user = db_session.query(UserDB).filter_by(username=username).first()
     user_group = db_session.query(UserGroup).filter_by(user_id=user.id).first()
-    
+
     version_params = {
         **new_version_data,
         "add_to_groups": [user_group.group_id],
