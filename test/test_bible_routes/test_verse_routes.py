@@ -6,7 +6,7 @@ from database.models import BibleVersion as BibleVersionModel
 prefix = "v3"
 
 
-def create_bible_version(client, regular_token1):
+def create_bible_version(client, regular_token1, db_session):
     new_version_data = {
         "name": "New Version",
         "iso_language": "eng",
@@ -20,6 +20,7 @@ def create_bible_version(client, regular_token1):
     headers = {"Authorization": f"Bearer {regular_token1}"}
     # Get Group1 for testuser1
     from database.models import Group
+
     group_1 = db_session.query(Group).filter_by(name="Group1").first()
     version_params = {
         **new_version_data,
@@ -69,7 +70,7 @@ def version_exists(db_session, version_id):
 
 def test_verse_routes_flow(client, regular_token1, regular_token2, db_session):
     # Create a Bible version and upload a revision
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     # Verify that the revision and version exist in the database
@@ -139,7 +140,7 @@ def test_verse_routes_flow(client, regular_token1, regular_token2, db_session):
 
 def test_words_endpoint_single_verse(client, regular_token1, db_session):
     """Test /words endpoint with a single verse (first_verse == last_verse)."""
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -168,7 +169,7 @@ def test_words_endpoint_single_verse(client, regular_token1, db_session):
 
 def test_words_endpoint_chapter_range(client, regular_token1, db_session):
     """Test /words endpoint with a range of verses within a single chapter."""
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -197,7 +198,7 @@ def test_words_endpoint_chapter_range(client, regular_token1, db_session):
 
 def test_words_endpoint_cross_chapter(client, regular_token1, db_session):
     """Test /words endpoint with a range spanning multiple chapters."""
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -226,7 +227,7 @@ def test_words_endpoint_cross_chapter(client, regular_token1, db_session):
 
 def test_words_endpoint_verse_not_found(client, regular_token1, db_session):
     """Test /words endpoint with non-existent verse references."""
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -247,7 +248,7 @@ def test_words_endpoint_verse_not_found(client, regular_token1, db_session):
 
 def test_words_endpoint_invalid_range(client, regular_token1, db_session):
     """Test /words endpoint with first_verse after last_verse."""
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -270,7 +271,7 @@ def test_words_endpoint_unauthorized(
     client, regular_token1, regular_token2, db_session
 ):
     """Test /words endpoint with unauthorized user."""
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     # Try to access with different user's token
@@ -291,7 +292,7 @@ def test_words_endpoint_unauthorized(
 
 def test_words_endpoint_unicode_handling(client, regular_token1, db_session):
     """Test that /words endpoint properly handles Unicode characters and special cases."""
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -321,7 +322,7 @@ def test_words_endpoint_unicode_handling(client, regular_token1, db_session):
 
 def test_words_endpoint_deduplication(client, regular_token1, db_session):
     """Test that /words endpoint properly deduplicates words across verses."""
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -349,7 +350,7 @@ def test_words_endpoint_deduplication(client, regular_token1, db_session):
 
 def test_words_endpoint_content_verification(client, regular_token1, db_session):
     """Test that /words endpoint returns expected words from known KJV text."""
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -412,7 +413,7 @@ def test_words_endpoint_content_verification(client, regular_token1, db_session)
 
 def test_words_endpoint_cross_book_boundary(client, regular_token1, db_session):
     """Test that /words endpoint correctly handles ranges across book boundaries."""
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}

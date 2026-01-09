@@ -10,7 +10,7 @@ from database.models import UserGroup
 prefix = "v3"
 
 
-def create_bible_version(client, regular_token1):
+def create_bible_version(client, regular_token1, db_session):
     new_version_data = {
         "name": "New Version",
         "iso_language": "eng",
@@ -24,6 +24,7 @@ def create_bible_version(client, regular_token1):
     headers = {"Authorization": f"Bearer {regular_token1}"}
     # Get Group1 for testuser1
     from database.models import Group
+
     group_1 = db_session.query(Group).filter_by(name="Group1").first()
     version_params = {
         **new_version_data,
@@ -74,7 +75,7 @@ def test_add_assessment_success(
     client, regular_token1, regular_token2, admin_token, db_session, test_db_session
 ):
     # Create two revisions
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
     reference_revision_id = upload_revision(client, regular_token1, version_id)
 
@@ -204,7 +205,7 @@ def test_add_assessment_success(
 
 def test_add_assessment_failure(client, regular_token1, db_session, test_db_session):
     # Create two revisions
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
     reference_revision_id = upload_revision(client, regular_token1, version_id)
 

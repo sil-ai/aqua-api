@@ -24,7 +24,7 @@ class TestRegularUserFlow:
         # Get Group1 for testuser1
         group_1 = db_session.query(Group).filter_by(name="Group1").first()
         assert group_1 is not None
-        
+
         # Step 1: Create a version as a regular user
         headers = {"Authorization": f"Bearer {regular_token1}"}
         version_params = {

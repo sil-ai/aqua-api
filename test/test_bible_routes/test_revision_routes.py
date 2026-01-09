@@ -74,7 +74,7 @@ async def test_process_and_upload_revision(async_test_db_session, test_db_sessio
 prefix = "v3"
 
 
-def create_bible_version(client, regular_token1):
+def create_bible_version(client, regular_token1, db_session):
     new_version_data = {
         "name": "New Version",
         "iso_language": "eng",
@@ -88,6 +88,7 @@ def create_bible_version(client, regular_token1):
     headers = {"Authorization": f"Bearer {regular_token1}"}
     # Get Group1 for testuser1
     from database.models import Group
+
     group_1 = db_session.query(Group).filter_by(name="Group1").first()
     version_params = {
         **new_version_data,
@@ -179,7 +180,7 @@ def rename_revision(client, token, revision_id, new_name):
 def test_regular_user_flow(
     client, regular_token1, regular_token2, db_session, test_db_session
 ):
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     assert version_exists(db_session, version_id)
     revision_id = upload_revision(client, regular_token1, version_id)
 
@@ -222,7 +223,7 @@ def test_regular_user_flow(
 
 # Flow 2: Load as Regular User, List as Admin, and Delete as Admin
 def test_admin_flow(client, regular_token1, admin_token, db_session):
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     assert revision_exists(db_session, revision_id)  # Ensure revision exists
@@ -237,7 +238,7 @@ def test_admin_flow(client, regular_token1, admin_token, db_session):
 
 def test_performance_revision_upload(client, regular_token1, db_session):
     # Create a test Bible version in the database
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
     test_revision = {
@@ -273,7 +274,7 @@ def test_get_revision(client, regular_token1, regular_token2, db_session):
     prev_rev2 = len(listed_revisions)
 
     for _ in range(4):
-        version_id = create_bible_version(client, regular_token1)
+        version_id = create_bible_version(client, regular_token1, db_session)
         upload_revision(client, regular_token1, version_id)
 
     # Get revisions user 1
@@ -286,7 +287,7 @@ def test_get_revision(client, regular_token1, regular_token2, db_session):
         delete_revision(client, regular_token1, revision["id"])
 
     for _ in range(5):
-        version_id = create_bible_version(client, regular_token2)
+        version_id = create_bible_version(client, regular_token2, db_session)
         upload_revision(client, regular_token2, version_id)
 
     # Get revisions user 2
