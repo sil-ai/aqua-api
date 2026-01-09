@@ -293,8 +293,12 @@ class TestAdminFlow:
 
         # Step 1: Create a version as user 1, who is part of groups 1 and 3
         headers = {"Authorization": f"Bearer {regular_token1}"}
+        params_1 = {
+            **new_version_data,
+            "add_to_groups": [group_1.id, group_3.id],
+        }
         create_response_1 = client.post(
-            f"{prefix}/version", json=new_version_data, headers=headers
+            f"{prefix}/version", json=params_1, headers=headers
         )
         assert create_response_1.status_code == 200
         version_id_1 = create_response_1.json().get("id")
