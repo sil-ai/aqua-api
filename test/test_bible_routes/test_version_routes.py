@@ -21,10 +21,18 @@ class TestRegularUserFlow:
     def test_regular_user_create_list_and_delete_version(
         self, client, regular_token1, regular_token2, db_session
     ):
+        # Get Group1 for testuser1
+        group_1 = db_session.query(Group).filter_by(name="Group1").first()
+        assert group_1 is not None
+        
         # Step 1: Create a version as a regular user
         headers = {"Authorization": f"Bearer {regular_token1}"}
+        version_params = {
+            **new_version_data,
+            "add_to_groups": [group_1.id],
+        }
         create_response = client.post(
-            f"{prefix}/version", json=new_version_data, headers=headers
+            f"{prefix}/version", json=version_params, headers=headers
         )
         assert create_response.status_code == 200
         # confirm that the response has an owner_id field
@@ -378,3 +386,69 @@ class TestAdminFlow:
             .first()
         )
         assert version_in_db_2 is None
+
+
+class TestVersionValidation:
+    def test_create_version_without_add_to_groups(self, client, regular_token1):
+        """Test that creating a version without add_to_groups fails with 422."""
+        headers = {"Authorization": f"Bearer {regular_token1}"}
+        invalid_version_data = {
+            "name": "Invalid Version",
+            "iso_language": "eng",
+            "iso_script": "Latn",
+            "abbreviation": "INV",
+        }
+        create_response = client.post(
+            f"{prefix}/version", json=invalid_version_data, headers=headers
+        )
+        # Pydantic validation error - missing required field
+        assert create_response.status_code == 422
+        assert "add_to_groups" in str(create_response.json())
+
+    def test_create_version_with_empty_add_to_groups(self, client, regular_token1):
+        """Test that creating a version with empty add_to_groups fails with 400."""
+        headers = {"Authorization": f"Bearer {regular_token1}"}
+        invalid_version_data = {
+            "name": "Invalid Version",
+            "iso_language": "eng",
+            "iso_script": "Latn",
+            "abbreviation": "INV",
+            "add_to_groups": [],
+        }
+        create_response = client.post(
+            f"{prefix}/version", json=invalid_version_data, headers=headers
+        )
+        assert create_response.status_code == 400
+        assert (
+            create_response.json().get("detail")
+            == "You must add a version to at least one group."
+        )
+
+    def test_create_version_with_unauthorized_group(
+        self, client, regular_token1, db_session
+    ):
+        """Test that creating a version with a group the user doesn't belong to fails."""
+        # Create a group that the user doesn't belong to
+        group = Group(name="UnauthorizedGroup", description="Test Group")
+        db_session.add(group)
+        db_session.commit()
+
+        headers = {"Authorization": f"Bearer {regular_token1}"}
+        invalid_version_data = {
+            "name": "Invalid Version",
+            "iso_language": "eng",
+            "iso_script": "Latn",
+            "abbreviation": "INV",
+            "add_to_groups": [group.id],
+        }
+        create_response = client.post(
+            f"{prefix}/version", json=invalid_version_data, headers=headers
+        )
+        assert create_response.status_code == 403
+        assert "not authorized to add version to group" in create_response.json().get(
+            "detail"
+        )
+
+        # Clean up
+        db_session.delete(group)
+        db_session.commit()

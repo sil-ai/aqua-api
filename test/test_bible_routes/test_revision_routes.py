@@ -86,8 +86,15 @@ def create_bible_version(client, regular_token1):
 
     # Fetch a version ID for testing
     headers = {"Authorization": f"Bearer {regular_token1}"}
+    # Get Group1 for testuser1
+    from database.models import Group
+    group_1 = db_session.query(Group).filter_by(name="Group1").first()
+    version_params = {
+        **new_version_data,
+        "add_to_groups": [group_1.id],
+    }
     create_response = client.post(
-        f"{prefix}/version", json=new_version_data, headers=headers
+        f"{prefix}/version", json=version_params, headers=headers
     )
     assert create_response.status_code == 200
     version_id = create_response.json().get("id")
