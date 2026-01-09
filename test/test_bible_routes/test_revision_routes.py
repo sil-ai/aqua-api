@@ -86,13 +86,22 @@ def create_bible_version(client, regular_token1, db_session):
 
     # Fetch a version ID for testing
     headers = {"Authorization": f"Bearer {regular_token1}"}
-    # Get Group1 for testuser1
-    from database.models import Group
+    # Get the user's first available group dynamically
+    from database.models import Group, UserDB, UserGroup
+    from jose import jwt
+    from security_routes.auth_routes import SECRET_KEY, ALGORITHM
 
-    group_1 = db_session.query(Group).filter_by(name="Group1").first()
+    # Decode token to get username
+    payload = jwt.decode(regular_token1, SECRET_KEY, algorithms=[ALGORITHM])
+    username = payload.get("sub")
+    
+    # Get user and their first group
+    user = db_session.query(UserDB).filter_by(username=username).first()
+    user_group = db_session.query(UserGroup).filter_by(user_id=user.id).first()
+    
     version_params = {
         **new_version_data,
-        "add_to_groups": [group_1.id],
+        "add_to_groups": [user_group.group_id],
     }
     create_response = client.post(
         f"{prefix}/version", json=version_params, headers=headers
