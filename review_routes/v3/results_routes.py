@@ -1728,9 +1728,7 @@ async def get_compare_results(
     if main_assessment_results:
         df_main = pd.DataFrame(main_assessment_results)
     else:
-        df_main = pd.DataFrame(
-            columns=["id", "book", "chapter", "verse", "score"]
-        )
+        df_main = pd.DataFrame(columns=["id", "book", "chapter", "verse", "score"])
 
     if baseline_assessment_results:
         df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=["id"])
