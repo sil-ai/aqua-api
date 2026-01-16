@@ -2005,8 +2005,12 @@ async def get_missing_words(
 
     else:
         df = df_main
-        df.loc[:, "flag"] = False
-        df["target"] = df.apply(lambda x: [], axis=1)
+        if not df.empty:
+            df.loc[:, "flag"] = False
+            df["target"] = df.apply(lambda x: [], axis=1)
+        else:
+            df["flag"] = []
+            df["target"] = []
 
     result_list = []
 
