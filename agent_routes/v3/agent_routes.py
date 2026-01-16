@@ -478,6 +478,7 @@ async def get_lexeme_cards(
     source_word: str = None,
     target_word: str = None,
     pos: str = None,
+    include_all_matches: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -493,13 +494,16 @@ async def get_lexeme_cards(
     - source_word: str (optional) - Filter by source lemma or word in source examples
     - target_word: str (optional) - Filter by target lemma or word in target examples
     - pos: str (optional) - Filter by part of speech
+    - include_all_matches: bool (optional, default=False) - When False, filters by exact
+      surface form match (case-insensitive). When True, uses broader matching that includes
+      lemma matches and occurrences in examples.
 
     Returns:
     - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending).
       Examples are filtered based on the user's access to Bible revisions.
     """
     try:
-        from sqlalchemy import desc, select
+        from sqlalchemy import desc, select, text
 
         # Get revision IDs the user has access to
         authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
@@ -511,11 +515,18 @@ async def get_lexeme_cards(
             AgentLexemeCard.target_language == target_language,
         ]
 
-        # Track if we need to join with examples table
+        # Add POS filter if provided
+        if pos:
+            conditions.append(AgentLexemeCard.pos == pos)
+
+        # Handle word filtering
+        # source_word always uses legacy behavior (lemma OR examples)
+        # target_word behavior depends on include_all_matches parameter
         lemma_conditions = []
         example_conditions = []
+        surface_form_conditions = []
 
-        # Add optional filters for source_word (lemma or in examples)
+        # Add optional filters for source_word (always use legacy: lemma or in examples)
         if source_word:
             lemma_conditions.append(AgentLexemeCard.source_lemma == source_word)
             if authorized_revision_ids:
@@ -523,16 +534,25 @@ async def get_lexeme_cards(
                     AgentLexemeCardExample.source_text.ilike(f"%{source_word}%")
                 )
 
-        # Add optional filters for target_word (lemma or in examples)
+        # Add optional filters for target_word based on include_all_matches
         if target_word:
-            lemma_conditions.append(AgentLexemeCard.target_lemma == target_word)
-            if authorized_revision_ids:
-                example_conditions.append(
-                    AgentLexemeCardExample.target_text.ilike(f"%{target_word}%")
+            if include_all_matches:
+                # Legacy behavior: match by lemma OR in examples
+                lemma_conditions.append(AgentLexemeCard.target_lemma == target_word)
+                if authorized_revision_ids:
+                    example_conditions.append(
+                        AgentLexemeCardExample.target_text.ilike(f"%{target_word}%")
+                    )
+            else:
+                # New default behavior: filter by exact surface form match (case-insensitive)
+                target_word_lower = target_word.strip().lower()
+                surface_form_conditions.append(
+                    text(
+                        "jsonb_typeof(agent_lexeme_cards.surface_forms) = 'array' AND "
+                        "EXISTS (SELECT 1 FROM jsonb_array_elements_text(agent_lexeme_cards.surface_forms) AS elem "
+                        "WHERE LOWER(elem) = :target_word_lower)"
+                    ).bindparams(target_word_lower=target_word_lower)
                 )
-
-        if pos:
-            conditions.append(AgentLexemeCard.pos == pos)
 
         # Build the query based on word search requirements
         if example_conditions:
@@ -555,6 +575,11 @@ async def get_lexeme_cards(
 
             # Only searching by lemma, no need to join
             query = query.where(*conditions, or_(*lemma_conditions)).order_by(
+                desc(AgentLexemeCard.confidence)
+            )
+        elif surface_form_conditions:
+            # Only searching by surface_forms
+            query = query.where(*conditions, *surface_form_conditions).order_by(
                 desc(AgentLexemeCard.confidence)
             )
         else:

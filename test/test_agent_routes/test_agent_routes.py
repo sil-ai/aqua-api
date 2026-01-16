@@ -764,9 +764,9 @@ def test_get_lexeme_cards_by_target_lemma(
         },
     )
 
-    # Filter by target lemma
+    # Filter by target lemma (using include_all_matches for legacy lemma matching)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upendo",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upendo&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -889,6 +889,87 @@ def test_get_lexeme_cards_unauthorized(client):
     )
 
     assert response.status_code == 401
+
+
+def test_get_lexeme_cards_surface_forms_filtering(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that default filtering uses surface_forms, while include_all_matches uses lemma/examples."""
+    # Add card 1: has "cheza" in surface_forms
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "play",
+            "target_lemma": "kucheza",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["cheza", "anacheza"],
+            "confidence": 0.9,
+        },
+    )
+    assert response1.status_code == 200
+    card1_id = response1.json()["id"]
+
+    # Add card 2: target_lemma is "cheza" but NOT in surface_forms
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "dance",
+            "target_lemma": "cheza",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["dansa", "anadansa"],
+            "confidence": 0.8,
+        },
+    )
+    assert response2.status_code == 200
+    card2_id = response2.json()["id"]
+
+    # Add card 3: "cheza" appears in examples but not in surface_forms or lemma
+    response3 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "game",
+            "target_lemma": "mchezo",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["mchezo"],
+            "examples": [{"source": "Let's play", "target": "Tunacheza sana"}],
+            "confidence": 0.85,
+        },
+    )
+    assert response3.status_code == 200
+    card3_id = response3.json()["id"]
+
+    # Test 1: Default behavior (no include_all_matches) - should only return card1 (has "cheza" in surface_forms)
+    response_default = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=cheza",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response_default.status_code == 200
+    cards_default = response_default.json()
+    card_ids_default = [c["id"] for c in cards_default]
+    assert card1_id in card_ids_default  # Has "cheza" in surface_forms
+    assert (
+        card2_id not in card_ids_default
+    )  # "cheza" is target_lemma but not in surface_forms
+    assert (
+        card3_id not in card_ids_default
+    )  # "cheza" appears in examples but not in surface_forms
+
+    # Test 2: With include_all_matches=true - should return card1, card2, and card3
+    response_all = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=cheza&include_all_matches=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response_all.status_code == 200
+    cards_all = response_all.json()
+    card_ids_all = [c["id"] for c in cards_all]
+    assert card2_id in card_ids_all  # Matches target_lemma
+    assert card3_id in card_ids_all  # "cheza" appears in examples
 
 
 def test_check_word_matches_target_lemma(
@@ -1750,9 +1831,9 @@ def test_get_lexeme_cards_by_target_word_in_lemma(
         },
     )
 
-    # Search by target_word matching target_lemma
+    # Search by target_word matching target_lemma (using include_all_matches for legacy lemma matching)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=imba",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=imba&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1819,9 +1900,9 @@ def test_get_lexeme_cards_by_target_word_in_examples(
         },
     )
 
-    # Search by target_word that appears in examples
+    # Search by target_word that appears in examples (using include_all_matches for legacy example matching)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=furaha",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=furaha&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1871,8 +1952,9 @@ def test_get_lexeme_cards_word_search_or_logic(
     )
 
     # Search for "run" - should find both cards (first by lemma, second by example)
+    # Using include_all_matches to test OR logic between lemma and examples
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=run",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=run&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2180,9 +2262,9 @@ def test_get_lexeme_cards_both_source_and_target_word(
         },
     )
 
-    # Search by both source and target word
+    # Search by both source and target word (using include_all_matches for legacy lemma matching)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=agape_love&target_word=penda_test",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=agape_love&target_word=penda_test&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 

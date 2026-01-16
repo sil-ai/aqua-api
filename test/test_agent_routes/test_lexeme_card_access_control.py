@@ -257,6 +257,7 @@ def test_single_user_multiple_revisions_same_version(
             "source_language": "eng",
             "target_language": "swh",
             "pos": "noun",
+            "surface_forms": ["kitabu"],
             "examples": [
                 {"source": "I read a book", "target": "Ninasoma kitabu"},
                 {"source": "The book is new", "target": "Kitabu ni kipya"},
