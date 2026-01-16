@@ -1724,7 +1724,14 @@ async def get_compare_results(
         baseline_assessments_query, select(func.count()), db
     )
 
-    df_main = pd.DataFrame(main_assessment_results)
+    # Handle empty results by creating DataFrame with expected columns
+    if main_assessment_results:
+        df_main = pd.DataFrame(main_assessment_results)
+    else:
+        df_main = pd.DataFrame(
+            columns=["id", "book", "chapter", "verse", "score"]
+        )
+
     if baseline_assessment_results:
         df_baseline = pd.DataFrame(baseline_assessment_results).drop(columns=["id"])
     else:
@@ -1954,7 +1961,14 @@ async def get_missing_words(
     )
     main_assessment_results = await db.execute(main_assessment_query)
     main_assessment_results = main_assessment_results.all()
-    df_main = pd.DataFrame(main_assessment_results)
+
+    # Handle empty results by creating DataFrame with expected columns
+    if main_assessment_results:
+        df_main = pd.DataFrame(main_assessment_results)
+    else:
+        df_main = pd.DataFrame(
+            columns=["id", "book", "chapter", "verse", "source", "score"]
+        )
     total_count = len(df_main)
 
     if baseline_ids:
