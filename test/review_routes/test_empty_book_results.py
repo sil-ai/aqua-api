@@ -1,5 +1,5 @@
 """Test that endpoints handle empty book results gracefully without errors."""
-import pytest
+
 from database.models import (
     Assessment,
     BibleRevision,
