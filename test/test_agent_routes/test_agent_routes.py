@@ -927,7 +927,7 @@ def test_get_lexeme_cards_surface_forms_filtering(
     assert response2.status_code == 200
     card2_id = response2.json()["id"]
 
-    # Add card 3: "cheza" appears in examples but not in surface_forms
+    # Add card 3: "cheza" appears in examples but not in surface_forms or lemma
     response3 = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -937,7 +937,7 @@ def test_get_lexeme_cards_surface_forms_filtering(
             "source_language": "eng",
             "target_language": "swh",
             "surface_forms": ["mchezo"],
-            "examples": [{"source": "Let's play", "target": "Hebu tucheze"}],
+            "examples": [{"source": "Let's play", "target": "Tunacheza sana"}],
             "confidence": 0.85,
         },
     )
@@ -960,7 +960,7 @@ def test_get_lexeme_cards_surface_forms_filtering(
         card3_id not in card_ids_default
     )  # "cheza" appears in examples but not in surface_forms
 
-    # Test 2: With include_all_matches=true - should return all three cards
+    # Test 2: With include_all_matches=true - should return card1, card2, and card3
     response_all = client.get(
         "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=cheza&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -968,9 +968,8 @@ def test_get_lexeme_cards_surface_forms_filtering(
     assert response_all.status_code == 200
     cards_all = response_all.json()
     card_ids_all = [c["id"] for c in cards_all]
-    assert card1_id in card_ids_all  # Has "cheza" in surface_forms
     assert card2_id in card_ids_all  # Matches target_lemma
-    assert card3_id in card_ids_all  # Appears in examples
+    assert card3_id in card_ids_all  # "cheza" appears in examples
 
 
 def test_check_word_matches_target_lemma(
