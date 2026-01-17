@@ -473,6 +473,7 @@ class LexemeCardIn(BaseModel):
     target_language: str
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
+    source_surface_forms: Optional[list] = None  # Source language surface forms
     senses: Optional[list] = None
     examples: Optional[list] = None  # List of example dicts for the given revision_id
     confidence: Optional[float] = None
@@ -493,6 +494,12 @@ class LexemeCardIn(BaseModel):
                     "amamos",
                     "aman",
                 ],  # Target language surface forms
+                "source_surface_forms": [
+                    "love",
+                    "loves",
+                    "loved",
+                    "loving",
+                ],  # Source language surface forms
                 "senses": [
                     {
                         "definition": "to feel deep affection",
@@ -518,6 +525,7 @@ class LexemeCardOut(BaseModel):
     target_language: str
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
+    source_surface_forms: Optional[list] = None  # Source language surface forms
     senses: Optional[list] = None
     examples: Optional[list] = None  # Filtered list for the requested revision_id
     confidence: Optional[float] = None
@@ -541,6 +549,12 @@ class LexemeCardOut(BaseModel):
                     "amamos",
                     "aman",
                 ],  # Target language surface forms
+                "source_surface_forms": [
+                    "love",
+                    "loves",
+                    "loved",
+                    "loving",
+                ],  # Source language surface forms
                 "senses": [
                     {
                         "definition": "to feel deep affection",
