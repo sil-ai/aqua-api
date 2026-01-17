@@ -388,6 +388,7 @@ class AgentLexemeCard(Base):
     target_language = Column(String(3), ForeignKey("iso_language.iso639"))
     pos = Column(Text)
     surface_forms = Column(JSONB)  # JSON array of target language surface forms
+    source_surface_forms = Column(JSONB)  # JSON array of source language surface forms
     senses = Column(JSONB)  # JSON array of senses
     # Note: examples are now stored in the agent_lexeme_card_examples table (see examples_rel relationship)
     confidence = Column(Numeric)
@@ -422,6 +423,12 @@ class AgentLexemeCard(Base):
         Index(
             "ix_agent_lexeme_cards_surface_forms",
             "surface_forms",
+            postgresql_using="gin",
+        ),
+        # GIN index for JSONB array searches in source_surface_forms
+        Index(
+            "ix_agent_lexeme_cards_source_surface_forms",
+            "source_surface_forms",
             postgresql_using="gin",
         ),
     )

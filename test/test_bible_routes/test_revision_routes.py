@@ -74,7 +74,7 @@ async def test_process_and_upload_revision(async_test_db_session, test_db_sessio
 prefix = "v3"
 
 
-def create_bible_version(client, regular_token1):
+def create_bible_version(client, regular_token1, db_session):
     new_version_data = {
         "name": "New Version",
         "iso_language": "eng",
@@ -86,8 +86,26 @@ def create_bible_version(client, regular_token1):
 
     # Fetch a version ID for testing
     headers = {"Authorization": f"Bearer {regular_token1}"}
+    # Get the user's first available group dynamically
+    from jose import jwt
+
+    from database.models import UserDB, UserGroup
+    from security_routes.auth_routes import ALGORITHM, SECRET_KEY
+
+    # Decode token to get username
+    payload = jwt.decode(regular_token1, SECRET_KEY, algorithms=[ALGORITHM])
+    username = payload.get("sub")
+
+    # Get user and their first group
+    user = db_session.query(UserDB).filter_by(username=username).first()
+    user_group = db_session.query(UserGroup).filter_by(user_id=user.id).first()
+
+    version_params = {
+        **new_version_data,
+        "add_to_groups": [user_group.group_id],
+    }
     create_response = client.post(
-        f"{prefix}/version", json=new_version_data, headers=headers
+        f"{prefix}/version", json=version_params, headers=headers
     )
     assert create_response.status_code == 200
     version_id = create_response.json().get("id")
@@ -172,7 +190,7 @@ def rename_revision(client, token, revision_id, new_name):
 def test_regular_user_flow(
     client, regular_token1, regular_token2, db_session, test_db_session
 ):
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     assert version_exists(db_session, version_id)
     revision_id = upload_revision(client, regular_token1, version_id)
 
@@ -215,7 +233,7 @@ def test_regular_user_flow(
 
 # Flow 2: Load as Regular User, List as Admin, and Delete as Admin
 def test_admin_flow(client, regular_token1, admin_token, db_session):
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     assert revision_exists(db_session, revision_id)  # Ensure revision exists
@@ -230,7 +248,7 @@ def test_admin_flow(client, regular_token1, admin_token, db_session):
 
 def test_performance_revision_upload(client, regular_token1, db_session):
     # Create a test Bible version in the database
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
     test_revision = {
@@ -266,7 +284,7 @@ def test_get_revision(client, regular_token1, regular_token2, db_session):
     prev_rev2 = len(listed_revisions)
 
     for _ in range(4):
-        version_id = create_bible_version(client, regular_token1)
+        version_id = create_bible_version(client, regular_token1, db_session)
         upload_revision(client, regular_token1, version_id)
 
     # Get revisions user 1
@@ -279,7 +297,7 @@ def test_get_revision(client, regular_token1, regular_token2, db_session):
         delete_revision(client, regular_token1, revision["id"])
 
     for _ in range(5):
-        version_id = create_bible_version(client, regular_token2)
+        version_id = create_bible_version(client, regular_token2, db_session)
         upload_revision(client, regular_token2, version_id)
 
     # Get revisions user 2

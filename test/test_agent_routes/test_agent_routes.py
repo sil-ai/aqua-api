@@ -502,6 +502,49 @@ def test_add_lexeme_card_with_pos_and_forms(
     assert "alikimbia" in data["surface_forms"]
 
 
+def test_add_lexeme_card_with_source_surface_forms(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test adding a lexeme card with source surface forms."""
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "love",
+            "target_lemma": "kupenda",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "verb",
+            "surface_forms": [
+                "kupenda",
+                "anapenda",
+                "wanapenda",
+                "alipenda",
+            ],  # Target language (Swahili) forms
+            "source_surface_forms": [
+                "love",
+                "loves",
+                "loved",
+                "loving",
+            ],  # Source language (English) forms
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["source_lemma"] == "love"
+    assert data["target_lemma"] == "kupenda"
+    assert data["pos"] == "verb"
+    assert len(data["surface_forms"]) == 4
+    assert "kupenda" in data["surface_forms"]
+    assert "anapenda" in data["surface_forms"]
+    assert len(data["source_surface_forms"]) == 4
+    assert "love" in data["source_surface_forms"]
+    assert "loves" in data["source_surface_forms"]
+    assert "loved" in data["source_surface_forms"]
+    assert "loving" in data["source_surface_forms"]
+
+
 def test_add_lexeme_card_with_senses(
     client, regular_token1, db_session, test_revision_id
 ):
@@ -764,9 +807,9 @@ def test_get_lexeme_cards_by_target_lemma(
         },
     )
 
-    # Filter by target lemma
+    # Filter by target lemma (using include_all_matches for legacy lemma matching)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upendo",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upendo&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -889,6 +932,87 @@ def test_get_lexeme_cards_unauthorized(client):
     )
 
     assert response.status_code == 401
+
+
+def test_get_lexeme_cards_surface_forms_filtering(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that default filtering uses surface_forms, while include_all_matches uses lemma/examples."""
+    # Add card 1: has "cheza" in surface_forms
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "play",
+            "target_lemma": "kucheza",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["cheza", "anacheza"],
+            "confidence": 0.9,
+        },
+    )
+    assert response1.status_code == 200
+    card1_id = response1.json()["id"]
+
+    # Add card 2: target_lemma is "cheza" but NOT in surface_forms
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "dance",
+            "target_lemma": "cheza",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["dansa", "anadansa"],
+            "confidence": 0.8,
+        },
+    )
+    assert response2.status_code == 200
+    card2_id = response2.json()["id"]
+
+    # Add card 3: "cheza" appears in examples but not in surface_forms or lemma
+    response3 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "game",
+            "target_lemma": "mchezo",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["mchezo"],
+            "examples": [{"source": "Let's play", "target": "Tunacheza sana"}],
+            "confidence": 0.85,
+        },
+    )
+    assert response3.status_code == 200
+    card3_id = response3.json()["id"]
+
+    # Test 1: Default behavior (no include_all_matches) - should only return card1 (has "cheza" in surface_forms)
+    response_default = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=cheza",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response_default.status_code == 200
+    cards_default = response_default.json()
+    card_ids_default = [c["id"] for c in cards_default]
+    assert card1_id in card_ids_default  # Has "cheza" in surface_forms
+    assert (
+        card2_id not in card_ids_default
+    )  # "cheza" is target_lemma but not in surface_forms
+    assert (
+        card3_id not in card_ids_default
+    )  # "cheza" appears in examples but not in surface_forms
+
+    # Test 2: With include_all_matches=true - should return card1, card2, and card3
+    response_all = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=cheza&include_all_matches=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response_all.status_code == 200
+    cards_all = response_all.json()
+    card_ids_all = [c["id"] for c in cards_all]
+    assert card2_id in card_ids_all  # Matches target_lemma
+    assert card3_id in card_ids_all  # "cheza" appears in examples
 
 
 def test_check_word_matches_target_lemma(
@@ -1313,6 +1437,77 @@ def test_add_lexeme_card_upsert_replace(
     # POS and confidence should be updated
     assert data2["pos"] == "verb"
     assert data2["confidence"] == 0.95
+
+
+def test_add_lexeme_card_upsert_source_surface_forms(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that source_surface_forms are properly merged on upsert."""
+    # Add initial card with source_surface_forms
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "write",
+            "target_lemma": "andika",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "verb",
+            "surface_forms": ["andika", "anaandika"],
+            "source_surface_forms": ["write", "writes", "writing"],
+            "confidence": 0.85,
+        },
+    )
+
+    assert response1.status_code == 200
+    data1 = response1.json()
+    card_id = data1["id"]
+    assert len(data1["source_surface_forms"]) == 3
+
+    # Append more source_surface_forms (default replace_existing=false)
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "write",
+            "target_lemma": "andika",
+            "source_language": "eng",
+            "target_language": "swh",
+            "source_surface_forms": ["write", "wrote", "written"],  # "write" overlaps
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+    assert data2["id"] == card_id
+    # Should have deduplicated: write, writes, writing, wrote, written = 5 unique
+    assert len(data2["source_surface_forms"]) == 5
+    assert set(data2["source_surface_forms"]) == {
+        "write",
+        "writes",
+        "writing",
+        "wrote",
+        "written",
+    }
+
+    # Test replace_existing=true replaces source_surface_forms
+    response3 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}&replace_existing=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "write",
+            "target_lemma": "andika",
+            "source_language": "eng",
+            "target_language": "swh",
+            "source_surface_forms": ["write", "wrote"],  # Replace with just 2 forms
+        },
+    )
+
+    assert response3.status_code == 200
+    data3 = response3.json()
+    assert data3["id"] == card_id
+    assert len(data3["source_surface_forms"]) == 2
+    assert set(data3["source_surface_forms"]) == {"write", "wrote"}
 
 
 def test_add_lexeme_card_upsert_append_deduplicates_surface_forms(
@@ -1750,9 +1945,9 @@ def test_get_lexeme_cards_by_target_word_in_lemma(
         },
     )
 
-    # Search by target_word matching target_lemma
+    # Search by target_word matching target_lemma (using include_all_matches for legacy lemma matching)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=imba",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=imba&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1819,9 +2014,9 @@ def test_get_lexeme_cards_by_target_word_in_examples(
         },
     )
 
-    # Search by target_word that appears in examples
+    # Search by target_word that appears in examples (using include_all_matches for legacy example matching)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=furaha",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=furaha&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1871,8 +2066,9 @@ def test_get_lexeme_cards_word_search_or_logic(
     )
 
     # Search for "run" - should find both cards (first by lemma, second by example)
+    # Using include_all_matches to test OR logic between lemma and examples
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=run",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=run&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2180,9 +2376,9 @@ def test_get_lexeme_cards_both_source_and_target_word(
         },
     )
 
-    # Search by both source and target word
+    # Search by both source and target word (using include_all_matches for legacy lemma matching)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=agape_love&target_word=penda_test",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=agape_love&target_word=penda_test&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
