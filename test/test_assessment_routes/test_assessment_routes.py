@@ -259,7 +259,7 @@ def test_assessment_filtering(
 ):
     """Test filtering assessments by revision_id, reference_id, and type"""
     # Create two versions and three revisions
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id_1 = upload_revision(client, regular_token1, version_id)
     revision_id_2 = upload_revision(client, regular_token1, version_id)
     reference_revision_id = upload_revision(client, regular_token1, version_id)
