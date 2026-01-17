@@ -130,6 +130,7 @@ async def get_assessments(
                 ReferenceRevision, ReferenceRevision.id == Assessment.reference_id
             )
             .filter(
+                Assessment.deleted.is_(False),
                 BibleRevision.bible_version_id.in_(version_ids),
                 or_(
                     Assessment.reference_id is None,
