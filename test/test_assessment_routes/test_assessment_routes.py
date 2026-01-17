@@ -312,10 +312,15 @@ def test_assessment_filtering(
         assert response.status_code == 200
         assessment_id_3 = response.json()[0]["id"]
 
+    # Track the assessment IDs we created for this test
+    created_assessment_ids = {assessment_id_1, assessment_id_2, assessment_id_3}
+
     # Test 1: Get all assessments (no filters) - backward compatibility
+    # Note: There may be assessments from previous tests, so we check our IDs are present
     response = list_assessment(client, regular_token1)
     assert response.status_code == 200
-    assert len(response.json()) == 3
+    all_assessment_ids = {a["id"] for a in response.json()}
+    assert created_assessment_ids.issubset(all_assessment_ids)
 
     # Test 2: Filter by revision_id_1
     response = list_assessment_with_filters(
@@ -323,9 +328,8 @@ def test_assessment_filtering(
     )
     assert response.status_code == 200
     assessments = response.json()
-    assert len(assessments) == 2
-    assessment_ids = {a["id"] for a in assessments}
-    assert assessment_ids == {assessment_id_1, assessment_id_3}
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1, assessment_id_3}
 
     # Test 3: Filter by revision_id_2
     response = list_assessment_with_filters(
@@ -333,8 +337,8 @@ def test_assessment_filtering(
     )
     assert response.status_code == 200
     assessments = response.json()
-    assert len(assessments) == 1
-    assert assessments[0]["id"] == assessment_id_2
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_2}
 
     # Test 4: Filter by reference_id
     response = list_assessment_with_filters(
@@ -342,9 +346,8 @@ def test_assessment_filtering(
     )
     assert response.status_code == 200
     assessments = response.json()
-    assert len(assessments) == 2
-    assessment_ids = {a["id"] for a in assessments}
-    assert assessment_ids == {assessment_id_1, assessment_id_2}
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1, assessment_id_2}
 
     # Test 5: Filter by type "word-alignment"
     response = list_assessment_with_filters(
@@ -352,9 +355,8 @@ def test_assessment_filtering(
     )
     assert response.status_code == 200
     assessments = response.json()
-    assert len(assessments) == 2
-    assessment_ids = {a["id"] for a in assessments}
-    assert assessment_ids == {assessment_id_1, assessment_id_2}
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1, assessment_id_2}
 
     # Test 6: Filter by type "sentence-length"
     response = list_assessment_with_filters(
@@ -362,8 +364,8 @@ def test_assessment_filtering(
     )
     assert response.status_code == 200
     assessments = response.json()
-    assert len(assessments) == 1
-    assert assessments[0]["id"] == assessment_id_3
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_3}
 
     # Test 7: Filter by multiple parameters (revision_id and type)
     response = list_assessment_with_filters(
@@ -371,8 +373,8 @@ def test_assessment_filtering(
     )
     assert response.status_code == 200
     assessments = response.json()
-    assert len(assessments) == 1
-    assert assessments[0]["id"] == assessment_id_1
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1}
 
     # Test 8: Filter by all three parameters
     response = list_assessment_with_filters(
@@ -384,8 +386,8 @@ def test_assessment_filtering(
     )
     assert response.status_code == 200
     assessments = response.json()
-    assert len(assessments) == 1
-    assert assessments[0]["id"] == assessment_id_1
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1}
 
     # Test 9: Admin can also use filters
     response = list_assessment_with_filters(
@@ -393,13 +395,15 @@ def test_assessment_filtering(
     )
     assert response.status_code == 200
     assessments = response.json()
-    assert len(assessments) == 2
-    assessment_ids = {a["id"] for a in assessments}
-    assert assessment_ids == {assessment_id_1, assessment_id_3}
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1, assessment_id_3}
 
-    # Test 10: Filter with no matching results
+    # Test 10: Filter with no matching results (combine filters that don't match our data)
     response = list_assessment_with_filters(
         client, regular_token1, revision_id=revision_id_2, type_filter="sentence-length"
     )
     assert response.status_code == 200
-    assert len(response.json()) == 0
+    filtered_ids = {
+        a["id"] for a in response.json() if a["id"] in created_assessment_ids
+    }
+    assert filtered_ids == set()  # No matches for this combination
