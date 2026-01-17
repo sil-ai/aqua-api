@@ -198,6 +198,7 @@ async def add_lexeme_card(
     - target_language: str - ISO 639-3 code for target language
     - pos: str (optional) - Part of speech
     - surface_forms: list (optional) - JSON array of target language surface forms
+    - source_surface_forms: list (optional) - JSON array of source language surface forms
     - senses: list (optional) - JSON array of senses with definitions and examples
     - examples: list (optional) - JSON array of usage examples for the specified revision_id
     - confidence: float (optional) - Confidence score for the lexeme card
@@ -227,8 +228,9 @@ async def add_lexeme_card(
 
             # Handle list fields based on replace_existing flag
             if replace_existing:
-                # Replace with new data (for surface_forms and senses)
+                # Replace with new data (for surface_forms, source_surface_forms and senses)
                 existing_card.surface_forms = card.surface_forms
+                existing_card.source_surface_forms = card.source_surface_forms
                 existing_card.senses = card.senses
 
                 # For examples: delete existing examples for this revision and add new ones
@@ -263,6 +265,16 @@ async def add_lexeme_card(
                     # Combine and deduplicate surface forms
                     combined_forms = existing_forms + card.surface_forms
                     existing_card.surface_forms = list(set(combined_forms))
+
+                if card.source_surface_forms:
+                    existing_source_forms = existing_card.source_surface_forms or []
+                    # Combine and deduplicate source surface forms
+                    combined_source_forms = (
+                        existing_source_forms + card.source_surface_forms
+                    )
+                    existing_card.source_surface_forms = list(
+                        set(combined_source_forms)
+                    )
 
                 if card.senses:
                     existing_senses = existing_card.senses or []
@@ -310,6 +322,7 @@ async def add_lexeme_card(
                 "target_language": existing_card.target_language,
                 "pos": existing_card.pos,
                 "surface_forms": existing_card.surface_forms,
+                "source_surface_forms": existing_card.source_surface_forms,
                 "senses": existing_card.senses,
                 "examples": examples_list,
                 "confidence": existing_card.confidence,
@@ -326,6 +339,7 @@ async def add_lexeme_card(
                 target_language=card.target_language,
                 pos=card.pos,
                 surface_forms=card.surface_forms,
+                source_surface_forms=card.source_surface_forms,
                 senses=card.senses,
                 confidence=card.confidence,
             )
@@ -374,6 +388,7 @@ async def add_lexeme_card(
                 "target_language": lexeme_card.target_language,
                 "pos": lexeme_card.pos,
                 "surface_forms": lexeme_card.surface_forms,
+                "source_surface_forms": lexeme_card.source_surface_forms,
                 "senses": lexeme_card.senses,
                 "examples": examples_list,
                 "confidence": lexeme_card.confidence,
@@ -601,6 +616,7 @@ async def get_lexeme_cards(
                 "target_language": card.target_language,
                 "pos": card.pos,
                 "surface_forms": card.surface_forms,
+                "source_surface_forms": card.source_surface_forms,
                 "senses": card.senses,
                 "confidence": card.confidence,
                 "created_at": card.created_at,
