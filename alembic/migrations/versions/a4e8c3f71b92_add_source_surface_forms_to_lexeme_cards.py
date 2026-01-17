@@ -24,7 +24,11 @@ def upgrade() -> None:
     # Add source_surface_forms column to agent_lexeme_cards table
     op.add_column(
         "agent_lexeme_cards",
-        sa.Column("source_surface_forms", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column(
+            "source_surface_forms",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
+        ),
     )
 
     # Add GIN index for efficient JSONB array searches in source_surface_forms

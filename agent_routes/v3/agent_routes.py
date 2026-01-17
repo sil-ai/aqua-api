@@ -269,8 +269,12 @@ async def add_lexeme_card(
                 if card.source_surface_forms:
                     existing_source_forms = existing_card.source_surface_forms or []
                     # Combine and deduplicate source surface forms
-                    combined_source_forms = existing_source_forms + card.source_surface_forms
-                    existing_card.source_surface_forms = list(set(combined_source_forms))
+                    combined_source_forms = (
+                        existing_source_forms + card.source_surface_forms
+                    )
+                    existing_card.source_surface_forms = list(
+                        set(combined_source_forms)
+                    )
 
                 if card.senses:
                     existing_senses = existing_card.senses or []
