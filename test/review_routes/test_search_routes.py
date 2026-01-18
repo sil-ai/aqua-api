@@ -63,6 +63,13 @@ def setup_search_test_data(db_session):
             28,
             "And we know that all things work together for good to them that love God, to them who are the called according to his purpose.",
         ),
+        # Verse only in main revision (not in comparison) - for testing require_comparison_text
+        (
+            "PSA",
+            23,
+            1,
+            "The LORD is my shepherd; I shall not want. God provides for all my needs.",
+        ),
     ]
 
     for book, chapter, verse, text in sample_verses:
@@ -574,3 +581,146 @@ def test_search_no_subword_matches(client, regular_token1, test_db_session):
         assert re.search(
             pattern, text_lower
         ), f"'love' not found as whole word in: {result['main_text']}"
+
+
+def test_search_comparison_includes_missing_by_default(
+    client, regular_token1, test_db_session
+):
+    """Test that verses without comparison text are included by default (LEFT JOIN behavior)."""
+    main_revision_id, comparison_revision_id = setup_search_test_data(test_db_session)
+
+    # Search for "God" - appears in both GEN verses (with comparison) and PSA 23:1 (no comparison)
+    params = {
+        "revision_id": main_revision_id,
+        "term": "God",
+        "comparison_revision_id": comparison_revision_id,
+        "limit": 10,
+    }
+
+    response = client.get(
+        "/v3/textsearch",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Should find verses including PSA 23:1 which has no comparison text
+    psa_results = [
+        r for r in response_data["results"] if r["book"] == "PSA" and r["verse"] == 1
+    ]
+    assert len(psa_results) == 1, "PSA 23:1 should be included even without comparison"
+
+    # PSA 23:1 should have comparison_text as None
+    assert psa_results[0]["comparison_text"] is None
+
+    # Other verses should have comparison text
+    gen_results = [r for r in response_data["results"] if r["book"] == "GEN"]
+    for result in gen_results:
+        assert (
+            result["comparison_text"] is not None
+        ), "GEN verses should have comparison text"
+
+
+def test_search_require_comparison_text_excludes_missing(
+    client, regular_token1, test_db_session
+):
+    """Test that require_comparison_text=True excludes verses without comparison text."""
+    main_revision_id, comparison_revision_id = setup_search_test_data(test_db_session)
+
+    # Search for "God" with require_comparison_text=True
+    params = {
+        "revision_id": main_revision_id,
+        "term": "God",
+        "comparison_revision_id": comparison_revision_id,
+        "require_comparison_text": True,
+        "limit": 10,
+    }
+
+    response = client.get(
+        "/v3/textsearch",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Should NOT find PSA 23:1 since it has no comparison text
+    psa_results = [
+        r for r in response_data["results"] if r["book"] == "PSA" and r["verse"] == 1
+    ]
+    assert (
+        len(psa_results) == 0
+    ), "PSA 23:1 should be excluded with require_comparison_text=True"
+
+    # All results should have non-empty comparison text
+    for result in response_data["results"]:
+        assert (
+            result["comparison_text"] is not None and result["comparison_text"] != ""
+        ), "All results should have comparison text when require_comparison_text=True"
+
+
+def test_search_require_comparison_text_false_explicit(
+    client, regular_token1, test_db_session
+):
+    """Test that require_comparison_text=False explicitly includes verses without comparison."""
+    main_revision_id, comparison_revision_id = setup_search_test_data(test_db_session)
+
+    # Explicitly set require_comparison_text to False
+    params = {
+        "revision_id": main_revision_id,
+        "term": "God",
+        "comparison_revision_id": comparison_revision_id,
+        "require_comparison_text": False,
+        "limit": 10,
+    }
+
+    response = client.get(
+        "/v3/textsearch",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Should find PSA 23:1 with None comparison_text
+    psa_results = [
+        r for r in response_data["results"] if r["book"] == "PSA" and r["verse"] == 1
+    ]
+    assert (
+        len(psa_results) == 1
+    ), "PSA 23:1 should be included with require_comparison_text=False"
+    assert psa_results[0]["comparison_text"] is None
+
+
+def test_search_require_comparison_without_comparison_id(
+    client, regular_token1, test_db_session
+):
+    """Test that require_comparison_text is ignored when no comparison_revision_id is provided."""
+    main_revision_id, _ = setup_search_test_data(test_db_session)
+
+    # Set require_comparison_text without providing comparison_revision_id
+    params = {
+        "revision_id": main_revision_id,
+        "term": "God",
+        "require_comparison_text": True,
+        "limit": 10,
+    }
+
+    response = client.get(
+        "/v3/textsearch",
+        params=params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    response_data = response.json()
+
+    # Should still return results (parameter ignored without comparison_revision_id)
+    assert response_data["total_count"] > 0
+    # Results should not have comparison_text field since no comparison was requested
+    for result in response_data["results"]:
+        assert "comparison_text" not in result

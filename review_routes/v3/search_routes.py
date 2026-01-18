@@ -51,6 +51,7 @@ async def search_revision_text(
     revision_id: int,
     term: str,
     comparison_revision_id: Optional[int] = None,
+    require_comparison_text: bool = False,
     limit: int = Query(default=10, ge=1, le=1000),
     random: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -68,6 +69,11 @@ async def search_revision_text(
         The search term to look for
     comparison_revision_id : int, optional
         The ID of a comparison revision to include text from
+    require_comparison_text : bool, optional
+        If True and comparison_revision_id is provided, only return verses that have
+        a corresponding entry in the comparison text (i.e., verses where the comparison
+        translation exists). If False (default), return all matching verses even if
+        the comparison text is missing or empty for that verse.
     limit : int, optional
         Maximum number of results to return (default 10, max 1000)
     random : bool, optional
@@ -105,29 +111,57 @@ async def search_revision_text(
 
     if comparison_revision_id:
         vt2_alias = aliased(VerseText, name="vt2")
-        search_query = (
-            select(
-                vt1_alias.id.label("id"),
-                vt1_alias.book.label("book"),
-                vt1_alias.chapter.label("chapter"),
-                vt1_alias.verse.label("verse"),
-                vt1_alias.text.label("main_text"),
-                vt2_alias.text.label("comparison_text"),
+
+        if require_comparison_text:
+            # Use INNER JOIN and filter to only include verses with comparison text
+            search_query = (
+                select(
+                    vt1_alias.id.label("id"),
+                    vt1_alias.book.label("book"),
+                    vt1_alias.chapter.label("chapter"),
+                    vt1_alias.verse.label("verse"),
+                    vt1_alias.text.label("main_text"),
+                    vt2_alias.text.label("comparison_text"),
+                )
+                .join(
+                    vt2_alias,
+                    (vt2_alias.book == vt1_alias.book)
+                    & (vt2_alias.chapter == vt1_alias.chapter)
+                    & (vt2_alias.verse == vt1_alias.verse)
+                    & (vt2_alias.revision_id == comparison_revision_id),
+                )
+                .where(
+                    vt1_alias.revision_id == revision_id,
+                    vt1_alias.text.ilike(f"%{term}%"),
+                    vt1_alias.text != "",
+                    vt2_alias.text.isnot(None),
+                    vt2_alias.text != "",
+                )
             )
-            .join(
-                vt2_alias,
-                (vt2_alias.book == vt1_alias.book)
-                & (vt2_alias.chapter == vt1_alias.chapter)
-                & (vt2_alias.verse == vt1_alias.verse)
-                & (vt2_alias.revision_id == comparison_revision_id),
+        else:
+            # Use LEFT JOIN to include verses even if comparison text is missing
+            search_query = (
+                select(
+                    vt1_alias.id.label("id"),
+                    vt1_alias.book.label("book"),
+                    vt1_alias.chapter.label("chapter"),
+                    vt1_alias.verse.label("verse"),
+                    vt1_alias.text.label("main_text"),
+                    vt2_alias.text.label("comparison_text"),
+                )
+                .outerjoin(
+                    vt2_alias,
+                    (vt2_alias.book == vt1_alias.book)
+                    & (vt2_alias.chapter == vt1_alias.chapter)
+                    & (vt2_alias.verse == vt1_alias.verse)
+                    & (vt2_alias.revision_id == comparison_revision_id),
+                )
+                .where(
+                    vt1_alias.revision_id == revision_id,
+                    vt1_alias.text.ilike(f"%{term}%"),
+                    vt1_alias.text != "",
+                )
             )
-            .where(
-                vt1_alias.revision_id == revision_id,
-                vt1_alias.text.ilike(f"%{term}%"),
-                vt1_alias.text != "",
-                vt2_alias.text != "",
-            )
-        )
     else:
         search_query = select(
             vt1_alias.id.label("id"),
