@@ -1,6 +1,6 @@
 import datetime
 from enum import Enum
-from typing import List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -678,4 +678,21 @@ class CritiqueIssueResolutionRequest(BaseModel):
             }
         },
         "from_attributes": True,
+    }
+
+
+class RevisionChapters(BaseModel):
+    """Response model for available chapters in a revision."""
+
+    chapters: Dict[str, List[int]]
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "chapters": {
+                    "GEN": [1, 2, 3, 4, 5],
+                    "EXO": [1, 2, 3],
+                }
+            }
+        },
     }
