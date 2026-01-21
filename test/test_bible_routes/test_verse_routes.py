@@ -473,3 +473,105 @@ def test_words_endpoint_cross_book_boundary(client, regular_token1, db_session):
     ), f"Expected word '{expected_exodus_word}' not found"
     # We're checking that the range actually spans both books
     assert len(words) > 0, "Should have words from both books"
+
+
+def test_chapters_endpoint_basic(client, regular_token1, db_session):
+    """Test /chapters endpoint returns available chapters for a revision."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/chapters",
+        params={"revision_id": revision_id},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should have a "chapters" key
+    assert "chapters" in data
+    chapters = data["chapters"]
+
+    # Should be a dict
+    assert isinstance(chapters, dict)
+
+    # Should have books (the KJV fixture has full Bible)
+    assert len(chapters) > 0
+
+    # GEN should be present with chapters
+    assert "GEN" in chapters
+    assert isinstance(chapters["GEN"], list)
+    assert len(chapters["GEN"]) > 0
+
+
+def test_chapters_endpoint_canonical_order(client, regular_token1, db_session):
+    """Test /chapters endpoint returns books in canonical order."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/chapters",
+        params={"revision_id": revision_id},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    chapters = response.json()["chapters"]
+
+    # Get the list of book keys in order
+    book_keys = list(chapters.keys())
+
+    # GEN should be first
+    assert book_keys[0] == "GEN"
+
+    # EXO should come after GEN
+    if "EXO" in chapters:
+        gen_idx = book_keys.index("GEN")
+        exo_idx = book_keys.index("EXO")
+        assert exo_idx > gen_idx
+
+    # REV should be last (if present)
+    if "REV" in chapters:
+        assert book_keys[-1] == "REV"
+
+
+def test_chapters_endpoint_chapters_sorted(client, regular_token1, db_session):
+    """Test /chapters endpoint returns chapters sorted numerically."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/chapters",
+        params={"revision_id": revision_id},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    chapters = response.json()["chapters"]
+
+    # Verify chapters are sorted numerically for each book
+    for book, chapter_list in chapters.items():
+        assert chapter_list == sorted(chapter_list), f"Chapters for {book} not sorted"
+
+
+def test_chapters_endpoint_unauthorized(
+    client, regular_token1, regular_token2, db_session
+):
+    """Test /chapters endpoint returns 403 for unauthorized user."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    # Try to access with different user's token
+    headers = {"Authorization": f"Bearer {regular_token2}"}
+
+    response = client.get(
+        f"/{prefix}/chapters",
+        params={"revision_id": revision_id},
+        headers=headers,
+    )
+    assert response.status_code == 403
+    assert "not authorized" in response.json()["detail"].lower()
