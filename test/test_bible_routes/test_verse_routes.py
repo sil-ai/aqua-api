@@ -502,8 +502,13 @@ def test_chapters_endpoint_basic(client, regular_token1, db_session):
 
     # GEN should be present with chapters
     assert "GEN" in chapters
+    assert "REV" in chapters
     assert isinstance(chapters["GEN"], list)
-    assert len(chapters["GEN"]) > 0
+    assert all(isinstance(chap, int) for chap in chapters["GEN"])
+    assert isinstance(chapters["REV"], list)
+    assert all(isinstance(chap, int) for chap in chapters["REV"])
+    assert len(chapters["GEN"]) == 50  # KJV has 50 chapters in Genesis
+    assert len(chapters["REV"]) == 22  # KJV has 22 chapters in Revelation
 
 
 def test_chapters_endpoint_canonical_order(client, regular_token1, db_session):
@@ -531,11 +536,9 @@ def test_chapters_endpoint_canonical_order(client, regular_token1, db_session):
     if "EXO" in chapters:
         gen_idx = book_keys.index("GEN")
         exo_idx = book_keys.index("EXO")
+        rev_idx = book_keys.index("REV")
         assert exo_idx > gen_idx
-
-    # REV should be last (if present)
-    if "REV" in chapters:
-        assert book_keys[-1] == "REV"
+        assert rev_idx > exo_idx
 
 
 def test_chapters_endpoint_chapters_sorted(client, regular_token1, db_session):
