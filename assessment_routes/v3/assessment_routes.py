@@ -36,11 +36,19 @@ router = fastapi.APIRouter()
 
 @router.get("/assessment", response_model=List[AssessmentOut])
 async def get_assessments(
+    revision_id: int = None,
+    reference_id: int = None,
+    type: str = None,
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
     Returns a list of all assessments the current user is authorized to access.
+
+    Optional query parameters:
+    - revision_id: Filter assessments by revision ID
+    - reference_id: Filter assessments by reference ID
+    - type: Filter assessments by assessment type
 
     Currently supported assessment types are:
 
@@ -78,9 +86,17 @@ async def get_assessments(
 
     if current_user.is_admin:
         # Admin users can access all assessments
-        result = await db.execute(
-            select(Assessment).where(Assessment.deleted.is_(False))
-        )
+        stmt = select(Assessment).where(Assessment.deleted.is_(False))
+
+        # Apply optional filters
+        if revision_id is not None:
+            stmt = stmt.where(Assessment.revision_id == revision_id)
+        if reference_id is not None:
+            stmt = stmt.where(Assessment.reference_id == reference_id)
+        if type is not None:
+            stmt = stmt.where(Assessment.type == type)
+
+        result = await db.execute(stmt)
         assessments = result.scalars().all()
     else:
         # Fetch the groups the user belongs to
@@ -114,13 +130,22 @@ async def get_assessments(
                 ReferenceRevision, ReferenceRevision.id == Assessment.reference_id
             )
             .filter(
+                Assessment.deleted.is_(False),
                 BibleRevision.bible_version_id.in_(version_ids),
                 or_(
-                    Assessment.reference_id is None,
+                    Assessment.reference_id.is_(None),
                     ReferenceRevision.bible_version_id.in_(version_ids),
                 ),
             )
         )
+
+        # Apply optional filters
+        if revision_id is not None:
+            stmt = stmt.where(Assessment.revision_id == revision_id)
+        if reference_id is not None:
+            stmt = stmt.where(Assessment.reference_id == reference_id)
+        if type is not None:
+            stmt = stmt.where(Assessment.type == type)
 
         result = await db.execute(stmt)
         assessments = result.scalars().all()
