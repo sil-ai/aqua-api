@@ -133,7 +133,7 @@ async def get_assessments(
                 Assessment.deleted.is_(False),
                 BibleRevision.bible_version_id.in_(version_ids),
                 or_(
-                    Assessment.reference_id is None,
+                    Assessment.reference_id.is_(None),
                     ReferenceRevision.bible_version_id.in_(version_ids),
                 ),
             )
