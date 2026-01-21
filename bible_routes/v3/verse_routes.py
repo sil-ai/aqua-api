@@ -599,8 +599,9 @@ async def get_available_chapters(
         )
 
     # Query distinct book/chapter pairs, ordered by canonical book order and chapter number
+    # Note: PostgreSQL requires ORDER BY columns to appear in SELECT with DISTINCT
     stmt = (
-        select(VerseModel.book, VerseModel.chapter)
+        select(VerseModel.book, VerseModel.chapter, BookReferenceModel.number)
         .distinct()
         .join(
             BookReferenceModel,
@@ -615,7 +616,7 @@ async def get_available_chapters(
 
     # Build nested dict: {book: [chapters]}
     chapters_dict: Dict[str, List[int]] = {}
-    for book, chapter in rows:
+    for book, chapter, _ in rows:
         if book not in chapters_dict:
             chapters_dict[book] = []
         chapters_dict[book].append(chapter)
