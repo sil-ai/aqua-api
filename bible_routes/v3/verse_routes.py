@@ -617,6 +617,14 @@ async def get_texts(
     a list of VerseText objects. Merged verses will have verse_reference formatted
     as a range (e.g., "GEN 1:1-3").
     """
+    # Deduplicate revision IDs while preserving order
+    revision_ids = list(dict.fromkeys(revision_ids))
+    if len(revision_ids) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="At least 2 unique revision IDs are required.",
+        )
+
     # Authorization check for all revisions
     for revision_id in revision_ids:
         if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
