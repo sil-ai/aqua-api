@@ -637,7 +637,7 @@ async def get_texts(
         if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"User not authorized to access revision {revision_id}.",
+                detail="User not authorized to access this revision.",
             )
 
     # Fetch all verses for all revision_ids in a single query
