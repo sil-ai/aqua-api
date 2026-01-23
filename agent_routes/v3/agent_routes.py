@@ -224,6 +224,8 @@ async def add_lexeme_card(
             # Update existing card
             existing_card.pos = card.pos
             existing_card.confidence = card.confidence
+            existing_card.english_lemma = card.english_lemma
+            existing_card.alignment_scores = card.alignment_scores
             existing_card.last_updated = func.now()
 
             # Handle list fields based on replace_existing flag
@@ -326,6 +328,8 @@ async def add_lexeme_card(
                 "senses": existing_card.senses,
                 "examples": examples_list,
                 "confidence": existing_card.confidence,
+                "english_lemma": existing_card.english_lemma,
+                "alignment_scores": existing_card.alignment_scores,
                 "created_at": existing_card.created_at,
                 "last_updated": existing_card.last_updated,
             }
@@ -342,6 +346,8 @@ async def add_lexeme_card(
                 source_surface_forms=card.source_surface_forms,
                 senses=card.senses,
                 confidence=card.confidence,
+                english_lemma=card.english_lemma,
+                alignment_scores=card.alignment_scores,
             )
 
             db.add(lexeme_card)
@@ -392,6 +398,8 @@ async def add_lexeme_card(
                 "senses": lexeme_card.senses,
                 "examples": examples_list,
                 "confidence": lexeme_card.confidence,
+                "english_lemma": lexeme_card.english_lemma,
+                "alignment_scores": lexeme_card.alignment_scores,
                 "created_at": lexeme_card.created_at,
                 "last_updated": lexeme_card.last_updated,
             }
@@ -619,6 +627,8 @@ async def get_lexeme_cards(
                 "source_surface_forms": card.source_surface_forms,
                 "senses": card.senses,
                 "confidence": card.confidence,
+                "english_lemma": card.english_lemma,
+                "alignment_scores": card.alignment_scores,
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
             }
