@@ -1,7 +1,7 @@
 __version__ = "v3"
 
 import unicodedata
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
@@ -667,7 +667,7 @@ async def get_texts(
     all_verses = result.all()
 
     # Group by verse_reference: {vref -> {revision_id -> verse_row}}
-    vref_to_revisions: Dict[str, Dict[int, any]] = {}
+    vref_to_revisions: Dict[str, Dict[int, Any]] = {}
     # Track ordering of vrefs (first seen order from canonical query)
     vref_order: List[str] = []
 
