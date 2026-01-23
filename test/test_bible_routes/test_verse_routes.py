@@ -1,7 +1,9 @@
+from io import BytesIO
 from pathlib import Path
 
 from database.models import BibleRevision as BibleRevisionModel
 from database.models import BibleVersion as BibleVersionModel
+from database.models import VerseText as VerseTextModel
 
 prefix = "v3"
 
@@ -473,3 +475,274 @@ def test_words_endpoint_cross_book_boundary(client, regular_token1, db_session):
     ), f"Expected word '{expected_exodus_word}' not found"
     # We're checking that the range actually spans both books
     assert len(words) > 0, "Should have words from both books"
+
+
+def upload_revision_with_content(client, token, version_id, content_lines):
+    """Helper to upload a revision with custom verse content.
+
+    content_lines should be a list of strings, one per verse in vref order.
+    """
+    headers = {"Authorization": f"Bearer {token}"}
+    test_revision = {
+        "version_id": version_id,
+        "name": "Test Revision",
+    }
+    content = "\n".join(content_lines)
+    files = {"file": ("test.txt", BytesIO(content.encode("utf-8")), "text/plain")}
+    response = client.post(
+        f"{prefix}/revision", params=test_revision, files=files, headers=headers
+    )
+    return response.json()["id"]
+
+
+def test_texts_endpoint_basic(client, regular_token1, db_session):
+    """Test /texts endpoint with two revisions without ranges."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id1 = upload_revision(client, regular_token1, version_id)
+
+    # Create a second version and revision
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should have entries for both revisions
+    assert str(revision_id1) in data
+    assert str(revision_id2) in data
+
+    # Both should have the same number of verses
+    assert len(data[str(revision_id1)]) == len(data[str(revision_id2)])
+
+    # Check that verses are properly formatted
+    for verse in data[str(revision_id1)]:
+        assert "verse_reference" in verse
+        assert "text" in verse
+        assert verse["revision_id"] == revision_id1
+
+
+def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
+    """Test /texts endpoint where one revision has <range> markers."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    # Create first revision with normal verses
+    content1 = ["Verse 1 text", "Verse 2 text", "Verse 3 text"]
+    revision_id1 = upload_revision_with_content(
+        client, regular_token1, version_id1, content1
+    )
+
+    # Create second revision with range marker (verse 2 is <range>)
+    content2 = ["Verse 1 and 2 combined", "<range>", "Verse 3 separate"]
+    revision_id2 = upload_revision_with_content(
+        client, regular_token1, version_id2, content2
+    )
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Both revisions should be present
+    assert str(revision_id1) in data
+    assert str(revision_id2) in data
+
+    # Should have 2 entries (verses 1+2 merged, verse 3 separate)
+    assert len(data[str(revision_id1)]) == 2
+    assert len(data[str(revision_id2)]) == 2
+
+    # First entry should be merged (GEN 1:1-2)
+    first_verse_rev1 = data[str(revision_id1)][0]
+    first_verse_rev2 = data[str(revision_id2)][0]
+
+    assert "-" in first_verse_rev1["verse_reference"]  # Should be a range
+    assert first_verse_rev1["verse_reference"] == first_verse_rev2["verse_reference"]
+
+    # Revision 1's merged text should combine verses 1 and 2
+    assert "Verse 1 text" in first_verse_rev1["text"]
+    assert "Verse 2 text" in first_verse_rev1["text"]
+
+    # Revision 2's merged text should NOT contain <range>
+    assert "<range>" not in first_verse_rev2["text"]
+    assert "Verse 1 and 2 combined" in first_verse_rev2["text"]
+
+
+def test_texts_endpoint_unauthorized(
+    client, regular_token1, regular_token2, db_session
+):
+    """Test /texts endpoint with unauthorized access to one revision."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id1 = upload_revision(client, regular_token1, version_id)
+
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Try to access with different user's token
+    headers = {"Authorization": f"Bearer {regular_token2}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 403
+    assert "not authorized" in response.json()["detail"].lower()
+
+
+def test_texts_endpoint_min_revisions_validation(client, regular_token1, db_session):
+    """Test /texts endpoint rejects requests with less than 2 revision IDs."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Try with only one revision ID
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id]},
+        headers=headers,
+    )
+    assert response.status_code == 422  # Validation error
+
+
+def test_texts_endpoint_missing_verses(client, regular_token1, db_session):
+    """Test /texts endpoint includes verses that exist in only one revision."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    # Create first revision with 3 verses
+    content1 = ["Verse 1", "Verse 2", "Verse 3"]
+    revision_id1 = upload_revision_with_content(
+        client, regular_token1, version_id1, content1
+    )
+
+    # Create second revision with only 2 verses (missing verse 3)
+    content2 = ["Vers un", "Vers deux"]
+    revision_id2 = upload_revision_with_content(
+        client, regular_token1, version_id2, content2
+    )
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Both should have 3 entries (verse 3 exists in rev1 so should appear for both)
+    assert len(data[str(revision_id1)]) == 3
+    assert len(data[str(revision_id2)]) == 3
+
+    # Third verse should have text in rev1 and empty in rev2
+    third_verse_rev1 = data[str(revision_id1)][2]
+    third_verse_rev2 = data[str(revision_id2)][2]
+
+    assert third_verse_rev1["text"] == "Verse 3"
+    assert third_verse_rev2["text"] == ""
+    assert third_verse_rev1["verse_reference"] == third_verse_rev2["verse_reference"]
+
+
+def test_texts_endpoint_three_revisions(client, regular_token1, db_session):
+    """Test /texts endpoint with three or more revisions."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+    version_id3 = create_bible_version(client, regular_token1, db_session)
+
+    content1 = ["Text A1", "Text A2", "Text A3"]
+    content2 = ["Text B1", "<range>", "Text B3"]
+    content3 = ["Text C1", "Text C2", "Text C3"]
+
+    revision_id1 = upload_revision_with_content(
+        client, regular_token1, version_id1, content1
+    )
+    revision_id2 = upload_revision_with_content(
+        client, regular_token1, version_id2, content2
+    )
+    revision_id3 = upload_revision_with_content(
+        client, regular_token1, version_id3, content3
+    )
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2, revision_id3]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # All three revisions should be present
+    assert str(revision_id1) in data
+    assert str(revision_id2) in data
+    assert str(revision_id3) in data
+
+    # All should have 2 entries (due to <range> in revision 2)
+    assert len(data[str(revision_id1)]) == 2
+    assert len(data[str(revision_id2)]) == 2
+    assert len(data[str(revision_id3)]) == 2
+
+    # Verify merging happened for all revisions
+    first_verse_rev1 = data[str(revision_id1)][0]
+    first_verse_rev2 = data[str(revision_id2)][0]
+    first_verse_rev3 = data[str(revision_id3)][0]
+
+    # All should have the same merged verse reference
+    assert first_verse_rev1["verse_reference"] == first_verse_rev2["verse_reference"]
+    assert first_verse_rev2["verse_reference"] == first_verse_rev3["verse_reference"]
+    assert "-" in first_verse_rev1["verse_reference"]
+
+
+def test_texts_endpoint_empty_verse_not_treated_as_range(
+    client, regular_token1, db_session
+):
+    """Test that empty verses are not treated as <range> markers."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    # Create revisions where one has an empty verse
+    content1 = ["Verse 1", "", "Verse 3"]  # Empty verse 2
+    content2 = ["Vers un", "Vers deux", "Vers trois"]
+
+    revision_id1 = upload_revision_with_content(
+        client, regular_token1, version_id1, content1
+    )
+    revision_id2 = upload_revision_with_content(
+        client, regular_token1, version_id2, content2
+    )
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should have 3 separate verses (empty string is NOT a range marker)
+    assert len(data[str(revision_id1)]) == 3
+    assert len(data[str(revision_id2)]) == 3
+
+    # Second verse should be empty in rev1, have text in rev2
+    second_verse_rev1 = data[str(revision_id1)][1]
+    second_verse_rev2 = data[str(revision_id2)][1]
+
+    assert second_verse_rev1["text"] == ""
+    assert second_verse_rev2["text"] == "Vers deux"
