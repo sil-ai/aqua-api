@@ -623,6 +623,13 @@ async def get_texts(
     Dict[str, List[VerseText]]: Dictionary keyed by revision_id (as string),
     each containing a list of VerseText objects. Merged verses will have
     verse_reference formatted as a range (e.g., "GEN 1:1-3").
+
+    Notes:
+    - The returned dictionary will include an entry for every requested
+      revision_id.
+    - If a revision contains no verses, its value will be an empty list.
+    - If a verse exists in one revision but not another, the missing revision
+      will have an empty string for that verse's text.
     """
     # Deduplicate revision IDs while preserving order
     revision_ids = list(dict.fromkeys(revision_ids))
