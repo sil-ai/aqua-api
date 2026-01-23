@@ -581,12 +581,19 @@ def format_verse_range(first_vref: str, last_vref: str) -> str:
     Examples:
         format_verse_range("GEN 1:1", "GEN 1:3") -> "GEN 1:1-3"
         format_verse_range("GEN 1:1", "GEN 2:3") -> "GEN 1:1-2:3"
+
+    Raises:
+        ValueError: If the verse references are from different books.
     """
     if first_vref == last_vref:
         return first_vref
 
     book_first, cv_first = first_vref.split(" ", 1)
     book_last, cv_last = last_vref.split(" ", 1)
+
+    if book_first != book_last:
+        raise ValueError(f"Cannot format cross-book range: {first_vref} to {last_vref}")
+
     chap_first, verse_first = cv_first.split(":")
     chap_last, verse_last = cv_last.split(":")
 
