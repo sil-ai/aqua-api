@@ -726,9 +726,10 @@ async def get_texts(
     )
 
     # Split back to per-revision lists (use string keys for JSON compatibility)
-    result_dict: Dict[str, List[VerseText]] = {
-        str(rev_id): [] for rev_id in revision_ids
-    }
+    # Pre-compute string keys and field names to avoid repeated string operations
+    rev_id_strs = [str(rev_id) for rev_id in revision_ids]
+    rev_field_names = [f"text_{rev_id}" for rev_id in revision_ids]
+    result_dict: Dict[str, List[VerseText]] = {key: [] for key in rev_id_strs}
 
     for record in merged_records:
         vrefs = record["vrefs"]
@@ -738,21 +739,21 @@ async def get_texts(
         else:
             verse_ref = format_verse_range(vrefs[0], vrefs[-1])
 
-        # Parse book/chapter/verse from first vref
+        # Parse book/chapter/verse from first vref (done once per record)
         first_vref = vrefs[0]
         book, cv = first_vref.split(" ", 1)
         chapter_str, verse_str = cv.split(":")
         chapter = int(chapter_str)
         verse_num = int(verse_str)
 
-        for rev_id in revision_ids:
-            field_name = f"text_{rev_id}"
-            text = record.get(field_name, "")
-
-            result_dict[str(rev_id)].append(
+        # Create VerseText for each revision
+        for rev_id, rev_id_str, field_name in zip(
+            revision_ids, rev_id_strs, rev_field_names
+        ):
+            result_dict[rev_id_str].append(
                 VerseText(
                     id=None,
-                    text=text,
+                    text=record[field_name],
                     verse_reference=verse_ref,
                     revision_id=rev_id,
                     book=book,
