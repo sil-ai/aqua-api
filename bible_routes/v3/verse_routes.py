@@ -605,7 +605,7 @@ def format_verse_range(first_vref: str, last_vref: str) -> str:
 
 @router.get("/texts", response_model=Dict[int, List[VerseText]])
 async def get_texts(
-    revision_ids: List[int] = Query(..., min_length=2),
+    revision_ids: List[int] = Query(..., min_items=2),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
