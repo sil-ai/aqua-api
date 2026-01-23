@@ -477,6 +477,8 @@ class LexemeCardIn(BaseModel):
     senses: Optional[list] = None
     examples: Optional[list] = None  # List of example dicts for the given revision_id
     confidence: Optional[float] = None
+    english_lemma: Optional[str] = None
+    alignment_scores: Optional[Dict[str, float]] = None
 
     model_config = {
         "json_schema_extra": {
@@ -492,7 +494,7 @@ class LexemeCardIn(BaseModel):
                     "amas",
                     "ama",
                     "amamos",
-                    "aman",
+                    "anan",
                 ],  # Target language surface forms
                 "source_surface_forms": [
                     "love",
@@ -512,6 +514,8 @@ class LexemeCardIn(BaseModel):
                     {"source": "They love music", "target": "Aman la música"},
                 ],
                 "confidence": 0.95,
+                "english_lemma": "love",
+                "alignment_scores": {"love": 0.92, "you": 0.88},
             }
         }
     }
@@ -529,6 +533,8 @@ class LexemeCardOut(BaseModel):
     senses: Optional[list] = None
     examples: Optional[list] = None  # Filtered list for the requested revision_id
     confidence: Optional[float] = None
+    english_lemma: Optional[str] = None
+    alignment_scores: Optional[Dict[str, float]] = None
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None
 
@@ -567,6 +573,8 @@ class LexemeCardOut(BaseModel):
                     {"source": "They love music", "target": "Aman la música"},
                 ],
                 "confidence": 0.95,
+                "english_lemma": "love",
+                "alignment_scores": {"love": 0.92, "you": 0.88},
                 "created_at": "2024-06-01T12:00:00",
                 "last_updated": "2024-06-01T12:00:00",
             }
