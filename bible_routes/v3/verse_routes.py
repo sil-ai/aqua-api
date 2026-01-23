@@ -603,7 +603,7 @@ def format_verse_range(first_vref: str, last_vref: str) -> str:
         return f"{book_first} {cv_first}-{cv_last}"
 
 
-@router.get("/texts", response_model=Dict[int, List[VerseText]])
+@router.get("/texts", response_model=Dict[str, List[VerseText]])
 async def get_texts(
     revision_ids: List[int] = Query(..., min_items=2),
     db: AsyncSession = Depends(get_db),
@@ -620,9 +620,9 @@ async def get_texts(
     Description: List of revision IDs to fetch (minimum 2).
 
     Returns:
-    Dict[int, List[VerseText]]: Dictionary keyed by revision_id, each containing
-    a list of VerseText objects. Merged verses will have verse_reference formatted
-    as a range (e.g., "GEN 1:1-3").
+    Dict[str, List[VerseText]]: Dictionary keyed by revision_id (as string),
+    each containing a list of VerseText objects. Merged verses will have
+    verse_reference formatted as a range (e.g., "GEN 1:1-3").
     """
     # Deduplicate revision IDs while preserving order
     revision_ids = list(dict.fromkeys(revision_ids))
@@ -714,8 +714,10 @@ async def get_texts(
         ),
     )
 
-    # Split back to per-revision lists
-    result_dict: Dict[int, List[VerseText]] = {rev_id: [] for rev_id in revision_ids}
+    # Split back to per-revision lists (use string keys for JSON compatibility)
+    result_dict: Dict[str, List[VerseText]] = {
+        str(rev_id): [] for rev_id in revision_ids
+    }
 
     for record in merged_records:
         vrefs = record["vrefs"]
@@ -736,7 +738,7 @@ async def get_texts(
             field_name = f"text_{rev_id}"
             text = record.get(field_name, "")
 
-            result_dict[rev_id].append(
+            result_dict[str(rev_id)].append(
                 VerseText(
                     id=None,
                     text=text,
