@@ -716,6 +716,10 @@ async def get_texts(
         combine_fields=text_fields,
         check_fields=text_fields,
         is_range_marker=lambda x: x == "<range>",
+        # combine_function filters out empty strings and "<range>" markers:
+        # - empty strings represent "no verse text" for that revision
+        # - "<range>" is a structural marker, not actual text content
+        # Only actual text content is joined with spaces.
         combine_function=lambda field, values: " ".join(
             v for v in values if v and v != "<range>"
         ),
