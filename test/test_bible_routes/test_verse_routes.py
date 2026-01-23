@@ -1,8 +1,8 @@
-from io import BytesIO
 from pathlib import Path
 
 from database.models import BibleRevision as BibleRevisionModel
 from database.models import BibleVersion as BibleVersionModel
+from database.models import VerseText as VerseTextModel
 
 prefix = "v3"
 
@@ -476,24 +476,6 @@ def test_words_endpoint_cross_book_boundary(client, regular_token1, db_session):
     assert len(words) > 0, "Should have words from both books"
 
 
-def upload_revision_with_content(client, token, version_id, content_lines):
-    """Helper to upload a revision with custom verse content.
-
-    content_lines should be a list of strings, one per verse in vref order.
-    """
-    headers = {"Authorization": f"Bearer {token}"}
-    test_revision = {
-        "version_id": version_id,
-        "name": "Test Revision",
-    }
-    content = "\n".join(content_lines)
-    files = {"file": ("test.txt", BytesIO(content.encode("utf-8")), "text/plain")}
-    response = client.post(
-        f"{prefix}/revision", params=test_revision, files=files, headers=headers
-    )
-    return response.json()["id"]
-
-
 def test_texts_endpoint_basic(client, regular_token1, db_session):
     """Test /texts endpoint with two revisions without ranges."""
     version_id = create_bible_version(client, regular_token1, db_session)
@@ -532,17 +514,21 @@ def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    # Create first revision with normal verses
-    content1 = ["Verse 1 text", "Verse 2 text", "Verse 3 text"]
-    revision_id1 = upload_revision_with_content(
-        client, regular_token1, version_id1, content1
-    )
+    # Upload full KJV revisions
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
 
-    # Create second revision with range marker (verse 2 is <range>)
-    content2 = ["Verse 1 and 2 combined", "<range>", "Verse 3 separate"]
-    revision_id2 = upload_revision_with_content(
-        client, regular_token1, version_id2, content2
+    # Modify revision 2: set GEN 1:2 to <range> marker
+    verse_to_modify = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id2,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
     )
+    verse_to_modify.text = "<range>"
+    db_session.commit()
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -558,24 +544,24 @@ def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
     assert str(revision_id1) in data
     assert str(revision_id2) in data
 
-    # Should have 2 entries (verses 1+2 merged, verse 3 separate)
-    assert len(data[str(revision_id1)]) == 2
-    assert len(data[str(revision_id2)]) == 2
-
-    # First entry should be merged (GEN 1:1-2)
+    # Find the first verse entry (should be merged GEN 1:1-2)
     first_verse_rev1 = data[str(revision_id1)][0]
     first_verse_rev2 = data[str(revision_id2)][0]
 
-    assert "-" in first_verse_rev1["verse_reference"]  # Should be a range
+    # First entry should be merged (GEN 1:1-2)
+    assert first_verse_rev1["verse_reference"] == "GEN 1:1-2"
     assert first_verse_rev1["verse_reference"] == first_verse_rev2["verse_reference"]
 
-    # Revision 1's merged text should combine verses 1 and 2
-    assert "Verse 1 text" in first_verse_rev1["text"]
-    assert "Verse 2 text" in first_verse_rev1["text"]
+    # Revision 1's merged text should combine verses 1 and 2 (KJV text)
+    assert (
+        "beginning" in first_verse_rev1["text"].lower()
+    )  # GEN 1:1 contains "beginning"
+    assert (
+        "without form" in first_verse_rev1["text"].lower()
+    )  # GEN 1:2 contains "without form"
 
     # Revision 2's merged text should NOT contain <range>
     assert "<range>" not in first_verse_rev2["text"]
-    assert "Verse 1 and 2 combined" in first_verse_rev2["text"]
 
 
 def test_texts_endpoint_unauthorized(
@@ -621,17 +607,16 @@ def test_texts_endpoint_missing_verses(client, regular_token1, db_session):
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    # Create first revision with 3 verses
-    content1 = ["Verse 1", "Verse 2", "Verse 3"]
-    revision_id1 = upload_revision_with_content(
-        client, regular_token1, version_id1, content1
-    )
+    # Upload full KJV revisions
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
 
-    # Create second revision with only 2 verses (missing verse 3)
-    content2 = ["Vers un", "Vers deux"]
-    revision_id2 = upload_revision_with_content(
-        client, regular_token1, version_id2, content2
-    )
+    # Delete GEN 1:3 from revision 2 to simulate missing verse
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).delete()
+    db_session.commit()
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -643,17 +628,25 @@ def test_texts_endpoint_missing_verses(client, regular_token1, db_session):
     assert response.status_code == 200
     data = response.json()
 
-    # Both should have 3 entries (verse 3 exists in rev1 so should appear for both)
-    assert len(data[str(revision_id1)]) == 3
-    assert len(data[str(revision_id2)]) == 3
+    # Both should have the same number of entries
+    assert len(data[str(revision_id1)]) == len(data[str(revision_id2)])
 
-    # Third verse should have text in rev1 and empty in rev2
-    third_verse_rev1 = data[str(revision_id1)][2]
-    third_verse_rev2 = data[str(revision_id2)][2]
+    # Find GEN 1:3 in both revisions
+    gen_1_3_rev1 = next(
+        (v for v in data[str(revision_id1)] if v["verse_reference"] == "GEN 1:3"), None
+    )
+    gen_1_3_rev2 = next(
+        (v for v in data[str(revision_id2)] if v["verse_reference"] == "GEN 1:3"), None
+    )
 
-    assert third_verse_rev1["text"] == "Verse 3"
-    assert third_verse_rev2["text"] == ""
-    assert third_verse_rev1["verse_reference"] == third_verse_rev2["verse_reference"]
+    # GEN 1:3 should exist in both outputs
+    assert gen_1_3_rev1 is not None
+    assert gen_1_3_rev2 is not None
+
+    # Rev1 should have text, Rev2 should be empty
+    assert gen_1_3_rev1["text"] != ""
+    assert "light" in gen_1_3_rev1["text"].lower()  # GEN 1:3 contains "light"
+    assert gen_1_3_rev2["text"] == ""
 
 
 def test_texts_endpoint_three_revisions(client, regular_token1, db_session):
@@ -662,19 +655,22 @@ def test_texts_endpoint_three_revisions(client, regular_token1, db_session):
     version_id2 = create_bible_version(client, regular_token1, db_session)
     version_id3 = create_bible_version(client, regular_token1, db_session)
 
-    content1 = ["Text A1", "Text A2", "Text A3"]
-    content2 = ["Text B1", "<range>", "Text B3"]
-    content3 = ["Text C1", "Text C2", "Text C3"]
+    # Upload full KJV revisions
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    revision_id3 = upload_revision(client, regular_token1, version_id3)
 
-    revision_id1 = upload_revision_with_content(
-        client, regular_token1, version_id1, content1
+    # Modify revision 2: set GEN 1:2 to <range> marker
+    verse_to_modify = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id2,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
     )
-    revision_id2 = upload_revision_with_content(
-        client, regular_token1, version_id2, content2
-    )
-    revision_id3 = upload_revision_with_content(
-        client, regular_token1, version_id3, content3
-    )
+    verse_to_modify.text = "<range>"
+    db_session.commit()
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -691,20 +687,15 @@ def test_texts_endpoint_three_revisions(client, regular_token1, db_session):
     assert str(revision_id2) in data
     assert str(revision_id3) in data
 
-    # All should have 2 entries (due to <range> in revision 2)
-    assert len(data[str(revision_id1)]) == 2
-    assert len(data[str(revision_id2)]) == 2
-    assert len(data[str(revision_id3)]) == 2
-
-    # Verify merging happened for all revisions
+    # Verify merging happened for all revisions - first entry should be merged
     first_verse_rev1 = data[str(revision_id1)][0]
     first_verse_rev2 = data[str(revision_id2)][0]
     first_verse_rev3 = data[str(revision_id3)][0]
 
-    # All should have the same merged verse reference
+    # All should have the same merged verse reference (GEN 1:1-2)
+    assert first_verse_rev1["verse_reference"] == "GEN 1:1-2"
     assert first_verse_rev1["verse_reference"] == first_verse_rev2["verse_reference"]
     assert first_verse_rev2["verse_reference"] == first_verse_rev3["verse_reference"]
-    assert "-" in first_verse_rev1["verse_reference"]
 
 
 def test_texts_endpoint_empty_verse_not_treated_as_range(
@@ -714,16 +705,21 @@ def test_texts_endpoint_empty_verse_not_treated_as_range(
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    # Create revisions where one has an empty verse
-    content1 = ["Verse 1", "", "Verse 3"]  # Empty verse 2
-    content2 = ["Vers un", "Vers deux", "Vers trois"]
+    # Upload full KJV revisions
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
 
-    revision_id1 = upload_revision_with_content(
-        client, regular_token1, version_id1, content1
+    # Set GEN 1:2 in revision 1 to empty string (not a range marker)
+    verse_to_modify = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id1,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
     )
-    revision_id2 = upload_revision_with_content(
-        client, regular_token1, version_id2, content2
-    )
+    verse_to_modify.text = ""
+    db_session.commit()
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -735,13 +731,18 @@ def test_texts_endpoint_empty_verse_not_treated_as_range(
     assert response.status_code == 200
     data = response.json()
 
-    # Should have 3 separate verses (empty string is NOT a range marker)
-    assert len(data[str(revision_id1)]) == 3
-    assert len(data[str(revision_id2)]) == 3
+    # Find GEN 1:2 in both revisions - should NOT be merged
+    gen_1_2_rev1 = next(
+        (v for v in data[str(revision_id1)] if v["verse_reference"] == "GEN 1:2"), None
+    )
+    gen_1_2_rev2 = next(
+        (v for v in data[str(revision_id2)] if v["verse_reference"] == "GEN 1:2"), None
+    )
 
-    # Second verse should be empty in rev1, have text in rev2
-    second_verse_rev1 = data[str(revision_id1)][1]
-    second_verse_rev2 = data[str(revision_id2)][1]
+    # GEN 1:2 should exist as separate entry (not merged)
+    assert gen_1_2_rev1 is not None
+    assert gen_1_2_rev2 is not None
 
-    assert second_verse_rev1["text"] == ""
-    assert second_verse_rev2["text"] == "Vers deux"
+    # Empty string is NOT treated as range marker
+    assert gen_1_2_rev1["text"] == ""
+    assert gen_1_2_rev2["text"] != ""  # Rev2 still has the original KJV text
