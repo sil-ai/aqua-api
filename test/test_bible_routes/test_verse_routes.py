@@ -3,7 +3,6 @@ from pathlib import Path
 
 from database.models import BibleRevision as BibleRevisionModel
 from database.models import BibleVersion as BibleVersionModel
-from database.models import VerseText as VerseTextModel
 
 prefix = "v3"
 
