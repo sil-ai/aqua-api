@@ -202,6 +202,8 @@ async def add_lexeme_card(
     - senses: list (optional) - JSON array of senses with definitions and examples
     - examples: list (optional) - JSON array of usage examples for the specified revision_id
     - confidence: float (optional) - Confidence score for the lexeme card
+    - english_lemma: str (optional) - English lemma when source/target languages are not English
+    - alignment_scores: dict (optional) - Dict with source words as keys and alignment scores as values
 
     Returns:
     - LexemeCardOut: The created or updated lexeme card entry (with examples for the specified revision_id)
