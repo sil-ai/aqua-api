@@ -212,6 +212,13 @@ async def add_lexeme_card(
         from sqlalchemy import delete, select
         from sqlalchemy.sql import func
 
+        # Sort alignment_scores by value in descending order (highest scores first)
+        sorted_alignment_scores = None
+        if card.alignment_scores:
+            sorted_alignment_scores = dict(
+                sorted(card.alignment_scores.items(), key=lambda x: x[1], reverse=True)
+            )
+
         # Check if a lexeme card with the same unique constraint already exists
         query = select(AgentLexemeCard).where(
             AgentLexemeCard.source_lemma == card.source_lemma,
@@ -227,7 +234,7 @@ async def add_lexeme_card(
             existing_card.pos = card.pos
             existing_card.confidence = card.confidence
             existing_card.english_lemma = card.english_lemma
-            existing_card.alignment_scores = card.alignment_scores
+            existing_card.alignment_scores = sorted_alignment_scores
             existing_card.last_updated = func.now()
 
             # Handle list fields based on replace_existing flag
@@ -349,7 +356,7 @@ async def add_lexeme_card(
                 senses=card.senses,
                 confidence=card.confidence,
                 english_lemma=card.english_lemma,
-                alignment_scores=card.alignment_scores,
+                alignment_scores=sorted_alignment_scores,
             )
 
             db.add(lexeme_card)

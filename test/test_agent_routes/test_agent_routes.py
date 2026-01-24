@@ -2390,6 +2390,55 @@ def test_get_lexeme_cards_both_source_and_target_word(
     assert card["target_lemma"] == "penda_test"
 
 
+def test_add_lexeme_card_alignment_scores_sorted_descending(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that alignment_scores are sorted by value in descending order."""
+    # Post a lexeme card with unsorted alignment_scores
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "test_alignment_sort",
+            "target_lemma": "sorted_target",
+            "source_language": "eng",
+            "target_language": "swh",
+            "alignment_scores": {"a": 0.3, "b": 0.9, "c": 0.5, "d": 0.1},
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Check that alignment_scores exist
+    assert data["alignment_scores"] is not None
+    assert len(data["alignment_scores"]) == 4
+
+    # Verify the order is descending by value
+    scores = list(data["alignment_scores"].items())
+    assert scores == [("b", 0.9), ("c", 0.5), ("a", 0.3), ("d", 0.1)]
+
+    # Also test update path - post again with different scores
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "test_alignment_sort",
+            "target_lemma": "sorted_target",
+            "source_language": "eng",
+            "target_language": "swh",
+            "alignment_scores": {"x": 0.2, "y": 0.8, "z": 0.5},
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+
+    # Verify the updated scores are also sorted descending
+    scores2 = list(data2["alignment_scores"].items())
+    assert scores2 == [("y", 0.8), ("z", 0.5), ("x", 0.2)]
+
+
 # Critique Issue Tests
 
 
