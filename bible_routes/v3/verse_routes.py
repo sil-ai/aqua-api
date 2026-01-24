@@ -1,7 +1,7 @@
 __version__ = "v3"
 
 import unicodedata
-from typing import Dict, List
+from typing import Any, Dict, List
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
@@ -17,6 +17,7 @@ from database.models import VerseText as VerseModel
 from models import RevisionChapters, VerseText
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_revision
+from utils.verse_range_utils import merge_verse_ranges
 
 router = fastapi.APIRouter()
 
@@ -571,6 +572,197 @@ async def get_words(
 
     # Return sorted list for consistent output
     return sorted(unique_words)
+
+
+def format_verse_range(first_vref: str, last_vref: str) -> str:
+    """
+    Convert a range of verse references to a formatted range string.
+
+    Examples:
+        format_verse_range("GEN 1:1", "GEN 1:3") -> "GEN 1:1-3"
+        format_verse_range("GEN 1:1", "GEN 2:3") -> "GEN 1:1-2:3"
+
+    Raises:
+        ValueError: If the verse references are from different books.
+    """
+    if first_vref == last_vref:
+        return first_vref
+
+    book_first, cv_first = first_vref.split(" ", 1)
+    book_last, cv_last = last_vref.split(" ", 1)
+
+    if book_first != book_last:
+        raise ValueError(f"Cannot format cross-book range: {first_vref} to {last_vref}")
+
+    chap_first, verse_first = cv_first.split(":")
+    chap_last, verse_last = cv_last.split(":")
+
+    if chap_first == chap_last:
+        return f"{book_first} {chap_first}:{verse_first}-{verse_last}"
+    else:
+        return f"{book_first} {cv_first}-{cv_last}"
+
+
+@router.get("/texts", response_model=Dict[str, List[VerseText]])
+async def get_texts(
+    revision_ids: List[int] = Query(..., min_items=2),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Gets verse texts for multiple revisions with range merging.
+
+    When any revision has a "<range>" marker for a verse, that verse is merged
+    with preceding verses for ALL revisions to keep them consistently aligned.
+
+    Input:
+    - revision_ids: List[int]
+    Description: List of revision IDs to fetch (minimum 2).
+
+    Returns:
+    Dict[str, List[VerseText]]: Dictionary keyed by revision_id (as string),
+    each containing a list of VerseText objects. Merged verses will have
+    verse_reference formatted as a range (e.g., "GEN 1:1-3").
+
+    Notes:
+    - The returned dictionary will include an entry for every requested
+      revision_id.
+    - If a revision contains no verses, its value will be an empty list.
+    - If a verse exists in one revision but not another, the missing revision
+      will have an empty string for that verse's text.
+    """
+    # Deduplicate revision IDs while preserving order
+    revision_ids = list(dict.fromkeys(revision_ids))
+    if len(revision_ids) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="At least 2 unique revision IDs are required.",
+        )
+
+    # Authorization check for all revisions
+    for revision_id in revision_ids:
+        if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized to access this revision.",
+            )
+
+    # Fetch all verses for all revision_ids in a single query
+    stmt = (
+        select(
+            VerseModel.id,
+            VerseModel.text,
+            VerseModel.verse_reference,
+            VerseModel.revision_id,
+            VerseModel.book,
+            VerseModel.chapter,
+            VerseModel.verse,
+        )
+        .join(
+            VerseReferenceModel,
+            VerseModel.verse_reference == VerseReferenceModel.full_verse_id,
+        )
+        .join(
+            ChapterReferenceModel,
+            VerseReferenceModel.chapter == ChapterReferenceModel.full_chapter_id,
+        )
+        .join(
+            BookReferenceModel,
+            VerseReferenceModel.book_reference == BookReferenceModel.abbreviation,
+        )
+        .where(VerseModel.revision_id.in_(revision_ids))
+        .order_by(
+            BookReferenceModel.number,
+            ChapterReferenceModel.number,
+            VerseReferenceModel.number,
+        )
+    )
+    result = await db.execute(stmt)
+    all_verses = result.all()
+
+    # Group by verse_reference: {vref -> {revision_id -> verse_row}}
+    vref_to_revisions: Dict[str, Dict[int, Any]] = {}
+    # Track ordering of vrefs (first seen order from canonical query)
+    vref_order: List[str] = []
+
+    for verse in all_verses:
+        vref = verse.verse_reference
+        if vref not in vref_to_revisions:
+            vref_to_revisions[vref] = {}
+            vref_order.append(vref)
+        vref_to_revisions[vref][verse.revision_id] = verse
+
+    # Create combined records with text field per revision
+    # Each record: {"vrefs": ["GEN 1:1"], "text_123": "...", "text_456": "..."}
+    text_fields = [f"text_{rev_id}" for rev_id in revision_ids]
+    combined_records: List[Dict] = []
+
+    for vref in vref_order:
+        rev_verses = vref_to_revisions[vref]
+        record = {"vrefs": [vref]}
+        for rev_id in revision_ids:
+            field_name = f"text_{rev_id}"
+            if rev_id in rev_verses:
+                record[field_name] = rev_verses[rev_id].text or ""
+            else:
+                # Verse doesn't exist in this revision - use empty string
+                record[field_name] = ""
+        combined_records.append(record)
+
+    # Run merge_verse_ranges - check ALL text fields for <range> markers
+    merged_records = merge_verse_ranges(
+        combined_records,
+        verse_ref_field="vrefs",
+        combine_fields=text_fields,
+        check_fields=text_fields,
+        is_range_marker=lambda x: x == "<range>",
+        # combine_function filters out empty strings and "<range>" markers:
+        # - empty strings represent "no verse text" for that revision
+        # - "<range>" is a structural marker, not actual text content
+        # Only actual text content is joined with spaces.
+        combine_function=lambda field, values: " ".join(
+            v for v in values if v and v != "<range>"
+        ),
+    )
+
+    # Split back to per-revision lists (use string keys for JSON compatibility)
+    # Pre-compute string keys and field names to avoid repeated string operations
+    rev_id_strs = [str(rev_id) for rev_id in revision_ids]
+    rev_field_names = [f"text_{rev_id}" for rev_id in revision_ids]
+    result_dict: Dict[str, List[VerseText]] = {key: [] for key in rev_id_strs}
+
+    for record in merged_records:
+        vrefs = record["vrefs"]
+        # Format verse_reference as range if multiple vrefs
+        if len(vrefs) == 1:
+            verse_ref = vrefs[0]
+        else:
+            verse_ref = format_verse_range(vrefs[0], vrefs[-1])
+
+        # Parse book/chapter/verse from first vref (done once per record)
+        first_vref = vrefs[0]
+        book, cv = first_vref.split(" ", 1)
+        chapter_str, verse_str = cv.split(":")
+        chapter = int(chapter_str)
+        verse_num = int(verse_str)
+
+        # Create VerseText for each revision
+        for rev_id, rev_id_str, field_name in zip(
+            revision_ids, rev_id_strs, rev_field_names
+        ):
+            result_dict[rev_id_str].append(
+                VerseText(
+                    id=None,
+                    text=record[field_name],
+                    verse_reference=verse_ref,
+                    revision_id=rev_id,
+                    book=book,
+                    chapter=chapter,
+                    verse=verse_num,
+                )
+            )
+
+    return result_dict
 
 
 @router.get("/chapters", response_model=RevisionChapters)
