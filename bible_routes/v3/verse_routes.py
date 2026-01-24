@@ -14,7 +14,7 @@ from database.models import ChapterReference as ChapterReferenceModel
 from database.models import UserDB as UserModel
 from database.models import VerseReference as VerseReferenceModel
 from database.models import VerseText as VerseModel
-from models import VerseText
+from models import RevisionChapters, VerseText
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_revision
 from utils.verse_range_utils import merge_verse_ranges
@@ -763,3 +763,54 @@ async def get_texts(
             )
 
     return result_dict
+
+
+@router.get("/chapters", response_model=RevisionChapters)
+async def get_available_chapters(
+    revision_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Gets all available book/chapter combinations for a revision.
+
+    Input:
+    - revision_id: int
+    Description: The unique identifier for the revision.
+
+    Returns:
+    - chapters: Dict[str, List[int]]
+    Description: A dictionary mapping book abbreviations (e.g., "GEN", "EXO")
+    to lists of available chapter numbers. Books are ordered canonically
+    (Genesis first) and chapters are sorted numerically within each book.
+    """
+    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this revision.",
+        )
+
+    # Query distinct book/chapter pairs, ordered by canonical book order and chapter number
+    # Note: PostgreSQL requires ORDER BY columns to appear in SELECT with DISTINCT
+    stmt = (
+        select(VerseModel.book, VerseModel.chapter, BookReferenceModel.number)
+        .distinct()
+        .join(
+            BookReferenceModel,
+            VerseModel.book == BookReferenceModel.abbreviation,
+        )
+        .where(VerseModel.revision_id == revision_id)
+        .order_by(BookReferenceModel.number, VerseModel.chapter)
+    )
+
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    # Build nested dict: {book: [chapters]}
+    chapters_dict: Dict[str, List[int]] = {}
+    for book, chapter, _ in rows:
+        if book not in chapters_dict:
+            chapters_dict[book] = []
+        chapters_dict[book].append(chapter)
+
+    return RevisionChapters(chapters=chapters_dict)

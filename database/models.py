@@ -392,6 +392,8 @@ class AgentLexemeCard(Base):
     senses = Column(JSONB)  # JSON array of senses
     # Note: examples are now stored in the agent_lexeme_card_examples table (see examples_rel relationship)
     confidence = Column(Numeric)
+    english_lemma = Column(Text)  # English lemma when source/target are not English
+    alignment_scores = Column(JSONB)  # Dict: {source_word: alignment_score}
     created_at = Column(TIMESTAMP, default=func.now())
     last_updated = Column(TIMESTAMP, default=func.now())
 
