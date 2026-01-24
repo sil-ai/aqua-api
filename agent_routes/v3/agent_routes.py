@@ -338,7 +338,7 @@ async def add_lexeme_card(
                 "examples": examples_list,
                 "confidence": existing_card.confidence,
                 "english_lemma": existing_card.english_lemma,
-                "alignment_scores": existing_card.alignment_scores,
+                "alignment_scores": sorted_alignment_scores,
                 "created_at": existing_card.created_at,
                 "last_updated": existing_card.last_updated,
             }
@@ -408,7 +408,7 @@ async def add_lexeme_card(
                 "examples": examples_list,
                 "confidence": lexeme_card.confidence,
                 "english_lemma": lexeme_card.english_lemma,
-                "alignment_scores": lexeme_card.alignment_scores,
+                "alignment_scores": sorted_alignment_scores,
                 "created_at": lexeme_card.created_at,
                 "last_updated": lexeme_card.last_updated,
             }
