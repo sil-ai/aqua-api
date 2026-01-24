@@ -12,10 +12,14 @@ from database.models import (
     AgentCritiqueIssue,
     AgentLexemeCard,
     AgentLexemeCardExample,
+    AgentTranslation,
     AgentWordAlignment,
 )
 from database.models import UserDB as UserModel
 from models import (
+    AgentTranslationBulkRequest,
+    AgentTranslationOut,
+    AgentTranslationStorageRequest,
     AgentWordAlignmentIn,
     AgentWordAlignmentOut,
     CritiqueIssueOut,
@@ -1039,6 +1043,374 @@ async def unresolve_critique_issue(
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Error unresolving critique issue: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.post("/agent/translation", response_model=AgentTranslationOut)
+async def add_agent_translation(
+    translation: AgentTranslationStorageRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Store a single agent-generated translation for a verse.
+
+    Input:
+    - assessment_id: int - The assessment ID
+    - vref: str - Verse reference (e.g., "JHN 1:1")
+    - draft_text: str (optional) - The draft translation text
+    - hyper_literal_translation: str (optional) - The hyper-literal back-translation
+    - literal_translation: str (optional) - The literal back-translation
+
+    The version is auto-incremented for each new translation of the same assessment+vref.
+
+    Returns:
+    - AgentTranslationOut: The created translation entry with id, version, and created_at
+    """
+    try:
+        from sqlalchemy import func, select
+
+        from database.models import Assessment
+
+        # Validate assessment exists
+        assessment_query = select(Assessment).where(
+            Assessment.id == translation.assessment_id
+        )
+        assessment_result = await db.execute(assessment_query)
+        assessment = assessment_result.scalar_one_or_none()
+
+        if not assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Assessment with id {translation.assessment_id} not found",
+            )
+
+        # Check user authorization for this assessment
+        if not await is_user_authorized_for_assessment(
+            current_user.id, translation.assessment_id, db
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized for this assessment",
+            )
+
+        # Get the next version number for this assessment+vref
+        version_query = select(func.max(AgentTranslation.version)).where(
+            AgentTranslation.assessment_id == translation.assessment_id,
+            AgentTranslation.vref == translation.vref,
+        )
+        version_result = await db.execute(version_query)
+        max_version = version_result.scalar()
+        next_version = (max_version or 0) + 1
+
+        # Create the translation record
+        agent_translation = AgentTranslation(
+            assessment_id=translation.assessment_id,
+            vref=translation.vref,
+            version=next_version,
+            draft_text=translation.draft_text,
+            hyper_literal_translation=translation.hyper_literal_translation,
+            literal_translation=translation.literal_translation,
+            english_translation=translation.english_translation,
+        )
+
+        db.add(agent_translation)
+        await db.commit()
+        await db.refresh(agent_translation)
+
+        return AgentTranslationOut.model_validate(agent_translation)
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error adding agent translation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.post("/agent/translations", response_model=list[AgentTranslationOut])
+async def add_agent_translations_bulk(
+    request: AgentTranslationBulkRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Store multiple agent-generated translations in bulk.
+
+    All translations in a single request get the same version number, which is
+    auto-incremented based on the max existing version for the assessment.
+
+    Input:
+    - assessment_id: int - The assessment ID
+    - translations: list - List of translations, each with:
+      - vref: str - Verse reference (e.g., "JHN 1:1")
+      - draft_text: str (optional) - The draft translation text
+      - hyper_literal_translation: str (optional) - The hyper-literal back-translation
+      - literal_translation: str (optional) - The literal back-translation
+
+    Returns:
+    - List[AgentTranslationOut]: List of created translation entries
+    """
+    try:
+        from sqlalchemy import func, select
+
+        from database.models import Assessment
+
+        # Validate assessment exists
+        assessment_query = select(Assessment).where(
+            Assessment.id == request.assessment_id
+        )
+        assessment_result = await db.execute(assessment_query)
+        assessment = assessment_result.scalar_one_or_none()
+
+        if not assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Assessment with id {request.assessment_id} not found",
+            )
+
+        # Check user authorization for this assessment
+        if not await is_user_authorized_for_assessment(
+            current_user.id, request.assessment_id, db
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized for this assessment",
+            )
+
+        # Get the next version number for this assessment (all translations get same version)
+        version_query = select(func.max(AgentTranslation.version)).where(
+            AgentTranslation.assessment_id == request.assessment_id
+        )
+        version_result = await db.execute(version_query)
+        max_version = version_result.scalar()
+        next_version = (max_version or 0) + 1
+
+        created_translations = []
+
+        # Create all translation records
+        for trans in request.translations:
+            agent_translation = AgentTranslation(
+                assessment_id=request.assessment_id,
+                vref=trans.vref,
+                version=next_version,
+                draft_text=trans.draft_text,
+                hyper_literal_translation=trans.hyper_literal_translation,
+                literal_translation=trans.literal_translation,
+                english_translation=trans.english_translation,
+            )
+            db.add(agent_translation)
+            created_translations.append(agent_translation)
+
+        await db.commit()
+
+        # Refresh all to get IDs and timestamps
+        for trans in created_translations:
+            await db.refresh(trans)
+
+        return [
+            AgentTranslationOut.model_validate(trans) for trans in created_translations
+        ]
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error adding agent translations in bulk: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.get("/agent/translations", response_model=list[AgentTranslationOut])
+async def get_agent_translations(
+    assessment_id: int,
+    vref: str = None,
+    first_vref: str = None,
+    last_vref: str = None,
+    version: int = None,
+    all_versions: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Get agent-generated translations for an assessment.
+
+    Query Parameters:
+    - assessment_id: int (required) - The assessment ID
+    - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
+    - first_vref: str (optional) - Start of verse range (inclusive)
+    - last_vref: str (optional) - End of verse range (inclusive)
+    - version: int (optional) - Filter by specific version number
+    - all_versions: bool (optional, default=False) - If True, return all versions;
+      if False, return only the latest version per vref
+
+    Returns:
+    - List[AgentTranslationOut]: List of matching translations, ordered by verse reference
+    """
+    try:
+        from sqlalchemy import and_, select
+
+        from database.models import Assessment, BookReference, VerseReference
+
+        # Validate assessment exists
+        assessment_query = select(Assessment).where(Assessment.id == assessment_id)
+        assessment_result = await db.execute(assessment_query)
+        assessment = assessment_result.scalar_one_or_none()
+
+        if not assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Assessment with id {assessment_id} not found",
+            )
+
+        # Check user authorization for this assessment
+        if not await is_user_authorized_for_assessment(
+            current_user.id, assessment_id, db
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized for this assessment",
+            )
+
+        # Build the query
+        if all_versions or version is not None:
+            # Return all versions or a specific version
+            query = select(AgentTranslation).where(
+                AgentTranslation.assessment_id == assessment_id
+            )
+        else:
+            # Return only the latest version per vref using a subquery
+            from sqlalchemy import func
+
+            # Subquery to get max version per vref
+            latest_version_subq = (
+                select(
+                    AgentTranslation.vref,
+                    func.max(AgentTranslation.version).label("max_version"),
+                )
+                .where(AgentTranslation.assessment_id == assessment_id)
+                .group_by(AgentTranslation.vref)
+                .subquery()
+            )
+
+            query = select(AgentTranslation).join(
+                latest_version_subq,
+                and_(
+                    AgentTranslation.vref == latest_version_subq.c.vref,
+                    AgentTranslation.version == latest_version_subq.c.max_version,
+                    AgentTranslation.assessment_id == assessment_id,
+                ),
+            )
+
+        # Filter by specific vref
+        if vref:
+            query = query.where(AgentTranslation.vref == vref)
+
+        # Filter by specific version
+        if version is not None:
+            query = query.where(AgentTranslation.version == version)
+
+        # Filter by verse range
+        if first_vref or last_vref:
+            # Join with verse_reference and book_reference for canonical ordering
+            query = query.join(
+                VerseReference,
+                AgentTranslation.vref == VerseReference.full_verse_id,
+            ).join(
+                BookReference,
+                VerseReference.book_reference == BookReference.abbreviation,
+            )
+
+            if first_vref:
+                # Get the book number, chapter, and verse for first_vref
+                first_vref_query = (
+                    select(
+                        BookReference.number.label("book_num"),
+                        VerseReference.chapter,
+                        VerseReference.number.label("verse_num"),
+                    )
+                    .join(
+                        VerseReference,
+                        VerseReference.book_reference == BookReference.abbreviation,
+                    )
+                    .where(VerseReference.full_verse_id == first_vref)
+                )
+                first_result = await db.execute(first_vref_query)
+                first_row = first_result.first()
+                if first_row:
+                    # Filter: book_num > first OR (book_num == first AND chapter > first_ch) OR ...
+                    query = query.where(
+                        (BookReference.number > first_row.book_num)
+                        | (
+                            (BookReference.number == first_row.book_num)
+                            & (VerseReference.chapter > first_row.chapter)
+                        )
+                        | (
+                            (BookReference.number == first_row.book_num)
+                            & (VerseReference.chapter == first_row.chapter)
+                            & (VerseReference.number >= first_row.verse_num)
+                        )
+                    )
+
+            if last_vref:
+                # Get the book number, chapter, and verse for last_vref
+                last_vref_query = (
+                    select(
+                        BookReference.number.label("book_num"),
+                        VerseReference.chapter,
+                        VerseReference.number.label("verse_num"),
+                    )
+                    .join(
+                        VerseReference,
+                        VerseReference.book_reference == BookReference.abbreviation,
+                    )
+                    .where(VerseReference.full_verse_id == last_vref)
+                )
+                last_result = await db.execute(last_vref_query)
+                last_row = last_result.first()
+                if last_row:
+                    query = query.where(
+                        (BookReference.number < last_row.book_num)
+                        | (
+                            (BookReference.number == last_row.book_num)
+                            & (VerseReference.chapter < last_row.chapter)
+                        )
+                        | (
+                            (BookReference.number == last_row.book_num)
+                            & (VerseReference.chapter == last_row.chapter)
+                            & (VerseReference.number <= last_row.verse_num)
+                        )
+                    )
+
+            # Order by canonical verse order
+            query = query.order_by(
+                BookReference.number,
+                VerseReference.chapter,
+                VerseReference.number,
+                AgentTranslation.version,
+            )
+        else:
+            # Order by vref and version
+            query = query.order_by(AgentTranslation.vref, AgentTranslation.version)
+
+        # Execute query
+        result = await db.execute(query)
+        translations = result.scalars().all()
+
+        return [AgentTranslationOut.model_validate(t) for t in translations]
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Error fetching agent translations: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",

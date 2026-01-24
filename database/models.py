@@ -553,3 +553,32 @@ class AgentCritiqueIssue(Base):
         Index("ix_agent_critique_issue_resolved", "is_resolved"),
         Index("ix_agent_critique_issue_resolved_by", "resolved_by_id"),
     )
+
+
+class AgentTranslation(Base):
+    __tablename__ = "agent_translations"
+
+    id = Column(Integer, primary_key=True)
+    assessment_id = Column(
+        Integer, ForeignKey("assessment.id", ondelete="CASCADE"), nullable=False
+    )
+    vref = Column(String(20), nullable=False)
+    version = Column(Integer, default=1, nullable=False)
+    draft_text = Column(Text, nullable=True)
+    hyper_literal_translation = Column(Text, nullable=True)
+    literal_translation = Column(Text, nullable=True)
+    english_translation = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, default=func.now())
+
+    assessment = relationship("Assessment")
+
+    __table_args__ = (
+        Index(
+            "ix_agent_translations_unique",
+            "assessment_id",
+            "vref",
+            "version",
+            unique=True,
+        ),
+        Index("ix_agent_translations_assessment_vref", "assessment_id", "vref"),
+    )

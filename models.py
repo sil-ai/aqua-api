@@ -704,3 +704,110 @@ class RevisionChapters(BaseModel):
             }
         },
     }
+
+
+# Agent Translation models
+class AgentTranslationIn(BaseModel):
+    """Single translation input for storage."""
+
+    vref: str
+    draft_text: Optional[str] = None
+    hyper_literal_translation: Optional[str] = None
+    literal_translation: Optional[str] = None
+    english_translation: Optional[str] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "vref": "JHN 1:1",
+                "draft_text": "Na mwanzo kulikuwa na Neno",
+                "hyper_literal_translation": "And beginning there-was with Word",
+                "literal_translation": "In the beginning was the Word",
+                "english_translation": "In the beginning was the Word",
+            }
+        }
+    }
+
+
+class AgentTranslationStorageRequest(BaseModel):
+    """Request to store a single translation."""
+
+    assessment_id: int
+    vref: str
+    draft_text: Optional[str] = None
+    hyper_literal_translation: Optional[str] = None
+    literal_translation: Optional[str] = None
+    english_translation: Optional[str] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "assessment_id": 123,
+                "vref": "JHN 1:1",
+                "draft_text": "Na mwanzo kulikuwa na Neno",
+                "hyper_literal_translation": "And beginning there-was with Word",
+                "literal_translation": "In the beginning was the Word",
+                "english_translation": "In the beginning was the Word",
+            }
+        }
+    }
+
+
+class AgentTranslationBulkRequest(BaseModel):
+    """Request to store multiple translations in bulk."""
+
+    assessment_id: int
+    translations: List[AgentTranslationIn]
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "assessment_id": 123,
+                "translations": [
+                    {
+                        "vref": "JHN 1:1",
+                        "draft_text": "Na mwanzo kulikuwa na Neno",
+                        "hyper_literal_translation": "And beginning there-was with Word",
+                        "literal_translation": "In the beginning was the Word",
+                    },
+                    {
+                        "vref": "JHN 1:2",
+                        "draft_text": "Huyu alikuwa mwanzoni na Mungu",
+                        "hyper_literal_translation": "This-one he-was beginning with God",
+                        "literal_translation": "He was in the beginning with God",
+                    },
+                ],
+            }
+        }
+    }
+
+
+class AgentTranslationOut(BaseModel):
+    """Response model for agent translation."""
+
+    id: int
+    assessment_id: int
+    vref: str
+    version: int
+    draft_text: Optional[str] = None
+    hyper_literal_translation: Optional[str] = None
+    literal_translation: Optional[str] = None
+    english_translation: Optional[str] = None
+    created_at: Optional[datetime.datetime] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "assessment_id": 123,
+                "vref": "JHN 1:1",
+                "version": 1,
+                "draft_text": "Na mwanzo kulikuwa na Neno",
+                "hyper_literal_translation": "And beginning there-was with Word",
+                "literal_translation": "In the beginning was the Word",
+                "english_translation": "In the beginning was the Word",
+                "created_at": "2024-06-01T12:00:00",
+            }
+        },
+        "from_attributes": True,
+    }
