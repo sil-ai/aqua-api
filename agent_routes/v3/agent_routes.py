@@ -1217,11 +1217,9 @@ async def add_agent_translations_bulk(
         max_version = version_result.scalar()
         next_version = (max_version or 0) + 1
 
-        created_translations = []
-
-        # Create all translation records with sanitized text fields
-        for trans in request.translations:
-            agent_translation = AgentTranslation(
+        # Build all translation objects with sanitized text fields
+        translations_to_insert = [
+            AgentTranslation(
                 assessment_id=request.assessment_id,
                 vref=trans.vref,
                 version=next_version,
@@ -1232,14 +1230,25 @@ async def add_agent_translations_bulk(
                 literal_translation=sanitize_text(trans.literal_translation),
                 english_translation=sanitize_text(trans.english_translation),
             )
-            db.add(agent_translation)
-            created_translations.append(agent_translation)
+            for trans in request.translations
+        ]
+
+        # Bulk insert all translations
+        db.add_all(translations_to_insert)
+        await db.flush()  # Flush to get IDs assigned
+
+        # Get the IDs that were just inserted
+        inserted_ids = [t.id for t in translations_to_insert]
 
         await db.commit()
 
-        # Refresh all to get IDs and timestamps
-        for trans in created_translations:
-            await db.refresh(trans)
+        # Fetch all inserted records in a single query
+        from sqlalchemy import select
+
+        result = await db.execute(
+            select(AgentTranslation).where(AgentTranslation.id.in_(inserted_ids))
+        )
+        created_translations = result.scalars().all()
 
         return [
             AgentTranslationOut.model_validate(trans) for trans in created_translations
