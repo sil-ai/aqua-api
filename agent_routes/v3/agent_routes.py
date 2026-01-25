@@ -40,6 +40,25 @@ logger = logging.getLogger(__name__)
 router = fastapi.APIRouter()
 
 
+def sanitize_text(text: str) -> str:
+    """Sanitize text fields to remove control characters.
+
+    LLM responses can contain literal newlines, tabs, or other control characters.
+    This function cleans them to prevent JSON parsing issues and database errors.
+    """
+    import re
+
+    if not text:
+        return text
+    # Replace newlines/carriage returns/tabs with spaces
+    text = text.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    # Remove other control characters (U+0000-U+001F, U+007F-U+009F) except space
+    text = re.sub(r"[\x00-\x1f\x7f-\x9f]", "", text)
+    # Collapse multiple spaces into one
+    text = re.sub(r" +", " ", text)
+    return text.strip()
+
+
 @router.post("/agent/word-alignment", response_model=AgentWordAlignmentOut)
 async def add_word_alignment(
     alignment: AgentWordAlignmentIn,
@@ -1106,15 +1125,21 @@ async def add_agent_translation(
         max_version = version_result.scalar()
         next_version = (max_version or 0) + 1
 
+        # Sanitize text fields to remove control characters
+        draft_text = sanitize_text(translation.draft_text)
+        hyper_literal = sanitize_text(translation.hyper_literal_translation)
+        literal = sanitize_text(translation.literal_translation)
+        english = sanitize_text(translation.english_translation)
+
         # Create the translation record
         agent_translation = AgentTranslation(
             assessment_id=translation.assessment_id,
             vref=translation.vref,
             version=next_version,
-            draft_text=translation.draft_text,
-            hyper_literal_translation=translation.hyper_literal_translation,
-            literal_translation=translation.literal_translation,
-            english_translation=translation.english_translation,
+            draft_text=draft_text,
+            hyper_literal_translation=hyper_literal,
+            literal_translation=literal,
+            english_translation=english,
         )
 
         db.add(agent_translation)
@@ -1194,16 +1219,18 @@ async def add_agent_translations_bulk(
 
         created_translations = []
 
-        # Create all translation records
+        # Create all translation records with sanitized text fields
         for trans in request.translations:
             agent_translation = AgentTranslation(
                 assessment_id=request.assessment_id,
                 vref=trans.vref,
                 version=next_version,
-                draft_text=trans.draft_text,
-                hyper_literal_translation=trans.hyper_literal_translation,
-                literal_translation=trans.literal_translation,
-                english_translation=trans.english_translation,
+                draft_text=sanitize_text(trans.draft_text),
+                hyper_literal_translation=sanitize_text(
+                    trans.hyper_literal_translation
+                ),
+                literal_translation=sanitize_text(trans.literal_translation),
+                english_translation=sanitize_text(trans.english_translation),
             )
             db.add(agent_translation)
             created_translations.append(agent_translation)
