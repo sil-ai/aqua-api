@@ -1,13 +1,10 @@
 import http
-import json
 import logging
 import time
 
 from jose import JWTError, jwt
 from pythonjsonlogger import jsonlogger
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.types import Message
 
 from security_routes.utilities import ALGORITHM, SECRET_KEY
 
@@ -30,14 +27,6 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             )
             logger.addHandler(handler)
             logger.setLevel(logging.INFO)
-
-    async def set_body(self, request: Request):
-        receive_ = await request._receive()
-
-        async def receive() -> Message:
-            return receive_
-
-        request._receive = receive
 
     def extract_username_from_token(self, authorization_header):
         if not authorization_header or not authorization_header.startswith("Bearer "):
