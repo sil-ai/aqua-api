@@ -3,7 +3,7 @@ __version__ = "v3"
 import logging
 
 import fastapi
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1157,6 +1157,13 @@ async def add_agent_translation(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
         ) from e
+
+
+@router.post("/agent/translations-test")
+async def test_bulk(request: Request):
+    """Debug endpoint - just echo the body size"""
+    body = await request.body()
+    return {"size": len(body), "received": True}
 
 
 @router.post("/agent/translations", response_model=list[AgentTranslationOut])
