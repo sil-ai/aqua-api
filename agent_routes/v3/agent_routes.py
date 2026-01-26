@@ -1217,37 +1217,32 @@ async def add_agent_translations_bulk(
         max_version = version_result.scalar()
         next_version = (max_version or 0) + 1
 
-        # Build data for bulk insert
-        translations_data = [
-            {
-                "assessment_id": request.assessment_id,
-                "vref": trans.vref,
-                "version": next_version,
-                "draft_text": sanitize_text(trans.draft_text),
-                "hyper_literal_translation": sanitize_text(
+        # Build ORM objects for bulk insert
+        translations_to_insert = [
+            AgentTranslation(
+                assessment_id=request.assessment_id,
+                vref=trans.vref,
+                version=next_version,
+                draft_text=sanitize_text(trans.draft_text),
+                hyper_literal_translation=sanitize_text(
                     trans.hyper_literal_translation
                 ),
-                "literal_translation": sanitize_text(trans.literal_translation),
-                "english_translation": sanitize_text(trans.english_translation),
-            }
+                literal_translation=sanitize_text(trans.literal_translation),
+                english_translation=sanitize_text(trans.english_translation),
+            )
             for trans in request.translations
         ]
 
-        # Bulk insert with RETURNING to get all results in single query
-        from sqlalchemy import insert
+        # Bulk insert
+        db.add_all(translations_to_insert)
+        await db.flush()  # Assigns IDs and created_at
 
-        stmt = (
-            insert(AgentTranslation)
-            .values(translations_data)
-            .returning(AgentTranslation)
-        )
-        result = await db.execute(stmt)
-        created_translations = result.scalars().all()
-
-        # Build response BEFORE commit to avoid object expiration
+        # Build response BEFORE commit to avoid object expiration/N+1 queries
         response = [
-            AgentTranslationOut.model_validate(trans) for trans in created_translations
+            AgentTranslationOut.model_validate(trans)
+            for trans in translations_to_insert
         ]
+
         await db.commit()
 
         return response
