@@ -1162,7 +1162,7 @@ async def add_agent_translation(
 @router.post("/agent/translations-test")
 async def test_bulk(request: Request):
     """Debug endpoint - just echo the body size"""
-    logger.info(f"Received bulk translation request")
+    logger.info("Received bulk translation request")
     body = await request.body()
     logger.info(f"Body size: {len(body)} bytes")
     return {"size": len(body), "received": True}
