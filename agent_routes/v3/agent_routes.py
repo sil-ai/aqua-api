@@ -1235,17 +1235,23 @@ async def add_agent_translations_bulk(
 
         # Bulk insert
         db.add_all(translations_to_insert)
-        await db.flush()  # Assigns IDs and created_at
+        await db.flush()  # Assigns IDs
 
-        # Build response BEFORE commit to avoid object expiration/N+1 queries
-        response = [
-            AgentTranslationOut.model_validate(trans)
-            for trans in translations_to_insert
-        ]
+        # Capture IDs before commit (objects will expire after commit)
+        inserted_ids = [t.id for t in translations_to_insert]
 
         await db.commit()
 
-        return response
+        # Fetch complete records with server-generated values (created_at)
+        # in a single query to avoid N+1
+        result = await db.execute(
+            select(AgentTranslation).where(AgentTranslation.id.in_(inserted_ids))
+        )
+        created_translations = result.scalars().all()
+
+        return [
+            AgentTranslationOut.model_validate(trans) for trans in created_translations
+        ]
 
     except HTTPException:
         raise
