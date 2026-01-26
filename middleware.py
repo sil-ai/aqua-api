@@ -77,13 +77,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         if is_sensitive_path or post_revision:
             body_str = "Sensitive Data - Not Logged"
         else:
-            await self.set_body(request)
-            body = await request.body()
-            try:
-                body_json = json.loads(body.decode())
-                body_str = json.dumps(body_json)
-            except json.JSONDecodeError:
-                body_str = body.decode() if body else "No Body"
+            body_str = "Non-sensitive Data - Body Logging Disabled"
 
         response = await call_next(request)
         process_time = (time.time() - start_time) * 1000
