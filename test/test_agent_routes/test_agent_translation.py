@@ -492,3 +492,262 @@ def test_get_translations_unauthorized_assessment(
     )
 
     assert response.status_code == 403
+
+
+def test_get_translations_requires_assessment_or_revision_id(client, regular_token1):
+    """Test that request without assessment_id or revision_id returns 400."""
+    response = client.get(
+        f"{prefix}/agent/translations",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "assessment_id or revision_id" in response.json()["detail"].lower()
+
+
+def test_get_translations_by_revision_id(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Test getting translations by revision_id across multiple assessments."""
+    from database.models import Assessment
+
+    # Create two assessments for the same revision
+    assessment1 = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    assessment2 = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add_all([assessment1, assessment2])
+    db_session.commit()
+    db_session.refresh(assessment1)
+    db_session.refresh(assessment2)
+
+    # Add translations to assessment1 (older)
+    import time
+
+    client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": assessment1.id,
+            "vref": "JHN 2:1",
+            "draft_text": "Assessment 1 - verse 1 (older)",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Small delay to ensure different created_at timestamps
+    time.sleep(0.1)
+
+    # Add translations to assessment2 (newer)
+    client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": assessment2.id,
+            "vref": "JHN 2:1",
+            "draft_text": "Assessment 2 - verse 1 (newer)",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Add a translation only in assessment1
+    client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": assessment1.id,
+            "vref": "JHN 2:2",
+            "draft_text": "Assessment 1 - verse 2 (only here)",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Query by revision_id
+    response = client.get(
+        f"{prefix}/agent/translations?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Find translations for JHN 2:1 and JHN 2:2
+    verse1_translations = [t for t in data if t["vref"] == "JHN 2:1"]
+    verse2_translations = [t for t in data if t["vref"] == "JHN 2:2"]
+
+    # Should return only one per vref (the latest by created_at)
+    assert len(verse1_translations) == 1
+    assert len(verse2_translations) == 1
+
+    # JHN 2:1 should be the newer one from assessment2
+    assert verse1_translations[0]["draft_text"] == "Assessment 2 - verse 1 (newer)"
+
+    # JHN 2:2 should be from assessment1 (only one exists)
+    assert verse2_translations[0]["draft_text"] == "Assessment 1 - verse 2 (only here)"
+
+
+def test_get_translations_by_revision_id_all_versions(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Test getting all versions by revision_id across assessments."""
+    from database.models import Assessment
+
+    # Create an assessment for the revision
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add(assessment)
+    db_session.commit()
+    db_session.refresh(assessment)
+
+    # Add multiple versions for a verse
+    for i in range(3):
+        client.post(
+            f"{prefix}/agent/translation",
+            json={
+                "assessment_id": assessment.id,
+                "vref": "JHN 2:3",
+                "draft_text": f"Version {i + 1}",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    # Query with all_versions=true
+    response = client.get(
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&vref=JHN 2:3&all_versions=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should return all 3 versions
+    assert len(data) >= 3
+    versions = sorted([t["version"] for t in data if t["vref"] == "JHN 2:3"])
+    assert versions == [1, 2, 3]
+
+
+def test_get_translations_assessment_id_takes_precedence(
+    client, regular_token1, test_assessment_id, test_revision_id, db_session
+):
+    """Test that when both assessment_id and revision_id are provided, assessment_id takes precedence."""
+    # Add a translation to the test assessment
+    client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": test_assessment_id,
+            "vref": "JHN 2:4",
+            "draft_text": "Test verse for precedence",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Query with both assessment_id and revision_id
+    response = client.get(
+        f"{prefix}/agent/translations?assessment_id={test_assessment_id}&revision_id={test_revision_id}&vref=JHN 2:4",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should return translation from the specific assessment
+    assert len(data) >= 1
+    assert any(t["assessment_id"] == test_assessment_id for t in data)
+
+
+def test_get_translations_by_revision_id_with_vref_filter(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Test filtering by vref when querying by revision_id."""
+    from database.models import Assessment
+
+    # Create an assessment
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add(assessment)
+    db_session.commit()
+    db_session.refresh(assessment)
+
+    # Add translations for multiple verses
+    for i in range(5, 8):
+        client.post(
+            f"{prefix}/agent/translation",
+            json={
+                "assessment_id": assessment.id,
+                "vref": f"JHN 2:{i}",
+                "draft_text": f"Verse {i}",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    # Query by revision_id with vref filter
+    response = client.get(
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&vref=JHN 2:6",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should only return JHN 2:6
+    assert all(t["vref"] == "JHN 2:6" for t in data)
+
+
+def test_get_translations_by_revision_id_with_verse_range(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Test filtering by verse range when querying by revision_id."""
+    from database.models import Assessment
+
+    # Create an assessment
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add(assessment)
+    db_session.commit()
+    db_session.refresh(assessment)
+
+    # Add translations for a range of verses
+    for i in range(10, 15):
+        client.post(
+            f"{prefix}/agent/translation",
+            json={
+                "assessment_id": assessment.id,
+                "vref": f"JHN 2:{i}",
+                "draft_text": f"Verse {i}",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    # Query by revision_id with verse range
+    response = client.get(
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&first_vref=JHN 2:11&last_vref=JHN 2:13",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should only return verses 11, 12, 13
+    vrefs = [t["vref"] for t in data]
+    assert "JHN 2:11" in vrefs
+    assert "JHN 2:12" in vrefs
+    assert "JHN 2:13" in vrefs
+    assert "JHN 2:10" not in vrefs
+    assert "JHN 2:14" not in vrefs
