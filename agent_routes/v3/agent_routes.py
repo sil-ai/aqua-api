@@ -1273,12 +1273,12 @@ async def add_agent_translations_bulk(
 
 @router.get("/agent/translations", response_model=list[AgentTranslationOut])
 async def get_agent_translations(
-    assessment_id: int = None,
-    revision_id: int = None,
-    vref: str = None,
-    first_vref: str = None,
-    last_vref: str = None,
-    version: int = None,
+    assessment_id: int | None = None,
+    revision_id: int | None = None,
+    vref: str | None = None,
+    first_vref: str | None = None,
+    last_vref: str | None = None,
+    version: int | None = None,
     all_versions: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
