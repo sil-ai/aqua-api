@@ -1273,7 +1273,8 @@ async def add_agent_translations_bulk(
 
 @router.get("/agent/translations", response_model=list[AgentTranslationOut])
 async def get_agent_translations(
-    assessment_id: int,
+    assessment_id: int = None,
+    revision_id: int = None,
     vref: str = None,
     first_vref: str = None,
     last_vref: str = None,
@@ -1283,10 +1284,14 @@ async def get_agent_translations(
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Get agent-generated translations for an assessment.
+    Get agent-generated translations for an assessment or revision.
 
     Query Parameters:
-    - assessment_id: int (required) - The assessment ID
+    - assessment_id: int (optional) - The assessment ID. If provided, returns
+      translations for this specific assessment (with authorization check).
+    - revision_id: int (optional) - The revision ID. If provided without assessment_id,
+      returns the latest translation per vref (by created_at) across all assessments
+      for that revision (no authorization check).
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - first_vref: str (optional) - Start of verse range (inclusive)
     - last_vref: str (optional) - End of verse range (inclusive)
@@ -1294,63 +1299,110 @@ async def get_agent_translations(
     - all_versions: bool (optional, default=False) - If True, return all versions;
       if False, return only the latest version per vref
 
+    Note: At least one of assessment_id or revision_id must be provided.
+    If both are provided, assessment_id takes precedence.
+
     Returns:
     - List[AgentTranslationOut]: List of matching translations, ordered by verse reference
     """
     try:
-        from sqlalchemy import and_, select
+        from sqlalchemy import and_, func, select
 
         from database.models import Assessment, BookReference, VerseReference
 
-        # Validate assessment exists
-        assessment_query = select(Assessment).where(Assessment.id == assessment_id)
-        assessment_result = await db.execute(assessment_query)
-        assessment = assessment_result.scalar_one_or_none()
-
-        if not assessment:
+        # Require at least one of assessment_id or revision_id
+        if assessment_id is None and revision_id is None:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Assessment with id {assessment_id} not found",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Either assessment_id or revision_id must be provided",
             )
 
-        # Check user authorization for this assessment
-        if not await is_user_authorized_for_assessment(
-            current_user.id, assessment_id, db
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User not authorized for this assessment",
-            )
+        # If assessment_id is provided, use assessment-specific logic with auth check
+        if assessment_id is not None:
+            # Validate assessment exists
+            assessment_query = select(Assessment).where(Assessment.id == assessment_id)
+            assessment_result = await db.execute(assessment_query)
+            assessment = assessment_result.scalar_one_or_none()
 
-        # Build the query
-        if all_versions or version is not None:
-            # Return all versions or a specific version
-            query = select(AgentTranslation).where(
-                AgentTranslation.assessment_id == assessment_id
-            )
-        else:
-            # Return only the latest version per vref using a subquery
-            from sqlalchemy import func
-
-            # Subquery to get max version per vref
-            latest_version_subq = (
-                select(
-                    AgentTranslation.vref,
-                    func.max(AgentTranslation.version).label("max_version"),
+            if not assessment:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Assessment with id {assessment_id} not found",
                 )
-                .where(AgentTranslation.assessment_id == assessment_id)
-                .group_by(AgentTranslation.vref)
-                .subquery()
-            )
 
-            query = select(AgentTranslation).join(
-                latest_version_subq,
-                and_(
-                    AgentTranslation.vref == latest_version_subq.c.vref,
-                    AgentTranslation.version == latest_version_subq.c.max_version,
-                    AgentTranslation.assessment_id == assessment_id,
-                ),
-            )
+            # Check user authorization for this assessment
+            if not await is_user_authorized_for_assessment(
+                current_user.id, assessment_id, db
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="User not authorized for this assessment",
+                )
+
+            # Build the query for assessment_id
+            if all_versions or version is not None:
+                # Return all versions or a specific version
+                query = select(AgentTranslation).where(
+                    AgentTranslation.assessment_id == assessment_id
+                )
+            else:
+                # Return only the latest version per vref using a subquery
+                # Subquery to get max version per vref
+                latest_version_subq = (
+                    select(
+                        AgentTranslation.vref,
+                        func.max(AgentTranslation.version).label("max_version"),
+                    )
+                    .where(AgentTranslation.assessment_id == assessment_id)
+                    .group_by(AgentTranslation.vref)
+                    .subquery()
+                )
+
+                query = select(AgentTranslation).join(
+                    latest_version_subq,
+                    and_(
+                        AgentTranslation.vref == latest_version_subq.c.vref,
+                        AgentTranslation.version == latest_version_subq.c.max_version,
+                        AgentTranslation.assessment_id == assessment_id,
+                    ),
+                )
+        else:
+            # revision_id is provided without assessment_id
+            # Return latest translation per vref by created_at across all assessments
+            # No authorization check needed
+
+            if all_versions or version is not None:
+                # Return all versions or a specific version across all assessments
+                query = (
+                    select(AgentTranslation)
+                    .join(Assessment, Assessment.id == AgentTranslation.assessment_id)
+                    .where(Assessment.revision_id == revision_id)
+                )
+            else:
+                # Return only the latest translation per vref by created_at
+                # Subquery: rank translations by created_at (desc) per vref
+                ranked_subq = (
+                    select(
+                        AgentTranslation.id,
+                        func.row_number()
+                        .over(
+                            partition_by=AgentTranslation.vref,
+                            order_by=AgentTranslation.created_at.desc(),
+                        )
+                        .label("rn"),
+                    )
+                    .join(Assessment, Assessment.id == AgentTranslation.assessment_id)
+                    .where(Assessment.revision_id == revision_id)
+                    .subquery()
+                )
+
+                query = select(AgentTranslation).join(
+                    ranked_subq,
+                    and_(
+                        AgentTranslation.id == ranked_subq.c.id,
+                        ranked_subq.c.rn == 1,
+                    ),
+                )
 
         # Filter by specific vref
         if vref:
