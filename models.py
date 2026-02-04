@@ -202,6 +202,24 @@ class AssessmentType(Enum):
     agent_critique = "agent-critique"
 
 
+class RealtimeAssessmentType(Enum):
+    semantic_similarity = "semantic-similarity"
+    word_count_difference = "word-count-difference"
+    char_count_difference = "char-count-difference"
+
+
+class RealtimeAssessmentRequest(BaseModel):
+    verse_1: str
+    verse_2: str
+    type: RealtimeAssessmentType
+
+    model_config = {"use_enum_values": True}
+
+
+class RealtimeAssessmentResponse(BaseModel):
+    score: float
+
+
 class AssessmentIn(BaseModel):
     id: Optional[int] = None
     revision_id: int
