@@ -424,6 +424,7 @@ class AgentWordAlignmentIn(BaseModel):
     target_word: str
     source_language: str
     target_language: str
+    score: float = 0.0
     is_human_verified: bool = False
 
     model_config = {
@@ -433,6 +434,7 @@ class AgentWordAlignmentIn(BaseModel):
                 "target_word": "amor",
                 "source_language": "eng",
                 "target_language": "spa",
+                "score": 0.95,
                 "is_human_verified": False,
             }
         }
@@ -445,6 +447,7 @@ class AgentWordAlignmentOut(BaseModel):
     target_word: str
     source_language: str
     target_language: str
+    score: float
     is_human_verified: bool
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None
@@ -457,6 +460,7 @@ class AgentWordAlignmentOut(BaseModel):
                 "target_word": "amor",
                 "source_language": "eng",
                 "target_language": "spa",
+                "score": 0.95,
                 "is_human_verified": False,
                 "created_at": "2024-06-01T12:00:00",
                 "last_updated": "2024-06-01T12:00:00",
@@ -464,6 +468,19 @@ class AgentWordAlignmentOut(BaseModel):
         },
         "from_attributes": True,
     }
+
+
+class AgentWordAlignmentBulkItem(BaseModel):
+    source_word: str
+    target_word: str
+    score: float = 0.0
+    is_human_verified: bool = False
+
+
+class AgentWordAlignmentBulkRequest(BaseModel):
+    source_language: str  # ISO 639-3
+    target_language: str  # ISO 639-3
+    alignments: list[AgentWordAlignmentBulkItem]
 
 
 class LexemeCardIn(BaseModel):

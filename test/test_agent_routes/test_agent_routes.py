@@ -400,6 +400,275 @@ def test_get_word_alignments_unauthorized(client):
     assert response.status_code == 401
 
 
+def test_add_word_alignment_with_score(client, regular_token1, db_session):
+    """Test adding a word alignment with a score field."""
+    alignment_data = {
+        "source_word": "faith",
+        "target_word": "imani",
+        "source_language": "eng",
+        "target_language": "swh",
+        "score": 0.87,
+        "is_human_verified": False,
+    }
+
+    response = client.post(
+        f"{prefix}/agent/word-alignment",
+        json=alignment_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["source_word"] == "faith"
+    assert data["target_word"] == "imani"
+    assert data["score"] == 0.87
+    assert data["is_human_verified"] is False
+
+    # Verify in database
+    alignment = (
+        db_session.query(AgentWordAlignment)
+        .filter(AgentWordAlignment.id == data["id"])
+        .first()
+    )
+    assert alignment.score == 0.87
+
+
+def test_add_word_alignment_default_score(client, regular_token1, db_session):
+    """Test that score defaults to 0.0 when not provided."""
+    alignment_data = {
+        "source_word": "grace",
+        "target_word": "neema",
+        "source_language": "eng",
+        "target_language": "swh",
+    }
+
+    response = client.post(
+        f"{prefix}/agent/word-alignment",
+        json=alignment_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["score"] == 0.0
+
+
+def test_bulk_word_alignment_insert(client, regular_token1, db_session):
+    """Test bulk inserting new word alignments."""
+    bulk_data = {
+        "source_language": "eng",
+        "target_language": "swh",
+        "alignments": [
+            {"source_word": "water", "target_word": "maji", "score": 0.95},
+            {"source_word": "fire", "target_word": "moto", "score": 0.92},
+            {"source_word": "earth", "target_word": "ardhi", "score": 0.88},
+        ],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/word-alignment/bulk",
+        json=bulk_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 3
+
+    # Verify scores
+    scores = {item["source_word"]: item["score"] for item in data}
+    assert scores["water"] == 0.95
+    assert scores["fire"] == 0.92
+    assert scores["earth"] == 0.88
+
+
+def test_bulk_word_alignment_upsert(client, regular_token1, db_session):
+    """Test that bulk endpoint updates existing alignments."""
+    # First, insert some alignments
+    initial_data = {
+        "source_language": "eng",
+        "target_language": "swh",
+        "alignments": [
+            {"source_word": "sky", "target_word": "anga", "score": 0.70},
+            {"source_word": "cloud", "target_word": "wingu", "score": 0.75},
+        ],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/word-alignment/bulk",
+        json=initial_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    initial_results = response.json()
+    initial_ids = {item["source_word"]: item["id"] for item in initial_results}
+
+    # Now upsert with updated scores and a new alignment
+    update_data = {
+        "source_language": "eng",
+        "target_language": "swh",
+        "alignments": [
+            {"source_word": "sky", "target_word": "anga", "score": 0.95},  # Update
+            {"source_word": "cloud", "target_word": "wingu", "score": 0.90},  # Update
+            {"source_word": "rain", "target_word": "mvua", "score": 0.85},  # New
+        ],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/word-alignment/bulk",
+        json=update_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 3
+
+    # Verify scores were updated
+    results = {item["source_word"]: item for item in data}
+    assert results["sky"]["score"] == 0.95
+    assert results["cloud"]["score"] == 0.90
+    assert results["rain"]["score"] == 0.85
+
+    # Verify IDs are preserved for updated records (same record was updated)
+    assert results["sky"]["id"] == initial_ids["sky"]
+    assert results["cloud"]["id"] == initial_ids["cloud"]
+
+
+def test_bulk_word_alignment_empty(client, regular_token1):
+    """Test bulk endpoint with empty alignments list."""
+    bulk_data = {
+        "source_language": "eng",
+        "target_language": "swh",
+        "alignments": [],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/word-alignment/bulk",
+        json=bulk_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_get_all_word_alignments(client, regular_token1, db_session):
+    """Test getting all word alignments for a language pair."""
+    # Insert some alignments with different scores using swh->eng direction
+    # to differentiate from other tests that use eng->swh
+    bulk_data = {
+        "source_language": "swh",
+        "target_language": "eng",
+        "alignments": [
+            {"source_word": "habari", "target_word": "hello", "score": 0.99},
+            {"source_word": "kwaheri", "target_word": "goodbye", "score": 0.95},
+            {"source_word": "asante", "target_word": "thanks", "score": 0.97},
+        ],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/word-alignment/bulk",
+        json=bulk_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+
+    # Get all alignments
+    response = client.get(
+        f"{prefix}/agent/word-alignment/all?source_language=swh&target_language=eng",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 3
+
+    # Verify ordering by score descending
+    scores = [item["score"] for item in data]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_get_all_word_alignments_with_pagination(client, regular_token1, db_session):
+    """Test getting word alignments with pagination."""
+    # First, clear any existing eng->swh alignments that might interfere
+    # by using unique source words
+    bulk_data = {
+        "source_language": "eng",
+        "target_language": "swh",
+        "alignments": [
+            {"source_word": "pagination_one", "target_word": "moja_pag", "score": 0.91},
+            {
+                "source_word": "pagination_two",
+                "target_word": "mbili_pag",
+                "score": 0.92,
+            },
+            {
+                "source_word": "pagination_three",
+                "target_word": "tatu_pag",
+                "score": 0.93,
+            },
+            {"source_word": "pagination_four", "target_word": "nne_pag", "score": 0.94},
+            {
+                "source_word": "pagination_five",
+                "target_word": "tano_pag",
+                "score": 0.95,
+            },
+        ],
+    }
+
+    response = client.post(
+        f"{prefix}/agent/word-alignment/bulk",
+        json=bulk_data,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+
+    # Get page 1 with page_size=2 - filter by looking at results
+    response = client.get(
+        f"{prefix}/agent/word-alignment/all?source_language=eng&target_language=swh&page=1&page_size=2",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    # Should be highest scores first (ordered by score desc)
+    assert data[0]["score"] >= data[1]["score"]
+
+    # Get page 2
+    response = client.get(
+        f"{prefix}/agent/word-alignment/all?source_language=eng&target_language=swh&page=2&page_size=2",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    # Should still be ordered
+    assert data[0]["score"] >= data[1]["score"]
+
+
+def test_get_all_word_alignments_invalid_page(client, regular_token1):
+    """Test that invalid page parameter returns error."""
+    response = client.get(
+        f"{prefix}/agent/word-alignment/all?source_language=eng&target_language=swh&page=0&page_size=10",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Page must be >= 1" in response.json()["detail"]
+
+
+def test_get_all_word_alignments_unauthorized(client):
+    """Test that getting all word alignments requires authentication."""
+    response = client.get(
+        f"{prefix}/agent/word-alignment/all?source_language=eng&target_language=swh"
+    )
+
+    assert response.status_code == 401
+
+
 # Lexeme Card Tests
 
 

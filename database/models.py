@@ -4,6 +4,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -487,6 +488,7 @@ class AgentWordAlignment(Base):
     target_word = Column(Text, nullable=False)
     source_language = Column(String(3), ForeignKey("iso_language.iso639"))
     target_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    score = Column(Float, nullable=False, default=0.0)
     is_human_verified = Column(Boolean, default=False)  # False until human-verified
     created_at = Column(TIMESTAMP, default=func.now())
     last_updated = Column(TIMESTAMP, default=func.now())

@@ -20,6 +20,7 @@ from models import (
     AgentTranslationBulkRequest,
     AgentTranslationOut,
     AgentTranslationStorageRequest,
+    AgentWordAlignmentBulkRequest,
     AgentWordAlignmentIn,
     AgentWordAlignmentOut,
     CritiqueIssueOut,
@@ -85,6 +86,7 @@ async def add_word_alignment(
             target_word=alignment.target_word,
             source_language=alignment.source_language,
             target_language=alignment.target_language,
+            score=alignment.score,
             is_human_verified=alignment.is_human_verified,
         )
 
@@ -97,6 +99,182 @@ async def add_word_alignment(
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Error adding word alignment: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.post("/agent/word-alignment/bulk", response_model=list[AgentWordAlignmentOut])
+async def add_word_alignments_bulk(
+    request: AgentWordAlignmentBulkRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Bulk upsert word alignments.
+
+    For each alignment in the request:
+    - If an alignment with the same (source_word, target_word, source_language, target_language) exists,
+      update its score and is_human_verified fields.
+    - Otherwise, insert a new alignment.
+
+    Input:
+    - source_language: str - ISO 639-3 code for source language
+    - target_language: str - ISO 639-3 code for target language
+    - alignments: list - List of alignment items, each with:
+      - source_word: str - The source language word
+      - target_word: str - The target language word
+      - score: float - NLLB alignment confidence score (default: 0.0)
+      - is_human_verified: bool - Whether human-verified (default: False)
+
+    Returns:
+    - List[AgentWordAlignmentOut]: List of created/updated word alignment entries
+    """
+    try:
+        from sqlalchemy import and_, select
+        from sqlalchemy.dialects.postgresql import insert
+
+        if not request.alignments:
+            return []
+
+        # Build list of (source_word, target_word) tuples to check for existing
+        word_pairs = [
+            (item.source_word, item.target_word) for item in request.alignments
+        ]
+
+        # Query existing alignments for this language pair
+        existing_query = select(AgentWordAlignment).where(
+            and_(
+                AgentWordAlignment.source_language == request.source_language,
+                AgentWordAlignment.target_language == request.target_language,
+            )
+        )
+        existing_result = await db.execute(existing_query)
+        existing_alignments = existing_result.scalars().all()
+
+        # Create lookup dict: (source_word, target_word) -> existing alignment
+        existing_lookup = {
+            (a.source_word, a.target_word): a for a in existing_alignments
+        }
+
+        to_insert = []
+        updated_ids = []
+
+        for item in request.alignments:
+            key = (item.source_word, item.target_word)
+            if key in existing_lookup:
+                # Update existing record
+                existing = existing_lookup[key]
+                existing.score = item.score
+                existing.is_human_verified = item.is_human_verified
+                updated_ids.append(existing.id)
+            else:
+                # Insert new record
+                to_insert.append(
+                    AgentWordAlignment(
+                        source_word=item.source_word,
+                        target_word=item.target_word,
+                        source_language=request.source_language,
+                        target_language=request.target_language,
+                        score=item.score,
+                        is_human_verified=item.is_human_verified,
+                    )
+                )
+
+        # Bulk insert new records
+        if to_insert:
+            db.add_all(to_insert)
+            await db.flush()  # Assigns IDs
+            inserted_ids = [a.id for a in to_insert]
+        else:
+            inserted_ids = []
+
+        await db.commit()
+
+        # Fetch all affected records
+        all_ids = updated_ids + inserted_ids
+        if all_ids:
+            result = await db.execute(
+                select(AgentWordAlignment).where(AgentWordAlignment.id.in_(all_ids))
+            )
+            alignments = result.scalars().all()
+            return [AgentWordAlignmentOut.model_validate(a) for a in alignments]
+        return []
+
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error in bulk word alignment upsert: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.get("/agent/word-alignment/all", response_model=list[AgentWordAlignmentOut])
+async def get_all_word_alignments(
+    source_language: str,
+    target_language: str,
+    page: int | None = None,
+    page_size: int | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Get all word alignments for a language pair.
+
+    Input:
+    - source_language: str - ISO 639-3 code for source language (required)
+    - target_language: str - ISO 639-3 code for target language (required)
+    - page: int (optional) - Page number (1-indexed)
+    - page_size: int (optional) - Number of results per page
+
+    If both page and page_size are provided, pagination is applied.
+    Otherwise, all results are returned.
+
+    Results are ordered by score descending.
+
+    Returns:
+    - List[AgentWordAlignmentOut]: List of word alignment entries
+    """
+    try:
+        from sqlalchemy import and_, select
+
+        query = (
+            select(AgentWordAlignment)
+            .where(
+                and_(
+                    AgentWordAlignment.source_language == source_language,
+                    AgentWordAlignment.target_language == target_language,
+                )
+            )
+            .order_by(AgentWordAlignment.score.desc())
+        )
+
+        # Apply pagination if both params provided
+        if page is not None and page_size is not None:
+            if page < 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Page must be >= 1",
+                )
+            if page_size < 1:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Page size must be >= 1",
+                )
+            offset = (page - 1) * page_size
+            query = query.offset(offset).limit(page_size)
+
+        result = await db.execute(query)
+        alignments = result.scalars().all()
+
+        return [AgentWordAlignmentOut.model_validate(a) for a in alignments]
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Error getting all word alignments: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
