@@ -4,6 +4,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -487,11 +488,21 @@ class AgentWordAlignment(Base):
     target_word = Column(Text, nullable=False)
     source_language = Column(String(3), ForeignKey("iso_language.iso639"))
     target_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    score = Column(Float, nullable=False, default=0.0)
     is_human_verified = Column(Boolean, default=False)  # False until human-verified
     created_at = Column(TIMESTAMP, default=func.now())
-    last_updated = Column(TIMESTAMP, default=func.now())
+    last_updated = Column(TIMESTAMP, default=func.now(), onupdate=func.now())
 
     __table_args__ = (
+        # Unique constraint for atomic upserts
+        Index(
+            "ux_agent_word_alignments_lang_words",
+            "source_language",
+            "target_language",
+            "source_word",
+            "target_word",
+            unique=True,
+        ),
         # Index for source word lookups by language pair
         Index(
             "ix_agent_word_alignments_lang_source",
@@ -505,6 +516,13 @@ class AgentWordAlignment(Base):
             "source_language",
             "target_language",
             "target_word",
+        ),
+        # Index for efficient score-ordered queries
+        Index(
+            "ix_agent_word_alignments_lang_score",
+            "source_language",
+            "target_language",
+            score.desc(),
         ),
     )
 
