@@ -74,6 +74,7 @@ async def add_word_alignment(
     - target_word: str - The target language word
     - source_language: str - ISO 639-3 code for source language
     - target_language: str - ISO 639-3 code for target language
+    - score: float - NLLB alignment confidence score (default: 0.0)
     - is_human_verified: bool - Whether the alignment is human-verified (default: False)
 
     Returns:
@@ -116,7 +117,7 @@ async def add_word_alignments_bulk(
 
     For each alignment in the request:
     - If an alignment with the same (source_word, target_word, source_language, target_language) exists,
-      update its score and is_human_verified fields.
+      update its score, is_human_verified, and last_updated fields.
     - Otherwise, insert a new alignment.
 
     Input:
@@ -132,73 +133,55 @@ async def add_word_alignments_bulk(
     - List[AgentWordAlignmentOut]: List of created/updated word alignment entries
     """
     try:
-        from sqlalchemy import and_, select
+        from sqlalchemy import select
         from sqlalchemy.dialects.postgresql import insert
+        from sqlalchemy.sql import func
 
         if not request.alignments:
             return []
 
-        # Build list of (source_word, target_word) tuples to check for existing
-        word_pairs = [
-            (item.source_word, item.target_word) for item in request.alignments
+        # Prepare records for bulk upsert
+        records = [
+            {
+                "source_word": item.source_word,
+                "target_word": item.target_word,
+                "source_language": request.source_language,
+                "target_language": request.target_language,
+                "score": item.score,
+                "is_human_verified": item.is_human_verified,
+            }
+            for item in request.alignments
         ]
 
-        # Query existing alignments for this language pair
-        existing_query = select(AgentWordAlignment).where(
-            and_(
-                AgentWordAlignment.source_language == request.source_language,
-                AgentWordAlignment.target_language == request.target_language,
-            )
-        )
-        existing_result = await db.execute(existing_query)
-        existing_alignments = existing_result.scalars().all()
+        # Use INSERT...ON CONFLICT DO UPDATE for atomic upsert
+        insert_stmt = insert(AgentWordAlignment).values(records)
 
-        # Create lookup dict: (source_word, target_word) -> existing alignment
-        existing_lookup = {
-            (a.source_word, a.target_word): a for a in existing_alignments
-        }
+        upsert_stmt = insert_stmt.on_conflict_do_update(
+            index_elements=[
+                "source_language",
+                "target_language",
+                "source_word",
+                "target_word",
+            ],
+            set_={
+                "score": insert_stmt.excluded.score,
+                "is_human_verified": insert_stmt.excluded.is_human_verified,
+                "last_updated": func.now(),
+            },
+        ).returning(AgentWordAlignment.id)
 
-        to_insert = []
-        updated_ids = []
-
-        for item in request.alignments:
-            key = (item.source_word, item.target_word)
-            if key in existing_lookup:
-                # Update existing record
-                existing = existing_lookup[key]
-                existing.score = item.score
-                existing.is_human_verified = item.is_human_verified
-                updated_ids.append(existing.id)
-            else:
-                # Insert new record
-                to_insert.append(
-                    AgentWordAlignment(
-                        source_word=item.source_word,
-                        target_word=item.target_word,
-                        source_language=request.source_language,
-                        target_language=request.target_language,
-                        score=item.score,
-                        is_human_verified=item.is_human_verified,
-                    )
-                )
-
-        # Bulk insert new records
-        if to_insert:
-            db.add_all(to_insert)
-            await db.flush()  # Assigns IDs
-            inserted_ids = [a.id for a in to_insert]
-        else:
-            inserted_ids = []
-
+        result = await db.execute(upsert_stmt)
         await db.commit()
 
-        # Fetch all affected records
-        all_ids = updated_ids + inserted_ids
-        if all_ids:
-            result = await db.execute(
-                select(AgentWordAlignment).where(AgentWordAlignment.id.in_(all_ids))
+        # Fetch complete records by IDs
+        affected_ids = [row[0] for row in result.fetchall()]
+        if affected_ids:
+            fetch_result = await db.execute(
+                select(AgentWordAlignment).where(
+                    AgentWordAlignment.id.in_(affected_ids)
+                )
             )
-            alignments = result.scalars().all()
+            alignments = fetch_result.scalars().all()
             return [AgentWordAlignmentOut.model_validate(a) for a in alignments]
         return []
 

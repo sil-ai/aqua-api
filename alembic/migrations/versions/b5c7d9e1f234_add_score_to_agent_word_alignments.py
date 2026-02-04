@@ -26,7 +26,32 @@ def upgrade() -> None:
         sa.Column("score", sa.Float(), nullable=False, server_default="0.0"),
     )
 
+    # Add unique constraint for atomic upserts
+    op.create_index(
+        "ux_agent_word_alignments_lang_words",
+        "agent_word_alignments",
+        ["source_language", "target_language", "source_word", "target_word"],
+        unique=True,
+    )
+
+    # Add index for efficient score-ordered queries
+    op.create_index(
+        "ix_agent_word_alignments_lang_score",
+        "agent_word_alignments",
+        ["source_language", "target_language", sa.text("score DESC")],
+    )
+
 
 def downgrade() -> None:
+    # Drop indexes
+    op.drop_index(
+        "ix_agent_word_alignments_lang_score",
+        table_name="agent_word_alignments",
+    )
+    op.drop_index(
+        "ux_agent_word_alignments_lang_words",
+        table_name="agent_word_alignments",
+    )
+
     # Drop the score column
     op.drop_column("agent_word_alignments", "score")
