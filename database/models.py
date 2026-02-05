@@ -400,9 +400,9 @@ class AgentLexemeCard(Base):
 
     __table_args__ = (
         # Unique constraint to prevent duplicate cards
+        # Each target_lemma can only have one card per language pair
         Index(
-            "ix_agent_lexeme_cards_unique",
-            "source_lemma",
+            "ix_agent_lexeme_cards_unique_v2",
             "target_lemma",
             "source_language",
             "target_language",
