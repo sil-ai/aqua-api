@@ -2708,6 +2708,429 @@ def test_add_lexeme_card_alignment_scores_sorted_descending(
     assert scores2 == [("y", 0.8), ("z", 0.5), ("x", 0.2)]
 
 
+# Lexeme Card PATCH Tests
+
+
+def test_patch_lexeme_card_by_id_append_surface_forms(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by ID with list_mode=append adds surface forms."""
+    # Create initial card
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "patch_test",
+            "target_lemma": "kipimo",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["kipimo", "vipimo"],
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # PATCH to append surface forms
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=append",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "surface_forms": ["mapimo", "kipimaji"],
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    assert data["id"] == card_id
+    assert len(data["surface_forms"]) == 4
+    assert set(data["surface_forms"]) == {"kipimo", "vipimo", "mapimo", "kipimaji"}
+
+
+def test_patch_lexeme_card_by_id_replace_surface_forms(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by ID with list_mode=replace overwrites surface forms."""
+    # Create initial card
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "patch_replace_test",
+            "target_lemma": "badilisha",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["badilisha", "anabadilisha", "walibadilisha"],
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # PATCH to replace surface forms
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "surface_forms": ["kubadilisha", "badilika"],
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    assert len(data["surface_forms"]) == 2
+    assert set(data["surface_forms"]) == {"kubadilisha", "badilika"}
+
+
+def test_patch_lexeme_card_by_id_merge_surface_forms(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by ID with list_mode=merge deduplicates case-insensitively."""
+    # Create initial card
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "merge_test",
+            "target_lemma": "unganisha",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["Unganisha", "anaunganisha"],
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # PATCH to merge surface forms (case-insensitive dedupe)
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=merge",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "surface_forms": ["unganisha", "ANAUNGANISHA", "waliunganisha"],
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    # "unganisha" and "ANAUNGANISHA" should be skipped (case-insensitive match)
+    assert len(data["surface_forms"]) == 3
+    # Original casing preserved
+    assert "Unganisha" in data["surface_forms"]
+    assert "anaunganisha" in data["surface_forms"]
+    assert "waliunganisha" in data["surface_forms"]
+
+
+def test_patch_lexeme_card_by_id_scalar_fields(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by ID updates scalar fields only when provided."""
+    # Create initial card
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "scalar_test",
+            "target_lemma": "skala",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "noun",
+            "confidence": 0.5,
+            "english_lemma": "scale",
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # PATCH only confidence, leave other fields unchanged
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "confidence": 0.95,
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    assert data["confidence"] == 0.95
+    # Other fields should remain unchanged
+    assert data["pos"] == "noun"
+    assert data["english_lemma"] == "scale"
+    assert data["source_lemma"] == "scalar_test"
+
+
+def test_patch_lexeme_card_by_id_alignment_scores_merge(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by ID merges alignment_scores and removes keys with null values."""
+    # Create initial card
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "align_test",
+            "target_lemma": "pangilia",
+            "source_language": "eng",
+            "target_language": "swh",
+            "alignment_scores": {"word1": 0.8, "word2": 0.5, "word3": 0.3},
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # PATCH: update word1, remove word2 (null), add word4
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "alignment_scores": {"word1": 0.9, "word2": None, "word4": 0.7},
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    # word2 should be removed, word1 updated, word4 added
+    assert "word2" not in data["alignment_scores"]
+    assert data["alignment_scores"]["word1"] == 0.9
+    assert data["alignment_scores"]["word3"] == 0.3
+    assert data["alignment_scores"]["word4"] == 0.7
+
+
+def test_patch_lexeme_card_by_id_examples_with_revision(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by ID adds examples with revision_id."""
+    # Create initial card
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "example_test",
+            "target_lemma": "mfano",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [{"source": "First example", "target": "Mfano wa kwanza"}],
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # PATCH to add more examples (must include revision_id in each)
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "examples": [
+                {
+                    "source": "Second example",
+                    "target": "Mfano wa pili",
+                    "revision_id": test_revision_id,
+                }
+            ],
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    assert len(data["examples"]) == 2
+    assert data["examples"][0]["source"] == "First example"
+    assert data["examples"][1]["source"] == "Second example"
+
+
+def test_patch_lexeme_card_by_id_examples_missing_revision_id(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by ID fails when examples are provided without revision_id."""
+    # Create initial card
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "fail_example_test",
+            "target_lemma": "mfano_fail",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # PATCH with examples missing revision_id - should fail
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "examples": [
+                {"source": "Bad example", "target": "Mfano mbaya"}
+            ],  # Missing revision_id
+        },
+    )
+
+    assert patch_response.status_code == 400
+    assert "revision_id" in patch_response.json()["detail"]
+
+
+def test_patch_lexeme_card_by_id_not_found(client, regular_token1, db_session):
+    """Test PATCH by ID returns 404 for non-existent card."""
+    patch_response = client.patch(
+        "/v3/agent/lexeme-card/999999",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "confidence": 0.5,
+        },
+    )
+
+    assert patch_response.status_code == 404
+
+
+def test_patch_lexeme_card_by_id_unauthorized(client, test_revision_id):
+    """Test PATCH by ID requires authentication."""
+    patch_response = client.patch(
+        "/v3/agent/lexeme-card/1",
+        json={
+            "confidence": 0.5,
+        },
+    )
+
+    assert patch_response.status_code == 401
+
+
+def test_patch_lexeme_card_by_lemma_success(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by lemma lookup works correctly."""
+    # Create initial card
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "lemma_lookup_test",
+            "target_lemma": "tafuta",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.6,
+        },
+    )
+    assert response.status_code == 200
+
+    # PATCH by lemma lookup
+    patch_response = client.patch(
+        "/v3/agent/lexeme-card"
+        "?target_lemma=tafuta"
+        "&source_language=eng"
+        "&target_language=swh"
+        "&source_lemma=lemma_lookup_test",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "confidence": 0.9,
+            "surface_forms": ["tafuta", "anatafuta"],
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    assert data["confidence"] == 0.9
+    assert data["target_lemma"] == "tafuta"
+    assert len(data["surface_forms"]) == 2
+
+
+def test_patch_lexeme_card_by_lemma_not_found(client, regular_token1, db_session):
+    """Test PATCH by lemma lookup returns 404 for non-existent card."""
+    patch_response = client.patch(
+        "/v3/agent/lexeme-card"
+        "?target_lemma=nonexistent"
+        "&source_language=eng"
+        "&target_language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "confidence": 0.5,
+        },
+    )
+
+    assert patch_response.status_code == 404
+
+
+def test_patch_lexeme_card_omitted_fields_unchanged(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that omitted fields are not changed by PATCH."""
+    # Create initial card with all fields
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "omit_test",
+            "target_lemma": "acha",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "verb",
+            "confidence": 0.75,
+            "english_lemma": "leave",
+            "surface_forms": ["acha", "anacha"],
+            "source_surface_forms": ["leave", "leaves", "left"],
+            "senses": [{"definition": "to leave behind"}],
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # PATCH with only one field
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "pos": "noun",  # Only change this
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    # Changed field
+    assert data["pos"] == "noun"
+    # Unchanged fields
+    assert data["confidence"] == 0.75
+    assert data["english_lemma"] == "leave"
+    assert data["source_lemma"] == "omit_test"
+    assert data["target_lemma"] == "acha"
+    assert set(data["surface_forms"]) == {"acha", "anacha"}
+    assert set(data["source_surface_forms"]) == {"leave", "leaves", "left"}
+    assert len(data["senses"]) == 1
+
+
+def test_patch_lexeme_card_explicit_null_clears_field(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that explicitly setting a field to null clears it."""
+    # Create initial card
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "null_test",
+            "target_lemma": "futa",
+            "source_language": "eng",
+            "target_language": "swh",
+            "pos": "verb",
+            "english_lemma": "clear",
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # PATCH to set english_lemma to null
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "english_lemma": None,
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    assert data["english_lemma"] is None
+    # Other fields unchanged
+    assert data["pos"] == "verb"
+
+
 # Critique Issue Tests
 
 

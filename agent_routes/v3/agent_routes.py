@@ -28,6 +28,8 @@ from models import (
     CritiqueStorageRequest,
     LexemeCardIn,
     LexemeCardOut,
+    LexemeCardPatch,
+    ListMode,
 )
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import (
@@ -601,6 +603,327 @@ async def add_lexeme_card(
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Error adding/updating lexeme card: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+def _merge_lists_case_insensitive(existing: list, new: list) -> list:
+    """Merge two string lists, deduplicating case-insensitively while preserving originals."""
+    if not existing:
+        existing = []
+    if not new:
+        return list(existing)
+
+    seen = {x.lower() for x in existing}
+    result = list(existing)
+    for item in new:
+        if item.lower() not in seen:
+            result.append(item)
+            seen.add(item.lower())
+    return result
+
+
+async def _apply_lexeme_card_patch(
+    card: AgentLexemeCard,
+    patch_data: LexemeCardPatch,
+    list_mode: ListMode,
+    authorized_revision_ids: set[int],
+    db: AsyncSession,
+) -> LexemeCardOut:
+    """Apply patch data to a lexeme card and return the updated card."""
+    from sqlalchemy import delete, select
+    from sqlalchemy.sql import func
+
+    provided_fields = patch_data.model_fields_set
+
+    # Scalar fields - update if provided
+    if "source_lemma" in provided_fields:
+        card.source_lemma = patch_data.source_lemma
+    if "target_lemma" in provided_fields:
+        card.target_lemma = patch_data.target_lemma
+    if "pos" in provided_fields:
+        card.pos = patch_data.pos
+    if "confidence" in provided_fields:
+        card.confidence = patch_data.confidence
+    if "english_lemma" in provided_fields:
+        card.english_lemma = patch_data.english_lemma
+
+    # Handle alignment_scores (dict) - merge keys, null value removes key
+    if "alignment_scores" in provided_fields:
+        if patch_data.alignment_scores is None:
+            card.alignment_scores = None
+        else:
+            # Make a copy to avoid mutation issues and ensure SQLAlchemy detects change
+            existing_scores = (
+                dict(card.alignment_scores) if card.alignment_scores else {}
+            )
+            for key, value in patch_data.alignment_scores.items():
+                if value is None:
+                    # Remove the key if value is null
+                    existing_scores.pop(key, None)
+                else:
+                    existing_scores[key] = value
+            # Sort by value descending and assign new dict
+            if existing_scores:
+                card.alignment_scores = dict(
+                    sorted(existing_scores.items(), key=lambda x: x[1], reverse=True)
+                )
+            else:
+                card.alignment_scores = None
+
+    # Handle list fields based on list_mode
+    if "surface_forms" in provided_fields:
+        if list_mode == ListMode.replace:
+            card.surface_forms = patch_data.surface_forms
+        elif list_mode == ListMode.merge:
+            card.surface_forms = _merge_lists_case_insensitive(
+                card.surface_forms, patch_data.surface_forms
+            )
+        else:  # append
+            existing = card.surface_forms or []
+            new = patch_data.surface_forms or []
+            card.surface_forms = existing + new
+
+    if "source_surface_forms" in provided_fields:
+        if list_mode == ListMode.replace:
+            card.source_surface_forms = patch_data.source_surface_forms
+        elif list_mode == ListMode.merge:
+            card.source_surface_forms = _merge_lists_case_insensitive(
+                card.source_surface_forms, patch_data.source_surface_forms
+            )
+        else:  # append
+            existing = card.source_surface_forms or []
+            new = patch_data.source_surface_forms or []
+            card.source_surface_forms = existing + new
+
+    if "senses" in provided_fields:
+        if list_mode == ListMode.replace:
+            card.senses = patch_data.senses
+        else:  # append or merge (merge doesn't dedupe dicts meaningfully)
+            existing = card.senses or []
+            new = patch_data.senses or []
+            card.senses = existing + new
+
+    # Handle examples - each must include revision_id
+    if "examples" in provided_fields and patch_data.examples is not None:
+        # Group examples by revision_id
+        examples_by_revision: dict[int, list[dict]] = {}
+        for example in patch_data.examples:
+            revision_id = example.get("revision_id")
+            if revision_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Each example must include a revision_id",
+                )
+            if revision_id not in examples_by_revision:
+                examples_by_revision[revision_id] = []
+            examples_by_revision[revision_id].append(example)
+
+        for revision_id, examples in examples_by_revision.items():
+            if list_mode == ListMode.replace:
+                # Delete existing examples for this revision, then add new ones
+                delete_query = delete(AgentLexemeCardExample).where(
+                    AgentLexemeCardExample.lexeme_card_id == card.id,
+                    AgentLexemeCardExample.revision_id == revision_id,
+                )
+                await db.execute(delete_query)
+
+            # Add new examples
+            for example in examples:
+                example_obj = AgentLexemeCardExample(
+                    lexeme_card_id=card.id,
+                    revision_id=revision_id,
+                    source_text=example.get("source", ""),
+                    target_text=example.get("target", ""),
+                )
+                db.add(example_obj)
+
+    # Update last_updated timestamp
+    card.last_updated = func.now()
+
+    await db.commit()
+    await db.refresh(card)
+
+    # Query examples for authorized revisions
+    examples_list = []
+    if authorized_revision_ids:
+        examples_query = (
+            select(AgentLexemeCardExample)
+            .where(
+                AgentLexemeCardExample.lexeme_card_id == card.id,
+                AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
+            )
+            .order_by(AgentLexemeCardExample.id)
+        )
+        examples_result = await db.execute(examples_query)
+        examples_objs = examples_result.scalars().all()
+        examples_list = [
+            {"source": ex.source_text, "target": ex.target_text} for ex in examples_objs
+        ]
+
+    # Build response
+    card_dict = {
+        "id": card.id,
+        "source_lemma": card.source_lemma,
+        "target_lemma": card.target_lemma,
+        "source_language": card.source_language,
+        "target_language": card.target_language,
+        "pos": card.pos,
+        "surface_forms": card.surface_forms,
+        "source_surface_forms": card.source_surface_forms,
+        "senses": card.senses,
+        "examples": examples_list,
+        "confidence": card.confidence,
+        "english_lemma": card.english_lemma,
+        "alignment_scores": card.alignment_scores,
+        "created_at": card.created_at,
+        "last_updated": card.last_updated,
+    }
+    return LexemeCardOut.model_validate(card_dict)
+
+
+@router.patch("/agent/lexeme-card/{card_id}", response_model=LexemeCardOut)
+async def patch_lexeme_card_by_id(
+    card_id: int,
+    patch_data: LexemeCardPatch,
+    list_mode: ListMode = ListMode.append,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Partially update a lexeme card by ID.
+
+    Path Parameters:
+    - card_id: int - The ID of the lexeme card to update
+
+    Query Parameters:
+    - list_mode: str (optional, default="append") - How to handle list fields:
+      - "append": Add new items to existing lists (no deduplication)
+      - "replace": Overwrite entire lists
+      - "merge": Append + deduplicate case-insensitively (for string lists like
+        surface_forms); preserves original casing of existing items
+
+    Note: The POST endpoint's append behavior differs - it uses case-sensitive
+    deduplication via set(). Use list_mode="merge" here for smart deduplication.
+
+    Body:
+    - LexemeCardPatch: Partial update data. Only provided fields are updated.
+      - source_lemma, target_lemma, pos, confidence, english_lemma: Scalar fields
+      - surface_forms, source_surface_forms: String list fields
+      - senses: List of sense dictionaries
+      - examples: List of example dicts, each must include revision_id
+      - alignment_scores: Dict - keys merge with existing; null value removes key
+
+    Returns:
+    - LexemeCardOut: The updated lexeme card
+    """
+    try:
+        from sqlalchemy import select
+
+        # Get authorized revision IDs for filtering examples
+        authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
+
+        # Fetch the card
+        query = select(AgentLexemeCard).where(AgentLexemeCard.id == card_id)
+        result = await db.execute(query)
+        card = result.scalar_one_or_none()
+
+        if not card:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Lexeme card with id {card_id} not found",
+            )
+
+        return await _apply_lexeme_card_patch(
+            card, patch_data, list_mode, authorized_revision_ids, db
+        )
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error patching lexeme card: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.patch("/agent/lexeme-card", response_model=LexemeCardOut)
+async def patch_lexeme_card_by_lemma(
+    patch_data: LexemeCardPatch,
+    target_lemma: str,
+    source_language: str,
+    target_language: str,
+    source_lemma: str = None,
+    list_mode: ListMode = ListMode.append,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Partially update a lexeme card by lemma lookup.
+
+    Query Parameters:
+    - target_lemma: str (required) - The target language lemma
+    - source_language: str (required) - ISO 639-3 code for source language
+    - target_language: str (required) - ISO 639-3 code for target language
+    - source_lemma: str (optional) - The source language lemma
+    - list_mode: str (optional, default="append") - How to handle list fields:
+      - "append": Add new items to existing lists (no deduplication)
+      - "replace": Overwrite entire lists
+      - "merge": Append + deduplicate case-insensitively (for string lists like
+        surface_forms); preserves original casing of existing items
+
+    Note: The POST endpoint's append behavior differs - it uses case-sensitive
+    deduplication via set(). Use list_mode="merge" here for smart deduplication.
+
+    Body:
+    - LexemeCardPatch: Partial update data. Only provided fields are updated.
+      - source_lemma, target_lemma, pos, confidence, english_lemma: Scalar fields
+      - surface_forms, source_surface_forms: String list fields
+      - senses: List of sense dictionaries
+      - examples: List of example dicts, each must include revision_id
+      - alignment_scores: Dict - keys merge with existing; null value removes key
+
+    Returns:
+    - LexemeCardOut: The updated lexeme card
+    """
+    try:
+        from sqlalchemy import select
+
+        # Get authorized revision IDs for filtering examples
+        authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
+
+        # Fetch the card by lemma lookup
+        query = select(AgentLexemeCard).where(
+            AgentLexemeCard.source_lemma == source_lemma,
+            AgentLexemeCard.target_lemma == target_lemma,
+            AgentLexemeCard.source_language == source_language,
+            AgentLexemeCard.target_language == target_language,
+        )
+        result = await db.execute(query)
+        card = result.scalar_one_or_none()
+
+        if not card:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Lexeme card not found for source_lemma={source_lemma}, "
+                f"target_lemma={target_lemma}, "
+                f"source_language={source_language}, "
+                f"target_language={target_language}",
+            )
+
+        return await _apply_lexeme_card_patch(
+            card, patch_data, list_mode, authorized_revision_ids, db
+        )
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error patching lexeme card by lemma: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
