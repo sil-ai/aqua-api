@@ -1,8 +1,8 @@
 import datetime
 from enum import Enum
-from typing import List, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 class VersionUpdate(BaseModel):
@@ -44,7 +44,7 @@ class VersionIn(BaseModel):
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
     is_reference: Optional[bool] = False
-    add_to_groups: Optional[List[int]] = None
+    add_to_groups: List[int]
 
     model_config = {
         "json_schema_extra": {
@@ -54,6 +54,7 @@ class VersionIn(BaseModel):
                 "iso_script": "Latn",
                 "abbreviation": "english_-_king_james_version",
                 "machineTranslation": False,
+                "add_to_groups": [1],
             }
         },
     }
@@ -207,6 +208,10 @@ class AssessmentIn(BaseModel):
     reference_id: Optional[int] = None
     type: AssessmentType
     train: Optional[bool] = None
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
+    first_vref: Optional[str] = None
+    last_vref: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
@@ -411,3 +416,410 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username: Optional[str] = None
+
+
+# Agent Word Alignment models
+class AgentWordAlignmentIn(BaseModel):
+    source_word: str
+    target_word: str
+    source_language: str
+    target_language: str
+    score: float = 0.0
+    is_human_verified: bool = False
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_word": "love",
+                "target_word": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "score": 0.95,
+                "is_human_verified": False,
+            }
+        }
+    }
+
+
+class AgentWordAlignmentOut(BaseModel):
+    id: int
+    source_word: str
+    target_word: str
+    source_language: str
+    target_language: str
+    score: float
+    is_human_verified: bool
+    created_at: Optional[datetime.datetime] = None
+    last_updated: Optional[datetime.datetime] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "source_word": "love",
+                "target_word": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "score": 0.95,
+                "is_human_verified": False,
+                "created_at": "2024-06-01T12:00:00",
+                "last_updated": "2024-06-01T12:00:00",
+            }
+        },
+        "from_attributes": True,
+    }
+
+
+class AgentWordAlignmentBulkItem(BaseModel):
+    source_word: str
+    target_word: str
+    score: float = 0.0
+    is_human_verified: bool = False
+
+
+class AgentWordAlignmentBulkRequest(BaseModel):
+    source_language: str  # ISO 639-3
+    target_language: str  # ISO 639-3
+    alignments: list[AgentWordAlignmentBulkItem]
+
+
+class LexemeCardIn(BaseModel):
+    source_lemma: Optional[str] = None
+    target_lemma: str
+    source_language: str
+    target_language: str
+    pos: Optional[str] = None
+    surface_forms: Optional[list] = None
+    source_surface_forms: Optional[list] = None  # Source language surface forms
+    senses: Optional[list] = None
+    examples: Optional[list] = None  # List of example dicts for the given revision_id
+    confidence: Optional[float] = None
+    english_lemma: Optional[str] = None
+    alignment_scores: Optional[Dict[str, float]] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_lemma": "love",
+                "target_lemma": "amor",
+                "source_language": "eng",
+                "target_language": "spa",
+                "pos": "verb",
+                "surface_forms": [
+                    "amor",
+                    "amo",
+                    "amas",
+                    "ama",
+                    "amamos",
+                    "anan",
+                ],  # Target language surface forms
+                "source_surface_forms": [
+                    "love",
+                    "loves",
+                    "loved",
+                    "loving",
+                ],  # Source language surface forms
+                "senses": [
+                    {
+                        "definition": "to feel deep affection",
+                        "examples": ["I love you"],
+                    },
+                    {"definition": "to enjoy greatly", "examples": ["I love pizza"]},
+                ],
+                "examples": [
+                    {"source": "I love you", "target": "Te amo"},
+                    {"source": "They love music", "target": "Aman la música"},
+                ],
+                "confidence": 0.95,
+                "english_lemma": "love",
+                "alignment_scores": {"love": 0.92, "you": 0.88},
+            }
+        }
+    }
+
+
+class LexemeCardOut(BaseModel):
+    id: int
+    source_lemma: Optional[str] = None
+    target_lemma: str
+    source_language: str
+    target_language: str
+    pos: Optional[str] = None
+    surface_forms: Optional[list] = None
+    source_surface_forms: Optional[list] = None  # Source language surface forms
+    senses: Optional[list] = None
+    examples: Optional[list] = None  # Filtered list for the requested revision_id
+    confidence: Optional[float] = None
+    english_lemma: Optional[str] = None
+    alignment_scores: Optional[Dict[str, float]] = None
+    created_at: Optional[datetime.datetime] = None
+    last_updated: Optional[datetime.datetime] = None
+
+
+class ListMode(str, Enum):
+    """Mode for handling list fields in PATCH operations."""
+
+    append = "append"  # Add new items to existing list
+    replace = "replace"  # Overwrite entire list
+    merge = "merge"  # Append + deduplicate (case-insensitive for string lists)
+
+
+class LexemeCardPatch(BaseModel):
+    """Partial update model for lexeme cards - all fields optional."""
+
+    source_lemma: Optional[str] = None
+    target_lemma: Optional[str] = None
+    pos: Optional[str] = None
+    confidence: Optional[float] = None
+    english_lemma: Optional[str] = None
+    surface_forms: Optional[List[str]] = None
+    source_surface_forms: Optional[List[str]] = None
+    senses: Optional[List[dict]] = None
+    examples: Optional[List[dict]] = None  # Each dict has: source, target, revision_id
+    # Dict values can be float or None (None means remove that key)
+    alignment_scores: Optional[Dict[str, Optional[float]]] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "surface_forms": ["new_form1", "new_form2"],
+                "examples": [
+                    {
+                        "source": "Example source",
+                        "target": "Example target",
+                        "revision_id": 123,
+                    }
+                ],
+            }
+        }
+    }
+
+
+class CritiqueIssueIn(BaseModel):
+    """Individual critique issue for input."""
+
+    text: Optional[str] = None
+    comments: Optional[str] = None
+    severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "text": "in the beginning",
+                "comments": "Missing key phrase from source text",
+                "severity": 4,
+            }
+        }
+    }
+
+
+class CritiqueStorageRequest(BaseModel):
+    """Request to store critique results for a verse."""
+
+    assessment_id: int
+    vref: str
+    omissions: list[CritiqueIssueIn] = []
+    additions: list[CritiqueIssueIn] = []
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "assessment_id": 123,
+                "vref": "JHN 1:1",
+                "omissions": [
+                    {
+                        "text": "in the beginning",
+                        "comments": "Missing key phrase",
+                        "severity": 4,
+                    }
+                ],
+                "additions": [
+                    {"text": "extra words", "comments": "Not in source", "severity": 2}
+                ],
+            }
+        }
+    }
+
+
+class CritiqueIssueOut(BaseModel):
+    """Individual critique issue for output."""
+
+    id: int
+    assessment_id: int
+    vref: str
+    book: str
+    chapter: int
+    verse: int
+    issue_type: Literal["omission", "addition"]
+    text: Optional[str] = None
+    comments: Optional[str] = None
+    severity: int
+    is_resolved: bool = False
+    resolved_by_id: Optional[int] = None
+    resolved_at: Optional[datetime.datetime] = None
+    resolution_notes: Optional[str] = None
+    created_at: Optional[datetime.datetime] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "assessment_id": 123,
+                "vref": "JHN 1:1",
+                "book": "JHN",
+                "chapter": 1,
+                "verse": 1,
+                "issue_type": "omission",
+                "text": "in the beginning",
+                "comments": "Missing key phrase from source text",
+                "severity": 4,
+                "is_resolved": False,
+                "resolved_by_id": None,
+                "resolved_at": None,
+                "resolution_notes": None,
+                "created_at": "2024-06-01T12:00:00",
+            }
+        },
+        "from_attributes": True,
+    }
+
+
+class CritiqueIssueResolutionRequest(BaseModel):
+    """Request to resolve a critique issue."""
+
+    resolution_notes: Optional[str] = Field(
+        None, description="Optional notes about how the issue was resolved"
+    )
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "resolution_notes": "Issue was addressed by updating the translation in the revision.",
+            }
+        },
+        "from_attributes": True,
+    }
+
+
+class RevisionChapters(BaseModel):
+    """Response model for available chapters in a revision."""
+
+    chapters: Dict[str, List[int]]
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "chapters": {
+                    "GEN": [1, 2, 3, 4, 5],
+                    "EXO": [1, 2, 3],
+                }
+            }
+        },
+    }
+
+
+# Agent Translation models
+class AgentTranslationIn(BaseModel):
+    """Single translation input for storage."""
+
+    vref: str
+    draft_text: Optional[str] = None
+    hyper_literal_translation: Optional[str] = None
+    literal_translation: Optional[str] = None
+    english_translation: Optional[str] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "vref": "JHN 1:1",
+                "draft_text": "Na mwanzo kulikuwa na Neno",
+                "hyper_literal_translation": "And beginning there-was with Word",
+                "literal_translation": "In the beginning was the Word",
+                "english_translation": "In the beginning was the Word",
+            }
+        }
+    }
+
+
+class AgentTranslationStorageRequest(BaseModel):
+    """Request to store a single translation."""
+
+    assessment_id: int
+    vref: str
+    draft_text: Optional[str] = None
+    hyper_literal_translation: Optional[str] = None
+    literal_translation: Optional[str] = None
+    english_translation: Optional[str] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "assessment_id": 123,
+                "vref": "JHN 1:1",
+                "draft_text": "Na mwanzo kulikuwa na Neno",
+                "hyper_literal_translation": "And beginning there-was with Word",
+                "literal_translation": "In the beginning was the Word",
+                "english_translation": "In the beginning was the Word",
+            }
+        }
+    }
+
+
+class AgentTranslationBulkRequest(BaseModel):
+    """Request to store multiple translations in bulk."""
+
+    assessment_id: int
+    translations: List[AgentTranslationIn]
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "assessment_id": 123,
+                "translations": [
+                    {
+                        "vref": "JHN 1:1",
+                        "draft_text": "Na mwanzo kulikuwa na Neno",
+                        "hyper_literal_translation": "And beginning there-was with Word",
+                        "literal_translation": "In the beginning was the Word",
+                    },
+                    {
+                        "vref": "JHN 1:2",
+                        "draft_text": "Huyu alikuwa mwanzoni na Mungu",
+                        "hyper_literal_translation": "This-one he-was beginning with God",
+                        "literal_translation": "He was in the beginning with God",
+                    },
+                ],
+            }
+        }
+    }
+
+
+class AgentTranslationOut(BaseModel):
+    """Response model for agent translation."""
+
+    id: int
+    assessment_id: int
+    vref: str
+    version: int
+    draft_text: Optional[str] = None
+    hyper_literal_translation: Optional[str] = None
+    literal_translation: Optional[str] = None
+    english_translation: Optional[str] = None
+    created_at: Optional[datetime.datetime] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": 1,
+                "assessment_id": 123,
+                "vref": "JHN 1:1",
+                "version": 1,
+                "draft_text": "Na mwanzo kulikuwa na Neno",
+                "hyper_literal_translation": "And beginning there-was with Word",
+                "literal_translation": "In the beginning was the Word",
+                "english_translation": "In the beginning was the Word",
+                "created_at": "2024-06-01T12:00:00",
+            }
+        },
+        "from_attributes": True,
+    }

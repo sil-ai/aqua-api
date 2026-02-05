@@ -114,9 +114,9 @@ async def add_version(
     Description: Whether the version is machine translated.
     - is_reference: bool
     Description: Whether the version is a reference version.
-    - add_to_groups: Optional[List[int]]
-    Description: The IDs of the groups to add the version to,
-    the version will only be added to this groups, not to all tha groups of the user as usual.
+    - add_to_groups: List[int] (required)
+    Description: The IDs of the groups to add the version to.
+    At least one group must be specified.
 
     Returns:
     Fields(VersionOut):
@@ -146,13 +146,24 @@ async def add_version(
     await db.commit()
     await db.refresh(new_version)
 
+    # Validate that at least one group is specified
+    if not v.add_to_groups:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="You must add a version to at least one group.",
+        )
+
+    # Validate user has access to all specified groups
     stmt = select(UserGroup.group_id).where(UserGroup.user_id == current_user.id)
     result = await db.execute(stmt)
-    user_group_ids = [group_id for group_id in result.scalars().all()]
+    user_group_ids = set(result.scalars().all())
 
-    for group_id in user_group_ids:
-        if v.add_to_groups and group_id not in v.add_to_groups:
-            continue
+    for group_id in v.add_to_groups:
+        if group_id not in user_group_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"User not authorized to add version to group {group_id}.",
+            )
         access = BibleVersionAccess(bible_version_id=new_version.id, group_id=group_id)
         db.add(access)
     await db.commit()
