@@ -367,8 +367,9 @@ async def add_lexeme_card(
     """
     Add a new lexeme card entry or update an existing one.
 
-    If a lexeme card with the same source_lemma, target_lemma, source_language,
-    and target_language already exists, it will be updated instead of creating a duplicate.
+    Uniqueness is enforced on (target_lemma, source_language, target_language).
+    If a card with the same target_lemma and language pair already exists,
+    it will be updated instead of creating a duplicate.
 
     Input:
     - card: LexemeCardIn - The lexeme card data
@@ -393,6 +394,10 @@ async def add_lexeme_card(
 
     Returns:
     - LexemeCardOut: The created or updated lexeme card entry (with examples for the specified revision_id)
+
+    Raises:
+    - 409 Conflict: If a card with same target_lemma and language pair exists but
+      has a different source_lemma. Response includes existing card ID for PATCH.
     """
     try:
         from sqlalchemy import delete, select
@@ -405,9 +410,9 @@ async def add_lexeme_card(
                 sorted(card.alignment_scores.items(), key=lambda x: x[1], reverse=True)
             )
 
-        # Check if a lexeme card with the same unique constraint already exists
+        # Check if a lexeme card with the same (target_lemma, source_language, target_language) exists
+        # This enforces uniqueness on target_lemma per language pair
         query = select(AgentLexemeCard).where(
-            AgentLexemeCard.source_lemma == card.source_lemma,
             AgentLexemeCard.target_lemma == card.target_lemma,
             AgentLexemeCard.source_language == card.source_language,
             AgentLexemeCard.target_language == card.target_language,
@@ -416,6 +421,19 @@ async def add_lexeme_card(
         existing_card = result.scalar_one_or_none()
 
         if existing_card:
+            # If source_lemma differs, reject with 409 and tell them to use PATCH
+            if existing_card.source_lemma != card.source_lemma:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "message": f"A lexeme card for target_lemma='{card.target_lemma}' "
+                        f"already exists for this language pair with a different source_lemma. "
+                        f"Use PATCH to update the existing card.",
+                        "existing_card_id": existing_card.id,
+                        "existing_source_lemma": existing_card.source_lemma,
+                    },
+                )
+            # Otherwise, update the existing card (same source_lemma)
             # Update existing card
             existing_card.pos = card.pos
             existing_card.confidence = card.confidence
@@ -637,6 +655,30 @@ async def _apply_lexeme_card_patch(
     from sqlalchemy.sql import func
 
     provided_fields = patch_data.model_fields_set
+
+    # Check if changing target_lemma would create a duplicate
+    # Uniqueness is enforced on (target_lemma, source_language, target_language)
+    if (
+        "target_lemma" in provided_fields
+        and patch_data.target_lemma != card.target_lemma
+    ):
+        duplicate_query = select(AgentLexemeCard).where(
+            AgentLexemeCard.target_lemma == patch_data.target_lemma,
+            AgentLexemeCard.source_language == card.source_language,
+            AgentLexemeCard.target_language == card.target_language,
+            AgentLexemeCard.id != card.id,  # Exclude the current card
+        )
+        duplicate_result = await db.execute(duplicate_query)
+        duplicate_card = duplicate_result.scalar_one_or_none()
+        if duplicate_card:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": f"Cannot change target_lemma to '{patch_data.target_lemma}' - "
+                    f"another card with this target_lemma already exists for this language pair.",
+                    "existing_card_id": duplicate_card.id,
+                },
+            )
 
     # Scalar fields - update if provided
     if "source_lemma" in provided_fields:
@@ -897,23 +939,37 @@ async def patch_lexeme_card_by_lemma(
         authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
 
         # Fetch the card by lemma lookup
+        # Build query with required fields
         query = select(AgentLexemeCard).where(
-            AgentLexemeCard.source_lemma == source_lemma,
             AgentLexemeCard.target_lemma == target_lemma,
             AgentLexemeCard.source_language == source_language,
             AgentLexemeCard.target_language == target_language,
         )
-        result = await db.execute(query)
-        card = result.scalar_one_or_none()
 
-        if not card:
+        # Only filter by source_lemma if explicitly provided
+        if source_lemma is not None:
+            query = query.where(AgentLexemeCard.source_lemma == source_lemma)
+
+        result = await db.execute(query)
+        cards = result.scalars().all()
+
+        if not cards:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Lexeme card not found for source_lemma={source_lemma}, "
-                f"target_lemma={target_lemma}, "
+                detail=f"Lexeme card not found for target_lemma={target_lemma}, "
                 f"source_language={source_language}, "
-                f"target_language={target_language}",
+                f"target_language={target_language}"
+                + (f", source_lemma={source_lemma}" if source_lemma else ""),
             )
+
+        if len(cards) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Multiple lexeme cards found ({len(cards)}). "
+                "Please provide source_lemma to disambiguate.",
+            )
+
+        card = cards[0]
 
         return await _apply_lexeme_card_patch(
             card, patch_data, list_mode, authorized_revision_ids, db

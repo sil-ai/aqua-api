@@ -1315,32 +1315,32 @@ def test_check_word_matches_surface_form(
     client, regular_token1, db_session, test_revision_id
 ):
     """Test checking if a word matches a surface form."""
-    # Add test data with surface forms
+    # Add test data with surface forms (use unique target_lemma to avoid conflicts)
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "penda",
+            "target_lemma": "penda_surface_test",
             "source_language": "eng",
             "target_language": "swh",
             "surface_forms": [
-                "penda",
-                "anapenda",
-                "wanapenda",
-                "alipenda",
+                "penda_surface_test",
+                "anapenda_surface_test",
+                "wanapenda_surface_test",
+                "alipenda_surface_test",
             ],  # Target language (Swahili) forms
         },
     )
 
     # Check if surface form exists
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=anapenda&source_language=eng&target_language=swh",
+        "/v3/agent/lexeme-card/check-word?word=anapenda_surface_test&source_language=eng&target_language=swh",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["word"] == "anapenda"
+    assert data["word"] == "anapenda_surface_test"
     assert data["count"] >= 1
 
 
@@ -1400,37 +1400,37 @@ def test_check_word_multiple_matches(
     client, regular_token1, db_session, test_revision_id
 ):
     """Test checking a word that appears in multiple lexeme cards."""
-    # Add multiple cards with the same word
+    # Add multiple cards with a shared surface form (use unique target_lemmas)
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "kimbia",
+            "target_lemma": "kimbia_multi_test",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["kimbia", "anakimbia"],  # Target language (Swahili) forms
+            "surface_forms": ["shared_form_multi", "anakimbia_multi"],
         },
     )
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "kukimbia",
+            "target_lemma": "kukimbia_multi_test",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["kukimbia", "kimbia"],  # Target language (Swahili) forms
+            "surface_forms": ["kukimbia_multi", "shared_form_multi"],
         },
     )
 
     # Check word that appears in multiple cards
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=kimbia&source_language=eng&target_language=swh",
+        "/v3/agent/lexeme-card/check-word?word=shared_form_multi&source_language=eng&target_language=swh",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["word"] == "kimbia"
+    assert data["word"] == "shared_form_multi"
     assert data["count"] >= 2
 
 
@@ -1935,13 +1935,13 @@ def test_add_lexeme_card_upsert_updates_last_updated(
     """Test that updating a card updates the last_updated timestamp."""
     import time
 
-    # Add initial card
+    # Add initial card (use unique target_lemma to avoid conflicts with other tests)
     response1 = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "source_lemma": "fly",
-            "target_lemma": "ruka",
+            "target_lemma": "ruka_timestamp_test",
             "source_language": "eng",
             "target_language": "swh",
         },
@@ -1960,7 +1960,7 @@ def test_add_lexeme_card_upsert_updates_last_updated(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "source_lemma": "fly",
-            "target_lemma": "ruka",
+            "target_lemma": "ruka_timestamp_test",
             "source_language": "eng",
             "target_language": "swh",
             "confidence": 0.88,
@@ -1979,33 +1979,36 @@ def test_add_lexeme_card_upsert_updates_last_updated(
 def test_add_lexeme_card_upsert_different_unique_keys(
     client, regular_token1, db_session, test_revision_id
 ):
-    """Test that cards with different unique constraint values are treated separately."""
-    # Add card 1
+    """Test that cards with different unique constraint values are treated separately.
+
+    Uniqueness is determined by (target_lemma, source_language, target_language).
+    """
+    # Add card 1: eng->swh (use unique target_lemma to avoid conflicts with other tests)
     response1 = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "source_lemma": "book",
-            "target_lemma": "kitabu",
+            "target_lemma": "kitabu_unique_test",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["book"],
+            "surface_forms": ["kitabu"],
         },
     )
 
     assert response1.status_code == 200
     card1_id = response1.json()["id"]
 
-    # Add card 2 with different source_lemma (different unique key)
+    # Add card 2 with different target_lemma (different unique key)
     response2 = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "source_lemma": "novel",  # Different source_lemma
-            "target_lemma": "kitabu",
+            "source_lemma": "book",
+            "target_lemma": "buku_unique_test",  # Different target_lemma
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["novel"],
+            "surface_forms": ["buku"],
         },
     )
 
@@ -2015,15 +2018,16 @@ def test_add_lexeme_card_upsert_different_unique_keys(
     # Should be different cards
     assert card1_id != card2_id
 
-    # Add card 3 with different target_language (different unique key)
+    # Add card 3 with different source_language (different unique key)
+    # Using swh->eng instead of eng->swh
     response3 = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "source_lemma": "book",
-            "target_lemma": "kitabu",
-            "source_language": "eng",
-            "target_language": "ngq",  # Different target_language
+            "source_lemma": "kitabu",
+            "target_lemma": "kitabu_unique_test",  # Same target_lemma as card 1
+            "source_language": "swh",  # Different source_language
+            "target_language": "eng",  # Different target_language
             "surface_forms": ["kitabu"],
         },
     )
@@ -2039,13 +2043,13 @@ def test_add_lexeme_card_upsert_empty_lists(
     client, regular_token1, db_session, test_revision_id
 ):
     """Test appending with empty lists."""
-    # Add initial card
+    # Add initial card (use unique target_lemma to avoid conflicts with other tests)
     response1 = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "source_lemma": "play",
-            "target_lemma": "cheza",
+            "target_lemma": "cheza_empty_test",
             "source_language": "eng",
             "target_language": "swh",
             "surface_forms": ["cheza", "anacheza"],  # Target language (Swahili) forms
@@ -2062,7 +2066,7 @@ def test_add_lexeme_card_upsert_empty_lists(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "source_lemma": "play",
-            "target_lemma": "cheza",
+            "target_lemma": "cheza_empty_test",
             "source_language": "eng",
             "target_language": "swh",
             "surface_forms": [],  # Empty list
@@ -2230,18 +2234,24 @@ def test_get_lexeme_cards_by_source_word_in_examples(
     client, regular_token1, db_session, test_revision_id
 ):
     """Test searching for source_word in example source_text."""
-    # Add test data with examples
+    # Add test data with examples (use unique target_lemma to avoid conflicts)
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "source_lemma": "love",
-            "target_lemma": "penda",
+            "source_lemma": "love_example_test",
+            "target_lemma": "penda_example_test",
             "source_language": "eng",
             "target_language": "swh",
             "examples": [
-                {"source": "I love you deeply", "target": "Nakupenda sana"},
-                {"source": "love is patient", "target": "upendo una subira"},
+                {
+                    "source": "I love_example_test you profoundly",
+                    "target": "Nakupenda sana",
+                },
+                {
+                    "source": "love_example_test is patient",
+                    "target": "upendo una subira",
+                },
             ],
             "confidence": 0.95,
         },
@@ -2249,7 +2259,7 @@ def test_get_lexeme_cards_by_source_word_in_examples(
 
     # Search by source_word that appears in examples
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=deeply",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=profoundly",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2257,9 +2267,9 @@ def test_get_lexeme_cards_by_source_word_in_examples(
     data = response.json()
     assert len(data) >= 1
     # Find the card
-    card = next((c for c in data if c["source_lemma"] == "love"), None)
+    card = next((c for c in data if c["source_lemma"] == "love_example_test"), None)
     assert card is not None
-    assert any("deeply" in ex["source"] for ex in card["examples"])
+    assert any("profoundly" in ex["source"] for ex in card["examples"])
 
 
 def test_get_lexeme_cards_by_target_word_in_examples(
@@ -2303,16 +2313,17 @@ def test_get_lexeme_cards_word_search_or_logic(
 ):
     """Test that word search matches EITHER lemma OR examples (OR logic)."""
     # Add card 1: source_lemma matches but no examples with the word
+    # Use unique target_lemmas to avoid conflicts
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "source_lemma": "run",
-            "target_lemma": "kimbia",
+            "source_lemma": "jog_or_test",
+            "target_lemma": "kimbia_or_test",
             "source_language": "eng",
             "target_language": "swh",
             "examples": [
-                {"source": "I run fast", "target": "Ninakimbia haraka"},
+                {"source": "I jog_or_test fast", "target": "Ninakimbia haraka"},
             ],
             "confidence": 0.90,
         },
@@ -2323,21 +2334,21 @@ def test_get_lexeme_cards_word_search_or_logic(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "source_lemma": "sprint",
-            "target_lemma": "kukimbia",
+            "source_lemma": "sprint_or_test",
+            "target_lemma": "kukimbia_or_test",
             "source_language": "eng",
             "target_language": "swh",
             "examples": [
-                {"source": "He runs quickly", "target": "Anakimbia haraka"},
+                {"source": "He jog_or_tests quickly", "target": "Anakimbia haraka"},
             ],
             "confidence": 0.85,
         },
     )
 
-    # Search for "run" - should find both cards (first by lemma, second by example)
+    # Search for "jog_or_test" - should find both cards (first by lemma, second by example)
     # Using include_all_matches to test OR logic between lemma and examples
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=run&include_all_matches=true",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=jog_or_test&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2345,8 +2356,8 @@ def test_get_lexeme_cards_word_search_or_logic(
     data = response.json()
     assert len(data) >= 2
     lemmas = [card["source_lemma"] for card in data]
-    assert "run" in lemmas  # Matched by lemma
-    assert "sprint" in lemmas  # Matched by example containing "runs"
+    assert "jog_or_test" in lemmas  # Matched by lemma
+    assert "sprint_or_test" in lemmas  # Matched by example containing "jog_or_tests"
 
 
 def test_get_lexeme_cards_word_search_case_insensitive(
@@ -2708,6 +2719,159 @@ def test_add_lexeme_card_alignment_scores_sorted_descending(
     assert scores2 == [("y", 0.8), ("z", 0.5), ("x", 0.2)]
 
 
+# Lexeme Card Duplicate Detection Tests
+
+
+def test_add_lexeme_card_duplicate_target_lemma_different_source_lemma(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test POST returns 409 when target_lemma exists with different source_lemma."""
+    # Create first card
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "first_source",
+            "target_lemma": "unique_target",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response1.status_code == 200
+    first_card_id = response1.json()["id"]
+
+    # Try to create second card with same target_lemma but different source_lemma
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "different_source",  # Different source_lemma
+            "target_lemma": "unique_target",  # Same target_lemma
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+
+    assert response2.status_code == 409
+    detail = response2.json()["detail"]
+    assert detail["existing_card_id"] == first_card_id
+    assert "PATCH" in detail["message"]
+
+
+def test_add_lexeme_card_duplicate_same_source_lemma_upserts(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test POST with same source_lemma and target_lemma upserts (updates existing)."""
+    # Create first card
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "same_source",
+            "target_lemma": "same_target",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.5,
+        },
+    )
+    assert response1.status_code == 200
+    first_card_id = response1.json()["id"]
+
+    # POST again with same source_lemma and target_lemma - should upsert
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "same_source",  # Same
+            "target_lemma": "same_target",  # Same
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.9,  # Updated value
+        },
+    )
+
+    assert response2.status_code == 200
+    data2 = response2.json()
+    assert data2["id"] == first_card_id  # Same card, not a new one
+    assert data2["confidence"] == 0.9  # Updated
+
+
+def test_patch_lexeme_card_cannot_change_target_lemma_to_duplicate(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH returns 409 when trying to change target_lemma to existing value."""
+    # Create first card
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "existing_lemma",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response1.status_code == 200
+    first_card_id = response1.json()["id"]
+
+    # Create second card with different target_lemma
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "other_lemma",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response2.status_code == 200
+    second_card_id = response2.json()["id"]
+
+    # Try to PATCH second card to use same target_lemma as first
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{second_card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "existing_lemma",  # Conflict!
+        },
+    )
+
+    assert patch_response.status_code == 409
+    detail = patch_response.json()["detail"]
+    assert detail["existing_card_id"] == first_card_id
+
+
+def test_patch_lexeme_card_can_keep_same_target_lemma(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH allows keeping the same target_lemma (no false positive)."""
+    # Create a card
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "keep_this",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.5,
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # PATCH with same target_lemma but different confidence - should work
+    patch_response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "keep_this",  # Same as before
+            "confidence": 0.9,
+        },
+    )
+
+    assert patch_response.status_code == 200
+    assert patch_response.json()["confidence"] == 0.9
+
+
 # Lexeme Card PATCH Tests
 
 
@@ -3046,6 +3210,84 @@ def test_patch_lexeme_card_by_lemma_not_found(client, regular_token1, db_session
     )
 
     assert patch_response.status_code == 404
+
+
+def test_patch_lexeme_card_by_lemma_without_source_lemma(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by lemma lookup works when source_lemma is not provided."""
+    # Create initial card WITH a source_lemma
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "some_source",  # Card has source_lemma
+            "target_lemma": "lengo_bila",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.6,
+        },
+    )
+    assert response.status_code == 200
+
+    # PATCH by lemma lookup WITHOUT source_lemma - should still find the card
+    patch_response = client.patch(
+        "/v3/agent/lexeme-card"
+        "?target_lemma=lengo_bila"
+        "&source_language=eng"
+        "&target_language=swh",
+        # Note: no source_lemma parameter
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "confidence": 0.95,
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    assert data["confidence"] == 0.95
+    assert data["source_lemma"] == "some_source"  # Original source_lemma preserved
+
+
+def test_post_lexeme_card_duplicate_returns_409_conflict(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test POST returns 409 Conflict when trying to create a duplicate card.
+
+    Uniqueness is determined by (target_lemma, source_language, target_language).
+    """
+    # Create first card (use unique target_lemma to avoid conflicts with other tests)
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "source_one",
+            "target_lemma": "shared_target_conflict_test",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response1.status_code == 200
+    card1_id = response1.json()["id"]
+
+    # Try to create another card with same target_lemma but different source_lemma
+    # This should return 409 Conflict
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "source_two",  # Different source_lemma
+            "target_lemma": "shared_target_conflict_test",  # Same target_lemma
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+
+    assert response2.status_code == 409
+    detail = response2.json()["detail"]
+    assert detail["existing_card_id"] == card1_id
+    assert detail["existing_source_lemma"] == "source_one"
+    assert "already exists" in detail["message"]
 
 
 def test_patch_lexeme_card_omitted_fields_unchanged(

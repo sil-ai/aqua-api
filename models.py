@@ -594,50 +594,6 @@ class LexemeCardPatch(BaseModel):
         }
     }
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "id": 1,
-                "source_lemma": "love",
-                "target_lemma": "amor",
-                "source_language": "eng",
-                "target_language": "spa",
-                "pos": "verb",
-                "surface_forms": [
-                    "amor",
-                    "amo",
-                    "amas",
-                    "ama",
-                    "amamos",
-                    "aman",
-                ],  # Target language surface forms
-                "source_surface_forms": [
-                    "love",
-                    "loves",
-                    "loved",
-                    "loving",
-                ],  # Source language surface forms
-                "senses": [
-                    {
-                        "definition": "to feel deep affection",
-                        "examples": ["I love you"],
-                    },
-                    {"definition": "to enjoy greatly", "examples": ["I love pizza"]},
-                ],
-                "examples": [
-                    {"source": "I love you", "target": "Te amo"},
-                    {"source": "They love music", "target": "Aman la música"},
-                ],
-                "confidence": 0.95,
-                "english_lemma": "love",
-                "alignment_scores": {"love": 0.92, "you": 0.88},
-                "created_at": "2024-06-01T12:00:00",
-                "last_updated": "2024-06-01T12:00:00",
-            }
-        },
-        "from_attributes": True,
-    }
-
 
 class CritiqueIssueIn(BaseModel):
     """Individual critique issue for input."""
