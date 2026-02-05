@@ -555,6 +555,45 @@ class LexemeCardOut(BaseModel):
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None
 
+
+class ListMode(str, Enum):
+    """Mode for handling list fields in PATCH operations."""
+
+    append = "append"  # Add new items to existing list
+    replace = "replace"  # Overwrite entire list
+    merge = "merge"  # Append + deduplicate (case-insensitive for string lists)
+
+
+class LexemeCardPatch(BaseModel):
+    """Partial update model for lexeme cards - all fields optional."""
+
+    source_lemma: Optional[str] = None
+    target_lemma: Optional[str] = None
+    pos: Optional[str] = None
+    confidence: Optional[float] = None
+    english_lemma: Optional[str] = None
+    surface_forms: Optional[List[str]] = None
+    source_surface_forms: Optional[List[str]] = None
+    senses: Optional[List[dict]] = None
+    examples: Optional[List[dict]] = None  # Each dict has: source, target, revision_id
+    # Dict values can be float or None (None means remove that key)
+    alignment_scores: Optional[Dict[str, Optional[float]]] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "surface_forms": ["new_form1", "new_form2"],
+                "examples": [
+                    {
+                        "source": "Example source",
+                        "target": "Example target",
+                        "revision_id": 123,
+                    }
+                ],
+            }
+        }
+    }
+
     model_config = {
         "json_schema_extra": {
             "example": {
