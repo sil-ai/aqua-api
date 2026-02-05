@@ -629,7 +629,7 @@ async def _apply_lexeme_card_patch(
     card: AgentLexemeCard,
     patch_data: LexemeCardPatch,
     list_mode: ListMode,
-    authorized_revision_ids: list[int],
+    authorized_revision_ids: set[int],
     db: AsyncSession,
 ) -> LexemeCardOut:
     """Apply patch data to a lexeme card and return the updated card."""
@@ -800,9 +800,13 @@ async def patch_lexeme_card_by_id(
 
     Query Parameters:
     - list_mode: str (optional, default="append") - How to handle list fields:
-      - "append": Add new items to existing lists
+      - "append": Add new items to existing lists (no deduplication)
       - "replace": Overwrite entire lists
-      - "merge": Append + deduplicate case-insensitively (for string lists)
+      - "merge": Append + deduplicate case-insensitively (for string lists like
+        surface_forms); preserves original casing of existing items
+
+    Note: The POST endpoint's append behavior differs - it uses case-sensitive
+    deduplication via set(). Use list_mode="merge" here for smart deduplication.
 
     Body:
     - LexemeCardPatch: Partial update data. Only provided fields are updated.
@@ -867,9 +871,13 @@ async def patch_lexeme_card_by_lemma(
     - target_language: str (required) - ISO 639-3 code for target language
     - source_lemma: str (optional) - The source language lemma
     - list_mode: str (optional, default="append") - How to handle list fields:
-      - "append": Add new items to existing lists
+      - "append": Add new items to existing lists (no deduplication)
       - "replace": Overwrite entire lists
-      - "merge": Append + deduplicate case-insensitively (for string lists)
+      - "merge": Append + deduplicate case-insensitively (for string lists like
+        surface_forms); preserves original casing of existing items
+
+    Note: The POST endpoint's append behavior differs - it uses case-sensitive
+    deduplication via set(). Use list_mode="merge" here for smart deduplication.
 
     Body:
     - LexemeCardPatch: Partial update data. Only provided fields are updated.
