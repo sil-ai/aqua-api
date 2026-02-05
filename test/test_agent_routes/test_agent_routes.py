@@ -1315,32 +1315,32 @@ def test_check_word_matches_surface_form(
     client, regular_token1, db_session, test_revision_id
 ):
     """Test checking if a word matches a surface form."""
-    # Add test data with surface forms
+    # Add test data with surface forms (use unique target_lemma to avoid conflicts)
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "penda",
+            "target_lemma": "penda_surface_test",
             "source_language": "eng",
             "target_language": "swh",
             "surface_forms": [
-                "penda",
-                "anapenda",
-                "wanapenda",
-                "alipenda",
+                "penda_surface_test",
+                "anapenda_surface_test",
+                "wanapenda_surface_test",
+                "alipenda_surface_test",
             ],  # Target language (Swahili) forms
         },
     )
 
     # Check if surface form exists
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=anapenda&source_language=eng&target_language=swh",
+        "/v3/agent/lexeme-card/check-word?word=anapenda_surface_test&source_language=eng&target_language=swh",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["word"] == "anapenda"
+    assert data["word"] == "anapenda_surface_test"
     assert data["count"] >= 1
 
 
@@ -1400,37 +1400,37 @@ def test_check_word_multiple_matches(
     client, regular_token1, db_session, test_revision_id
 ):
     """Test checking a word that appears in multiple lexeme cards."""
-    # Add multiple cards with the same word
+    # Add multiple cards with a shared surface form (use unique target_lemmas)
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "kimbia",
+            "target_lemma": "kimbia_multi_test",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["kimbia", "anakimbia"],  # Target language (Swahili) forms
+            "surface_forms": ["shared_form_multi", "anakimbia_multi"],
         },
     )
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "kukimbia",
+            "target_lemma": "kukimbia_multi_test",
             "source_language": "eng",
             "target_language": "swh",
-            "surface_forms": ["kukimbia", "kimbia"],  # Target language (Swahili) forms
+            "surface_forms": ["kukimbia_multi", "shared_form_multi"],
         },
     )
 
     # Check word that appears in multiple cards
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=kimbia&source_language=eng&target_language=swh",
+        "/v3/agent/lexeme-card/check-word?word=shared_form_multi&source_language=eng&target_language=swh",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["word"] == "kimbia"
+    assert data["word"] == "shared_form_multi"
     assert data["count"] >= 2
 
 
@@ -2234,18 +2234,24 @@ def test_get_lexeme_cards_by_source_word_in_examples(
     client, regular_token1, db_session, test_revision_id
 ):
     """Test searching for source_word in example source_text."""
-    # Add test data with examples
+    # Add test data with examples (use unique target_lemma to avoid conflicts)
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "source_lemma": "love",
-            "target_lemma": "penda",
+            "source_lemma": "love_example_test",
+            "target_lemma": "penda_example_test",
             "source_language": "eng",
             "target_language": "swh",
             "examples": [
-                {"source": "I love you deeply", "target": "Nakupenda sana"},
-                {"source": "love is patient", "target": "upendo una subira"},
+                {
+                    "source": "I love_example_test you profoundly",
+                    "target": "Nakupenda sana",
+                },
+                {
+                    "source": "love_example_test is patient",
+                    "target": "upendo una subira",
+                },
             ],
             "confidence": 0.95,
         },
@@ -2253,7 +2259,7 @@ def test_get_lexeme_cards_by_source_word_in_examples(
 
     # Search by source_word that appears in examples
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=deeply",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=profoundly",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2261,9 +2267,9 @@ def test_get_lexeme_cards_by_source_word_in_examples(
     data = response.json()
     assert len(data) >= 1
     # Find the card
-    card = next((c for c in data if c["source_lemma"] == "love"), None)
+    card = next((c for c in data if c["source_lemma"] == "love_example_test"), None)
     assert card is not None
-    assert any("deeply" in ex["source"] for ex in card["examples"])
+    assert any("profoundly" in ex["source"] for ex in card["examples"])
 
 
 def test_get_lexeme_cards_by_target_word_in_examples(
@@ -2307,16 +2313,17 @@ def test_get_lexeme_cards_word_search_or_logic(
 ):
     """Test that word search matches EITHER lemma OR examples (OR logic)."""
     # Add card 1: source_lemma matches but no examples with the word
+    # Use unique target_lemmas to avoid conflicts
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "source_lemma": "run",
-            "target_lemma": "kimbia",
+            "source_lemma": "jog_or_test",
+            "target_lemma": "kimbia_or_test",
             "source_language": "eng",
             "target_language": "swh",
             "examples": [
-                {"source": "I run fast", "target": "Ninakimbia haraka"},
+                {"source": "I jog_or_test fast", "target": "Ninakimbia haraka"},
             ],
             "confidence": 0.90,
         },
@@ -2327,21 +2334,21 @@ def test_get_lexeme_cards_word_search_or_logic(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "source_lemma": "sprint",
-            "target_lemma": "kukimbia",
+            "source_lemma": "sprint_or_test",
+            "target_lemma": "kukimbia_or_test",
             "source_language": "eng",
             "target_language": "swh",
             "examples": [
-                {"source": "He runs quickly", "target": "Anakimbia haraka"},
+                {"source": "He jog_or_tests quickly", "target": "Anakimbia haraka"},
             ],
             "confidence": 0.85,
         },
     )
 
-    # Search for "run" - should find both cards (first by lemma, second by example)
+    # Search for "jog_or_test" - should find both cards (first by lemma, second by example)
     # Using include_all_matches to test OR logic between lemma and examples
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=run&include_all_matches=true",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=jog_or_test&include_all_matches=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2349,8 +2356,8 @@ def test_get_lexeme_cards_word_search_or_logic(
     data = response.json()
     assert len(data) >= 2
     lemmas = [card["source_lemma"] for card in data]
-    assert "run" in lemmas  # Matched by lemma
-    assert "sprint" in lemmas  # Matched by example containing "runs"
+    assert "jog_or_test" in lemmas  # Matched by lemma
+    assert "sprint_or_test" in lemmas  # Matched by example containing "jog_or_tests"
 
 
 def test_get_lexeme_cards_word_search_case_insensitive(
