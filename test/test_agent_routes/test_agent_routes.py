@@ -3048,6 +3048,89 @@ def test_patch_lexeme_card_by_lemma_not_found(client, regular_token1, db_session
     assert patch_response.status_code == 404
 
 
+def test_patch_lexeme_card_by_lemma_without_source_lemma(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by lemma lookup works when source_lemma is not provided."""
+    # Create initial card WITH a source_lemma
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "some_source",  # Card has source_lemma
+            "target_lemma": "lengo_bila",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.6,
+        },
+    )
+    assert response.status_code == 200
+
+    # PATCH by lemma lookup WITHOUT source_lemma - should still find the card
+    patch_response = client.patch(
+        "/v3/agent/lexeme-card"
+        "?target_lemma=lengo_bila"
+        "&source_language=eng"
+        "&target_language=swh",
+        # Note: no source_lemma parameter
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "confidence": 0.95,
+        },
+    )
+
+    assert patch_response.status_code == 200
+    data = patch_response.json()
+    assert data["confidence"] == 0.95
+    assert data["source_lemma"] == "some_source"  # Original source_lemma preserved
+
+
+def test_patch_lexeme_card_by_lemma_multiple_cards_error(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test PATCH by lemma returns 400 when multiple cards match without source_lemma."""
+    # Create two cards with same target_lemma but different source_lemma
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "source_one",
+            "target_lemma": "shared_target",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response1.status_code == 200
+
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "source_two",
+            "target_lemma": "shared_target",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response2.status_code == 200
+
+    # PATCH without source_lemma should fail with 400
+    patch_response = client.patch(
+        "/v3/agent/lexeme-card"
+        "?target_lemma=shared_target"
+        "&source_language=eng"
+        "&target_language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "confidence": 0.5,
+        },
+    )
+
+    assert patch_response.status_code == 400
+    assert "Multiple" in patch_response.json()["detail"]
+    assert "source_lemma" in patch_response.json()["detail"]
+
+
 def test_patch_lexeme_card_omitted_fields_unchanged(
     client, regular_token1, db_session, test_revision_id
 ):

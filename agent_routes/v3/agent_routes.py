@@ -897,23 +897,37 @@ async def patch_lexeme_card_by_lemma(
         authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
 
         # Fetch the card by lemma lookup
+        # Build query with required fields
         query = select(AgentLexemeCard).where(
-            AgentLexemeCard.source_lemma == source_lemma,
             AgentLexemeCard.target_lemma == target_lemma,
             AgentLexemeCard.source_language == source_language,
             AgentLexemeCard.target_language == target_language,
         )
-        result = await db.execute(query)
-        card = result.scalar_one_or_none()
 
-        if not card:
+        # Only filter by source_lemma if explicitly provided
+        if source_lemma is not None:
+            query = query.where(AgentLexemeCard.source_lemma == source_lemma)
+
+        result = await db.execute(query)
+        cards = result.scalars().all()
+
+        if not cards:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Lexeme card not found for source_lemma={source_lemma}, "
-                f"target_lemma={target_lemma}, "
+                detail=f"Lexeme card not found for target_lemma={target_lemma}, "
                 f"source_language={source_language}, "
-                f"target_language={target_language}",
+                f"target_language={target_language}"
+                + (f", source_lemma={source_lemma}" if source_lemma else ""),
             )
+
+        if len(cards) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Multiple lexeme cards found ({len(cards)}). "
+                "Please provide source_lemma to disambiguate.",
+            )
+
+        card = cards[0]
 
         return await _apply_lexeme_card_patch(
             card, patch_data, list_mode, authorized_revision_ids, db
