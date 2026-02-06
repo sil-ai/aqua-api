@@ -204,8 +204,7 @@ class AssessmentType(Enum):
 
 class RealtimeAssessmentType(Enum):
     semantic_similarity = "semantic-similarity"
-    word_count_difference = "word-count-difference"
-    char_count_difference = "char-count-difference"
+    text_lengths = "text-lengths"
 
 
 class RealtimeAssessmentRequest(BaseModel):
@@ -217,7 +216,9 @@ class RealtimeAssessmentRequest(BaseModel):
 
 
 class RealtimeAssessmentResponse(BaseModel):
-    score: float
+    score: Optional[float] = None  # For semantic-similarity
+    word_count_difference: Optional[int] = None  # For text-lengths
+    char_count_difference: Optional[int] = None  # For text-lengths
 
 
 class AssessmentIn(BaseModel):

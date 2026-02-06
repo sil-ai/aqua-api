@@ -20,10 +20,10 @@ async def test_realtime_assessment_semantic_similarity_success(client, regular_t
         "type": "semantic-similarity"
     }
 
-    # Mock the Modal response
+    # Mock the Modal response - semantic similarity returns {"score": float}
     mock_response = AsyncMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = 0.85
+    mock_response.json.return_value = {"score": 0.85}
 
     with patch("httpx.AsyncClient.post", return_value=mock_response):
         response = client.post(
@@ -40,20 +40,23 @@ async def test_realtime_assessment_semantic_similarity_success(client, regular_t
 
 
 @pytest.mark.asyncio
-async def test_realtime_assessment_word_count_difference_success(client, regular_token1):
-    """Test successful word count difference assessment."""
+async def test_realtime_assessment_text_lengths_success(client, regular_token1):
+    """Test successful text lengths assessment (returns both word and char differences)."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     request_data = {
         "verse_1": "In the beginning God created the heaven and the earth.",
         "verse_2": "In the beginning God created.",
-        "type": "word-count-difference"
+        "type": "text-lengths"
     }
 
-    # Mock the Modal response
+    # Mock the Modal response - returns both word and char count differences
     mock_response = AsyncMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = 6  # 10 - 4 = 6
+    mock_response.json.return_value = {
+        "word_count_difference": 6,  # 10 - 4 = 6
+        "char_count_difference": 25  # Example value
+    }
 
     with patch("httpx.AsyncClient.post", return_value=mock_response):
         response = client.post(
@@ -64,39 +67,14 @@ async def test_realtime_assessment_word_count_difference_success(client, regular
 
     assert response.status_code == 200
     data = response.json()
-    assert "score" in data
-    assert isinstance(data["score"], float)
-    assert data["score"] == 6.0
+    assert "word_count_difference" in data
+    assert "char_count_difference" in data
+    assert isinstance(data["word_count_difference"], int)
+    assert isinstance(data["char_count_difference"], int)
+    assert data["word_count_difference"] == 6
+    assert data["char_count_difference"] == 25
 
 
-@pytest.mark.asyncio
-async def test_realtime_assessment_char_count_difference_success(client, regular_token1):
-    """Test successful character count difference assessment."""
-    headers = {"Authorization": f"Bearer {regular_token1}"}
-
-    request_data = {
-        "verse_1": "Hello world",
-        "verse_2": "Hi",
-        "type": "char-count-difference"
-    }
-
-    # Mock the Modal response
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = 9  # 11 - 2 = 9
-
-    with patch("httpx.AsyncClient.post", return_value=mock_response):
-        response = client.post(
-            f"/{prefix}/realtime/assessment",
-            json=request_data,
-            headers=headers
-        )
-
-    assert response.status_code == 200
-    data = response.json()
-    assert "score" in data
-    assert isinstance(data["score"], float)
-    assert data["score"] == 9.0
 
 
 @pytest.mark.asyncio
@@ -289,10 +267,10 @@ async def test_realtime_assessment_strips_whitespace(client, regular_token1):
         "type": "semantic-similarity"
     }
 
-    # Mock the Modal response
+    # Mock the Modal response - semantic similarity returns {"score": float}
     mock_response = AsyncMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = 0.85
+    mock_response.json.return_value = {"score": 0.85}
 
     with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
         response = client.post(
@@ -324,7 +302,7 @@ async def test_realtime_assessment_negative_result(client, regular_token1):
     # Mock the Modal response with negative similarity
     mock_response = AsyncMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = -0.15
+    mock_response.json.return_value = {"score": -0.15}
 
     with patch("httpx.AsyncClient.post", return_value=mock_response):
         response = client.post(
@@ -352,7 +330,7 @@ async def test_realtime_assessment_modal_env_main(client, regular_token1):
 
     mock_response = AsyncMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = 0.95
+    mock_response.json.return_value = {"score": 0.95}
 
     with patch.dict("os.environ", {"MODAL_ENV": "main"}):
         with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
@@ -369,7 +347,7 @@ async def test_realtime_assessment_modal_env_main(client, regular_token1):
     # Verify the URL called was the production URL
     call_args = mock_post.call_args
     url = call_args[0][0] if call_args[0] else call_args.kwargs.get("url")
-    assert "sil-ai--semantic-similarity-compare.modal.run" in str(url)
+    assert "sil-ai--semantic-similarity-realtime-assess.modal.run" in str(url)
 
 
 @pytest.mark.asyncio
@@ -385,7 +363,7 @@ async def test_realtime_assessment_modal_env_dev(client, regular_token1):
 
     mock_response = AsyncMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = 0.95
+    mock_response.json.return_value = {"score": 0.95}
 
     with patch.dict("os.environ", {"MODAL_ENV": "dev"}):
         with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
@@ -402,4 +380,4 @@ async def test_realtime_assessment_modal_env_dev(client, regular_token1):
     # Verify the URL called was the dev URL
     call_args = mock_post.call_args
     url = call_args[0][0] if call_args[0] else call_args.kwargs.get("url")
-    assert "sil-ai-dev--semantic-similarity-compare.modal.run" in str(url)
+    assert "sil-ai-dev--semantic-similarity-realtime-assess.modal.run" in str(url)

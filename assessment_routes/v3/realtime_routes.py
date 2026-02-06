@@ -22,9 +22,8 @@ router = fastapi.APIRouter()
 
 # Mapping: type -> (modal_app_name, function_name)
 MODAL_FUNCTION_MAPPING = {
-    RealtimeAssessmentType.semantic_similarity: ("semantic-similarity", "compare"),
-    RealtimeAssessmentType.word_count_difference: ("text-lengths", "word-count-difference"),
-    RealtimeAssessmentType.char_count_difference: ("text-lengths", "char-count-difference"),
+    RealtimeAssessmentType.semantic_similarity: ("semantic-similarity", "realtime-assess"),
+    RealtimeAssessmentType.text_lengths: ("text-lengths", "realtime-assess"),
 }
 
 
@@ -79,9 +78,8 @@ async def realtime_assessment(
     LaBSE model loads. Subsequent calls are near-instantaneous.
 
     Supported types:
-    - semantic-similarity: Cosine similarity using LaBSE embeddings (float, -1 to 1)
-    - word-count-difference: Difference in word counts (int, positive if verse_1 has more)
-    - char-count-difference: Difference in character counts (int, positive if verse_1 has more)
+    - semantic-similarity: Cosine similarity using LaBSE embeddings (returns score: float, -1 to 1)
+    - text-lengths: Word and character count differences (returns word_count_difference and char_count_difference as ints)
 
     Returns:
         RealtimeAssessmentResponse: JSON object with score field
@@ -112,13 +110,22 @@ async def realtime_assessment(
         )
 
     try:
-        # Modal returns raw value (float or int) directly
+        # Modal returns different response structures based on assessment type
         result = response.json()
-    except Exception as e:
+
+        # Handle semantic-similarity response: {"score": float}
+        if request.type == RealtimeAssessmentType.semantic_similarity:
+            return RealtimeAssessmentResponse(score=float(result["score"]))
+
+        # Handle text-lengths response: {"word_count_difference": int, "char_count_difference": int}
+        else:  # text_lengths
+            return RealtimeAssessmentResponse(
+                word_count_difference=result["word_count_difference"],
+                char_count_difference=result["char_count_difference"]
+            )
+    except (KeyError, ValueError, TypeError) as e:
         logger.error(f"Error parsing Modal response: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to parse assessment result"
         ) from e
-
-    return RealtimeAssessmentResponse(score=float(result))
