@@ -4306,3 +4306,165 @@ def test_get_critique_issues_all_assessments_explicit_true(
 
     assert len(assessment1_issues) > 0
     assert len(assessment2_issues) > 0
+
+
+# ── last_user_edit tests ──────────────────────────────────────────────
+
+
+def test_post_lexeme_card_without_is_user_edit_has_null_last_user_edit(
+    client, regular_token1, db_session, test_revision_id
+):
+    """POST without is_user_edit should create card with last_user_edit=NULL."""
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "house",
+            "target_lemma": "nyumba_lue_test_null",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["last_user_edit"] is None
+
+
+def test_post_lexeme_card_with_is_user_edit_sets_last_user_edit(
+    client, regular_token1, db_session, test_revision_id
+):
+    """POST with is_user_edit=true should create card with last_user_edit set."""
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}&is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "tree",
+            "target_lemma": "mti_lue_test_set",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["last_user_edit"] is not None
+
+
+def test_post_lexeme_card_upsert_with_is_user_edit_updates_last_user_edit(
+    client, regular_token1, db_session, test_revision_id
+):
+    """POST upsert with is_user_edit=true should update last_user_edit."""
+    # Create card without is_user_edit
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "water",
+            "target_lemma": "maji_lue_test_upsert",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response1.status_code == 200
+    assert response1.json()["last_user_edit"] is None
+
+    # Upsert with is_user_edit=true
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}&is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "water",
+            "target_lemma": "maji_lue_test_upsert",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.95,
+        },
+    )
+    assert response2.status_code == 200
+    data2 = response2.json()
+    assert data2["last_user_edit"] is not None
+
+
+def test_patch_lexeme_card_without_is_user_edit_leaves_last_user_edit_unchanged(
+    client, regular_token1, db_session, test_revision_id
+):
+    """PATCH without is_user_edit should not update last_user_edit."""
+    # Create card without is_user_edit
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "fire",
+            "target_lemma": "moto_lue_test_patch_null",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response1.status_code == 200
+    card_id = response1.json()["id"]
+    assert response1.json()["last_user_edit"] is None
+
+    # Patch without is_user_edit
+    response2 = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"confidence": 0.77},
+    )
+    assert response2.status_code == 200
+    assert response2.json()["last_user_edit"] is None
+
+
+def test_patch_lexeme_card_with_is_user_edit_updates_last_user_edit(
+    client, regular_token1, db_session, test_revision_id
+):
+    """PATCH with is_user_edit=true should update last_user_edit."""
+    # Create card without is_user_edit
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "earth",
+            "target_lemma": "ardhi_lue_test_patch_set",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response1.status_code == 200
+    card_id = response1.json()["id"]
+    assert response1.json()["last_user_edit"] is None
+
+    # Patch with is_user_edit=true
+    response2 = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"confidence": 0.88},
+    )
+    assert response2.status_code == 200
+    assert response2.json()["last_user_edit"] is not None
+
+
+def test_get_lexeme_cards_includes_last_user_edit(
+    client, regular_token1, db_session, test_revision_id
+):
+    """GET response should include last_user_edit field."""
+    # Create card with is_user_edit=true
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}&is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "wind",
+            "target_lemma": "upepo_lue_test_get",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upepo_lue_test_get&include_all_matches=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    card = data[0]
+    assert "last_user_edit" in card
+    assert card["last_user_edit"] is not None

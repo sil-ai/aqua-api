@@ -4,14 +4,28 @@ This file contains development notes and instructions for working with this code
 
 ## Running Tests Locally
 
+### Virtual Environment
+
+The project uses a `.venv` in the repo root. All CLI tools (`alembic`, `pytest`, etc.) are at `.venv/bin/`.
+
 ### Prerequisites
 
-1. Start the PostgreSQL database with pgvector:
+1. Check that port 5432 is free (other project containers may hold it):
+   ```bash
+   docker ps --filter "publish=5432"
+   # If occupied, stop the conflicting container first
+   ```
+
+2. Start the PostgreSQL database with pgvector:
    ```bash
    docker compose up -d db
    ```
+   If the container was previously created without port mappings, recreate it:
+   ```bash
+   docker compose rm -sf db && docker compose up -d db
+   ```
 
-2. Enable the pgvector extension (first time only):
+3. Enable the pgvector extension (first time only):
    ```bash
    PGPASSWORD=dbpassword psql -h localhost -U dbuser -d dbname -c "CREATE EXTENSION IF NOT EXISTS vector;"
    ```
@@ -22,10 +36,10 @@ Set the `AQUA_DB` environment variable and run pytest:
 
 ```bash
 # Run all agent routes tests
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" python -m pytest test/test_agent_routes/test_agent_routes.py -v
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" .venv/bin/python -m pytest test/test_agent_routes/test_agent_routes.py -v
 
 # Run specific tests by keyword
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" python -m pytest test/test_agent_routes/test_agent_routes.py -k word_alignment -v
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" .venv/bin/python -m pytest test/test_agent_routes/test_agent_routes.py -k word_alignment -v
 ```
 
 ### Stopping the Database
@@ -42,21 +56,26 @@ Migrations are located in `alembic/migrations/versions/`. The alembic config is 
 
 ### Checking Migration Status
 
+**Important:** Alembic must be run from the `alembic/` subdirectory (it expects `migrations/` relative to cwd).
+
 ```bash
+cd alembic
+
 # Check current heads
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" alembic heads
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../.venv/bin/alembic heads
 
 # View migration history
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" alembic history
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../.venv/bin/alembic history
 
 # Check current database revision
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" alembic current
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../.venv/bin/alembic current
 ```
 
 ### Running Migrations
 
 ```bash
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" alembic upgrade head
+cd alembic
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../.venv/bin/alembic upgrade head
 ```
 
 ### Creating New Migrations

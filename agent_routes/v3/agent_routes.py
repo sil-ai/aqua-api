@@ -361,6 +361,7 @@ async def add_lexeme_card(
     card: LexemeCardIn,
     revision_id: int,
     replace_existing: bool = False,
+    is_user_edit: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -377,6 +378,8 @@ async def add_lexeme_card(
     - replace_existing: bool (optional, default=False) - If True, replaces list fields
       (surface_forms, senses) with new data and replaces examples for this revision_id.
       If False, appends new data to existing lists.
+    - is_user_edit: bool (optional, default=False) - If True, sets the last_user_edit
+      timestamp. Use for user-initiated writes to distinguish from automated updates.
 
     Card fields:
     - source_lemma: str (optional) - The source language lemma for cross-reference
@@ -440,6 +443,8 @@ async def add_lexeme_card(
             existing_card.english_lemma = card.english_lemma
             existing_card.alignment_scores = sorted_alignment_scores
             existing_card.last_updated = func.now()
+            if is_user_edit:
+                existing_card.last_user_edit = func.now()
 
             # Handle list fields based on replace_existing flag
             if replace_existing:
@@ -545,6 +550,7 @@ async def add_lexeme_card(
                 "alignment_scores": sorted_alignment_scores,
                 "created_at": existing_card.created_at,
                 "last_updated": existing_card.last_updated,
+                "last_user_edit": existing_card.last_user_edit,
             }
             return LexemeCardOut.model_validate(card_dict)
         else:
@@ -561,6 +567,7 @@ async def add_lexeme_card(
                 confidence=card.confidence,
                 english_lemma=card.english_lemma,
                 alignment_scores=sorted_alignment_scores,
+                last_user_edit=func.now() if is_user_edit else None,
             )
 
             db.add(lexeme_card)
@@ -615,6 +622,7 @@ async def add_lexeme_card(
                 "alignment_scores": sorted_alignment_scores,
                 "created_at": lexeme_card.created_at,
                 "last_updated": lexeme_card.last_updated,
+                "last_user_edit": lexeme_card.last_user_edit,
             }
             return LexemeCardOut.model_validate(card_dict)
 
@@ -649,6 +657,7 @@ async def _apply_lexeme_card_patch(
     list_mode: ListMode,
     authorized_revision_ids: set[int],
     db: AsyncSession,
+    is_user_edit: bool = False,
 ) -> LexemeCardOut:
     """Apply patch data to a lexeme card and return the updated card."""
     from sqlalchemy import delete, select
@@ -784,6 +793,8 @@ async def _apply_lexeme_card_patch(
 
     # Update last_updated timestamp
     card.last_updated = func.now()
+    if is_user_edit:
+        card.last_user_edit = func.now()
 
     await db.commit()
     await db.refresh(card)
@@ -822,6 +833,7 @@ async def _apply_lexeme_card_patch(
         "alignment_scores": card.alignment_scores,
         "created_at": card.created_at,
         "last_updated": card.last_updated,
+        "last_user_edit": card.last_user_edit,
     }
     return LexemeCardOut.model_validate(card_dict)
 
@@ -831,6 +843,7 @@ async def patch_lexeme_card_by_id(
     card_id: int,
     patch_data: LexemeCardPatch,
     list_mode: ListMode = ListMode.append,
+    is_user_edit: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -846,6 +859,8 @@ async def patch_lexeme_card_by_id(
       - "replace": Overwrite entire lists
       - "merge": Append + deduplicate case-insensitively (for string lists like
         surface_forms); preserves original casing of existing items
+    - is_user_edit: bool (optional, default=False) - If True, sets the last_user_edit
+      timestamp. Use for user-initiated writes to distinguish from automated updates.
 
     Note: The POST endpoint's append behavior differs - it uses case-sensitive
     deduplication via set(). Use list_mode="merge" here for smart deduplication.
@@ -879,7 +894,7 @@ async def patch_lexeme_card_by_id(
             )
 
         return await _apply_lexeme_card_patch(
-            card, patch_data, list_mode, authorized_revision_ids, db
+            card, patch_data, list_mode, authorized_revision_ids, db, is_user_edit
         )
 
     except HTTPException:
@@ -901,6 +916,7 @@ async def patch_lexeme_card_by_lemma(
     target_language: str,
     source_lemma: str = None,
     list_mode: ListMode = ListMode.append,
+    is_user_edit: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -917,6 +933,8 @@ async def patch_lexeme_card_by_lemma(
       - "replace": Overwrite entire lists
       - "merge": Append + deduplicate case-insensitively (for string lists like
         surface_forms); preserves original casing of existing items
+    - is_user_edit: bool (optional, default=False) - If True, sets the last_user_edit
+      timestamp. Use for user-initiated writes to distinguish from automated updates.
 
     Note: The POST endpoint's append behavior differs - it uses case-sensitive
     deduplication via set(). Use list_mode="merge" here for smart deduplication.
@@ -972,7 +990,7 @@ async def patch_lexeme_card_by_lemma(
         card = cards[0]
 
         return await _apply_lexeme_card_patch(
-            card, patch_data, list_mode, authorized_revision_ids, db
+            card, patch_data, list_mode, authorized_revision_ids, db, is_user_edit
         )
 
     except HTTPException:
@@ -1203,6 +1221,7 @@ async def get_lexeme_cards(
                 "alignment_scores": card.alignment_scores,
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
+                "last_user_edit": card.last_user_edit,
             }
 
             # Query examples for this lexeme card from all authorized revisions, ordered by ID (insertion order)

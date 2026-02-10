@@ -554,6 +554,7 @@ class LexemeCardOut(BaseModel):
     alignment_scores: Optional[Dict[str, float]] = None
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None
+    last_user_edit: Optional[datetime.datetime] = None
 
 
 class ListMode(str, Enum):
