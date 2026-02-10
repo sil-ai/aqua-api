@@ -112,7 +112,9 @@ def configure_routing(app):
     app.include_router(
         assessment_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
     )
-    app.include_router(realtime_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(
+        realtime_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
+    )
     app.include_router(results_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(search_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(agent_router_v3, prefix="/latest", tags=["Version 3 / Latest"])

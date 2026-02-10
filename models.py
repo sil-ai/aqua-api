@@ -212,7 +212,7 @@ class RealtimeAssessmentRequest(BaseModel):
     verse_2: str
     type: RealtimeAssessmentType
 
-    #model_config = {"use_enum_values": True}
+    # model_config = {"use_enum_values": True}
 
 
 class RealtimeAssessmentResponse(BaseModel):

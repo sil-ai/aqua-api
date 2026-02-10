@@ -42,18 +42,21 @@ def _get_modal_function(app_name: str, function_name: str) -> modal.Function:
     environment = _get_modal_environment()
     cache_key = f"{app_name}:{function_name}:{environment}"
     if cache_key not in _modal_functions_cache:
-        logger.info(f"Initializing Modal function {app_name}.{function_name} (environment: {environment})")
+        logger.info(
+            f"Initializing Modal function {app_name}.{function_name} (environment: {environment})"
+        )
         _modal_functions_cache[cache_key] = modal.Function.from_name(
-            app_name,
-            function_name,
-            environment_name=environment
+            app_name, function_name, environment_name=environment
         )
     return _modal_functions_cache[cache_key]
 
 
 # Mapping: type -> (app_name, function_name)
 MODAL_FUNCTION_MAPPING = {
-    RealtimeAssessmentType.semantic_similarity: ("semantic-similarity", "realtime_assess"),
+    RealtimeAssessmentType.semantic_similarity: (
+        "semantic-similarity",
+        "realtime_assess",
+    ),
     RealtimeAssessmentType.text_lengths: ("text-lengths", "realtime_assess"),
 }
 
@@ -89,17 +92,21 @@ async def call_realtime_modal(
         logger.error(f"Modal timeout: {e}")
         raise HTTPException(
             status_code=status.HTTP_408_REQUEST_TIMEOUT,
-            detail="Assessment service timed out"
+            detail="Assessment service timed out",
         ) from e
     except Exception as e:
         logger.error(f"Modal request error: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Assessment service unavailable"
+            detail="Assessment service unavailable",
         ) from e
 
 
-@router.post("/realtime/assessment", response_model=RealtimeAssessmentResponse, response_model_exclude_none=True)
+@router.post(
+    "/realtime/assessment",
+    response_model=RealtimeAssessmentResponse,
+    response_model_exclude_none=True,
+)
 async def realtime_assessment(
     request: RealtimeAssessmentRequest,
     current_user: UserModel = Depends(get_current_user),
@@ -121,9 +128,13 @@ async def realtime_assessment(
     """
     # Validate inputs
     if not request.verse_1 or not request.verse_1.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="verse_1 cannot be empty")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="verse_1 cannot be empty"
+        )
     if not request.verse_2 or not request.verse_2.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="verse_2 cannot be empty")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="verse_2 cannot be empty"
+        )
 
     # Get Modal function reference (lazy initialization)
     app_name, function_name = MODAL_FUNCTION_MAPPING[request.type]
@@ -149,11 +160,11 @@ async def realtime_assessment(
         else:  # text_lengths
             return RealtimeAssessmentResponse(
                 word_count_difference=result["word_count_difference"],
-                char_count_difference=result["char_count_difference"]
+                char_count_difference=result["char_count_difference"],
             )
     except (KeyError, ValueError, TypeError) as e:
         logger.error(f"Error parsing Modal response: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to parse assessment result"
+            detail="Failed to parse assessment result",
         ) from e
