@@ -216,7 +216,7 @@ async def build_results_query(
         *[getattr(AssessmentResult, col) for col in group_by_columns],
     ).subquery()
 
-    final_count_query = select([func.count()]).select_from(count_subquery)
+    final_count_query = select(func.count()).select_from(count_subquery)
 
     return (
         base_query,
