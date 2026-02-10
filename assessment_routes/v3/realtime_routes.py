@@ -2,10 +2,12 @@ __version__ = "v3"
 
 import asyncio
 import logging
+import math
 import os
 
 import fastapi
 import modal
+import modal.exception
 from fastapi import Depends, HTTPException, status
 
 from database.models import UserDB as UserModel
@@ -37,9 +39,9 @@ def _get_modal_function(app_name: str, function_name: str) -> modal.Function:
 
     This is lazy-initialized to ensure environment variables are loaded.
     """
-    cache_key = f"{app_name}:{function_name}"
+    environment = _get_modal_environment()
+    cache_key = f"{app_name}:{function_name}:{environment}"
     if cache_key not in _modal_functions_cache:
-        environment = _get_modal_environment()
         logger.info(f"Initializing Modal function {app_name}.{function_name} (environment: {environment})")
         _modal_functions_cache[cache_key] = modal.Function.from_name(
             app_name,
@@ -83,7 +85,7 @@ async def call_realtime_modal(
             text2=text2,
         )
         return result
-    except TimeoutError as e:
+    except (TimeoutError, modal.exception.TimeoutError) as e:
         logger.error(f"Modal timeout: {e}")
         raise HTTPException(
             status_code=status.HTTP_408_REQUEST_TIMEOUT,
@@ -97,7 +99,7 @@ async def call_realtime_modal(
         ) from e
 
 
-@router.post("/realtime/assessment", response_model=RealtimeAssessmentResponse)
+@router.post("/realtime/assessment", response_model=RealtimeAssessmentResponse, response_model_exclude_none=True)
 async def realtime_assessment(
     request: RealtimeAssessmentRequest,
     current_user: UserModel = Depends(get_current_user),
@@ -138,7 +140,10 @@ async def realtime_assessment(
     try:
         # Handle semantic-similarity response: {"score": float}
         if request.type == RealtimeAssessmentType.semantic_similarity:
-            return RealtimeAssessmentResponse(score=float(result["score"]))
+            score = float(result["score"])
+            if not math.isfinite(score):
+                raise ValueError(f"Score is not finite: {score}")
+            return RealtimeAssessmentResponse(score=score)
 
         # Handle text-lengths response: {"word_count_difference": int, "char_count_difference": int}
         else:  # text_lengths
