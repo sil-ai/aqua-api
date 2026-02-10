@@ -1,10 +1,11 @@
 __version__ = "v3"
 
+import asyncio
 import logging
 import os
 
 import fastapi
-import httpx
+import modal
 from fastapi import Depends, HTTPException, status
 
 from database.models import UserDB as UserModel
@@ -20,44 +21,76 @@ logger = logging.getLogger(__name__)
 
 router = fastapi.APIRouter()
 
-# Mapping: type -> (modal_app_name, function_name)
+# Cache for Modal function references (lazy initialization)
+_modal_functions_cache = {}
+
+
+def _get_modal_environment():
+    """Get the Modal environment name from MODAL_ENV variable."""
+    modal_env = os.getenv("MODAL_ENV", "main")
+    return "dev" if modal_env == "dev" else "main"
+
+
+def _get_modal_function(app_name: str, function_name: str) -> modal.Function:
+    """
+    Get a Modal function reference, with caching.
+
+    This is lazy-initialized to ensure environment variables are loaded.
+    """
+    cache_key = f"{app_name}:{function_name}"
+    if cache_key not in _modal_functions_cache:
+        environment = _get_modal_environment()
+        logger.info(f"Initializing Modal function {app_name}.{function_name} (environment: {environment})")
+        _modal_functions_cache[cache_key] = modal.Function.from_name(
+            app_name,
+            function_name,
+            environment_name=environment
+        )
+    return _modal_functions_cache[cache_key]
+
+
+# Mapping: type -> (app_name, function_name)
 MODAL_FUNCTION_MAPPING = {
-    RealtimeAssessmentType.semantic_similarity: ("semantic-similarity", "realtime-assess"),
-    RealtimeAssessmentType.text_lengths: ("text-lengths", "realtime-assess"),
+    RealtimeAssessmentType.semantic_similarity: ("semantic-similarity", "realtime_assess"),
+    RealtimeAssessmentType.text_lengths: ("text-lengths", "realtime_assess"),
 }
 
 
 async def call_realtime_modal(
-    modal_app: str,
-    function_name: str,
-    verse_1: str,
-    verse_2: str,
-    timeout: float = 30.0
-) -> httpx.Response:
-    """Call a Modal function for realtime assessment."""
-    if os.getenv("MODAL_ENV", "main") == "main":
-        base_url = f"https://sil-ai--{modal_app}-{function_name}.modal.run"
-    else:
-        base_url = f"https://sil-ai-dev--{modal_app}-{function_name}.modal.run"
+    modal_fn: modal.Function,
+    text1: str,
+    text2: str,
+) -> dict:
+    """
+    Call a Modal function for realtime assessment using the Modal SDK.
 
-    logger.info(f"Calling Modal at {base_url}")
-    headers = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
+    Args:
+        modal_fn: Modal function reference from Function.from_name()
+        text1: First text string to compare
+        text2: Second text string to compare
 
-    # All Modal functions use text1, text2 parameters
-    payload = {"text1": verse_1, "text2": verse_2}
+    Returns:
+        dict: The result from the Modal function
 
+    Raises:
+        HTTPException: On timeout or service unavailability
+    """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(base_url, headers=headers, json=payload)
-        return response
-    except httpx.TimeoutException as e:
-        logger.error(f"Modal timeout for {modal_app}/{function_name}: {e}")
+        # .remote() is synchronous — run in thread pool to avoid blocking the event loop
+        result = await asyncio.to_thread(
+            modal_fn.remote,
+            text1=text1,
+            text2=text2,
+        )
+        return result
+    except TimeoutError as e:
+        logger.error(f"Modal timeout: {e}")
         raise HTTPException(
             status_code=status.HTTP_408_REQUEST_TIMEOUT,
             detail="Assessment service timed out"
         ) from e
-    except httpx.RequestError as e:
-        logger.error(f"Modal request error for {modal_app}/{function_name}: {e}")
+    except Exception as e:
+        logger.error(f"Modal request error: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Assessment service unavailable"
@@ -90,29 +123,18 @@ async def realtime_assessment(
     if not request.verse_2 or not request.verse_2.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="verse_2 cannot be empty")
 
-    # Get Modal function details
-    modal_app, function_name = MODAL_FUNCTION_MAPPING[request.type]
+    # Get Modal function reference (lazy initialization)
+    app_name, function_name = MODAL_FUNCTION_MAPPING[request.type]
+    modal_fn = _get_modal_function(app_name, function_name)
 
-    # Call Modal
-    response = await call_realtime_modal(
-        modal_app=modal_app,
-        function_name=function_name,
-        verse_1=request.verse_1.strip(),
-        verse_2=request.verse_2.strip(),
+    # Call Modal function via SDK
+    result = await call_realtime_modal(
+        modal_fn=modal_fn,
+        text1=request.verse_1.strip(),
+        text2=request.verse_2.strip(),
     )
 
-    # Handle response
-    if not 200 <= response.status_code < 300:
-        logger.error(f"Modal error: {response.status_code} - {response.text}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Assessment service error: {response.text}"
-        )
-
     try:
-        # Modal returns different response structures based on assessment type
-        result = response.json()
-
         # Handle semantic-similarity response: {"score": float}
         if request.type == RealtimeAssessmentType.semantic_similarity:
             return RealtimeAssessmentResponse(score=float(result["score"]))

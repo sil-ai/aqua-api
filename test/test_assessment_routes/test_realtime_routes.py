@@ -1,8 +1,7 @@
 """Tests for the realtime assessment endpoints."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock, patch
 
-import httpx
 import pytest
 from fastapi import status
 
@@ -20,12 +19,11 @@ async def test_realtime_assessment_semantic_similarity_success(client, regular_t
         "type": "semantic-similarity"
     }
 
-    # Mock the Modal response - semantic similarity returns {"score": float}
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"score": 0.85}
+    # Mock the Modal function - semantic similarity returns {"score": float}
+    mock_modal_fn = MagicMock()
+    mock_modal_fn.remote.return_value = {"score": 0.85}
 
-    with patch("httpx.AsyncClient.post", return_value=mock_response):
+    with patch("assessment_routes.v3.realtime_routes._get_modal_function", return_value=mock_modal_fn):
         response = client.post(
             f"/{prefix}/realtime/assessment",
             json=request_data,
@@ -50,15 +48,14 @@ async def test_realtime_assessment_text_lengths_success(client, regular_token1):
         "type": "text-lengths"
     }
 
-    # Mock the Modal response - returns both word and char count differences
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {
+    # Mock the Modal function - returns both word and char count differences
+    mock_modal_fn = MagicMock()
+    mock_modal_fn.remote.return_value = {
         "word_count_difference": 6,  # 10 - 4 = 6
         "char_count_difference": 25  # Example value
     }
 
-    with patch("httpx.AsyncClient.post", return_value=mock_response):
+    with patch("assessment_routes.v3.realtime_routes._get_modal_function", return_value=mock_modal_fn):
         response = client.post(
             f"/{prefix}/realtime/assessment",
             json=request_data,
@@ -147,8 +144,11 @@ async def test_realtime_assessment_modal_timeout(client, regular_token1):
         "type": "semantic-similarity"
     }
 
-    # Mock a timeout exception
-    with patch("httpx.AsyncClient.post", side_effect=httpx.TimeoutException("Timeout")):
+    # Mock a timeout exception from Modal SDK
+    mock_modal_fn = MagicMock()
+    mock_modal_fn.remote.side_effect = TimeoutError("Timeout")
+
+    with patch("assessment_routes.v3.realtime_routes._get_modal_function", return_value=mock_modal_fn):
         response = client.post(
             f"/{prefix}/realtime/assessment",
             json=request_data,
@@ -170,8 +170,11 @@ async def test_realtime_assessment_modal_unavailable(client, regular_token1):
         "type": "semantic-similarity"
     }
 
-    # Mock a request error
-    with patch("httpx.AsyncClient.post", side_effect=httpx.RequestError("Connection failed")):
+    # Mock a request error from Modal SDK
+    mock_modal_fn = MagicMock()
+    mock_modal_fn.remote.side_effect = Exception("Connection failed")
+
+    with patch("assessment_routes.v3.realtime_routes._get_modal_function", return_value=mock_modal_fn):
         response = client.post(
             f"/{prefix}/realtime/assessment",
             json=request_data,
@@ -184,7 +187,7 @@ async def test_realtime_assessment_modal_unavailable(client, regular_token1):
 
 @pytest.mark.asyncio
 async def test_realtime_assessment_modal_error_response(client, regular_token1):
-    """Test that Modal error response returns 500 error."""
+    """Test that Modal error (missing key in response) returns 500 error."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     request_data = {
@@ -193,12 +196,11 @@ async def test_realtime_assessment_modal_error_response(client, regular_token1):
         "type": "semantic-similarity"
     }
 
-    # Mock an error response from Modal
-    mock_response = AsyncMock()
-    mock_response.status_code = 500
-    mock_response.text = "Internal server error"
+    # Mock Modal function returning incomplete response
+    mock_modal_fn = MagicMock()
+    mock_modal_fn.remote.return_value = {"wrong_key": "value"}
 
-    with patch("httpx.AsyncClient.post", return_value=mock_response):
+    with patch("assessment_routes.v3.realtime_routes._get_modal_function", return_value=mock_modal_fn):
         response = client.post(
             f"/{prefix}/realtime/assessment",
             json=request_data,
@@ -206,7 +208,7 @@ async def test_realtime_assessment_modal_error_response(client, regular_token1):
         )
 
     assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
-    assert "Assessment service error" in response.json()["detail"]
+    assert "Failed to parse assessment result" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -220,12 +222,11 @@ async def test_realtime_assessment_modal_invalid_json(client, regular_token1):
         "type": "semantic-similarity"
     }
 
-    # Mock a response that fails JSON parsing
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json.side_effect = ValueError("Invalid JSON")
+    # Mock Modal function returning non-dict response
+    mock_modal_fn = MagicMock()
+    mock_modal_fn.remote.return_value = "not a dict"
 
-    with patch("httpx.AsyncClient.post", return_value=mock_response):
+    with patch("assessment_routes.v3.realtime_routes._get_modal_function", return_value=mock_modal_fn):
         response = client.post(
             f"/{prefix}/realtime/assessment",
             json=request_data,
@@ -267,12 +268,11 @@ async def test_realtime_assessment_strips_whitespace(client, regular_token1):
         "type": "semantic-similarity"
     }
 
-    # Mock the Modal response - semantic similarity returns {"score": float}
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"score": 0.85}
+    # Mock the Modal function
+    mock_modal_fn = MagicMock()
+    mock_modal_fn.remote.return_value = {"score": 0.85}
 
-    with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
+    with patch("assessment_routes.v3.realtime_routes._get_modal_function", return_value=mock_modal_fn):
         response = client.post(
             f"/{prefix}/realtime/assessment",
             json=request_data,
@@ -282,10 +282,11 @@ async def test_realtime_assessment_strips_whitespace(client, regular_token1):
     assert response.status_code == 200
     data = response.json()
     assert "score" in data
-    # Verify that the Modal call was made with stripped text
-    call_kwargs = mock_post.call_args.kwargs
-    assert call_kwargs["json"]["text1"] == "In the beginning"
-    assert call_kwargs["json"]["text2"] == "Na mwanzo"
+    # Verify that the Modal function was called with stripped text
+    mock_modal_fn.remote.assert_called_once_with(
+        text1="In the beginning",
+        text2="Na mwanzo"
+    )
 
 
 @pytest.mark.asyncio
@@ -299,12 +300,11 @@ async def test_realtime_assessment_negative_result(client, regular_token1):
         "type": "semantic-similarity"
     }
 
-    # Mock the Modal response with negative similarity
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"score": -0.15}
+    # Mock the Modal function with negative similarity
+    mock_modal_fn = MagicMock()
+    mock_modal_fn.remote.return_value = {"score": -0.15}
 
-    with patch("httpx.AsyncClient.post", return_value=mock_response):
+    with patch("assessment_routes.v3.realtime_routes._get_modal_function", return_value=mock_modal_fn):
         response = client.post(
             f"/{prefix}/realtime/assessment",
             json=request_data,
@@ -318,8 +318,8 @@ async def test_realtime_assessment_negative_result(client, regular_token1):
 
 
 @pytest.mark.asyncio
-async def test_realtime_assessment_modal_env_main(client, regular_token1):
-    """Test that MODAL_ENV=main uses production Modal URLs."""
+async def test_realtime_assessment_modal_function_called(client, regular_token1):
+    """Test that Modal function is called correctly via SDK."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     request_data = {
@@ -328,56 +328,59 @@ async def test_realtime_assessment_modal_env_main(client, regular_token1):
         "type": "semantic-similarity"
     }
 
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"score": 0.95}
+    mock_modal_fn = MagicMock()
+    mock_modal_fn.remote.return_value = {"score": 0.95}
 
-    with patch.dict("os.environ", {"MODAL_ENV": "main"}):
-        with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
-            response = client.post(
-                f"/{prefix}/realtime/assessment",
-                json=request_data,
-                headers=headers
-            )
+    with patch("assessment_routes.v3.realtime_routes._get_modal_function", return_value=mock_modal_fn):
+        response = client.post(
+            f"/{prefix}/realtime/assessment",
+            json=request_data,
+            headers=headers
+        )
 
     assert response.status_code == 200
     data = response.json()
     assert "score" in data
     assert data["score"] == 0.95
-    # Verify the URL called was the production URL
-    call_args = mock_post.call_args
-    url = call_args[0][0] if call_args[0] else call_args.kwargs.get("url")
-    assert "sil-ai--semantic-similarity-realtime-assess.modal.run" in str(url)
+    # Verify the Modal function was called with correct parameters
+    mock_modal_fn.remote.assert_called_once_with(
+        text1="Test text",
+        text2="Test text 2"
+    )
 
 
 @pytest.mark.asyncio
-async def test_realtime_assessment_modal_env_dev(client, regular_token1):
-    """Test that MODAL_ENV=dev uses development Modal URLs."""
+async def test_realtime_assessment_text_lengths_function_called(client, regular_token1):
+    """Test that text-lengths Modal function is called correctly via SDK."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     request_data = {
-        "verse_1": "Test text",
-        "verse_2": "Test text 2",
-        "type": "semantic-similarity"
+        "verse_1": "Test text with more words",
+        "verse_2": "Test text",
+        "type": "text-lengths"
     }
 
-    mock_response = AsyncMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {"score": 0.95}
+    mock_modal_fn = MagicMock()
+    mock_modal_fn.remote.return_value = {
+        "word_count_difference": 2,
+        "char_count_difference": 10
+    }
 
-    with patch.dict("os.environ", {"MODAL_ENV": "dev"}):
-        with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
-            response = client.post(
-                f"/{prefix}/realtime/assessment",
-                json=request_data,
-                headers=headers
-            )
+    with patch("assessment_routes.v3.realtime_routes._get_modal_function", return_value=mock_modal_fn):
+        response = client.post(
+            f"/{prefix}/realtime/assessment",
+            json=request_data,
+            headers=headers
+        )
 
     assert response.status_code == 200
     data = response.json()
-    assert "score" in data
-    assert data["score"] == 0.95
-    # Verify the URL called was the dev URL
-    call_args = mock_post.call_args
-    url = call_args[0][0] if call_args[0] else call_args.kwargs.get("url")
-    assert "sil-ai-dev--semantic-similarity-realtime-assess.modal.run" in str(url)
+    assert "word_count_difference" in data
+    assert "char_count_difference" in data
+    assert data["word_count_difference"] == 2
+    assert data["char_count_difference"] == 10
+    # Verify the Modal function was called with correct parameters
+    mock_modal_fn.remote.assert_called_once_with(
+        text1="Test text with more words",
+        text2="Test text"
+    )
