@@ -22,7 +22,7 @@ The project uses a `.venv` in the repo root. All CLI tools (`alembic`, `pytest`,
    ```
    If the container was previously created without port mappings, recreate it:
    ```bash
-   docker compose down db && docker compose up -d db
+   docker compose rm -sf db && docker compose up -d db
    ```
 
 3. Enable the pgvector extension (first time only):

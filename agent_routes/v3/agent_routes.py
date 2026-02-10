@@ -378,6 +378,8 @@ async def add_lexeme_card(
     - replace_existing: bool (optional, default=False) - If True, replaces list fields
       (surface_forms, senses) with new data and replaces examples for this revision_id.
       If False, appends new data to existing lists.
+    - is_user_edit: bool (optional, default=False) - If True, sets the last_user_edit
+      timestamp. Use for user-initiated writes to distinguish from automated updates.
 
     Card fields:
     - source_lemma: str (optional) - The source language lemma for cross-reference
@@ -857,6 +859,8 @@ async def patch_lexeme_card_by_id(
       - "replace": Overwrite entire lists
       - "merge": Append + deduplicate case-insensitively (for string lists like
         surface_forms); preserves original casing of existing items
+    - is_user_edit: bool (optional, default=False) - If True, sets the last_user_edit
+      timestamp. Use for user-initiated writes to distinguish from automated updates.
 
     Note: The POST endpoint's append behavior differs - it uses case-sensitive
     deduplication via set(). Use list_mode="merge" here for smart deduplication.
@@ -929,6 +933,8 @@ async def patch_lexeme_card_by_lemma(
       - "replace": Overwrite entire lists
       - "merge": Append + deduplicate case-insensitively (for string lists like
         surface_forms); preserves original casing of existing items
+    - is_user_edit: bool (optional, default=False) - If True, sets the last_user_edit
+      timestamp. Use for user-initiated writes to distinguish from automated updates.
 
     Note: The POST endpoint's append behavior differs - it uses case-sensitive
     deduplication via set(). Use list_mode="merge" here for smart deduplication.

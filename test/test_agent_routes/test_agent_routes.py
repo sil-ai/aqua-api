@@ -4353,8 +4353,6 @@ def test_post_lexeme_card_upsert_with_is_user_edit_updates_last_user_edit(
     client, regular_token1, db_session, test_revision_id
 ):
     """POST upsert with is_user_edit=true should update last_user_edit."""
-    import time
-
     # Create card without is_user_edit
     response1 = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
@@ -4368,8 +4366,6 @@ def test_post_lexeme_card_upsert_with_is_user_edit_updates_last_user_edit(
     )
     assert response1.status_code == 200
     assert response1.json()["last_user_edit"] is None
-
-    time.sleep(0.1)
 
     # Upsert with is_user_edit=true
     response2 = client.post(
