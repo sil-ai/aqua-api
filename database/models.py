@@ -397,6 +397,7 @@ class AgentLexemeCard(Base):
     alignment_scores = Column(JSONB)  # Dict: {source_word: alignment_score}
     created_at = Column(TIMESTAMP, default=func.now())
     last_updated = Column(TIMESTAMP, default=func.now())
+    last_user_edit = Column(TIMESTAMP, nullable=True)
 
     __table_args__ = (
         # Unique constraint to prevent duplicate cards
