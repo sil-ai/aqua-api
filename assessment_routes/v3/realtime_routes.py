@@ -128,6 +128,7 @@ async def realtime_assessment(
     modal_fn = _get_modal_function(app_name, function_name)
 
     # Call Modal function via SDK
+    logger.info(f"Calling Modal function: {app_name}.{function_name}")
     result = await call_realtime_modal(
         modal_fn=modal_fn,
         text1=request.verse_1.strip(),
