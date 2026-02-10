@@ -195,7 +195,6 @@ class AssessmentType(Enum):
     word_alignment = "word-alignment"
     sentence_length = "sentence-length"
     semantic_similarity = "semantic-similarity"
-    model_config = ConfigDict(from_attributes=True)
     ngrams = "ngrams"
     tfidf = "tfidf"
     text_lengths = "text-lengths"
