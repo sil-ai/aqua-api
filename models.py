@@ -614,18 +614,20 @@ class CritiqueIssueIn(BaseModel):
 
 
 class CritiqueStorageRequest(BaseModel):
-    """Request to store critique results for a verse."""
+    """Request to store critique results for a verse.
 
-    assessment_id: int
-    vref: str
+    The critique is linked to a specific agent translation by agent_translation_id.
+    The assessment_id and vref are derived from the referenced translation.
+    """
+
+    agent_translation_id: int
     omissions: list[CritiqueIssueIn] = []
     additions: list[CritiqueIssueIn] = []
 
     model_config = {
         "json_schema_extra": {
             "example": {
-                "assessment_id": 123,
-                "vref": "JHN 1:1",
+                "agent_translation_id": 1,
                 "omissions": [
                     {
                         "text": "in the beginning",
@@ -646,6 +648,7 @@ class CritiqueIssueOut(BaseModel):
 
     id: int
     assessment_id: int
+    agent_translation_id: int
     vref: str
     book: str
     chapter: int
@@ -665,6 +668,7 @@ class CritiqueIssueOut(BaseModel):
             "example": {
                 "id": 1,
                 "assessment_id": 123,
+                "agent_translation_id": 1,
                 "vref": "JHN 1:1",
                 "book": "JHN",
                 "chapter": 1,

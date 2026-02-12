@@ -273,11 +273,10 @@ async def add_critique_issues(
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Store critique issues (omissions and additions) for a verse assessment.
+    Store critique issues (omissions and additions) linked to a specific agent translation.
 
     Input:
-    - assessment_id: int - The assessment ID
-    - vref: str - Verse reference (e.g., "JHN 1:1")
+    - agent_translation_id: int - The ID of the translation being critiqued
     - omissions: list[CritiqueIssueIn] - List of omission issues
     - additions: list[CritiqueIssueIn] - List of addition issues
 
@@ -292,12 +291,40 @@ async def add_critique_issues(
     try:
         import re
 
+        from sqlalchemy import select
+
+        # Look up the AgentTranslation record
+        translation_query = select(AgentTranslation).where(
+            AgentTranslation.id == critique.agent_translation_id
+        )
+        translation_result = await db.execute(translation_query)
+        translation = translation_result.scalar_one_or_none()
+
+        if not translation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Agent translation with id {critique.agent_translation_id} not found",
+            )
+
+        # Derive assessment_id and vref from the translation
+        assessment_id = translation.assessment_id
+        vref = translation.vref
+
+        # Check user authorization via the derived assessment_id
+        if not await is_user_authorized_for_assessment(
+            current_user.id, assessment_id, db
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized for this assessment",
+            )
+
         # Parse vref into book, chapter, verse components
-        match = re.match(r"([A-Z1-3]{3})\s+(\d+):(\d+)", critique.vref)
+        match = re.match(r"([A-Z1-3]{3})\s+(\d+):(\d+)", vref)
         if not match:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid vref format: {critique.vref}. Expected format: 'BBB C:V' (e.g., 'JHN 1:1')",
+                detail=f"Invalid vref format: {vref}. Expected format: 'BBB C:V' (e.g., 'JHN 1:1')",
             )
         book, chapter, verse = match.groups()
         chapter = int(chapter)
@@ -308,8 +335,9 @@ async def add_critique_issues(
         # Create records for omissions
         for omission in critique.omissions:
             issue = AgentCritiqueIssue(
-                assessment_id=critique.assessment_id,
-                vref=critique.vref,
+                assessment_id=assessment_id,
+                agent_translation_id=critique.agent_translation_id,
+                vref=vref,
                 book=book,
                 chapter=chapter,
                 verse=verse,
@@ -324,8 +352,9 @@ async def add_critique_issues(
         # Create records for additions
         for addition in critique.additions:
             issue = AgentCritiqueIssue(
-                assessment_id=critique.assessment_id,
-                vref=critique.vref,
+                assessment_id=assessment_id,
+                agent_translation_id=critique.agent_translation_id,
+                vref=vref,
                 book=book,
                 chapter=chapter,
                 verse=verse,
@@ -1295,6 +1324,7 @@ async def get_critique_issues(
     revision_id: int = None,
     reference_id: int = None,
     all_assessments: bool = True,
+    agent_translation_id: int = None,
     vref: str = None,
     book: str = None,
     issue_type: str = None,
@@ -1311,6 +1341,7 @@ async def get_critique_issues(
     - revision_id: int (optional) - The revision ID. Must be provided with reference_id if not using assessment_id.
     - reference_id: int (optional) - The reference ID. Must be provided with revision_id if not using assessment_id.
     - all_assessments: bool (optional, default=True) - When using revision_id and reference_id, if True returns issues from all assessments between the revision and reference. If False, returns only issues from the latest assessment.
+    - agent_translation_id: int (optional) - Filter by specific agent translation ID
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - book: str (optional) - Filter by book code (e.g., "JHN")
     - issue_type: str (optional) - Filter by issue type ("omission" or "addition")
@@ -1408,6 +1439,11 @@ async def get_critique_issues(
             )
 
         # Add optional filters
+        if agent_translation_id is not None:
+            query = query.where(
+                AgentCritiqueIssue.agent_translation_id == agent_translation_id
+            )
+
         if vref:
             query = query.where(AgentCritiqueIssue.vref == vref)
 

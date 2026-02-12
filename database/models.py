@@ -565,9 +565,15 @@ class AgentCritiqueIssue(Base):
     # Timestamp
     created_at = Column(TIMESTAMP, default=func.now())
 
+    # Link to the specific translation that was critiqued
+    agent_translation_id = Column(
+        Integer, ForeignKey("agent_translations.id"), nullable=False
+    )
+
     # Relationships
     assessment = relationship("Assessment")
     resolved_by = relationship("UserDB", foreign_keys=[resolved_by_id])
+    translation = relationship("AgentTranslation", back_populates="critique_issues")
 
     __table_args__ = (
         Index("ix_agent_critique_issue_assessment", "assessment_id"),
@@ -577,6 +583,7 @@ class AgentCritiqueIssue(Base):
         Index("ix_agent_critique_issue_severity", "severity"),
         Index("ix_agent_critique_issue_resolved", "is_resolved"),
         Index("ix_agent_critique_issue_resolved_by", "resolved_by_id"),
+        Index("ix_agent_critique_issue_translation", "agent_translation_id"),
     )
 
 
@@ -596,6 +603,7 @@ class AgentTranslation(Base):
     created_at = Column(TIMESTAMP, default=func.now())
 
     assessment = relationship("Assessment")
+    critique_issues = relationship("AgentCritiqueIssue", back_populates="translation")
 
     __table_args__ = (
         Index(

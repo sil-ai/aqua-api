@@ -5,20 +5,46 @@ Tests for agent critique issue resolution functionality.
 prefix = "v3"
 
 
+def _create_translation(client, token, assessment_id, vref, draft_text="test"):
+    """Helper: create an agent translation and return its ID."""
+    resp = client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": assessment_id,
+            "vref": vref,
+            "draft_text": draft_text,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200, f"Failed to create translation: {resp.json()}"
+    return resp.json()["id"]
+
+
+def _create_critique(client, token, translation_id, omissions=None, additions=None):
+    """Helper: create critique issues for a translation and return the response."""
+    return client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "agent_translation_id": translation_id,
+            "omissions": omissions or [],
+            "additions": additions or [],
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
 def test_resolve_critique_issue_success(client, regular_token1, test_assessment_id):
     """Test successfully resolving a critique issue."""
-    # First create a critique issue
-    critique_data = {
-        "assessment_id": test_assessment_id,
-        "vref": "JHN 1:1",
-        "omissions": [{"text": "word", "comments": "missing word", "severity": 4}],
-        "additions": [],
-    }
+    # First create a translation and then a critique issue
+    translation_id = _create_translation(
+        client, regular_token1, test_assessment_id, "JHN 1:1"
+    )
 
-    create_response = client.post(
-        f"{prefix}/agent/critique",
-        json=critique_data,
-        headers={"Authorization": f"Bearer {regular_token1}"},
+    create_response = _create_critique(
+        client,
+        regular_token1,
+        translation_id,
+        omissions=[{"text": "word", "comments": "missing word", "severity": 4}],
     )
     assert create_response.status_code == 200
     created_issues = create_response.json()
@@ -46,18 +72,16 @@ def test_resolve_critique_issue_success(client, regular_token1, test_assessment_
 
 def test_unresolve_critique_issue_success(client, regular_token1, test_assessment_id):
     """Test successfully unresolving a previously resolved critique issue."""
-    # Create and resolve a critique issue
-    critique_data = {
-        "assessment_id": test_assessment_id,
-        "vref": "JHN 1:3",
-        "omissions": [{"text": "made", "comments": "missing made", "severity": 3}],
-        "additions": [],
-    }
+    # Create a translation, then a critique issue
+    translation_id = _create_translation(
+        client, regular_token1, test_assessment_id, "JHN 1:3"
+    )
 
-    create_response = client.post(
-        f"{prefix}/agent/critique",
-        json=critique_data,
-        headers={"Authorization": f"Bearer {regular_token1}"},
+    create_response = _create_critique(
+        client,
+        regular_token1,
+        translation_id,
+        omissions=[{"text": "made", "comments": "missing made", "severity": 3}],
     )
     issue_id = create_response.json()[0]["id"]
 
@@ -89,35 +113,26 @@ def test_get_critique_issues_filter_by_resolved(
     client, regular_token1, test_assessment_id
 ):
     """Test filtering critique issues by resolution status."""
-    # Create multiple critique issues
-    unresolved_data = {
-        "assessment_id": test_assessment_id,
-        "vref": "JHN 2:1",
-        "omissions": [
-            {"text": "unresolved", "comments": "this stays unresolved", "severity": 2}
-        ],
-        "additions": [],
-    }
-
-    resolved_data = {
-        "assessment_id": test_assessment_id,
-        "vref": "JHN 2:2",
-        "omissions": [
-            {"text": "resolved", "comments": "this gets resolved", "severity": 3}
-        ],
-        "additions": [],
-    }
+    # Create translations for the critique issues
+    t1 = _create_translation(client, regular_token1, test_assessment_id, "JHN 2:1")
+    t2 = _create_translation(client, regular_token1, test_assessment_id, "JHN 2:2")
 
     # Create both issues
-    unresolved_response = client.post(
-        f"{prefix}/agent/critique",
-        json=unresolved_data,
-        headers={"Authorization": f"Bearer {regular_token1}"},
+    unresolved_response = _create_critique(
+        client,
+        regular_token1,
+        t1,
+        omissions=[
+            {"text": "unresolved", "comments": "this stays unresolved", "severity": 2}
+        ],
     )
-    resolved_response = client.post(
-        f"{prefix}/agent/critique",
-        json=resolved_data,
-        headers={"Authorization": f"Bearer {regular_token1}"},
+    resolved_response = _create_critique(
+        client,
+        regular_token1,
+        t2,
+        omissions=[
+            {"text": "resolved", "comments": "this gets resolved", "severity": 3}
+        ],
     )
 
     assert unresolved_response.status_code == 200
