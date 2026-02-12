@@ -1091,7 +1091,6 @@ async def get_lexeme_cards(
     source_word: str = None,
     target_word: str = None,
     pos: str = None,
-    include_all_matches: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -1109,9 +1108,6 @@ async def get_lexeme_cards(
     - target_word: str (optional) - Filter by target_lemma or surface_forms
       (case-insensitive exact match)
     - pos: str (optional) - Filter by part of speech
-    - include_all_matches: bool (deprecated, no effect) - Kept for backward
-      compatibility. Both source_word and target_word now always search lemma
-      and surface forms.
 
     Returns:
     - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending).
