@@ -1123,8 +1123,7 @@ async def get_lexeme_cards(
         # Get revision IDs the user has access to
         authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
 
-        # Start with base query filtered by languages
-        query = select(AgentLexemeCard)
+        # Base conditions: language pair filter
         conditions = [
             AgentLexemeCard.source_language == source_language,
             AgentLexemeCard.target_language == target_language,
@@ -1138,8 +1137,11 @@ async def get_lexeme_cards(
         # lemma OR surface_forms (case-insensitive exact match)
         word_conditions = []
 
+        source_word = source_word.strip() if source_word else None
+        target_word = target_word.strip() if target_word else None
+
         if source_word:
-            source_word_lower = source_word.strip().lower()
+            source_word_lower = source_word.lower()
             word_conditions.append(
                 text(
                     "(LOWER(agent_lexeme_cards.source_lemma) = :source_word_lower) OR "
@@ -1150,7 +1152,7 @@ async def get_lexeme_cards(
             )
 
         if target_word:
-            target_word_lower = target_word.strip().lower()
+            target_word_lower = target_word.lower()
             word_conditions.append(
                 text(
                     "(LOWER(agent_lexeme_cards.target_lemma) = :target_word_lower) OR "
