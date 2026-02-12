@@ -423,6 +423,12 @@ class AgentLexemeCard(Base):
             func.lower(target_lemma),
             postgresql_using="btree",
         ),
+        # Functional index for case-insensitive source_lemma searches
+        Index(
+            "ix_agent_lexeme_cards_source_lemma_lower",
+            func.lower(source_lemma),
+            postgresql_using="btree",
+        ),
         # GIN index for JSONB array searches in surface_forms
         Index(
             "ix_agent_lexeme_cards_surface_forms",
