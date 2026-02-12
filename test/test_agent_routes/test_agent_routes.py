@@ -2626,7 +2626,7 @@ def test_get_lexeme_cards_source_word_matches_source_surface_forms(
 def test_get_lexeme_cards_target_word_matches_target_lemma_without_flag(
     client, regular_token1, db_session, test_revision_id
 ):
-    """Test that target_word=upendo_nf finds card with target_lemma='upendo_nf' without include_all_matches."""
+    """Test that target_word=upendo_nf finds card with target_lemma='upendo_nf'."""
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -2639,7 +2639,7 @@ def test_get_lexeme_cards_target_word_matches_target_lemma_without_flag(
         },
     )
 
-    # No include_all_matches param — should still find by target_lemma
+    # Should find by target_lemma
     response = client.get(
         "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upendo_nf",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -2703,43 +2703,6 @@ def test_get_lexeme_cards_source_word_case_insensitive_lemma(
     data = response.json()
     card = next((c for c in data if c["target_lemma"] == "upendo_ci2"), None)
     assert card is not None
-
-
-def test_get_lexeme_cards_include_all_matches_ignored(
-    client, regular_token1, db_session, test_revision_id
-):
-    """Test that include_all_matches=true and include_all_matches=false produce identical results."""
-    client.post(
-        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={
-            "source_lemma": "ignore_flag_test",
-            "target_lemma": "kupuuza_flag",
-            "source_language": "eng",
-            "target_language": "swh",
-            "surface_forms": ["kupuuza_flag_sf"],
-            "confidence": 0.80,
-        },
-    )
-
-    response_true = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=kupuuza_flag&include_all_matches=true",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-    )
-    response_false = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=kupuuza_flag&include_all_matches=false",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-    )
-
-    assert response_true.status_code == 200
-    assert response_false.status_code == 200
-    data_true = response_true.json()
-    data_false = response_false.json()
-    # Both should return the same cards
-    assert len(data_true) == len(data_false)
-    ids_true = sorted(c["id"] for c in data_true)
-    ids_false = sorted(c["id"] for c in data_false)
-    assert ids_true == ids_false
 
 
 def test_get_lexeme_cards_no_example_text_search(
@@ -4673,7 +4636,7 @@ def test_get_lexeme_cards_includes_last_user_edit(
     )
 
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upepo_lue_test_get&include_all_matches=true",
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upepo_lue_test_get",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
