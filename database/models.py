@@ -567,7 +567,9 @@ class AgentCritiqueIssue(Base):
 
     # Link to the specific translation that was critiqued
     agent_translation_id = Column(
-        Integer, ForeignKey("agent_translations.id"), nullable=False
+        Integer,
+        ForeignKey("agent_translations.id", ondelete="CASCADE"),
+        nullable=False,
     )
 
     # Relationships

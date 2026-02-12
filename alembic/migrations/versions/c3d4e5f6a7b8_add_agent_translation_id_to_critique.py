@@ -28,6 +28,7 @@ def upgrade() -> None:
         "agent_translations",
         ["agent_translation_id"],
         ["id"],
+        ondelete="CASCADE",
     )
     op.create_index(
         "ix_agent_critique_issue_translation",
