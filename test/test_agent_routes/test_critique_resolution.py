@@ -20,7 +20,9 @@ def _create_translation(client, token, assessment_id, vref, draft_text="test"):
     return resp.json()["id"]
 
 
-def _create_critique(client, token, translation_id, omissions=None, additions=None):
+def _create_critique(
+    client, token, translation_id, omissions=None, additions=None, replacements=None
+):
     """Helper: create critique issues for a translation and return the response."""
     return client.post(
         f"{prefix}/agent/critique",
@@ -28,6 +30,7 @@ def _create_critique(client, token, translation_id, omissions=None, additions=No
             "agent_translation_id": translation_id,
             "omissions": omissions or [],
             "additions": additions or [],
+            "replacements": replacements or [],
         },
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -44,7 +47,7 @@ def test_resolve_critique_issue_success(client, regular_token1, test_assessment_
         client,
         regular_token1,
         translation_id,
-        omissions=[{"text": "word", "comments": "missing word", "severity": 4}],
+        omissions=[{"source_text": "word", "comments": "missing word", "severity": 4}],
     )
     assert create_response.status_code == 200
     created_issues = create_response.json()
@@ -81,7 +84,7 @@ def test_unresolve_critique_issue_success(client, regular_token1, test_assessmen
         client,
         regular_token1,
         translation_id,
-        omissions=[{"text": "made", "comments": "missing made", "severity": 3}],
+        omissions=[{"source_text": "made", "comments": "missing made", "severity": 3}],
     )
     issue_id = create_response.json()[0]["id"]
 
@@ -123,7 +126,11 @@ def test_get_critique_issues_filter_by_resolved(
         regular_token1,
         t1,
         omissions=[
-            {"text": "unresolved", "comments": "this stays unresolved", "severity": 2}
+            {
+                "source_text": "unresolved",
+                "comments": "this stays unresolved",
+                "severity": 2,
+            }
         ],
     )
     resolved_response = _create_critique(
@@ -131,7 +138,7 @@ def test_get_critique_issues_filter_by_resolved(
         regular_token1,
         t2,
         omissions=[
-            {"text": "resolved", "comments": "this gets resolved", "severity": 3}
+            {"source_text": "resolved", "comments": "this gets resolved", "severity": 3}
         ],
     )
 
@@ -156,7 +163,7 @@ def test_get_critique_issues_filter_by_resolved(
     resolved_issues = resolved_filter_response.json()
 
     # Should only contain the resolved issue from this test
-    resolved_texts = [issue["text"] for issue in resolved_issues]
+    resolved_texts = [issue["source_text"] for issue in resolved_issues]
     assert "resolved" in resolved_texts
     assert all(issue["is_resolved"] for issue in resolved_issues)
 
@@ -169,9 +176,47 @@ def test_get_critique_issues_filter_by_resolved(
     unresolved_issues = unresolved_filter_response.json()
 
     # Should contain all unresolved issues (including any from other tests)
-    unresolved_texts = [issue["text"] for issue in unresolved_issues]
+    unresolved_texts = [issue["source_text"] for issue in unresolved_issues]
     assert "unresolved" in unresolved_texts
     assert all(not issue["is_resolved"] for issue in unresolved_issues)
+
+
+def test_resolve_replacement_issue_success(client, regular_token1, test_assessment_id):
+    """Test that replacement issues can be resolved just like omissions."""
+    translation_id = _create_translation(
+        client, regular_token1, test_assessment_id, "JHN 1:4"
+    )
+
+    create_response = _create_critique(
+        client,
+        regular_token1,
+        translation_id,
+        replacements=[
+            {
+                "source_text": "love",
+                "draft_text": "like",
+                "comments": "wrong term",
+                "severity": 4,
+            }
+        ],
+    )
+    assert create_response.status_code == 200
+    issue_id = create_response.json()[0]["id"]
+
+    # Resolve it
+    resolve_response = client.patch(
+        f"{prefix}/agent/critique/{issue_id}/resolve",
+        json={"resolution_notes": "Fixed translation to use 'love'"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert resolve_response.status_code == 200
+    resolved = resolve_response.json()
+    assert resolved["is_resolved"] is True
+    assert resolved["resolution_notes"] == "Fixed translation to use 'love'"
+    assert resolved["issue_type"] == "replacement"
+    assert resolved["source_text"] == "love"
+    assert resolved["draft_text"] == "like"
 
 
 def test_resolve_requires_authentication(client):

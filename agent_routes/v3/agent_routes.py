@@ -273,17 +273,13 @@ async def add_critique_issues(
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Store critique issues (omissions and additions) linked to a specific agent translation.
+    Store critique issues (omissions, additions, and replacements) linked to a specific agent translation.
 
     Input:
     - agent_translation_id: int - The ID of the translation being critiqued
-    - omissions: list[CritiqueIssueIn] - List of omission issues
-    - additions: list[CritiqueIssueIn] - List of addition issues
-
-    Each issue contains:
-    - text: str (optional) - The text that was omitted or added
-    - comments: str (optional) - Explanation of why this is an issue
-    - severity: int - Severity level (0=none, 5=critical)
+    - omissions: list[OmissionIssueIn] - source_text present in source but missing from draft
+    - additions: list[AdditionIssueIn] - draft_text present in draft but not in source
+    - replacements: list[ReplacementIssueIn] - source_text incorrectly rendered as draft_text
 
     Returns:
     - List[CritiqueIssueOut]: List of all created critique issue entries
@@ -342,7 +338,7 @@ async def add_critique_issues(
                 chapter=chapter,
                 verse=verse,
                 issue_type="omission",
-                text=omission.text,
+                source_text=omission.source_text,
                 comments=omission.comments,
                 severity=omission.severity,
             )
@@ -359,9 +355,27 @@ async def add_critique_issues(
                 chapter=chapter,
                 verse=verse,
                 issue_type="addition",
-                text=addition.text,
+                draft_text=addition.draft_text,
                 comments=addition.comments,
                 severity=addition.severity,
+            )
+            db.add(issue)
+            created_issues.append(issue)
+
+        # Create records for replacements
+        for replacement in critique.replacements:
+            issue = AgentCritiqueIssue(
+                assessment_id=assessment_id,
+                agent_translation_id=critique.agent_translation_id,
+                vref=vref,
+                book=book,
+                chapter=chapter,
+                verse=verse,
+                issue_type="replacement",
+                source_text=replacement.source_text,
+                draft_text=replacement.draft_text,
+                comments=replacement.comments,
+                severity=replacement.severity,
             )
             db.add(issue)
             created_issues.append(issue)
@@ -1447,10 +1461,10 @@ async def get_critique_issues(
             query = query.where(AgentCritiqueIssue.book == book)
 
         if issue_type:
-            if issue_type not in ["omission", "addition"]:
+            if issue_type not in ["omission", "addition", "replacement"]:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="issue_type must be either 'omission' or 'addition'",
+                    detail="issue_type must be 'omission', 'addition', or 'replacement'",
                 )
             query = query.where(AgentCritiqueIssue.issue_type == issue_type)
 
