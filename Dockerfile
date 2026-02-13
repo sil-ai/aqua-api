@@ -9,6 +9,7 @@ RUN pip install -r requirements.txt && \
 RUN mkdir /app
 COPY *.py /app/
 ADD fixtures/ /app/fixtures/
+ADD agent_routes/ /app/agent_routes/
 ADD bible_routes/ /app/bible_routes/
 ADD assessment_routes/ /app/assessment_routes/
 ADD review_routes/ /app/review_routes/
