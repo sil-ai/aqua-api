@@ -595,22 +595,35 @@ class LexemeCardPatch(BaseModel):
     }
 
 
-class CritiqueIssueIn(BaseModel):
-    """Individual critique issue for input."""
+class OmissionIssueIn(BaseModel):
+    """Omission critique issue: source text missing from the draft."""
 
-    text: Optional[str] = None
+    source_text: str = Field(min_length=1)
     comments: Optional[str] = None
     severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
 
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "text": "in the beginning",
-                "comments": "Missing key phrase from source text",
-                "severity": 4,
-            }
-        }
-    }
+    model_config = {"str_strip_whitespace": True}
+
+
+class AdditionIssueIn(BaseModel):
+    """Addition critique issue: draft text not present in the source."""
+
+    draft_text: str = Field(min_length=1)
+    comments: Optional[str] = None
+    severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
+
+    model_config = {"str_strip_whitespace": True}
+
+
+class ReplacementIssueIn(BaseModel):
+    """Replacement critique issue: source text incorrectly rendered as draft text."""
+
+    source_text: str = Field(min_length=1)
+    draft_text: str = Field(min_length=1)
+    comments: Optional[str] = None
+    severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
+
+    model_config = {"str_strip_whitespace": True}
 
 
 class CritiqueStorageRequest(BaseModel):
@@ -621,8 +634,9 @@ class CritiqueStorageRequest(BaseModel):
     """
 
     agent_translation_id: int
-    omissions: list[CritiqueIssueIn] = []
-    additions: list[CritiqueIssueIn] = []
+    omissions: list[OmissionIssueIn] = []
+    additions: list[AdditionIssueIn] = []
+    replacements: list[ReplacementIssueIn] = []
 
     model_config = {
         "json_schema_extra": {
@@ -630,13 +644,25 @@ class CritiqueStorageRequest(BaseModel):
                 "agent_translation_id": 1,
                 "omissions": [
                     {
-                        "text": "in the beginning",
+                        "source_text": "in the beginning",
                         "comments": "Missing key phrase",
                         "severity": 4,
                     }
                 ],
                 "additions": [
-                    {"text": "extra words", "comments": "Not in source", "severity": 2}
+                    {
+                        "draft_text": "extra words",
+                        "comments": "Not in source",
+                        "severity": 2,
+                    }
+                ],
+                "replacements": [
+                    {
+                        "source_text": "love",
+                        "draft_text": "like",
+                        "comments": "Incorrect translation",
+                        "severity": 3,
+                    }
                 ],
             }
         }
@@ -653,8 +679,9 @@ class CritiqueIssueOut(BaseModel):
     book: str
     chapter: int
     verse: int
-    issue_type: Literal["omission", "addition"]
-    text: Optional[str] = None
+    issue_type: Literal["omission", "addition", "replacement"]
+    source_text: Optional[str] = None
+    draft_text: Optional[str] = None
     comments: Optional[str] = None
     severity: int
     is_resolved: bool = False
@@ -674,7 +701,8 @@ class CritiqueIssueOut(BaseModel):
                 "chapter": 1,
                 "verse": 1,
                 "issue_type": "omission",
-                "text": "in the beginning",
+                "source_text": "in the beginning",
+                "draft_text": None,
                 "comments": "Missing key phrase from source text",
                 "severity": 4,
                 "is_resolved": False,

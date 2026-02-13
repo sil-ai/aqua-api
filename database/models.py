@@ -2,6 +2,7 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     TIMESTAMP,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -549,10 +550,13 @@ class AgentCritiqueIssue(Base):
     verse = Column(Integer, nullable=False)
 
     # Issue classification
-    issue_type = Column(String(10), nullable=False)  # 'omission' or 'addition'
+    issue_type = Column(
+        String(15), nullable=False
+    )  # 'omission', 'addition', or 'replacement'
 
     # Issue details
-    text = Column(Text, nullable=True)  # The text that was omitted or added
+    source_text = Column(Text, nullable=True)  # The source text (omission/replacement)
+    draft_text = Column(Text, nullable=True)  # The draft text (addition/replacement)
     comments = Column(Text, nullable=True)  # Explanation of why this is an issue
     severity = Column(Integer, nullable=False)  # 0=none, 5=critical
 
@@ -586,6 +590,18 @@ class AgentCritiqueIssue(Base):
         Index("ix_agent_critique_issue_resolved", "is_resolved"),
         Index("ix_agent_critique_issue_resolved_by", "resolved_by_id"),
         Index("ix_agent_critique_issue_translation", "agent_translation_id"),
+        # The both-NULL clause permits legacy rows that existed before this
+        # migration with no text fields set.  New rows always satisfy the
+        # type-specific requirements via Pydantic validation.
+        CheckConstraint(
+            """
+            (issue_type = 'omission'    AND source_text IS NOT NULL AND draft_text IS NULL) OR
+            (issue_type = 'addition'    AND source_text IS NULL     AND draft_text IS NOT NULL) OR
+            (issue_type = 'replacement' AND source_text IS NOT NULL AND draft_text IS NOT NULL) OR
+            (source_text IS NULL AND draft_text IS NULL)
+            """,
+            name="ck_critique_issue_text_fields",
+        ),
     )
 
 
