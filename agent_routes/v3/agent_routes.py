@@ -338,8 +338,8 @@ async def add_critique_issues(
                 chapter=chapter,
                 verse=verse,
                 issue_type="omission",
-                source_text=omission.source_text,
-                comments=omission.comments,
+                source_text=sanitize_text(omission.source_text),
+                comments=sanitize_text(omission.comments),
                 severity=omission.severity,
             )
             db.add(issue)
@@ -355,8 +355,8 @@ async def add_critique_issues(
                 chapter=chapter,
                 verse=verse,
                 issue_type="addition",
-                draft_text=addition.draft_text,
-                comments=addition.comments,
+                draft_text=sanitize_text(addition.draft_text),
+                comments=sanitize_text(addition.comments),
                 severity=addition.severity,
             )
             db.add(issue)
@@ -372,9 +372,9 @@ async def add_critique_issues(
                 chapter=chapter,
                 verse=verse,
                 issue_type="replacement",
-                source_text=replacement.source_text,
-                draft_text=replacement.draft_text,
-                comments=replacement.comments,
+                source_text=sanitize_text(replacement.source_text),
+                draft_text=sanitize_text(replacement.draft_text),
+                comments=sanitize_text(replacement.comments),
                 severity=replacement.severity,
             )
             db.add(issue)

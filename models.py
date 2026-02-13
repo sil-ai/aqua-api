@@ -602,6 +602,8 @@ class OmissionIssueIn(BaseModel):
     comments: Optional[str] = None
     severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
 
+    model_config = {"str_strip_whitespace": True}
+
 
 class AdditionIssueIn(BaseModel):
     """Addition critique issue: draft text not present in the source."""
@@ -609,6 +611,8 @@ class AdditionIssueIn(BaseModel):
     draft_text: str = Field(min_length=1)
     comments: Optional[str] = None
     severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
+
+    model_config = {"str_strip_whitespace": True}
 
 
 class ReplacementIssueIn(BaseModel):
@@ -618,6 +622,8 @@ class ReplacementIssueIn(BaseModel):
     draft_text: str = Field(min_length=1)
     comments: Optional[str] = None
     severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
+
+    model_config = {"str_strip_whitespace": True}
 
 
 class CritiqueStorageRequest(BaseModel):

@@ -590,9 +590,9 @@ class AgentCritiqueIssue(Base):
         Index("ix_agent_critique_issue_resolved", "is_resolved"),
         Index("ix_agent_critique_issue_resolved_by", "resolved_by_id"),
         Index("ix_agent_critique_issue_translation", "agent_translation_id"),
-        # The both-NULL clause allows legacy rows that had text=NULL before the
-        # source_text/draft_text migration.  New rows always have the required
-        # fields enforced by Pydantic validation.
+        # The both-NULL clause permits legacy rows that existed before this
+        # migration with no text fields set.  New rows always satisfy the
+        # type-specific requirements via Pydantic validation.
         CheckConstraint(
             """
             (issue_type = 'omission'    AND source_text IS NOT NULL AND draft_text IS NULL) OR

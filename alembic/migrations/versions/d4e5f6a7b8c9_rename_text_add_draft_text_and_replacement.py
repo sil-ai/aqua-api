@@ -69,8 +69,9 @@ def upgrade() -> None:
     )
 
     # 6. Add CHECK constraint
-    # The both-NULL clause allows legacy rows that had text=NULL before this migration.
-    # New rows always have the required fields enforced by Pydantic validation.
+    # The both-NULL clause permits legacy rows that existed before this migration
+    # with no text fields set.  New rows always satisfy the type-specific
+    # requirements via Pydantic validation.
     op.create_check_constraint(
         "ck_critique_issue_text_fields",
         "agent_critique_issue",
