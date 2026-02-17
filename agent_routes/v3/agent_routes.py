@@ -1087,7 +1087,7 @@ async def deduplicate_lexeme_cards(
     try:
         import json
 
-        from sqlalchemy import delete, select, text, update
+        from sqlalchemy import delete, select
         from sqlalchemy.sql import func
 
         # Find duplicate groups: GROUP BY LOWER(target_lemma) HAVING COUNT(*) > 1
