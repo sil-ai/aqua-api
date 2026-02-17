@@ -1,10 +1,11 @@
 __version__ = "v3"
 # Standard library imports
+import datetime
 import logging
 
 import fastapi
 from fastapi import Depends, HTTPException, Request, status
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
@@ -457,9 +458,9 @@ async def add_lexeme_card(
             )
 
         # Check if a lexeme card with the same (target_lemma, source_language, target_language) exists
-        # This enforces uniqueness on target_lemma per language pair
+        # This enforces uniqueness on target_lemma per language pair (case-insensitive)
         query = select(AgentLexemeCard).where(
-            AgentLexemeCard.target_lemma == card.target_lemma,
+            func.lower(AgentLexemeCard.target_lemma) == card.target_lemma.lower(),
             AgentLexemeCard.source_language == card.source_language,
             AgentLexemeCard.target_language == card.target_language,
         )
@@ -669,6 +670,21 @@ async def add_lexeme_card(
             }
             return LexemeCardOut.model_validate(card_dict)
 
+    except IntegrityError as e:
+        await db.rollback()
+        if "ix_agent_lexeme_cards_unique" in str(e.orig):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": f"A lexeme card for target_lemma='{card.target_lemma}' "
+                    f"already exists for this language pair. "
+                    f"Use PATCH to update the existing card.",
+                },
+            ) from e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Error adding/updating lexeme card: {e}")
@@ -709,13 +725,13 @@ async def _apply_lexeme_card_patch(
     provided_fields = patch_data.model_fields_set
 
     # Check if changing target_lemma would create a duplicate
-    # Uniqueness is enforced on (target_lemma, source_language, target_language)
+    # Uniqueness is enforced on (LOWER(target_lemma), source_language, target_language)
     if (
         "target_lemma" in provided_fields
-        and patch_data.target_lemma != card.target_lemma
+        and patch_data.target_lemma.lower() != card.target_lemma.lower()
     ):
         duplicate_query = select(AgentLexemeCard).where(
-            AgentLexemeCard.target_lemma == patch_data.target_lemma,
+            func.lower(AgentLexemeCard.target_lemma) == patch_data.target_lemma.lower(),
             AgentLexemeCard.source_language == card.source_language,
             AgentLexemeCard.target_language == card.target_language,
             AgentLexemeCard.id != card.id,  # Exclude the current card
@@ -999,10 +1015,12 @@ async def patch_lexeme_card_by_lemma(
         # Get authorized revision IDs for filtering examples
         authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
 
-        # Fetch the card by lemma lookup
+        # Fetch the card by lemma lookup (case-insensitive)
         # Build query with required fields
+        from sqlalchemy.sql import func as sql_func
+
         query = select(AgentLexemeCard).where(
-            AgentLexemeCard.target_lemma == target_lemma,
+            sql_func.lower(AgentLexemeCard.target_lemma) == target_lemma.lower(),
             AgentLexemeCard.source_language == source_language,
             AgentLexemeCard.target_language == target_language,
         )
@@ -1041,6 +1059,224 @@ async def patch_lexeme_card_by_lemma(
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Error patching lexeme card by lemma: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.post("/agent/lexeme-card/deduplicate")
+async def deduplicate_lexeme_cards(
+    source_language: str,
+    target_language: str,
+    dry_run: bool = True,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Find and merge duplicate lexeme cards that differ only by case in target_lemma.
+
+    Query Parameters:
+    - source_language: str (required) - ISO 639-3 code for source language
+    - target_language: str (required) - ISO 639-3 code for target language
+    - dry_run: bool (optional, default=True) - If True, only report duplicates without merging
+
+    Returns:
+    - Summary with dry_run status, counts, and group details
+    """
+    try:
+        import json
+
+        from sqlalchemy import delete, select, text, update
+        from sqlalchemy.sql import func
+
+        # Find duplicate groups: GROUP BY LOWER(target_lemma) HAVING COUNT(*) > 1
+        dup_query = (
+            select(
+                func.lower(AgentLexemeCard.target_lemma).label("lower_lemma"),
+                func.count().label("cnt"),
+            )
+            .where(
+                AgentLexemeCard.source_language == source_language,
+                AgentLexemeCard.target_language == target_language,
+            )
+            .group_by(func.lower(AgentLexemeCard.target_lemma))
+            .having(func.count() > 1)
+        )
+        dup_result = await db.execute(dup_query)
+        dup_groups = dup_result.all()
+
+        if not dup_groups:
+            return {
+                "dry_run": dry_run,
+                "duplicates_found": 0,
+                "cards_merged": 0,
+                "cards_deleted": 0,
+                "groups": [],
+            }
+
+        groups_summary = []
+        total_merged = 0
+        total_deleted = 0
+
+        for row in dup_groups:
+            lower_lemma = row.lower_lemma
+
+            # Fetch all cards in this duplicate group
+            cards_query = (
+                select(AgentLexemeCard)
+                .where(
+                    func.lower(AgentLexemeCard.target_lemma) == lower_lemma,
+                    AgentLexemeCard.source_language == source_language,
+                    AgentLexemeCard.target_language == target_language,
+                )
+                .order_by(AgentLexemeCard.id)
+            )
+            cards_result = await db.execute(cards_query)
+            cards = cards_result.scalars().all()
+
+            if len(cards) < 2:
+                continue
+
+            # Pick the winner: most recent last_user_edit, then highest confidence, then lowest id
+            def sort_key(c):
+                return (
+                    c.last_user_edit is not None,
+                    c.last_user_edit or datetime.datetime.min,
+                    float(c.confidence or 0),
+                    -c.id,  # Negative so lowest id wins in descending sort
+                )
+
+            sorted_cards = sorted(cards, key=sort_key, reverse=True)
+            winner = sorted_cards[0]
+            losers = sorted_cards[1:]
+
+            group_info = {
+                "lower_lemma": lower_lemma,
+                "winner_id": winner.id,
+                "winner_target_lemma": winner.target_lemma,
+                "loser_ids": [c.id for c in losers],
+                "loser_target_lemmas": [c.target_lemma for c in losers],
+            }
+
+            if not dry_run:
+                # Merge data from losers into winner
+                for loser in losers:
+                    # surface_forms: union case-insensitive
+                    winner.surface_forms = _merge_lists_case_insensitive(
+                        winner.surface_forms or [], loser.surface_forms or []
+                    )
+
+                    # source_surface_forms: union case-insensitive
+                    winner.source_surface_forms = _merge_lists_case_insensitive(
+                        winner.source_surface_forms or [],
+                        loser.source_surface_forms or [],
+                    )
+
+                    # senses: concatenate, deduplicate by JSON equality
+                    winner_senses = winner.senses or []
+                    loser_senses = loser.senses or []
+                    existing_json = {
+                        json.dumps(s, sort_keys=True) for s in winner_senses
+                    }
+                    for sense in loser_senses:
+                        sense_json = json.dumps(sense, sort_keys=True)
+                        if sense_json not in existing_json:
+                            winner_senses.append(sense)
+                            existing_json.add(sense_json)
+                    winner.senses = winner_senses
+
+                    # alignment_scores: keep max score per key
+                    if loser.alignment_scores:
+                        winner_scores = dict(winner.alignment_scores or {})
+                        for key, val in loser.alignment_scores.items():
+                            if key not in winner_scores or val > winner_scores[key]:
+                                winner_scores[key] = val
+                        winner.alignment_scores = winner_scores
+
+                    # confidence: keep max
+                    if loser.confidence is not None:
+                        if winner.confidence is None or float(loser.confidence) > float(
+                            winner.confidence
+                        ):
+                            winner.confidence = loser.confidence
+
+                    # english_lemma: prefer winner's (already set)
+                    if not winner.english_lemma and loser.english_lemma:
+                        winner.english_lemma = loser.english_lemma
+
+                    # source_lemma: prefer winner's
+                    if not winner.source_lemma and loser.source_lemma:
+                        winner.source_lemma = loser.source_lemma
+
+                    # Timestamps: keep earliest created_at, latest last_updated, latest last_user_edit
+                    if loser.created_at and (
+                        not winner.created_at or loser.created_at < winner.created_at
+                    ):
+                        winner.created_at = loser.created_at
+
+                    if loser.last_updated and (
+                        not winner.last_updated
+                        or loser.last_updated > winner.last_updated
+                    ):
+                        winner.last_updated = loser.last_updated
+
+                    if loser.last_user_edit and (
+                        not winner.last_user_edit
+                        or loser.last_user_edit > winner.last_user_edit
+                    ):
+                        winner.last_user_edit = loser.last_user_edit
+
+                    # Migrate examples: update lexeme_card_id, skip on conflict
+                    # Use raw SQL for ON CONFLICT DO NOTHING
+                    loser_examples_query = select(AgentLexemeCardExample).where(
+                        AgentLexemeCardExample.lexeme_card_id == loser.id
+                    )
+                    loser_examples_result = await db.execute(loser_examples_query)
+                    loser_examples = loser_examples_result.scalars().all()
+
+                    for ex in loser_examples:
+                        # Check if this example already exists for the winner
+                        existing_check = select(AgentLexemeCardExample).where(
+                            AgentLexemeCardExample.lexeme_card_id == winner.id,
+                            AgentLexemeCardExample.revision_id == ex.revision_id,
+                            AgentLexemeCardExample.source_text == ex.source_text,
+                            AgentLexemeCardExample.target_text == ex.target_text,
+                        )
+                        existing_result = await db.execute(existing_check)
+                        if not existing_result.scalar_one_or_none():
+                            ex.lexeme_card_id = winner.id
+
+                # Normalize winner's target_lemma to lowercase
+                winner.target_lemma = winner.target_lemma.lower()
+                winner.last_updated = func.now()
+
+                # Delete loser cards (cascade will delete their remaining examples)
+                loser_ids = [c.id for c in losers]
+                await db.execute(
+                    delete(AgentLexemeCard).where(AgentLexemeCard.id.in_(loser_ids))
+                )
+
+            total_merged += 1
+            total_deleted += len(losers)
+            groups_summary.append(group_info)
+
+        if not dry_run:
+            await db.commit()
+
+        return {
+            "dry_run": dry_run,
+            "duplicates_found": len(groups_summary),
+            "cards_merged": total_merged,
+            "cards_deleted": total_deleted,
+            "groups": groups_summary,
+        }
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error deduplicating lexeme cards: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
