@@ -16,10 +16,18 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # 1. Lowercase all existing target_lemma values
+    # 1. Drop the old case-sensitive unique index first so lowercasing doesn't violate it
+    op.drop_index("ix_agent_lexeme_cards_unique_v2", table_name="agent_lexeme_cards")
+
+    # 2. Drop the now-redundant lower index (the new unique index will cover this)
+    op.drop_index(
+        "ix_agent_lexeme_cards_target_lemma_lower", table_name="agent_lexeme_cards"
+    )
+
+    # 3. Lowercase all existing target_lemma values
     op.execute("UPDATE agent_lexeme_cards SET target_lemma = LOWER(target_lemma)")
 
-    # 2. Merge any resulting duplicates (keep lowest id per group)
+    # 4. Merge any resulting duplicates (keep lowest id per group)
     # For each duplicate group, migrate examples from losers to winner,
     # merge JSONB arrays, then delete losers.
     op.execute(
@@ -113,14 +121,6 @@ def upgrade() -> None:
         USING losers l
         WHERE c.id = l.loser_id
         """
-    )
-
-    # 3. Drop the old case-sensitive unique index
-    op.drop_index("ix_agent_lexeme_cards_unique_v2", table_name="agent_lexeme_cards")
-
-    # 4. Drop the now-redundant lower index (the new unique index covers this)
-    op.drop_index(
-        "ix_agent_lexeme_cards_target_lemma_lower", table_name="agent_lexeme_cards"
     )
 
     # 5. Create case-insensitive unique index
