@@ -216,7 +216,7 @@ async def build_results_query(
         *[getattr(AssessmentResult, col) for col in group_by_columns],
     ).subquery()
 
-    final_count_query = select([func.count()]).select_from(count_subquery)
+    final_count_query = select(func.count()).select_from(count_subquery)
 
     return (
         base_query,
@@ -1595,7 +1595,7 @@ async def build_missing_words_baseline_query(
             func.jsonb_object_agg(
                 Assessment.revision_id.cast(Text),
                 case(
-                    [(AlignmentTopSourceScores.score < threshold, None)],
+                    (AlignmentTopSourceScores.score < threshold, None),
                     else_=AlignmentTopSourceScores.target,
                 ),
             ).label("target"),

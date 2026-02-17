@@ -5,7 +5,7 @@ import bcrypt
 import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -608,10 +608,10 @@ def teardown_database(db_session):
     engine = db_session.get_bind()
     with engine.connect() as connection:
         with connection.begin() as transaction:
-            connection.execute("SET session_replication_role = replica;")
+            connection.execute(text("SET session_replication_role = replica;"))
             for table_name in reversed(Base.metadata.sorted_tables):
                 connection.execute(table_name.delete())
-            connection.execute("SET session_replication_role = DEFAULT;")
+            connection.execute(text("SET session_replication_role = DEFAULT;"))
             transaction.commit()
 
 
@@ -620,10 +620,10 @@ async def teardown_database_async(session):
     Tear down the database by deleting all data from tables asynchronously,
     using session and engine from async ORM.
     """
-    await session.execute("SET session_replication_role = replica;")
+    await session.execute(text("SET session_replication_role = replica;"))
     for table in reversed(Base.metadata.sorted_tables):
         await session.execute(table.delete())
-    await session.execute("SET session_replication_role = DEFAULT;")
+    await session.execute(text("SET session_replication_role = DEFAULT;"))
     await session.commit()
 
 
