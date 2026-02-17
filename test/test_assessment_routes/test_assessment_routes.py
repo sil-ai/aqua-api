@@ -10,7 +10,7 @@ from database.models import UserGroup
 prefix = "v3"
 
 
-def create_bible_version(client, regular_token1):
+def create_bible_version(client, regular_token1, db_session):
     new_version_data = {
         "name": "New Version",
         "iso_language": "eng",
@@ -22,8 +22,16 @@ def create_bible_version(client, regular_token1):
 
     # Fetch aversion ID for testing
     headers = {"Authorization": f"Bearer {regular_token1}"}
+    # Get Group1 for testuser1
+    from database.models import Group
+
+    group_1 = db_session.query(Group).filter_by(name="Group1").first()
+    version_params = {
+        **new_version_data,
+        "add_to_groups": [group_1.id],
+    }
     create_response = client.post(
-        f"{prefix}/version", json=new_version_data, headers=headers
+        f"{prefix}/version", json=version_params, headers=headers
     )
     assert create_response.status_code == 200
     version_id = create_response.json().get("id")
@@ -63,11 +71,28 @@ def delete_assessment(client, token, assessment_id):
     return response
 
 
+def list_assessment_with_filters(
+    client, token, revision_id=None, reference_id=None, type_filter=None
+):
+    headers = {"Authorization": f"Bearer {token}"}
+    url = f"{prefix}/assessment?"
+    params = []
+    if revision_id is not None:
+        params.append(f"revision_id={revision_id}")
+    if reference_id is not None:
+        params.append(f"reference_id={reference_id}")
+    if type_filter is not None:
+        params.append(f"type={type_filter}")
+    url += "&".join(params)
+    response = client.get(url, headers=headers)
+    return response
+
+
 def test_add_assessment_success(
     client, regular_token1, regular_token2, admin_token, db_session, test_db_session
 ):
     # Create two revisions
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
     reference_revision_id = upload_revision(client, regular_token1, version_id)
 
@@ -197,7 +222,7 @@ def test_add_assessment_success(
 
 def test_add_assessment_failure(client, regular_token1, db_session, test_db_session):
     # Create two revisions
-    version_id = create_bible_version(client, regular_token1)
+    version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
     reference_revision_id = upload_revision(client, regular_token1, version_id)
 
@@ -227,3 +252,158 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
         )
 
         assert response.status_code == 500
+
+
+def test_assessment_filtering(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """Test filtering assessments by revision_id, reference_id, and type"""
+    # Create two versions and three revisions
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id_1 = upload_revision(client, regular_token1, version_id)
+    revision_id_2 = upload_revision(client, regular_token1, version_id)
+    reference_revision_id = upload_revision(client, regular_token1, version_id)
+
+    # Create multiple assessments with different parameters
+    assessment_data_1 = {
+        "revision_id": revision_id_1,
+        "reference_id": reference_revision_id,
+        "type": "word-alignment",
+    }
+    assessment_data_2 = {
+        "revision_id": revision_id_2,
+        "reference_id": reference_revision_id,
+        "type": "word-alignment",
+    }
+    assessment_data_3 = {
+        "revision_id": revision_id_1,
+        "type": "sentence-length",
+    }
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        # Create assessment 1
+        response = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data_1,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200
+        assessment_id_1 = response.json()[0]["id"]
+
+        # Create assessment 2
+        response = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data_2,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200
+        assessment_id_2 = response.json()[0]["id"]
+
+        # Create assessment 3
+        response = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data_3,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200
+        assessment_id_3 = response.json()[0]["id"]
+
+    # Track the assessment IDs we created for this test
+    created_assessment_ids = {assessment_id_1, assessment_id_2, assessment_id_3}
+
+    # Test 1: Get all assessments (no filters) - backward compatibility
+    # Note: There may be assessments from previous tests, so we check our IDs are present
+    response = list_assessment(client, regular_token1)
+    assert response.status_code == 200
+    all_assessment_ids = {a["id"] for a in response.json()}
+    assert created_assessment_ids.issubset(all_assessment_ids)
+
+    # Test 2: Filter by revision_id_1
+    response = list_assessment_with_filters(
+        client, regular_token1, revision_id=revision_id_1
+    )
+    assert response.status_code == 200
+    assessments = response.json()
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1, assessment_id_3}
+
+    # Test 3: Filter by revision_id_2
+    response = list_assessment_with_filters(
+        client, regular_token1, revision_id=revision_id_2
+    )
+    assert response.status_code == 200
+    assessments = response.json()
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_2}
+
+    # Test 4: Filter by reference_id
+    response = list_assessment_with_filters(
+        client, regular_token1, reference_id=reference_revision_id
+    )
+    assert response.status_code == 200
+    assessments = response.json()
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1, assessment_id_2}
+
+    # Test 5: Filter by type "word-alignment"
+    response = list_assessment_with_filters(
+        client, regular_token1, type_filter="word-alignment"
+    )
+    assert response.status_code == 200
+    assessments = response.json()
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1, assessment_id_2}
+
+    # Test 6: Filter by type "sentence-length"
+    response = list_assessment_with_filters(
+        client, regular_token1, type_filter="sentence-length"
+    )
+    assert response.status_code == 200
+    assessments = response.json()
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_3}
+
+    # Test 7: Filter by multiple parameters (revision_id and type)
+    response = list_assessment_with_filters(
+        client, regular_token1, revision_id=revision_id_1, type_filter="word-alignment"
+    )
+    assert response.status_code == 200
+    assessments = response.json()
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1}
+
+    # Test 8: Filter by all three parameters
+    response = list_assessment_with_filters(
+        client,
+        regular_token1,
+        revision_id=revision_id_1,
+        reference_id=reference_revision_id,
+        type_filter="word-alignment",
+    )
+    assert response.status_code == 200
+    assessments = response.json()
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1}
+
+    # Test 9: Admin can also use filters
+    response = list_assessment_with_filters(
+        client, admin_token, revision_id=revision_id_1
+    )
+    assert response.status_code == 200
+    assessments = response.json()
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1, assessment_id_3}
+
+    # Test 10: Filter with no matching results (combine filters that don't match our data)
+    response = list_assessment_with_filters(
+        client, regular_token1, revision_id=revision_id_2, type_filter="sentence-length"
+    )
+    assert response.status_code == 200
+    filtered_ids = {
+        a["id"] for a in response.json() if a["id"] in created_assessment_ids
+    }
+    assert filtered_ids == set()  # No matches for this combination

@@ -2,8 +2,10 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     TIMESTAMP,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -376,3 +378,252 @@ class UserGroup(Base):
     # Relationships
     user = relationship("UserDB", back_populates="groups")
     group = relationship("Group", back_populates="users")
+
+
+class AgentLexemeCard(Base):
+    __tablename__ = "agent_lexeme_cards"
+
+    id = Column(Integer, primary_key=True)
+    source_lemma = Column(Text)  # Source language lemma for cross-reference
+    target_lemma = Column(Text, nullable=False)
+    source_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    target_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    pos = Column(Text)
+    surface_forms = Column(JSONB)  # JSON array of target language surface forms
+    source_surface_forms = Column(JSONB)  # JSON array of source language surface forms
+    senses = Column(JSONB)  # JSON array of senses
+    # Note: examples are now stored in the agent_lexeme_card_examples table (see examples_rel relationship)
+    confidence = Column(Numeric)
+    english_lemma = Column(Text)  # English lemma when source/target are not English
+    alignment_scores = Column(JSONB)  # Dict: {source_word: alignment_score}
+    created_at = Column(TIMESTAMP, default=func.now())
+    last_updated = Column(TIMESTAMP, default=func.now())
+    last_user_edit = Column(TIMESTAMP, nullable=True)
+
+    __table_args__ = (
+        # Case-insensitive unique constraint to prevent duplicate cards
+        # Each LOWER(target_lemma) can only have one card per language pair
+        Index(
+            "ix_agent_lexeme_cards_unique_v3",
+            func.lower(target_lemma),
+            "source_language",
+            "target_language",
+            unique=True,
+        ),
+        # Index for common query pattern: language pair + confidence ordering
+        Index(
+            "ix_agent_lexeme_cards_lang_confidence",
+            "source_language",
+            "target_language",
+            "confidence",
+            postgresql_ops={"confidence": "DESC"},
+        ),
+        # Functional index for case-insensitive source_lemma searches
+        Index(
+            "ix_agent_lexeme_cards_source_lemma_lower",
+            func.lower(source_lemma),
+            postgresql_using="btree",
+        ),
+        # GIN index for JSONB array searches in surface_forms
+        Index(
+            "ix_agent_lexeme_cards_surface_forms",
+            "surface_forms",
+            postgresql_using="gin",
+        ),
+        # GIN index for JSONB array searches in source_surface_forms
+        Index(
+            "ix_agent_lexeme_cards_source_surface_forms",
+            "source_surface_forms",
+            postgresql_using="gin",
+        ),
+    )
+
+    # Relationship to examples
+    examples_rel = relationship(
+        "AgentLexemeCardExample",
+        back_populates="lexeme_card",
+        cascade="all, delete-orphan",
+    )
+
+
+class AgentLexemeCardExample(Base):
+    __tablename__ = "agent_lexeme_card_examples"
+
+    id = Column(Integer, primary_key=True)
+    lexeme_card_id = Column(
+        Integer, ForeignKey("agent_lexeme_cards.id", ondelete="CASCADE"), nullable=False
+    )
+    revision_id = Column(
+        Integer, ForeignKey("bible_revision.id", ondelete="CASCADE"), nullable=False
+    )
+    source_text = Column(Text, nullable=False)
+    target_text = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        # Prevent duplicate examples for the same lexeme card + revision
+        Index(
+            "ix_agent_lexeme_card_examples_unique",
+            "lexeme_card_id",
+            "revision_id",
+            "source_text",
+            "target_text",
+            unique=True,
+        ),
+        # Index for querying examples by revision
+        Index(
+            "ix_agent_lexeme_card_examples_revision",
+            "revision_id",
+        ),
+    )
+
+    # Relationships
+    lexeme_card = relationship("AgentLexemeCard", back_populates="examples_rel")
+    revision = relationship("BibleRevision")
+
+
+class AgentWordAlignment(Base):
+    __tablename__ = "agent_word_alignments"
+
+    id = Column(Integer, primary_key=True)
+    source_word = Column(Text, nullable=False)
+    target_word = Column(Text, nullable=False)
+    source_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    target_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    score = Column(Float, nullable=False, default=0.0)
+    is_human_verified = Column(Boolean, default=False)  # False until human-verified
+    created_at = Column(TIMESTAMP, default=func.now())
+    last_updated = Column(TIMESTAMP, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        # Unique constraint for atomic upserts
+        Index(
+            "ux_agent_word_alignments_lang_words",
+            "source_language",
+            "target_language",
+            "source_word",
+            "target_word",
+            unique=True,
+        ),
+        # Index for source word lookups by language pair
+        Index(
+            "ix_agent_word_alignments_lang_source",
+            "source_language",
+            "target_language",
+            "source_word",
+        ),
+        # Index for target word lookups by language pair
+        Index(
+            "ix_agent_word_alignments_lang_target",
+            "source_language",
+            "target_language",
+            "target_word",
+        ),
+        # Index for efficient score-ordered queries
+        Index(
+            "ix_agent_word_alignments_lang_score",
+            "source_language",
+            "target_language",
+            score.desc(),
+        ),
+    )
+
+
+class AgentCritiqueIssue(Base):
+    __tablename__ = "agent_critique_issue"
+
+    id = Column(Integer, primary_key=True)
+
+    # Assessment metadata
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), nullable=False)
+
+    # Verse information (parsed from vref)
+    vref = Column(String(20), nullable=False)
+    book = Column(String(10), nullable=False)
+    chapter = Column(Integer, nullable=False)
+    verse = Column(Integer, nullable=False)
+
+    # Issue classification
+    issue_type = Column(
+        String(15), nullable=False
+    )  # 'omission', 'addition', or 'replacement'
+
+    # Issue details
+    source_text = Column(Text, nullable=True)  # The source text (omission/replacement)
+    draft_text = Column(Text, nullable=True)  # The draft text (addition/replacement)
+    comments = Column(Text, nullable=True)  # Explanation of why this is an issue
+    severity = Column(Integer, nullable=False)  # 0=none, 5=critical
+
+    # Resolution tracking
+    is_resolved = Column(Boolean, default=False, nullable=False)
+    resolved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolved_at = Column(TIMESTAMP, nullable=True)
+    resolution_notes = Column(Text, nullable=True)
+
+    # Timestamp
+    created_at = Column(TIMESTAMP, default=func.now())
+
+    # Link to the specific translation that was critiqued
+    agent_translation_id = Column(
+        Integer,
+        ForeignKey("agent_translations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+
+    # Relationships
+    assessment = relationship("Assessment")
+    resolved_by = relationship("UserDB", foreign_keys=[resolved_by_id])
+    translation = relationship("AgentTranslation", back_populates="critique_issues")
+
+    __table_args__ = (
+        Index("ix_agent_critique_issue_assessment", "assessment_id"),
+        Index("ix_agent_critique_issue_vref", "vref"),
+        Index("ix_agent_critique_issue_book_chapter_verse", "book", "chapter", "verse"),
+        Index("ix_agent_critique_issue_type", "issue_type"),
+        Index("ix_agent_critique_issue_severity", "severity"),
+        Index("ix_agent_critique_issue_resolved", "is_resolved"),
+        Index("ix_agent_critique_issue_resolved_by", "resolved_by_id"),
+        Index("ix_agent_critique_issue_translation", "agent_translation_id"),
+        # The both-NULL clause permits legacy rows that existed before this
+        # migration with no text fields set.  New rows always satisfy the
+        # type-specific requirements via Pydantic validation.
+        CheckConstraint(
+            """
+            (issue_type = 'omission'    AND source_text IS NOT NULL AND draft_text IS NULL) OR
+            (issue_type = 'addition'    AND source_text IS NULL     AND draft_text IS NOT NULL) OR
+            (issue_type = 'replacement' AND source_text IS NOT NULL AND draft_text IS NOT NULL) OR
+            (source_text IS NULL AND draft_text IS NULL)
+            """,
+            name="ck_critique_issue_text_fields",
+        ),
+    )
+
+
+class AgentTranslation(Base):
+    __tablename__ = "agent_translations"
+
+    id = Column(Integer, primary_key=True)
+    assessment_id = Column(
+        Integer, ForeignKey("assessment.id", ondelete="CASCADE"), nullable=False
+    )
+    vref = Column(String(20), nullable=False)
+    version = Column(Integer, default=1, nullable=False)
+    draft_text = Column(Text, nullable=True)
+    hyper_literal_translation = Column(Text, nullable=True)
+    literal_translation = Column(Text, nullable=True)
+    english_translation = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, default=func.now())
+
+    assessment = relationship("Assessment")
+    critique_issues = relationship("AgentCritiqueIssue", back_populates="translation")
+
+    __table_args__ = (
+        Index(
+            "ix_agent_translations_unique",
+            "assessment_id",
+            "vref",
+            "version",
+            unique=True,
+        ),
+        Index("ix_agent_translations_assessment_vref", "assessment_id", "vref"),
+    )
