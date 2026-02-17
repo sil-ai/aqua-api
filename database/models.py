@@ -401,11 +401,11 @@ class AgentLexemeCard(Base):
     last_user_edit = Column(TIMESTAMP, nullable=True)
 
     __table_args__ = (
-        # Unique constraint to prevent duplicate cards
-        # Each target_lemma can only have one card per language pair
+        # Case-insensitive unique constraint to prevent duplicate cards
+        # Each LOWER(target_lemma) can only have one card per language pair
         Index(
-            "ix_agent_lexeme_cards_unique_v2",
-            "target_lemma",
+            "ix_agent_lexeme_cards_unique_v3",
+            func.lower(target_lemma),
             "source_language",
             "target_language",
             unique=True,
@@ -417,12 +417,6 @@ class AgentLexemeCard(Base):
             "target_language",
             "confidence",
             postgresql_ops={"confidence": "DESC"},
-        ),
-        # Functional index for case-insensitive target_lemma searches
-        Index(
-            "ix_agent_lexeme_cards_target_lemma_lower",
-            func.lower(target_lemma),
-            postgresql_using="btree",
         ),
         # Functional index for case-insensitive source_lemma searches
         Index(

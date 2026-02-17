@@ -2351,10 +2351,10 @@ def test_get_lexeme_cards_word_search_case_insensitive(
     assert response.status_code == 200
     data = response.json()
     assert len(data) >= 1
-    card = next((c for c in data if c["target_lemma"] == "Bwana"), None)
+    card = next((c for c in data if c["target_lemma"] == "bwana"), None)
     assert card is not None
 
-    # Search for lowercase "bwana" — should match "Bwana" target_lemma (case-insensitive)
+    # Search for lowercase "bwana" — should match "bwana" target_lemma (normalized to lowercase)
     response2 = client.get(
         "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=bwana",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -2363,7 +2363,7 @@ def test_get_lexeme_cards_word_search_case_insensitive(
     assert response2.status_code == 200
     data2 = response2.json()
     assert len(data2) >= 1
-    card2 = next((c for c in data2 if c["target_lemma"] == "Bwana"), None)
+    card2 = next((c for c in data2 if c["target_lemma"] == "bwana"), None)
     assert card2 is not None
 
 
@@ -2674,7 +2674,7 @@ def test_get_lexeme_cards_target_word_case_insensitive_lemma(
 
     assert response.status_code == 200
     data = response.json()
-    card = next((c for c in data if c["target_lemma"] == "Upendo_ci"), None)
+    card = next((c for c in data if c["target_lemma"] == "upendo_ci"), None)
     assert card is not None
 
 
@@ -4817,3 +4817,308 @@ def test_get_lexeme_cards_includes_last_user_edit(
     card = data[0]
     assert "last_user_edit" in card
     assert card["last_user_edit"] is not None
+
+
+# ── Case-insensitive lexeme card tests ──────────────────────────────────
+
+
+def test_post_lexeme_card_normalizes_target_lemma_to_lowercase(
+    client, regular_token1, db_session, test_revision_id
+):
+    """POST should normalize target_lemma to lowercase."""
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "run",
+            "target_lemma": "Kimbia_CI_Test",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["target_lemma"] == "kimbia_ci_test"
+
+
+def test_post_lexeme_card_case_insensitive_duplicate_returns_upsert(
+    client, regular_token1, db_session, test_revision_id
+):
+    """POST with same target_lemma but different case should upsert, not create duplicate."""
+    # Create first card
+    resp1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "walk",
+            "target_lemma": "tembea_ci_dup",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.5,
+        },
+    )
+    assert resp1.status_code == 200
+    card_id = resp1.json()["id"]
+
+    # POST again with different case - should upsert the same card
+    resp2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "walk",
+            "target_lemma": "Tembea_CI_Dup",
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.9,
+        },
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["id"] == card_id  # Same card was updated
+    assert resp2.json()["confidence"] == 0.9
+
+
+def test_post_lexeme_card_case_insensitive_different_source_lemma_returns_409(
+    client, regular_token1, db_session, test_revision_id
+):
+    """POST with same target_lemma (different case) but different source_lemma should return 409."""
+    # Create first card
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "run",
+            "target_lemma": "kimbia_ci_409",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+
+    # POST again with different case AND different source_lemma - should 409
+    resp2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "sprint",
+            "target_lemma": "Kimbia_CI_409",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert resp2.status_code == 409
+
+
+def test_patch_lexeme_card_by_lemma_case_insensitive_lookup(
+    client, regular_token1, db_session, test_revision_id
+):
+    """PATCH by lemma should find the card regardless of case."""
+    # Create card
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "eat",
+            "target_lemma": "kula_ci_patch",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+
+    # PATCH using different case
+    resp = client.patch(
+        "/v3/agent/lexeme-card?target_lemma=KULA_CI_PATCH&source_language=eng&target_language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"confidence": 0.99},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["confidence"] == 0.99
+
+
+def test_patch_lexeme_card_normalizes_target_lemma(
+    client, regular_token1, db_session, test_revision_id
+):
+    """PATCH should normalize target_lemma to lowercase when changing it."""
+    # Create card
+    resp1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "drink",
+            "target_lemma": "kunywa_ci_norm",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    card_id = resp1.json()["id"]
+
+    # PATCH to change target_lemma with mixed case
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"target_lemma": "Kunywa_CI_Renamed"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["target_lemma"] == "kunywa_ci_renamed"
+
+
+def test_patch_lexeme_card_case_insensitive_duplicate_check(
+    client, regular_token1, db_session, test_revision_id
+):
+    """PATCH should reject target_lemma change that creates case-insensitive duplicate."""
+    # Create two cards
+    resp1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "sit",
+            "target_lemma": "keti_ci_a",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    card_a_id = resp1.json()["id"]
+
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "stand",
+            "target_lemma": "keti_ci_b",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+
+    # Try to rename card A to card B's lemma (different case)
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/{card_a_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"target_lemma": "KETI_CI_B"},
+    )
+    assert resp.status_code == 409
+
+
+# ── Deduplicate endpoint tests ──────────────────────────────────
+
+
+def _raw_psycopg2(statements):
+    """Execute SQL statements via a separate psycopg2 autocommit connection."""
+    import psycopg2
+
+    conn = psycopg2.connect(
+        "dbname=dbname user=dbuser password=dbpassword host=localhost"
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+    try:
+        for sql in statements:
+            cur.execute(sql)
+    finally:
+        cur.close()
+        conn.close()
+
+
+def test_deduplicate_lexeme_cards_dry_run(client, regular_token1):
+    """Deduplicate dry_run should report duplicates without deleting."""
+    # Drop unique index, insert case-variant duplicates
+    _raw_psycopg2(
+        [
+            "DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v3",
+            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_language, target_language, confidence, created_at, last_updated) "
+            "VALUES ('go', 'enda_dedup_dry', 'eng', 'swh', 0.5, now(), now())",
+            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_language, target_language, confidence, created_at, last_updated) "
+            "VALUES ('go', 'Enda_Dedup_Dry', 'eng', 'swh', 0.9, now(), now())",
+        ]
+    )
+
+    try:
+        resp = client.post(
+            "/v3/agent/lexeme-card/deduplicate?source_language=eng&target_language=swh&dry_run=true",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["dry_run"] is True
+        assert data["duplicates_found"] >= 1
+
+        # Verify both cards still exist via raw SQL (dry run shouldn't delete)
+        import psycopg2
+
+        conn = psycopg2.connect(
+            "dbname=dbname user=dbuser password=dbpassword host=localhost"
+        )
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM agent_lexeme_cards WHERE LOWER(target_lemma) = 'enda_dedup_dry' AND source_language = 'eng' AND target_language = 'swh'"
+        )
+        assert cur.fetchone()[0] == 2
+        cur.close()
+        conn.close()
+    finally:
+        _raw_psycopg2(
+            [
+                "DELETE FROM agent_lexeme_cards WHERE LOWER(target_lemma) = 'enda_dedup_dry' AND source_language = 'eng' AND target_language = 'swh'",
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_lexeme_cards_unique_v3 "
+                "ON agent_lexeme_cards (LOWER(target_lemma), source_language, target_language)",
+            ]
+        )
+
+
+def test_deduplicate_lexeme_cards_merge(client, regular_token1):
+    """Deduplicate with dry_run=false should merge duplicates."""
+    # Drop unique index, insert case-variant duplicates
+    _raw_psycopg2(
+        [
+            "DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v3",
+            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_language, target_language, confidence, surface_forms, created_at, last_updated) "
+            "VALUES ('come', 'kuja_dedup_merge', 'eng', 'swh', 0.5, '[\"kuja\", \"anakuja\"]'::jsonb, now(), now())",
+            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_language, target_language, confidence, surface_forms, created_at, last_updated) "
+            "VALUES ('come', 'Kuja_Dedup_Merge', 'eng', 'swh', 0.9, '[\"Kuja\", \"walikuja\"]'::jsonb, now(), now())",
+        ]
+    )
+
+    try:
+        resp = client.post(
+            "/v3/agent/lexeme-card/deduplicate?source_language=eng&target_language=swh&dry_run=false",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["dry_run"] is False
+        assert data["duplicates_found"] >= 1
+        assert data["cards_deleted"] >= 1
+
+        # Verify only one card remains via raw SQL
+        import psycopg2
+
+        conn = psycopg2.connect(
+            "dbname=dbname user=dbuser password=dbpassword host=localhost"
+        )
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*), MAX(confidence) FROM agent_lexeme_cards "
+            "WHERE LOWER(target_lemma) = 'kuja_dedup_merge' AND source_language = 'eng' AND target_language = 'swh'"
+        )
+        count, max_conf = cur.fetchone()
+        assert count == 1
+        assert float(max_conf) == 0.9  # Kept the higher confidence
+        cur.close()
+        conn.close()
+    finally:
+        _raw_psycopg2(
+            [
+                "DELETE FROM agent_lexeme_cards WHERE LOWER(target_lemma) = 'kuja_dedup_merge' AND source_language = 'eng' AND target_language = 'swh'",
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_lexeme_cards_unique_v3 "
+                "ON agent_lexeme_cards (LOWER(target_lemma), source_language, target_language)",
+            ]
+        )
+
+
+def test_deduplicate_no_duplicates(client, regular_token1, db_session):
+    """Deduplicate should return zeros when no duplicates exist."""
+    resp = client.post(
+        "/v3/agent/lexeme-card/deduplicate?source_language=eng&target_language=swh&dry_run=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["duplicates_found"] == 0

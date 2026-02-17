@@ -2,7 +2,7 @@ import datetime
 from enum import Enum
 from typing import Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class VersionUpdate(BaseModel):
@@ -487,6 +487,12 @@ class LexemeCardIn(BaseModel):
     target_lemma: str
     source_language: str
     target_language: str
+
+    @field_validator("target_lemma")
+    @classmethod
+    def normalize_target_lemma(cls, v):
+        return v.lower() if v else v
+
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
     source_surface_forms: Optional[list] = None  # Source language surface forms
@@ -569,6 +575,12 @@ class LexemeCardPatch(BaseModel):
 
     source_lemma: Optional[str] = None
     target_lemma: Optional[str] = None
+
+    @field_validator("target_lemma")
+    @classmethod
+    def normalize_target_lemma(cls, v):
+        return v.lower() if v else v
+
     pos: Optional[str] = None
     confidence: Optional[float] = None
     english_lemma: Optional[str] = None
