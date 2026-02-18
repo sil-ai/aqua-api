@@ -1540,9 +1540,9 @@ async def check_word_in_lexeme_cards(
             AgentLexemeCard.target_language == target_language,
             AgentLexemeCard.surface_forms.isnot(None),
             text(
-                "jsonb_typeof(agent_lexeme_cards.surface_forms) = 'array' AND "
+                "(jsonb_typeof(agent_lexeme_cards.surface_forms) = 'array' AND "
                 "EXISTS (SELECT 1 FROM jsonb_array_elements_text(agent_lexeme_cards.surface_forms) AS elem "
-                "WHERE LOWER(elem) = :word_lower)"
+                "WHERE LOWER(elem) = :word_lower))"
             ).bindparams(word_lower=word_lower),
         )
 

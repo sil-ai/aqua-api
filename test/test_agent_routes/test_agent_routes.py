@@ -2896,6 +2896,11 @@ def test_get_lexeme_cards_word_filter_respects_language_pair(
     )
     assert response.status_code == 200
     data = response.json()
+    # Verify the correct card IS present (guards against false pass on empty results)
+    assert len(data) >= 1, "Expected at least one eng->swh card to be returned"
+    assert any(
+        c["target_lemma"] == shared_word for c in data
+    ), f"Expected to find card with target_lemma='{shared_word}' in eng->swh results"
     # Should only return the eng->swh card, NOT the swh->eng card
     for card in data:
         assert card["source_language"] == "eng", (
@@ -2914,6 +2919,11 @@ def test_get_lexeme_cards_word_filter_respects_language_pair(
     )
     assert response2.status_code == 200
     data2 = response2.json()
+    # Verify the correct card IS present (guards against false pass on empty results)
+    assert len(data2) >= 1, "Expected at least one swh->eng card to be returned"
+    assert any(
+        c["source_lemma"] == "cross_src_swh" for c in data2
+    ), "Expected to find card with source_lemma='cross_src_swh' in swh->eng results"
     # Should only return the swh->eng card, NOT the eng->swh card
     for card in data2:
         assert card["source_language"] == "swh", (
