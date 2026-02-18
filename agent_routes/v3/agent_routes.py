@@ -1419,10 +1419,10 @@ async def get_lexeme_cards(
             source_word_lower = source_word.lower()
             word_conditions.append(
                 text(
-                    "(LOWER(agent_lexeme_cards.source_lemma) = :source_word_lower) OR "
+                    "((LOWER(agent_lexeme_cards.source_lemma) = :source_word_lower) OR "
                     "(jsonb_typeof(agent_lexeme_cards.source_surface_forms) = 'array' AND "
                     "EXISTS (SELECT 1 FROM jsonb_array_elements_text(agent_lexeme_cards.source_surface_forms) AS elem "
-                    "WHERE LOWER(elem) = :source_word_lower))"
+                    "WHERE LOWER(elem) = :source_word_lower)))"
                 ).bindparams(source_word_lower=source_word_lower)
             )
 
@@ -1430,10 +1430,10 @@ async def get_lexeme_cards(
             target_word_lower = target_word.lower()
             word_conditions.append(
                 text(
-                    "(LOWER(agent_lexeme_cards.target_lemma) = :target_word_lower) OR "
+                    "((LOWER(agent_lexeme_cards.target_lemma) = :target_word_lower) OR "
                     "(jsonb_typeof(agent_lexeme_cards.surface_forms) = 'array' AND "
                     "EXISTS (SELECT 1 FROM jsonb_array_elements_text(agent_lexeme_cards.surface_forms) AS elem "
-                    "WHERE LOWER(elem) = :target_word_lower))"
+                    "WHERE LOWER(elem) = :target_word_lower)))"
                 ).bindparams(target_word_lower=target_word_lower)
             )
 
