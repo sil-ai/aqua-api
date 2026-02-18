@@ -10,7 +10,7 @@ import httpx
 from dotenv import load_dotenv
 
 # Third party imports
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +36,7 @@ router = fastapi.APIRouter()
 
 @router.get("/assessment", response_model=List[AssessmentOut])
 async def get_assessments(
-    assessment_id: Optional[int] = None,
+    id: Optional[List[int]] = Query(None),
     revision_id: Optional[int] = None,
     reference_id: Optional[int] = None,
     type: Optional[str] = None,
@@ -45,10 +45,9 @@ async def get_assessments(
 ):
     """
     Returns a list of assessments the current user is authorized to access.
-    When assessment_id is provided, returns at most one item (or 404 if not found).
 
     Optional query parameters:
-    - assessment_id: Filter by assessment ID
+    - id: Filter by one or more assessment IDs (repeated param, e.g. ?id=1&id=2)
     - revision_id: Filter assessments by revision ID
     - reference_id: Filter assessments by reference ID
     - type: Filter assessments by assessment type
@@ -92,8 +91,8 @@ async def get_assessments(
         stmt = select(Assessment).where(Assessment.deleted.is_(False))
 
         # Apply optional filters
-        if assessment_id is not None:
-            stmt = stmt.where(Assessment.id == assessment_id)
+        if id is not None:
+            stmt = stmt.where(Assessment.id.in_(id))
         if revision_id is not None:
             stmt = stmt.where(Assessment.revision_id == revision_id)
         if reference_id is not None:
@@ -145,8 +144,8 @@ async def get_assessments(
         )
 
         # Apply optional filters
-        if assessment_id is not None:
-            stmt = stmt.where(Assessment.id == assessment_id)
+        if id is not None:
+            stmt = stmt.where(Assessment.id.in_(id))
         if revision_id is not None:
             stmt = stmt.where(Assessment.revision_id == revision_id)
         if reference_id is not None:
@@ -156,12 +155,6 @@ async def get_assessments(
 
         result = await db.execute(stmt)
         assessments = result.scalars().all()
-
-    if assessment_id is not None and not assessments:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Assessment {assessment_id} not found.",
-        )
 
     # Convert SQLAlchemy models to Pydantic models
     assessment_data = [

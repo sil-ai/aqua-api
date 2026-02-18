@@ -57,15 +57,19 @@ def upload_revision(client, token, version_id):
 def list_assessment(
     client,
     token,
-    assessment_id=None,
+    ids=None,
     revision_id=None,
     reference_id=None,
     type_filter=None,
 ):
     headers = {"Authorization": f"Bearer {token}"}
     params = []
-    if assessment_id is not None:
-        params.append(f"assessment_id={assessment_id}")
+    if ids is not None:
+        if isinstance(ids, (list, tuple)):
+            for aid in ids:
+                params.append(f"id={aid}")
+        else:
+            params.append(f"id={ids}")
     if revision_id is not None:
         params.append(f"revision_id={revision_id}")
     if reference_id is not None:
@@ -397,8 +401,8 @@ def test_assessment_filtering(
     }
     assert filtered_ids == set()  # No matches for this combination
 
-    # Test 11: Filter by assessment_id returns only that assessment
-    response = list_assessment(client, regular_token1, assessment_id=assessment_id_2)
+    # Test 11: Filter by single id returns only that assessment
+    response = list_assessment(client, regular_token1, ids=assessment_id_2)
     assert response.status_code == 200
     assessments = response.json()
     filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
@@ -406,18 +410,33 @@ def test_assessment_filtering(
     assert assessments[0]["revision_id"] == revision_id_2
     assert assessments[0]["type"] == "word-alignment"
 
-    # Test 12: Filter by assessment_id as admin
-    response = list_assessment(client, admin_token, assessment_id=assessment_id_3)
+    # Test 12: Filter by single id as admin
+    response = list_assessment(client, admin_token, ids=assessment_id_3)
     assert response.status_code == 200
     assessments = response.json()
     filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
     assert filtered_ids == {assessment_id_3}
     assert assessments[0]["type"] == "sentence-length"
 
-    # Test 13: Non-existent assessment_id returns 404
-    response = list_assessment(client, regular_token1, assessment_id=999999)
-    assert response.status_code == 404
+    # Test 13: Filter by multiple ids returns exactly those assessments
+    response = list_assessment(
+        client, regular_token1, ids=[assessment_id_1, assessment_id_3]
+    )
+    assert response.status_code == 200
+    assessments = response.json()
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_1, assessment_id_3}
 
-    # Test 14: assessment_id for an assessment outside the user's group access returns 404
-    response = list_assessment(client, regular_token2, assessment_id=assessment_id_1)
-    assert response.status_code == 404
+    # Test 14: Multiple ids with a non-existent id returns only the matching ones
+    response = list_assessment(client, regular_token1, ids=[assessment_id_2, 999999])
+    assert response.status_code == 200
+    assessments = response.json()
+    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
+    assert filtered_ids == {assessment_id_2}
+
+    # Test 15: Id filter respects access control — unauthorized user sees nothing
+    response = list_assessment(
+        client, regular_token2, ids=[assessment_id_1, assessment_id_2]
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 0
