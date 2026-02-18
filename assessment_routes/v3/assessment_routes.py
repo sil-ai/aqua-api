@@ -36,6 +36,7 @@ router = fastapi.APIRouter()
 
 @router.get("/assessment", response_model=List[AssessmentOut])
 async def get_assessments(
+    assessment_id: int = None,
     revision_id: int = None,
     reference_id: int = None,
     type: str = None,
@@ -46,6 +47,7 @@ async def get_assessments(
     Returns a list of all assessments the current user is authorized to access.
 
     Optional query parameters:
+    - assessment_id: Filter by assessment ID
     - revision_id: Filter assessments by revision ID
     - reference_id: Filter assessments by reference ID
     - type: Filter assessments by assessment type
@@ -89,6 +91,8 @@ async def get_assessments(
         stmt = select(Assessment).where(Assessment.deleted.is_(False))
 
         # Apply optional filters
+        if assessment_id is not None:
+            stmt = stmt.where(Assessment.id == assessment_id)
         if revision_id is not None:
             stmt = stmt.where(Assessment.revision_id == revision_id)
         if reference_id is not None:
@@ -140,6 +144,8 @@ async def get_assessments(
         )
 
         # Apply optional filters
+        if assessment_id is not None:
+            stmt = stmt.where(Assessment.id == assessment_id)
         if revision_id is not None:
             stmt = stmt.where(Assessment.revision_id == revision_id)
         if reference_id is not None:

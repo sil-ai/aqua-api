@@ -255,7 +255,7 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
 
 
 def test_assessment_filtering(
-    client, regular_token1, admin_token, db_session, test_db_session
+    client, regular_token1, regular_token2, admin_token, db_session, test_db_session
 ):
     """Test filtering assessments by revision_id, reference_id, and type"""
     # Create two versions and three revisions
@@ -407,3 +407,31 @@ def test_assessment_filtering(
         a["id"] for a in response.json() if a["id"] in created_assessment_ids
     }
     assert filtered_ids == set()  # No matches for this combination
+
+    # Test 11: Filter by assessment_id returns only that assessment
+    response = list_assessment(client, regular_token1, assessment_id=assessment_id_2)
+    assert response.status_code == 200
+    assessments = response.json()
+    assert len(assessments) == 1
+    assert assessments[0]["id"] == assessment_id_2
+    assert assessments[0]["revision_id"] == revision_id_2
+    assert assessments[0]["type"] == "word-alignment"
+
+    # Test 12: Filter by assessment_id as admin
+    response = list_assessment(client, admin_token, assessment_id=assessment_id_3)
+    assert response.status_code == 200
+    assessments = response.json()
+    assert len(assessments) == 1
+    assert assessments[0]["id"] == assessment_id_3
+    assert assessments[0]["type"] == "sentence-length"
+
+    # Test 13: Filter by non-existent assessment_id returns empty list
+    response = list_assessment(client, regular_token1, assessment_id=999999)
+    assert response.status_code == 200
+    assert len(response.json()) == 0
+
+    # Test 14: Filter by assessment_id respects access control
+    # regular_token2 should not see assessments owned by testuser1
+    response = list_assessment(client, regular_token2, assessment_id=assessment_id_1)
+    assert response.status_code == 200
+    assert len(response.json()) == 0
