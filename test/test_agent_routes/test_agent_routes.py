@@ -2847,6 +2847,95 @@ def test_get_lexeme_cards_empty_surface_forms(
     assert card2 is None
 
 
+def test_get_lexeme_cards_word_filter_respects_language_pair(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that word filtering with surface_forms does not leak cards from other language pairs.
+
+    Regression test: raw SQL text() clauses with OR were missing outer parentheses,
+    causing the surface_forms branch to bypass the language pair filter.
+    """
+    shared_word = "crosslang_word"
+
+    # Create a card in eng->swh with the shared word as target_lemma
+    resp1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "cross_src_eng",
+            "target_lemma": shared_word,
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": [shared_word, "crosslang_form_swh"],
+            "source_surface_forms": [shared_word, "crosslang_src_form"],
+            "confidence": 0.9,
+        },
+    )
+    assert resp1.status_code == 200
+
+    # Create a card in swh->eng with the same word in surface_forms only
+    resp2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "cross_src_swh",
+            "target_lemma": "crosslang_other",
+            "source_language": "swh",
+            "target_language": "eng",
+            "surface_forms": [shared_word, "crosslang_form_eng"],
+            "source_surface_forms": [shared_word],
+            "confidence": 0.85,
+        },
+    )
+    assert resp2.status_code == 200
+
+    # Query eng->swh with target_word matching the shared word
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word={shared_word}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Verify the correct card IS present (guards against false pass on empty results)
+    assert len(data) >= 1, "Expected at least one eng->swh card to be returned"
+    assert any(
+        c["target_lemma"] == shared_word for c in data
+    ), f"Expected to find card with target_lemma='{shared_word}' in eng->swh results"
+    # Should only return the eng->swh card, NOT the swh->eng card
+    for card in data:
+        assert card["source_language"] == "eng", (
+            f"Expected source_language='eng', got '{card['source_language']}' "
+            f"(target_lemma='{card['target_lemma']}')"
+        )
+        assert card["target_language"] == "swh", (
+            f"Expected target_language='swh', got '{card['target_language']}' "
+            f"(target_lemma='{card['target_lemma']}')"
+        )
+
+    # Query swh->eng with source_word matching the shared word
+    response2 = client.get(
+        f"/v3/agent/lexeme-card?source_language=swh&target_language=eng&source_word={shared_word}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response2.status_code == 200
+    data2 = response2.json()
+    # Verify the correct card IS present (guards against false pass on empty results)
+    assert len(data2) >= 1, "Expected at least one swh->eng card to be returned"
+    assert any(
+        c["source_lemma"] == "cross_src_swh" for c in data2
+    ), "Expected to find card with source_lemma='cross_src_swh' in swh->eng results"
+    # Should only return the swh->eng card, NOT the eng->swh card
+    for card in data2:
+        assert card["source_language"] == "swh", (
+            f"Expected source_language='swh', got '{card['source_language']}' "
+            f"(target_lemma='{card['target_lemma']}')"
+        )
+        assert card["target_language"] == "eng", (
+            f"Expected target_language='eng', got '{card['target_language']}' "
+            f"(target_lemma='{card['target_lemma']}')"
+        )
+
+
 def test_add_lexeme_card_alignment_scores_sorted_descending(
     client, regular_token1, db_session, test_revision_id
 ):
