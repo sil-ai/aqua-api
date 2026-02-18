@@ -405,18 +405,18 @@ def test_assessment_filtering(
     response = list_assessment(client, regular_token1, ids=assessment_id_2)
     assert response.status_code == 200
     assessments = response.json()
-    matching = [a for a in assessments if a["id"] == assessment_id_2]
-    assert len(matching) == 1
-    assert matching[0]["revision_id"] == revision_id_2
-    assert matching[0]["type"] == "word-alignment"
+    assert len(assessments) == 1
+    assert assessments[0]["id"] == assessment_id_2
+    assert assessments[0]["revision_id"] == revision_id_2
+    assert assessments[0]["type"] == "word-alignment"
 
     # Test 12: Filter by single id as admin
     response = list_assessment(client, admin_token, ids=assessment_id_3)
     assert response.status_code == 200
     assessments = response.json()
-    matching = [a for a in assessments if a["id"] == assessment_id_3]
-    assert len(matching) == 1
-    assert matching[0]["type"] == "sentence-length"
+    assert len(assessments) == 1
+    assert assessments[0]["id"] == assessment_id_3
+    assert assessments[0]["type"] == "sentence-length"
 
     # Test 13: Filter by multiple ids returns exactly those assessments
     response = list_assessment(
@@ -424,15 +424,15 @@ def test_assessment_filtering(
     )
     assert response.status_code == 200
     assessments = response.json()
-    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
-    assert filtered_ids == {assessment_id_1, assessment_id_3}
+    returned_ids = {a["id"] for a in assessments}
+    assert returned_ids == {assessment_id_1, assessment_id_3}
 
     # Test 14: Multiple ids with a non-existent id returns only the matching ones
     response = list_assessment(client, regular_token1, ids=[assessment_id_2, 999999])
     assert response.status_code == 200
     assessments = response.json()
-    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
-    assert filtered_ids == {assessment_id_2}
+    returned_ids = {a["id"] for a in assessments}
+    assert returned_ids == {assessment_id_2}
 
     # Test 15: Id filter respects access control — unauthorized user sees nothing
     response = list_assessment(
