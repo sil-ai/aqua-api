@@ -3,7 +3,7 @@ __version__ = "v3"
 import logging
 import os
 from datetime import date, datetime
-from typing import List
+from typing import List, Optional
 
 import fastapi
 import httpx
@@ -36,15 +36,16 @@ router = fastapi.APIRouter()
 
 @router.get("/assessment", response_model=List[AssessmentOut])
 async def get_assessments(
-    assessment_id: int = None,
-    revision_id: int = None,
-    reference_id: int = None,
-    type: str = None,
+    assessment_id: Optional[int] = None,
+    revision_id: Optional[int] = None,
+    reference_id: Optional[int] = None,
+    type: Optional[str] = None,
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Returns a list of all assessments the current user is authorized to access.
+    Returns a list of assessments the current user is authorized to access.
+    When assessment_id is provided, returns at most one item (or 404 if not found).
 
     Optional query parameters:
     - assessment_id: Filter by assessment ID
@@ -155,6 +156,12 @@ async def get_assessments(
 
         result = await db.execute(stmt)
         assessments = result.scalars().all()
+
+    if assessment_id is not None and not assessments:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assessment {assessment_id} not found.",
+        )
 
     # Convert SQLAlchemy models to Pydantic models
     assessment_data = [
