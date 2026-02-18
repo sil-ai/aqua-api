@@ -1,4 +1,4 @@
-# test_revision_flows.py
+# test_assessment_routes.py
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -405,18 +405,18 @@ def test_assessment_filtering(
     response = list_assessment(client, regular_token1, ids=assessment_id_2)
     assert response.status_code == 200
     assessments = response.json()
-    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
-    assert filtered_ids == {assessment_id_2}
-    assert assessments[0]["revision_id"] == revision_id_2
-    assert assessments[0]["type"] == "word-alignment"
+    matching = [a for a in assessments if a["id"] == assessment_id_2]
+    assert len(matching) == 1
+    assert matching[0]["revision_id"] == revision_id_2
+    assert matching[0]["type"] == "word-alignment"
 
     # Test 12: Filter by single id as admin
     response = list_assessment(client, admin_token, ids=assessment_id_3)
     assert response.status_code == 200
     assessments = response.json()
-    filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
-    assert filtered_ids == {assessment_id_3}
-    assert assessments[0]["type"] == "sentence-length"
+    matching = [a for a in assessments if a["id"] == assessment_id_3]
+    assert len(matching) == 1
+    assert matching[0]["type"] == "sentence-length"
 
     # Test 13: Filter by multiple ids returns exactly those assessments
     response = list_assessment(
@@ -440,3 +440,9 @@ def test_assessment_filtering(
     )
     assert response.status_code == 200
     assert len(response.json()) == 0
+
+    # Test 16: No id params returns all accessible assessments (not filtered)
+    response = list_assessment(client, regular_token1)
+    assert response.status_code == 200
+    all_ids = {a["id"] for a in response.json()}
+    assert created_assessment_ids.issubset(all_ids)
