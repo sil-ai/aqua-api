@@ -1,4 +1,4 @@
-# test_revision_flows.py
+# test_assessment_routes.py
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -54,11 +54,31 @@ def upload_revision(client, token, version_id):
     return response.json()["id"]  # Return the ID of the uploaded revision
 
 
-def list_assessment(client, token, assessment_id=None):
+def list_assessment(
+    client,
+    token,
+    ids=None,
+    revision_id=None,
+    reference_id=None,
+    type_filter=None,
+):
     headers = {"Authorization": f"Bearer {token}"}
+    params = []
+    if ids is not None:
+        if isinstance(ids, (list, tuple)):
+            for aid in ids:
+                params.append(f"id={aid}")
+        else:
+            params.append(f"id={ids}")
+    if revision_id is not None:
+        params.append(f"revision_id={revision_id}")
+    if reference_id is not None:
+        params.append(f"reference_id={reference_id}")
+    if type_filter is not None:
+        params.append(f"type={type_filter}")
     url = f"{prefix}/assessment"
-    if assessment_id:
-        url += f"?assessment_id={assessment_id}"
+    if params:
+        url += "?" + "&".join(params)
     response = client.get(url, headers=headers)
     return response
 
@@ -68,23 +88,6 @@ def delete_assessment(client, token, assessment_id):
     response = client.delete(
         f"{prefix}/assessment?assessment_id={assessment_id}", headers=headers
     )
-    return response
-
-
-def list_assessment_with_filters(
-    client, token, revision_id=None, reference_id=None, type_filter=None
-):
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"{prefix}/assessment?"
-    params = []
-    if revision_id is not None:
-        params.append(f"revision_id={revision_id}")
-    if reference_id is not None:
-        params.append(f"reference_id={reference_id}")
-    if type_filter is not None:
-        params.append(f"type={type_filter}")
-    url += "&".join(params)
-    response = client.get(url, headers=headers)
     return response
 
 
@@ -255,7 +258,7 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
 
 
 def test_assessment_filtering(
-    client, regular_token1, admin_token, db_session, test_db_session
+    client, regular_token1, regular_token2, admin_token, db_session, test_db_session
 ):
     """Test filtering assessments by revision_id, reference_id, and type"""
     # Create two versions and three revisions
@@ -323,25 +326,21 @@ def test_assessment_filtering(
     assert created_assessment_ids.issubset(all_assessment_ids)
 
     # Test 2: Filter by revision_id_1
-    response = list_assessment_with_filters(
-        client, regular_token1, revision_id=revision_id_1
-    )
+    response = list_assessment(client, regular_token1, revision_id=revision_id_1)
     assert response.status_code == 200
     assessments = response.json()
     filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
     assert filtered_ids == {assessment_id_1, assessment_id_3}
 
     # Test 3: Filter by revision_id_2
-    response = list_assessment_with_filters(
-        client, regular_token1, revision_id=revision_id_2
-    )
+    response = list_assessment(client, regular_token1, revision_id=revision_id_2)
     assert response.status_code == 200
     assessments = response.json()
     filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
     assert filtered_ids == {assessment_id_2}
 
     # Test 4: Filter by reference_id
-    response = list_assessment_with_filters(
+    response = list_assessment(
         client, regular_token1, reference_id=reference_revision_id
     )
     assert response.status_code == 200
@@ -350,25 +349,21 @@ def test_assessment_filtering(
     assert filtered_ids == {assessment_id_1, assessment_id_2}
 
     # Test 5: Filter by type "word-alignment"
-    response = list_assessment_with_filters(
-        client, regular_token1, type_filter="word-alignment"
-    )
+    response = list_assessment(client, regular_token1, type_filter="word-alignment")
     assert response.status_code == 200
     assessments = response.json()
     filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
     assert filtered_ids == {assessment_id_1, assessment_id_2}
 
     # Test 6: Filter by type "sentence-length"
-    response = list_assessment_with_filters(
-        client, regular_token1, type_filter="sentence-length"
-    )
+    response = list_assessment(client, regular_token1, type_filter="sentence-length")
     assert response.status_code == 200
     assessments = response.json()
     filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
     assert filtered_ids == {assessment_id_3}
 
     # Test 7: Filter by multiple parameters (revision_id and type)
-    response = list_assessment_with_filters(
+    response = list_assessment(
         client, regular_token1, revision_id=revision_id_1, type_filter="word-alignment"
     )
     assert response.status_code == 200
@@ -377,7 +372,7 @@ def test_assessment_filtering(
     assert filtered_ids == {assessment_id_1}
 
     # Test 8: Filter by all three parameters
-    response = list_assessment_with_filters(
+    response = list_assessment(
         client,
         regular_token1,
         revision_id=revision_id_1,
@@ -390,16 +385,14 @@ def test_assessment_filtering(
     assert filtered_ids == {assessment_id_1}
 
     # Test 9: Admin can also use filters
-    response = list_assessment_with_filters(
-        client, admin_token, revision_id=revision_id_1
-    )
+    response = list_assessment(client, admin_token, revision_id=revision_id_1)
     assert response.status_code == 200
     assessments = response.json()
     filtered_ids = {a["id"] for a in assessments if a["id"] in created_assessment_ids}
     assert filtered_ids == {assessment_id_1, assessment_id_3}
 
     # Test 10: Filter with no matching results (combine filters that don't match our data)
-    response = list_assessment_with_filters(
+    response = list_assessment(
         client, regular_token1, revision_id=revision_id_2, type_filter="sentence-length"
     )
     assert response.status_code == 200
@@ -407,3 +400,49 @@ def test_assessment_filtering(
         a["id"] for a in response.json() if a["id"] in created_assessment_ids
     }
     assert filtered_ids == set()  # No matches for this combination
+
+    # Test 11: Filter by single id returns only that assessment
+    response = list_assessment(client, regular_token1, ids=assessment_id_2)
+    assert response.status_code == 200
+    assessments = response.json()
+    assert len(assessments) == 1
+    assert assessments[0]["id"] == assessment_id_2
+    assert assessments[0]["revision_id"] == revision_id_2
+    assert assessments[0]["type"] == "word-alignment"
+
+    # Test 12: Filter by single id as admin
+    response = list_assessment(client, admin_token, ids=assessment_id_3)
+    assert response.status_code == 200
+    assessments = response.json()
+    assert len(assessments) == 1
+    assert assessments[0]["id"] == assessment_id_3
+    assert assessments[0]["type"] == "sentence-length"
+
+    # Test 13: Filter by multiple ids returns exactly those assessments
+    response = list_assessment(
+        client, regular_token1, ids=[assessment_id_1, assessment_id_3]
+    )
+    assert response.status_code == 200
+    assessments = response.json()
+    returned_ids = {a["id"] for a in assessments}
+    assert returned_ids == {assessment_id_1, assessment_id_3}
+
+    # Test 14: Multiple ids with a non-existent id returns only the matching ones
+    response = list_assessment(client, regular_token1, ids=[assessment_id_2, 999999])
+    assert response.status_code == 200
+    assessments = response.json()
+    returned_ids = {a["id"] for a in assessments}
+    assert returned_ids == {assessment_id_2}
+
+    # Test 15: Id filter respects access control — unauthorized user sees nothing
+    response = list_assessment(
+        client, regular_token2, ids=[assessment_id_1, assessment_id_2]
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 0
+
+    # Test 16: No id params returns all accessible assessments (not filtered)
+    response = list_assessment(client, regular_token1)
+    assert response.status_code == 200
+    all_ids = {a["id"] for a in response.json()}
+    assert created_assessment_ids.issubset(all_ids)
