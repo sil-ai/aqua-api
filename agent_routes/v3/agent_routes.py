@@ -4,7 +4,7 @@ import datetime
 import logging
 
 import fastapi
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -2015,7 +2015,7 @@ async def add_agent_translations_bulk(
     Store multiple agent-generated translations in bulk.
 
     All translations in a single request get the same version number, which is
-    auto-incremented based on the max existing version for the assessment.
+    auto-incremented based on the max existing version for the revision+language+script.
 
     Input:
     - assessment_id: int - The assessment ID
@@ -2141,8 +2141,8 @@ async def add_agent_translations_bulk(
 async def get_agent_translations(
     assessment_id: int | None = None,
     revision_id: int | None = None,
-    language: str | None = None,
-    script: str | None = None,
+    language: str | None = Query(None, min_length=2, max_length=3),
+    script: str | None = Query(None, min_length=4, max_length=4),
     vref: str | None = None,
     first_vref: str | None = None,
     last_vref: str | None = None,
