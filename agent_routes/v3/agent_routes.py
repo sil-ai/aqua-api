@@ -2087,6 +2087,7 @@ async def add_agent_translations_bulk(
 async def get_agent_translations(
     assessment_id: int | None = None,
     revision_id: int | None = None,
+    language: str | None = None,
     vref: str | None = None,
     first_vref: str | None = None,
     last_vref: str | None = None,
@@ -2104,6 +2105,8 @@ async def get_agent_translations(
     - revision_id: int (optional) - The revision ID. If provided without assessment_id,
       returns the latest translation per vref (by created_at) across all assessments
       for that revision (no authorization check).
+    - language: str (optional) - 3-letter ISO 639 language code to filter by the
+      reference revision's language. Required when using revision_id.
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - first_vref: str (optional) - Start of verse range (inclusive)
     - last_vref: str (optional) - End of verse range (inclusive)
@@ -2119,14 +2122,28 @@ async def get_agent_translations(
     """
     try:
         from sqlalchemy import and_, func, select
+        from sqlalchemy.orm import aliased
 
-        from database.models import Assessment, BookReference, VerseReference
+        from database.models import (
+            Assessment,
+            BibleRevision,
+            BibleVersion,
+            BookReference,
+            VerseReference,
+        )
 
         # Require at least one of assessment_id or revision_id
         if assessment_id is None and revision_id is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Either assessment_id or revision_id must be provided",
+            )
+
+        # Validate language parameter
+        if revision_id is not None and assessment_id is None and language is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="language is required when using revision_id",
             )
 
         # If assessment_id is provided, use assessment-specific logic with auth check
@@ -2150,6 +2167,24 @@ async def get_agent_translations(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="User not authorized for this assessment",
                 )
+
+            # Validate language matches assessment's reference language if provided
+            if language is not None:
+                ref_lang_query = (
+                    select(BibleVersion.iso_language)
+                    .join(
+                        BibleRevision,
+                        BibleRevision.bible_version_id == BibleVersion.id,
+                    )
+                    .where(BibleRevision.id == assessment.reference_id)
+                )
+                ref_lang_result = await db.execute(ref_lang_query)
+                ref_lang = ref_lang_result.scalar_one_or_none()
+                if ref_lang and ref_lang != language:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="language does not match assessment's reference language",
+                    )
 
             # Build the query for assessment_id
             if all_versions or version is not None:
@@ -2183,12 +2218,21 @@ async def get_agent_translations(
             # Return latest translation per vref by created_at across all assessments
             # No authorization check needed
 
+            # Alias BibleRevision for the reference_id join to avoid ambiguity
+            RefRevision = aliased(BibleRevision)
+
             if all_versions or version is not None:
                 # Return all versions or a specific version across all assessments
                 query = (
                     select(AgentTranslation)
                     .join(Assessment, Assessment.id == AgentTranslation.assessment_id)
+                    .join(RefRevision, RefRevision.id == Assessment.reference_id)
+                    .join(
+                        BibleVersion,
+                        BibleVersion.id == RefRevision.bible_version_id,
+                    )
                     .where(Assessment.revision_id == revision_id)
+                    .where(BibleVersion.iso_language == language)
                 )
             else:
                 # Return only the latest translation per vref by created_at
@@ -2204,7 +2248,13 @@ async def get_agent_translations(
                         .label("rn"),
                     )
                     .join(Assessment, Assessment.id == AgentTranslation.assessment_id)
+                    .join(RefRevision, RefRevision.id == Assessment.reference_id)
+                    .join(
+                        BibleVersion,
+                        BibleVersion.id == RefRevision.bible_version_id,
+                    )
                     .where(Assessment.revision_id == revision_id)
+                    .where(BibleVersion.iso_language == language)
                     .subquery()
                 )
 
