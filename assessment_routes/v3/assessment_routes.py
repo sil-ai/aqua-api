@@ -3,14 +3,14 @@ __version__ = "v3"
 import logging
 import os
 from datetime import date, datetime
-from typing import List
+from typing import List, Optional
 
 import fastapi
 import httpx
 from dotenv import load_dotenv
 
 # Third party imports
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,18 +34,34 @@ logger = logging.getLogger(__name__)
 router = fastapi.APIRouter()
 
 
+def _apply_filters(stmt, ids, revision_id, reference_id, type_):
+    if ids is not None:
+        stmt = stmt.where(Assessment.id.in_(ids))
+    if revision_id is not None:
+        stmt = stmt.where(Assessment.revision_id == revision_id)
+    if reference_id is not None:
+        stmt = stmt.where(Assessment.reference_id == reference_id)
+    if type_ is not None:
+        stmt = stmt.where(Assessment.type == type_)
+    return stmt
+
+
 @router.get("/assessment", response_model=List[AssessmentOut])
 async def get_assessments(
-    revision_id: int = None,
-    reference_id: int = None,
-    type: str = None,
+    ids: Optional[List[int]] = Query(None, alias="id"),
+    revision_id: Optional[int] = None,
+    reference_id: Optional[int] = None,
+    type: Optional[str] = None,
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Returns a list of all assessments the current user is authorized to access.
+    Returns a list of assessments the current user is authorized to access.
 
     Optional query parameters:
+    - id: Filter by one or more assessment IDs (repeated param, e.g. ?id=1&id=2).
+      IDs that do not exist or are not accessible to the current user are silently
+      omitted; a partial result is not an error.
     - revision_id: Filter assessments by revision ID
     - reference_id: Filter assessments by reference ID
     - type: Filter assessments by assessment type
@@ -88,13 +104,7 @@ async def get_assessments(
         # Admin users can access all assessments
         stmt = select(Assessment).where(Assessment.deleted.is_(False))
 
-        # Apply optional filters
-        if revision_id is not None:
-            stmt = stmt.where(Assessment.revision_id == revision_id)
-        if reference_id is not None:
-            stmt = stmt.where(Assessment.reference_id == reference_id)
-        if type is not None:
-            stmt = stmt.where(Assessment.type == type)
+        stmt = _apply_filters(stmt, ids, revision_id, reference_id, type)
 
         result = await db.execute(stmt)
         assessments = result.scalars().all()
@@ -139,13 +149,7 @@ async def get_assessments(
             )
         )
 
-        # Apply optional filters
-        if revision_id is not None:
-            stmt = stmt.where(Assessment.revision_id == revision_id)
-        if reference_id is not None:
-            stmt = stmt.where(Assessment.reference_id == reference_id)
-        if type is not None:
-            stmt = stmt.where(Assessment.type == type)
+        stmt = _apply_filters(stmt, ids, revision_id, reference_id, type)
 
         result = await db.execute(stmt)
         assessments = result.scalars().all()
@@ -155,7 +159,9 @@ async def get_assessments(
         AssessmentOut.model_validate(assessment) for assessment in assessments
     ]
     assessment_data = sorted(
-        assessment_data, key=lambda x: x.requested_time, reverse=True
+        assessment_data,
+        key=lambda x: x.requested_time or datetime.min,
+        reverse=True,
     )
 
     return assessment_data
