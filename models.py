@@ -843,6 +843,9 @@ class AgentTranslationOut(BaseModel):
 
     id: int
     assessment_id: int
+    revision_id: int
+    language: str
+    script: str
     vref: str
     version: int
     draft_text: Optional[str] = None
@@ -856,6 +859,9 @@ class AgentTranslationOut(BaseModel):
             "example": {
                 "id": 1,
                 "assessment_id": 123,
+                "revision_id": 456,
+                "language": "eng",
+                "script": "Latn",
                 "vref": "JHN 1:1",
                 "version": 1,
                 "draft_text": "Na mwanzo kulikuwa na Neno",
