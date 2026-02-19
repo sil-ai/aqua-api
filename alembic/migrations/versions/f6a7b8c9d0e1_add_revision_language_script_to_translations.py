@@ -67,6 +67,27 @@ def upgrade() -> None:
         """
     )
 
+    # Phase 2b: Renumber versions within each (revision_id, language, script, vref)
+    # group so they are unique, ordered by created_at then id.
+    # This handles rows from different assessments that all had version=1 but now
+    # share the same (revision_id, language, script, vref) after backfill.
+    op.execute(
+        """
+        UPDATE agent_translations
+        SET version = sub.new_version
+        FROM (
+            SELECT id,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY revision_id, language, script, vref
+                       ORDER BY created_at, id
+                   ) AS new_version
+            FROM agent_translations
+        ) sub
+        WHERE agent_translations.id = sub.id
+          AND agent_translations.version != sub.new_version
+        """
+    )
+
     # Verify backfill is complete before applying NOT NULL constraints
     op.execute(
         """
