@@ -569,7 +569,7 @@ def test_get_translations_by_revision_id(
 
     # Query by revision_id
     response = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -622,7 +622,7 @@ def test_get_translations_by_revision_id_all_versions(
 
     # Query with all_versions=true
     response = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}&vref=JHN 2:3&all_versions=true",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng&vref=JHN 2:3&all_versions=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -695,7 +695,7 @@ def test_get_translations_by_revision_id_with_vref_filter(
 
     # Query by revision_id with vref filter
     response = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}&vref=JHN 2:6",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng&vref=JHN 2:6",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -737,7 +737,7 @@ def test_get_translations_by_revision_id_with_verse_range(
 
     # Query by revision_id with verse range
     response = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}&first_vref=JHN 2:11&last_vref=JHN 2:13",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng&first_vref=JHN 2:11&last_vref=JHN 2:13",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -751,3 +751,154 @@ def test_get_translations_by_revision_id_with_verse_range(
     assert "JHN 2:13" in vrefs
     assert "JHN 2:10" not in vrefs
     assert "JHN 2:14" not in vrefs
+
+
+def test_get_translations_by_revision_id_requires_language(
+    client, regular_token1, test_revision_id
+):
+    """Test that revision_id without language returns 400."""
+    response = client.get(
+        f"{prefix}/agent/translations?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "language is required" in response.json()["detail"].lower()
+
+
+def test_get_translations_by_revision_id_with_language_filter(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Test filtering translations by language when querying by revision_id."""
+    from datetime import date
+
+    from database.models import (
+        Assessment,
+        BibleRevision,
+        BibleVersion,
+        BibleVersionAccess,
+        Group,
+    )
+
+    # Create a swh BibleVersion + revision for the second reference
+    swh_version = BibleVersion(
+        name="swh_test_lang_filter",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="SWHTEST",
+        is_reference=True,
+    )
+    db_session.add(swh_version)
+    db_session.commit()
+    db_session.refresh(swh_version)
+
+    swh_revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=swh_version.id,
+        published=False,
+        machine_translation=False,
+    )
+    db_session.add(swh_revision)
+    db_session.commit()
+    db_session.refresh(swh_revision)
+
+    # Grant Group1 access to the swh version so testuser1 can add translations
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+    swh_access = BibleVersionAccess(bible_version_id=swh_version.id, group_id=group1.id)
+    db_session.add(swh_access)
+    db_session.commit()
+
+    # Get the existing eng revision to use as reference_id for eng assessment
+    eng_version = (
+        db_session.query(BibleVersion)
+        .filter(BibleVersion.name == "loading_test")
+        .first()
+    )
+    eng_revision = (
+        db_session.query(BibleRevision)
+        .filter(BibleRevision.bible_version_id == eng_version.id)
+        .first()
+    )
+
+    # Create two assessments for the same revision_id but different reference languages
+    assessment_eng = Assessment(
+        revision_id=test_revision_id,
+        reference_id=eng_revision.id,
+        type="agent_critique",
+        status="finished",
+    )
+    assessment_swh = Assessment(
+        revision_id=test_revision_id,
+        reference_id=swh_revision.id,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add_all([assessment_eng, assessment_swh])
+    db_session.commit()
+    db_session.refresh(assessment_eng)
+    db_session.refresh(assessment_swh)
+
+    # Add translations to the eng-reference assessment
+    client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": assessment_eng.id,
+            "vref": "JHN 3:1",
+            "draft_text": "English ref translation",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Add translations to the swh-reference assessment
+    client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": assessment_swh.id,
+            "vref": "JHN 3:1",
+            "draft_text": "Swahili ref translation",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    # Query with language=eng — should only get the eng-reference translation
+    response_eng = client.get(
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng&vref=JHN 3:1&all_versions=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response_eng.status_code == 200
+    data_eng = response_eng.json()
+    assert len(data_eng) >= 1
+    assert all(
+        t["draft_text"] == "English ref translation"
+        for t in data_eng
+        if t["vref"] == "JHN 3:1"
+    )
+    assert not any(t["draft_text"] == "Swahili ref translation" for t in data_eng)
+
+    # Query with language=swh — should only get the swh-reference translation
+    response_swh = client.get(
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=swh&vref=JHN 3:1&all_versions=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response_swh.status_code == 200
+    data_swh = response_swh.json()
+    assert len(data_swh) >= 1
+    assert all(
+        t["draft_text"] == "Swahili ref translation"
+        for t in data_swh
+        if t["vref"] == "JHN 3:1"
+    )
+    assert not any(t["draft_text"] == "English ref translation" for t in data_swh)
+
+
+def test_get_translations_assessment_id_with_wrong_language(
+    client, regular_token1, test_assessment_id
+):
+    """Test that assessment_id with mismatched language returns 400."""
+    response = client.get(
+        f"{prefix}/agent/translations?assessment_id={test_assessment_id}&language=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "does not match" in response.json()["detail"].lower()
