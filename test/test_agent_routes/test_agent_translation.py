@@ -931,3 +931,186 @@ def test_get_translations_assessment_id_with_wrong_script(
 
     assert response.status_code == 400
     assert "does not match" in response.json()["detail"].lower()
+
+
+def test_version_increments_across_assessments(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Test that version auto-increments across assessments sharing the same
+    revision+language+script when using the single POST endpoint."""
+    from database.models import Assessment
+
+    # Create two assessments for the same revision
+    assessment1 = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    assessment2 = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add_all([assessment1, assessment2])
+    db_session.commit()
+    db_session.refresh(assessment1)
+    db_session.refresh(assessment2)
+
+    # POST via assessment1
+    r1 = client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": assessment1.id,
+            "vref": "JHN 4:1",
+            "draft_text": "From assessment 1",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert r1.status_code == 200
+    assert r1.json()["version"] == 1
+
+    # POST via assessment2 for same revision+language+script+vref → version 2
+    r2 = client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": assessment2.id,
+            "vref": "JHN 4:1",
+            "draft_text": "From assessment 2",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert r2.status_code == 200
+    assert r2.json()["version"] == 2
+
+
+def test_bulk_version_increments_across_assessments(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Test that bulk POST version auto-increments across assessments sharing
+    the same revision+language+script."""
+    from database.models import Assessment
+
+    assessment1 = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    assessment2 = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add_all([assessment1, assessment2])
+    db_session.commit()
+    db_session.refresh(assessment1)
+    db_session.refresh(assessment2)
+
+    # Bulk POST via assessment1
+    r1 = client.post(
+        f"{prefix}/agent/translations",
+        json={
+            "assessment_id": assessment1.id,
+            "translations": [
+                {"vref": "JHN 4:2", "draft_text": "Batch 1 v2"},
+                {"vref": "JHN 4:3", "draft_text": "Batch 1 v3"},
+            ],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert r1.status_code == 200
+    version1 = r1.json()[0]["version"]
+
+    # Bulk POST via assessment2 for same revision+language+script → next version
+    r2 = client.post(
+        f"{prefix}/agent/translations",
+        json={
+            "assessment_id": assessment2.id,
+            "translations": [
+                {"vref": "JHN 4:4", "draft_text": "Batch 2 v4"},
+            ],
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert r2.status_code == 200
+    version2 = r2.json()[0]["version"]
+    assert version2 == version1 + 1
+
+
+def test_get_translations_by_revision_id_all_versions_no_script(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Test all_versions=True without script on a revision_id query."""
+    from database.models import Assessment
+
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add(assessment)
+    db_session.commit()
+    db_session.refresh(assessment)
+
+    # Add multiple versions for a verse
+    for i in range(3):
+        client.post(
+            f"{prefix}/agent/translation",
+            json={
+                "assessment_id": assessment.id,
+                "vref": "JHN 4:5",
+                "draft_text": f"Version {i + 1}",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    # Query with all_versions=true, no script
+    response = client.get(
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng&vref=JHN 4:5&all_versions=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    jhn45 = [t for t in data if t["vref"] == "JHN 4:5"]
+    assert len(jhn45) >= 3
+    versions = sorted([t["version"] for t in jhn45])
+    assert versions == [1, 2, 3]
+
+
+def test_post_translation_null_reference_assessment(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Test that POST with an assessment whose reference_id is NULL returns 400."""
+    from database.models import Assessment
+
+    # Create an assessment with no reference_id
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=None,
+        type="agent_critique",
+        status="finished",
+    )
+    db_session.add(assessment)
+    db_session.commit()
+    db_session.refresh(assessment)
+
+    # Grant access: the assessment belongs to test_revision_id which Group1
+    # already has access to via the agent_test_access fixture
+
+    response = client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": assessment.id,
+            "vref": "JHN 4:6",
+            "draft_text": "Should fail",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "could not determine" in response.json()["detail"].lower()

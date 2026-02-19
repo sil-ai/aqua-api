@@ -606,7 +606,9 @@ class AgentTranslation(Base):
     assessment_id = Column(
         Integer, ForeignKey("assessment.id", ondelete="CASCADE"), nullable=False
     )
+    # revision being translated (assessment.revision_id, i.e. the target text)
     revision_id = Column(Integer, ForeignKey("bible_revision.id"), nullable=False)
+    # reference language/script (from assessment's reference BibleVersion)
     language = Column(String(3), ForeignKey("iso_language.iso639"), nullable=False)
     script = Column(String(4), ForeignKey("iso_script.iso15924"), nullable=False)
     vref = Column(String(20), nullable=False)

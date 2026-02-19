@@ -67,6 +67,22 @@ def upgrade() -> None:
         """
     )
 
+    # Verify backfill is complete before applying NOT NULL constraints
+    op.execute(
+        """
+        DO $$ BEGIN
+            IF EXISTS (
+                SELECT 1 FROM agent_translations
+                WHERE revision_id IS NULL OR language IS NULL OR script IS NULL
+            ) THEN
+                RAISE EXCEPTION
+                    'Backfill incomplete: rows with NULL revision_id/language/script remain. '
+                    'Check for assessments with NULL reference_id.';
+            END IF;
+        END $$;
+        """
+    )
+
     # Phase 3: Set NOT NULL constraints
     op.alter_column(
         "agent_translations",
