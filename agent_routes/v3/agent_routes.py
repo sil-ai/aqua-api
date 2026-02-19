@@ -1926,9 +1926,33 @@ async def add_agent_translation(
                 detail="User not authorized for this assessment",
             )
 
-        # Get the next version number for this assessment+vref
+        # Derive revision_id, language, script from the assessment's reference
+        from database.models import BibleRevision, BibleVersion
+
+        ref_query = (
+            select(
+                Assessment.revision_id,
+                BibleVersion.iso_language,
+                BibleVersion.iso_script,
+            )
+            .join(BibleRevision, BibleRevision.id == Assessment.reference_id)
+            .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
+            .where(Assessment.id == translation.assessment_id)
+        )
+        ref_result = await db.execute(ref_query)
+        ref_row = ref_result.first()
+        if not ref_row:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Could not determine revision/language/script from assessment",
+            )
+        rev_id, lang, scrpt = ref_row
+
+        # Get the next version number scoped to (revision_id, language, script, vref)
         version_query = select(func.max(AgentTranslation.version)).where(
-            AgentTranslation.assessment_id == translation.assessment_id,
+            AgentTranslation.revision_id == rev_id,
+            AgentTranslation.language == lang,
+            AgentTranslation.script == scrpt,
             AgentTranslation.vref == translation.vref,
         )
         version_result = await db.execute(version_query)
@@ -1944,6 +1968,9 @@ async def add_agent_translation(
         # Create the translation record
         agent_translation = AgentTranslation(
             assessment_id=translation.assessment_id,
+            revision_id=rev_id,
+            language=lang,
+            script=scrpt,
             vref=translation.vref,
             version=next_version,
             draft_text=draft_text,
@@ -2028,9 +2055,33 @@ async def add_agent_translations_bulk(
                 detail="User not authorized for this assessment",
             )
 
-        # Get the next version number for this assessment (all translations get same version)
+        # Derive revision_id, language, script from the assessment's reference
+        from database.models import BibleRevision, BibleVersion
+
+        ref_query = (
+            select(
+                Assessment.revision_id,
+                BibleVersion.iso_language,
+                BibleVersion.iso_script,
+            )
+            .join(BibleRevision, BibleRevision.id == Assessment.reference_id)
+            .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
+            .where(Assessment.id == request.assessment_id)
+        )
+        ref_result = await db.execute(ref_query)
+        ref_row = ref_result.first()
+        if not ref_row:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Could not determine revision/language/script from assessment",
+            )
+        rev_id, lang, scrpt = ref_row
+
+        # Get the next version number scoped to (revision_id, language, script)
         version_query = select(func.max(AgentTranslation.version)).where(
-            AgentTranslation.assessment_id == request.assessment_id
+            AgentTranslation.revision_id == rev_id,
+            AgentTranslation.language == lang,
+            AgentTranslation.script == scrpt,
         )
         version_result = await db.execute(version_query)
         max_version = version_result.scalar()
@@ -2040,6 +2091,9 @@ async def add_agent_translations_bulk(
         translations_to_insert = [
             AgentTranslation(
                 assessment_id=request.assessment_id,
+                revision_id=rev_id,
+                language=lang,
+                script=scrpt,
                 vref=trans.vref,
                 version=next_version,
                 draft_text=sanitize_text(trans.draft_text),
@@ -2088,6 +2142,7 @@ async def get_agent_translations(
     assessment_id: int | None = None,
     revision_id: int | None = None,
     language: str | None = None,
+    script: str | None = None,
     vref: str | None = None,
     first_vref: str | None = None,
     last_vref: str | None = None,
@@ -2105,8 +2160,9 @@ async def get_agent_translations(
     - revision_id: int (optional) - The revision ID. If provided without assessment_id,
       returns the latest translation per vref (by created_at) across all assessments
       for that revision (no authorization check).
-    - language: str (optional) - 3-letter ISO 639 language code to filter by the
-      reference revision's language. Required when using revision_id.
+    - language: str (optional) - 3-letter ISO 639 language code. Required when using revision_id.
+    - script: str (optional) - 4-letter ISO 15924 script code. If omitted, returns
+      translations across all scripts for the given language.
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - first_vref: str (optional) - Start of verse range (inclusive)
     - last_vref: str (optional) - End of verse range (inclusive)
@@ -2122,7 +2178,6 @@ async def get_agent_translations(
     """
     try:
         from sqlalchemy import and_, func, select
-        from sqlalchemy.orm import aliased
 
         from database.models import (
             Assessment,
@@ -2168,23 +2223,29 @@ async def get_agent_translations(
                     detail="User not authorized for this assessment",
                 )
 
-            # Validate language matches assessment's reference language if provided
-            if language is not None:
-                ref_lang_query = (
-                    select(BibleVersion.iso_language)
+            # Validate language/script match assessment's reference if provided
+            if language is not None or script is not None:
+                ref_query = (
+                    select(BibleVersion.iso_language, BibleVersion.iso_script)
                     .join(
                         BibleRevision,
                         BibleRevision.bible_version_id == BibleVersion.id,
                     )
                     .where(BibleRevision.id == assessment.reference_id)
                 )
-                ref_lang_result = await db.execute(ref_lang_query)
-                ref_lang = ref_lang_result.scalar_one_or_none()
-                if ref_lang and ref_lang != language:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="language does not match assessment's reference language",
-                    )
+                ref_result = await db.execute(ref_query)
+                ref_row = ref_result.first()
+                if ref_row:
+                    if language is not None and ref_row.iso_language != language:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="language does not match assessment's reference language",
+                        )
+                    if script is not None and ref_row.iso_script != script:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="script does not match assessment's reference script",
+                        )
 
             # Build the query for assessment_id
             if all_versions or version is not None:
@@ -2215,55 +2276,49 @@ async def get_agent_translations(
                 )
         else:
             # revision_id is provided without assessment_id
-            # Return latest translation per vref by created_at across all assessments
+            # Query directly on the denormalized columns — no joins needed
             # No authorization check needed
 
-            # Alias BibleRevision for the reference_id join to avoid ambiguity
-            RefRevision = aliased(BibleRevision)
-
             if all_versions or version is not None:
-                # Return all versions or a specific version across all assessments
+                # Return all versions or a specific version
                 query = (
                     select(AgentTranslation)
-                    .join(Assessment, Assessment.id == AgentTranslation.assessment_id)
-                    .join(RefRevision, RefRevision.id == Assessment.reference_id)
-                    .join(
-                        BibleVersion,
-                        BibleVersion.id == RefRevision.bible_version_id,
-                    )
-                    .where(Assessment.revision_id == revision_id)
-                    .where(BibleVersion.iso_language == language)
+                    .where(AgentTranslation.revision_id == revision_id)
+                    .where(AgentTranslation.language == language)
                 )
+                if script is not None:
+                    query = query.where(AgentTranslation.script == script)
             else:
-                # Return only the latest translation per vref by created_at
-                # Subquery: rank translations by created_at (desc) per vref
-                ranked_subq = (
+                # Return only the latest version per vref using MAX(version)
+                base_filters = [
+                    AgentTranslation.revision_id == revision_id,
+                    AgentTranslation.language == language,
+                ]
+                if script is not None:
+                    base_filters.append(AgentTranslation.script == script)
+
+                latest_subq = (
                     select(
-                        AgentTranslation.id,
-                        func.row_number()
-                        .over(
-                            partition_by=AgentTranslation.vref,
-                            order_by=AgentTranslation.created_at.desc(),
-                        )
-                        .label("rn"),
+                        AgentTranslation.vref,
+                        func.max(AgentTranslation.version).label("max_version"),
                     )
-                    .join(Assessment, Assessment.id == AgentTranslation.assessment_id)
-                    .join(RefRevision, RefRevision.id == Assessment.reference_id)
-                    .join(
-                        BibleVersion,
-                        BibleVersion.id == RefRevision.bible_version_id,
-                    )
-                    .where(Assessment.revision_id == revision_id)
-                    .where(BibleVersion.iso_language == language)
+                    .where(*base_filters)
+                    .group_by(AgentTranslation.vref)
                     .subquery()
                 )
 
+                join_conditions = [
+                    AgentTranslation.vref == latest_subq.c.vref,
+                    AgentTranslation.version == latest_subq.c.max_version,
+                    AgentTranslation.revision_id == revision_id,
+                    AgentTranslation.language == language,
+                ]
+                if script is not None:
+                    join_conditions.append(AgentTranslation.script == script)
+
                 query = select(AgentTranslation).join(
-                    ranked_subq,
-                    and_(
-                        AgentTranslation.id == ranked_subq.c.id,
-                        ranked_subq.c.rn == 1,
-                    ),
+                    latest_subq,
+                    and_(*join_conditions),
                 )
 
         # Filter by specific vref
