@@ -606,6 +606,11 @@ class AgentTranslation(Base):
     assessment_id = Column(
         Integer, ForeignKey("assessment.id", ondelete="CASCADE"), nullable=False
     )
+    # revision being translated (assessment.revision_id, i.e. the target text)
+    revision_id = Column(Integer, ForeignKey("bible_revision.id"), nullable=False)
+    # reference language/script (from assessment's reference BibleVersion)
+    language = Column(String(3), ForeignKey("iso_language.iso639"), nullable=False)
+    script = Column(String(4), ForeignKey("iso_script.iso15924"), nullable=False)
     vref = Column(String(20), nullable=False)
     version = Column(Integer, default=1, nullable=False)
     draft_text = Column(Text, nullable=True)
@@ -620,10 +625,19 @@ class AgentTranslation(Base):
     __table_args__ = (
         Index(
             "ix_agent_translations_unique",
-            "assessment_id",
+            "revision_id",
+            "language",
+            "script",
             "vref",
             "version",
             unique=True,
         ),
         Index("ix_agent_translations_assessment_vref", "assessment_id", "vref"),
+        Index(
+            "ix_agent_translations_rev_lang_script_vref",
+            "revision_id",
+            "language",
+            "script",
+            "vref",
+        ),
     )
