@@ -175,14 +175,22 @@ Sets `start_time` on first non-queued status, `end_time` on terminal status.
 
 Authenticated via `Authorization: Bearer {MODAL_WEBHOOK_TOKEN}` (same token as status callback).
 
-Query param: `range_handling` = `filter` (default) or `merge`.
-- `filter`: exclude verse pairs where either text contains `<range>`
-- `merge`: merge `<range>` text into the preceding verse (matches current word alignment behavior)
+Query param: `range_handling` = `filter` (default), `merge`, or `empty`.
+
+| Value | Behavior |
+|-------|----------|
+| `filter` | Drop verse pairs where either side is `<range>` |
+| `merge` | Combine `<range>` verses into the preceding verse using `merge_verse_ranges()` from `utils/verse_range_utils.py` (matches current word alignment behavior — Cassie's preference for alignment tasks) |
+| `empty` | Return `<range>` verses with empty strings |
+
+The existing `merge_verse_ranges()` utility handles grouping consecutive `<range>` verses with their anchor verse and combining text fields. For the training data endpoint, call it with `combine_fields=["source", "target"]` and the default string concatenation combiner.
 
 Returns JSON array of aligned verse pairs:
 ```json
 [{"vref": "GEN 1:1", "source": "In the beginning...", "target": "Hapo mwanzo..."}]
 ```
+
+When `merge` is used, merged verses return a combined vref: `"vref": "GEN 1:1-2"`.
 
 Query: self-join `VerseText` on `verse_reference` for both revisions. Filter out rows where either text is NULL, empty, or whitespace-only. Apply range handling per query param. Uses index `ix_verse_text_verse_reference_revision`.
 
