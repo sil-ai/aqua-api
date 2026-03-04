@@ -822,7 +822,7 @@ async def get_available_chapters(
     return RevisionChapters(chapters=chapters_dict)
 
 
-@router.get("/vref-text")
+@router.get("/vref-text", response_class=PlainTextResponse)
 async def get_vref_text(
     revision_id: int,
     db: AsyncSession = Depends(get_db),
@@ -856,5 +856,9 @@ async def get_vref_text(
 
     lookup = {row.verse_reference: row.text for row in rows}
 
-    lines = [lookup.get(vref, "") or "" for vref in _VREF_LIST]
+    # text column is nullable; also filter out "<range>" structural markers
+    lines = [
+        "" if not (t := lookup.get(vref)) or t == "<range>" else t
+        for vref in _VREF_LIST
+    ]
     return PlainTextResponse("\n".join(lines) + "\n")
