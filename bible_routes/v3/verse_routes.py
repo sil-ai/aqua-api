@@ -856,9 +856,5 @@ async def get_vref_text(
 
     lookup = {row.verse_reference: row.text for row in rows}
 
-    # text column is nullable; also filter out "<range>" structural markers
-    lines = [
-        "" if not (t := lookup.get(vref)) or t == "<range>" else t
-        for vref in _VREF_LIST
-    ]
+    lines = [lookup.get(vref, "") or "" for vref in _VREF_LIST]
     return PlainTextResponse("\n".join(lines) + "\n")
