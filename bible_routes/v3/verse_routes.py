@@ -25,7 +25,7 @@ router = fastapi.APIRouter()
 
 # Load vref list once at module level
 _VREF_PATH = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "vref.txt"
-_VREF_LIST = _VREF_PATH.read_text().splitlines()
+_VREF_LIST = _VREF_PATH.read_text(encoding="utf-8").splitlines()
 
 
 def extract_unique_words(text: str) -> List[str]:
