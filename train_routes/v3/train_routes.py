@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 
 import fastapi
-import httpx
+import modal
 from dotenv import load_dotenv
 from fastapi import Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
@@ -142,25 +142,12 @@ async def create_training_job(
     # Dispatch to Modal runner
     job_out = TrainingJobOut.model_validate(training_job)
     try:
-        if os.getenv("MODAL_ENV", "main") == "main":
-            runner_url = "https://sil-ai--train-runner.modal.run"
-        else:
-            runner_url = "https://sil-ai-dev--train-runner.modal.run"
-
-        headers = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN", "")}
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                runner_url, headers=headers, json=job_out.model_dump(mode="json")
-            )
-        if not 200 <= response.status_code < 300:
-            training_job.status = "failed"
-            training_job.status_detail = (
-                f"dispatch_failed: runner returned {response.status_code}"
-            )
-            training_job.end_time = datetime.utcnow()
-            await db.commit()
-            await db.refresh(training_job)
-    except (httpx.RequestError, httpx.HTTPStatusError) as e:
+        modal_env = os.getenv("MODAL_ENV", "main")
+        f = modal.Function.from_name(
+            "train-runner", "run_training_job", environment_name=modal_env
+        )
+        await f.spawn.aio(job_out.model_dump(mode="json"))
+    except Exception as e:
         logger.error(f"Error dispatching training job {training_job.id}: {e}")
         training_job.status = "failed"
         training_job.status_detail = f"dispatch_failed: {type(e).__name__}: {e}"

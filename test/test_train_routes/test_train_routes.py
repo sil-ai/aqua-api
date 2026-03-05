@@ -1,6 +1,6 @@
 # test_train_routes.py
 import os
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 from database.models import TrainingJob, VerseText
 
@@ -22,17 +22,10 @@ def _create_training_job_via_api(client, token, source_rev, target_rev, options=
     if options is not None:
         data["options"] = options
 
-    with patch(
-        "train_routes.v3.train_routes.httpx.AsyncClient"
-    ) as mock_client_cls, patch.dict(
-        os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}
-    ):
-        mock_response = Mock(status_code=200)
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
+    with patch("train_routes.v3.train_routes.modal.Function") as mock_function_cls:
+        mock_fn = AsyncMock()
+        mock_fn.spawn = AsyncMock()
+        mock_function_cls.from_name.return_value = mock_fn
 
         response = client.post(
             f"{prefix}/train",
@@ -627,17 +620,10 @@ def test_dispatch_failure_marks_job_failed(
         "options": {"tag": "dispatch_fail_test"},
     }
 
-    with patch(
-        "train_routes.v3.train_routes.httpx.AsyncClient"
-    ) as mock_client_cls, patch.dict(
-        os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}
-    ):
-        mock_response = Mock(status_code=503)
-        mock_client = AsyncMock()
-        mock_client.post.return_value = mock_response
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-        mock_client_cls.return_value = mock_client
+    with patch("train_routes.v3.train_routes.modal.Function") as mock_function_cls:
+        mock_fn = AsyncMock()
+        mock_fn.spawn = AsyncMock(side_effect=Exception("Modal dispatch failed"))
+        mock_function_cls.from_name.return_value = mock_fn
 
         response = client.post(
             f"{prefix}/train",
