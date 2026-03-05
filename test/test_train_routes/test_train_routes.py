@@ -24,7 +24,7 @@ def _create_training_job_via_api(client, token, source_rev, target_rev, options=
 
     with patch("train_routes.v3.train_routes.modal.Function") as mock_function_cls:
         mock_fn = AsyncMock()
-        mock_fn.spawn = AsyncMock()
+        mock_fn.spawn.aio = AsyncMock()
         mock_function_cls.from_name.return_value = mock_fn
 
         response = client.post(
@@ -622,7 +622,7 @@ def test_dispatch_failure_marks_job_failed(
 
     with patch("train_routes.v3.train_routes.modal.Function") as mock_function_cls:
         mock_fn = AsyncMock()
-        mock_fn.spawn = AsyncMock(side_effect=Exception("Modal dispatch failed"))
+        mock_fn.spawn.aio = AsyncMock(side_effect=Exception("Modal dispatch failed"))
         mock_function_cls.from_name.return_value = mock_fn
 
         response = client.post(
