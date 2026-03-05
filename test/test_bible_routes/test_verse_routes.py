@@ -851,3 +851,50 @@ def test_chapters_endpoint_unauthorized(
     )
     assert response.status_code == 403
     assert "not authorized" in response.json()["detail"].lower()
+
+
+def test_vref_text_endpoint(client, regular_token1, db_session):
+    """Test /vref-text endpoint returns 41,899 lines with correct verse text."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/vref-text",
+        params={"revision_id": revision_id},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+
+    lines = response.text.split("\n")
+    # File ends with trailing newline, so last element is empty
+    assert lines[-1] == ""
+    content_lines = lines[:-1]
+    assert len(content_lines) == 41899
+
+    # Line 0 corresponds to GEN 1:1 — should have text
+    assert content_lines[0] != ""
+    assert "In the beginning" in content_lines[0]
+
+    # Line 1 corresponds to GEN 1:2 — should have text
+    assert content_lines[1] != ""
+
+
+def test_vref_text_endpoint_unauthorized(
+    client, regular_token1, regular_token2, db_session
+):
+    """Test /vref-text endpoint returns 403 for unauthorized user."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token2}"}
+
+    response = client.get(
+        f"/{prefix}/vref-text",
+        params={"revision_id": revision_id},
+        headers=headers,
+    )
+    assert response.status_code == 403
+    assert "not authorized" in response.json()["detail"].lower()

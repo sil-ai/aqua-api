@@ -1,10 +1,12 @@
 __version__ = "v3"
 
+import pathlib
 import unicodedata
 from typing import Any, Dict, List
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
+from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +22,10 @@ from security_routes.utilities import is_user_authorized_for_revision
 from utils.verse_range_utils import merge_verse_ranges
 
 router = fastapi.APIRouter()
+
+# Load vref list once at module level
+_VREF_PATH = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "vref.txt"
+_VREF_LIST = _VREF_PATH.read_text(encoding="utf-8").splitlines()
 
 
 def extract_unique_words(text: str) -> List[str]:
@@ -814,3 +820,41 @@ async def get_available_chapters(
         chapters_dict[book].append(chapter)
 
     return RevisionChapters(chapters=chapters_dict)
+
+
+@router.get("/vref-text", response_class=PlainTextResponse)
+async def get_vref_text(
+    revision_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> PlainTextResponse:
+    """
+    Exports a revision's verse text in vref format.
+
+    Returns a plain text file with 41,899 lines, one per canonical verse
+    reference (matching fixtures/vref.txt). Lines with verse text get the
+    text; lines without get left blank.
+
+    Input:
+    - revision_id: int
+    Description: The unique identifier for the revision.
+
+    Returns:
+    - Plain text with 41,899 lines.
+    """
+    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this revision.",
+        )
+
+    stmt = select(VerseModel.verse_reference, VerseModel.text).where(
+        VerseModel.revision_id == revision_id
+    )
+    result = await db.execute(stmt)
+    rows = result.all()
+
+    lookup = {row.verse_reference: row.text for row in rows}
+
+    lines = [lookup.get(vref, "") or "" for vref in _VREF_LIST]
+    return PlainTextResponse("\n".join(lines) + "\n")
