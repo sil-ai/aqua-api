@@ -211,6 +211,7 @@ class AssessmentIn(BaseModel):
     target_language: Optional[str] = None
     first_vref: Optional[str] = None
     last_vref: Optional[str] = None
+    kwargs: Optional[dict] = None
 
     model_config = {
         "json_schema_extra": {

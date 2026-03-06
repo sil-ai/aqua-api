@@ -10,7 +10,7 @@ import httpx
 from dotenv import load_dotenv
 
 # Third party imports
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Body, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -199,6 +199,7 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
 @router.post("/assessment", response_model=List[AssessmentOut])
 async def add_assessment(
     a: AssessmentIn = Depends(),
+    kwargs: Optional[dict] = Body(None),
     return_all_results: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(
@@ -264,6 +265,7 @@ async def add_assessment(
     await db.commit()
     await db.refresh(assessment)
     a.id = assessment.id
+    a.kwargs = kwargs
 
     # Call runner using helper function
     response = await call_assessment_runner(a, return_all_results)
