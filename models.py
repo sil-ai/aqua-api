@@ -1,4 +1,5 @@
 import datetime
+import re
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -221,6 +222,14 @@ class AssessmentIn(BaseModel):
         if len(v) > 20:
             raise ValueError("kwargs may not contain more than 20 keys")
         for key, val in v.items():
+            if len(key) > 64:
+                raise ValueError(
+                    f"kwargs key '{key[:64]}...' exceeds 64-character limit"
+                )
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key):
+                raise ValueError(
+                    f"kwargs key '{key}' must be a valid Python identifier"
+                )
             if not isinstance(val, (str, int, float, bool, type(None))):
                 raise ValueError(
                     f"kwargs values must be scalar types, got {type(val).__name__} for key '{key}'"
@@ -230,6 +239,7 @@ class AssessmentIn(BaseModel):
         return v
 
     model_config = {
+        "validate_assignment": True,
         "json_schema_extra": {
             "example": {
                 "revision_id": 1,
