@@ -1,6 +1,6 @@
 import datetime
 from enum import Enum
-from typing import Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -211,11 +211,32 @@ class AssessmentIn(BaseModel):
     target_language: Optional[str] = None
     first_vref: Optional[str] = None
     last_vref: Optional[str] = None
-    kwargs: Optional[dict] = None
+    kwargs: Optional[Dict[str, Any]] = None
+
+    @field_validator("kwargs")
+    @classmethod
+    def validate_kwargs(cls, v):
+        if v is None:
+            return v
+        if len(v) > 20:
+            raise ValueError("kwargs may not contain more than 20 keys")
+        for key, val in v.items():
+            if not isinstance(val, (str, int, float, bool, type(None))):
+                raise ValueError(
+                    f"kwargs values must be scalar types, got {type(val).__name__} for key '{key}'"
+                )
+            if isinstance(val, str) and len(val) > 1000:
+                raise ValueError("kwargs string values must not exceed 1000 characters")
+        return v
 
     model_config = {
         "json_schema_extra": {
-            "example": {"revision_id": 1, "reference_id": 1, "type": "word-alignment"}
+            "example": {
+                "revision_id": 1,
+                "reference_id": 1,
+                "type": "word-alignment",
+                "kwargs": {"top_k": 5},
+            }
         },
         "use_enum_values": True,
     }

@@ -1,5 +1,6 @@
 __version__ = "v3"
 # Standard library imports
+import json
 import logging
 import os
 from datetime import date, datetime
@@ -10,7 +11,7 @@ import httpx
 from dotenv import load_dotenv
 
 # Third party imports
-from fastapi import Body, Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -184,7 +185,7 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
         # Asynchronously post the request to the runner
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                runner_url, params=params, headers=headers, json=assessment.dict()
+                runner_url, params=params, headers=headers, json=assessment.model_dump()
             )
     except (httpx.RequestError, httpx.HTTPStatusError) as e:
         logger.error(f"Error calling Modal runner for assessment {assessment.id}: {e}")
@@ -199,12 +200,13 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
 @router.post("/assessment", response_model=List[AssessmentOut])
 async def add_assessment(
     a: AssessmentIn = Depends(),
-    kwargs: Optional[dict] = Body(None),
+    kwargs: Optional[str] = Query(
+        None,
+        description="JSON-encoded dict of extra keyword arguments to pass to the assessment function",
+    ),
     return_all_results: bool = False,
     db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(
-        get_current_user
-    ),  # Adjusted to get the current user model
+    current_user: UserModel = Depends(get_current_user),
 ):
     """
     Requests an assessment to be run on a revision and (where required) a reference revision.
@@ -220,29 +222,12 @@ async def add_assessment(
 
     For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
 
-    Parameter `modal_suffix` is used to tell modal which set of assessment apps to use. It should not normally be set by users.
+    Optional `kwargs` parameter accepts a JSON-encoded dict of extra keyword arguments
+    to pass through to the assessment function (e.g., `{"top_k": 5}`). Values must be
+    scalar types (str, int, float, bool, null). Max 20 keys.
 
     Add an assessment entry. For regular users, an entry is added for each group they are part of.
     For admin users, the entry is not linked to any specific group.
-
-    Input:
-    Fields(AssessmentIn):
-    - revision_id: int
-    Description: The unique identifier for the revision.
-    - reference_id: Optional[int] = None
-    Description: The unique identifier for the reference revision.
-    - type: AssessmentType
-    Description: The type of assessment to be run. (queued, failed, finished)
-    - status: str
-    Description: The status of the assessment.
-    - requested_time: datetime.datetime
-    Description: The time the assessment was requested.
-    - start_time: datetime.datetime
-    Description: The time the assessment was started.
-    - end_time: datetime.datetime
-    Description: The time the assessment was completed.
-    - owner_id: int
-    Description: The unique identifier for the owner of the assessment.
     """
     if (
         a.type in ["semantic-similarity", "word-alignment", "agent-critique"]
@@ -252,6 +237,20 @@ async def add_assessment(
             status_code=400, detail=f"Assessment type {a.type} requires a reference_id."
         )
 
+    # Parse kwargs JSON string into a validated dict
+    parsed_kwargs = None
+    if kwargs is not None:
+        try:
+            parsed_kwargs = json.loads(kwargs)
+        except (json.JSONDecodeError, TypeError) as e:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid kwargs JSON: {e}"
+            ) from e
+        if not isinstance(parsed_kwargs, dict):
+            raise HTTPException(status_code=400, detail="kwargs must be a JSON object")
+        # Validate through the model's field_validator
+        a.kwargs = parsed_kwargs
+
     assessment = Assessment(
         revision_id=a.revision_id,
         reference_id=a.reference_id,
@@ -259,13 +258,13 @@ async def add_assessment(
         status="queued",
         requested_time=datetime.now(),
         owner_id=current_user.id,
+        kwargs=parsed_kwargs,
     )
 
     db.add(assessment)
     await db.commit()
     await db.refresh(assessment)
     a.id = assessment.id
-    a.kwargs = kwargs
 
     # Call runner using helper function
     response = await call_assessment_runner(a, return_all_results)
