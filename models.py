@@ -239,7 +239,6 @@ class AssessmentIn(BaseModel):
         return v
 
     model_config = {
-        "validate_assignment": True,
         "json_schema_extra": {
             "example": {
                 "revision_id": 1,

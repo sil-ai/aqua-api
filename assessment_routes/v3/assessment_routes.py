@@ -200,8 +200,9 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
 @router.post("/assessment", response_model=List[AssessmentOut])
 async def add_assessment(
     a: AssessmentIn = Depends(),
-    kwargs: Optional[str] = Query(
+    extra_kwargs: Optional[str] = Query(
         None,
+        alias="extra_kwargs",
         description="JSON-encoded dict of extra keyword arguments to pass to the assessment function",
     ),
     return_all_results: bool = False,
@@ -222,9 +223,9 @@ async def add_assessment(
 
     For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
 
-    Optional `kwargs` parameter accepts a JSON-encoded dict of extra keyword arguments
-    to pass through to the assessment function (e.g., `{"top_k": 5}`). Values must be
-    scalar types (str, int, float, bool, null). Max 20 keys.
+    Optional `extra_kwargs` query parameter accepts a JSON-encoded dict of extra keyword
+    arguments to pass through to the assessment function (e.g., `{"top_k": 5}`). Values
+    must be scalar types (str, int, float, bool, null). Max 20 keys.
 
     Add an assessment entry. For regular users, an entry is added for each group they are part of.
     For admin users, the entry is not linked to any specific group.
@@ -237,18 +238,22 @@ async def add_assessment(
             status_code=400, detail=f"Assessment type {a.type} requires a reference_id."
         )
 
-    # Parse kwargs JSON string into a validated dict
+    # Parse extra_kwargs JSON string into a validated dict
     parsed_kwargs = None
-    if kwargs is not None:
+    if extra_kwargs is not None:
         try:
-            parsed_kwargs = json.loads(kwargs)
+            parsed_kwargs = json.loads(extra_kwargs)
         except (json.JSONDecodeError, TypeError) as e:
             raise HTTPException(
                 status_code=400, detail=f"Invalid kwargs JSON: {e}"
             ) from e
         if not isinstance(parsed_kwargs, dict):
             raise HTTPException(status_code=400, detail="kwargs must be a JSON object")
-        # Validate through the model's field_validator
+        # Validate through the model's field_validator explicitly
+        try:
+            parsed_kwargs = AssessmentIn.validate_kwargs(parsed_kwargs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
         a.kwargs = parsed_kwargs
 
     assessment = Assessment(
