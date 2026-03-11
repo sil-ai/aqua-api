@@ -641,3 +641,59 @@ class AgentTranslation(Base):
             "vref",
         ),
     )
+
+
+class EflomalModel(Base):
+    __tablename__ = "eflomal_model"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), nullable=False, unique=True)
+    artifact_version = Column(Integer, nullable=False, default=2)
+    num_verse_pairs = Column(Integer)
+    num_alignment_links = Column(Integer)
+    num_dictionary_entries = Column(Integer)
+    num_missing_words = Column(Integer)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class EflomalDictionary(Base):
+    __tablename__ = "eflomal_dictionary"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_id = Column(Integer, ForeignKey("eflomal_model.id", ondelete="CASCADE"), nullable=False)
+    source_word = Column(String, nullable=False)
+    target_word = Column(String, nullable=False)
+    count = Column(Integer, nullable=False)
+    probability = Column(Float, nullable=False)
+
+    __table_args__ = (
+        Index("ix_eflomal_dictionary_model_source", "model_id", "source_word"),
+    )
+
+
+class EflomalCooccurrence(Base):
+    __tablename__ = "eflomal_cooccurrence"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_id = Column(Integer, ForeignKey("eflomal_model.id", ondelete="CASCADE"), nullable=False)
+    source_word = Column(String, nullable=False)
+    target_word = Column(String, nullable=False)
+    co_occur_count = Column(Integer, nullable=False)
+    aligned_count = Column(Integer, nullable=False)
+
+    __table_args__ = (
+        Index("ix_eflomal_cooccurrence_lookup", "model_id", "source_word", "target_word"),
+    )
+
+
+class EflomalTargetWordCount(Base):
+    __tablename__ = "eflomal_target_word_count"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_id = Column(Integer, ForeignKey("eflomal_model.id", ondelete="CASCADE"), nullable=False)
+    word = Column(String, nullable=False)
+    count = Column(Integer, nullable=False)
+
+    __table_args__ = (
+        Index("ix_eflomal_target_word_count_lookup", "model_id", "word"),
+    )
