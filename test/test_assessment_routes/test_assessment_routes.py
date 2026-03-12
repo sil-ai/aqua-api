@@ -1,4 +1,5 @@
 # test_assessment_routes.py
+import json
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -446,3 +447,114 @@ def test_assessment_filtering(
     assert response.status_code == 200
     all_ids = {a["id"] for a in response.json()}
     assert created_assessment_ids.issubset(all_ids)
+
+
+def test_use_eflomal_routes_to_eflomal_alignment(
+    client, regular_token1, db_session, test_db_session
+):
+    """use_eflomal=True with word-alignment sends eflomal-alignment to Modal."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    assessment_data = {
+        "revision_id": revision_id,
+        "reference_id": reference_id,
+        "type": "word-alignment",
+    }
+    kwargs_json = json.dumps({"use_eflomal": True})
+
+    captured_payloads = []
+
+    async def capture_runner(assessment, return_all_results):
+        captured_payloads.append(assessment.model_dump())
+        return Mock(status_code=200)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner",
+        side_effect=capture_runner,
+    ):
+        response = client.post(
+            f"{prefix}/assessment",
+            params={**assessment_data, "extra_kwargs": kwargs_json},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    result = response.json()[0]
+    # DB record stays as word-alignment
+    assert result["type"] == "word-alignment"
+
+    # kwargs stored in DB
+    assessment_id = result["id"]
+    assessment = db_session.query(Assessment).filter_by(id=assessment_id).first()
+    assert assessment.kwargs == {"use_eflomal": True}
+
+    # Runner was called with use_eflomal in kwargs
+    assert len(captured_payloads) == 1
+    assert captured_payloads[0]["kwargs"] == {"use_eflomal": True}
+
+
+def test_use_eflomal_invalid_type_returns_400(
+    client, regular_token1, db_session, test_db_session
+):
+    """use_eflomal=True with a non-word-alignment type returns 400."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    assessment_data = {
+        "revision_id": revision_id,
+        "type": "sentence-length",
+    }
+    kwargs_json = json.dumps({"use_eflomal": True})
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+        response = client.post(
+            f"{prefix}/assessment",
+            params={**assessment_data, "extra_kwargs": kwargs_json},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 400
+    assert "use_eflomal" in response.json()["detail"]
+    mock_runner.assert_not_called()
+
+
+def test_word_alignment_without_use_eflomal_unaffected(
+    client, regular_token1, db_session, test_db_session
+):
+    """word-alignment without use_eflomal sends type=word-alignment to Modal."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    assessment_data = {
+        "revision_id": revision_id,
+        "reference_id": reference_id,
+        "type": "word-alignment",
+    }
+
+    captured_payloads = []
+
+    async def capture_runner(assessment, return_all_results):
+        captured_payloads.append(assessment.model_dump())
+        return Mock(status_code=200)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner",
+        side_effect=capture_runner,
+    ):
+        response = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()[0]["type"] == "word-alignment"
+    assert len(captured_payloads) == 1
+    # type in payload stays word-alignment (no use_eflomal)
+    assert captured_payloads[0]["type"] == "word-alignment"

@@ -184,8 +184,11 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
     try:
         # Asynchronously post the request to the runner
         async with httpx.AsyncClient() as client:
+            payload = assessment.model_dump()
+            if payload.get("kwargs", {}) and payload["kwargs"].get("use_eflomal"):
+                payload["type"] = "eflomal-alignment"
             response = await client.post(
-                runner_url, params=params, headers=headers, json=assessment.model_dump()
+                runner_url, params=params, headers=headers, json=payload
             )
     except (httpx.RequestError, httpx.HTTPStatusError) as e:
         logger.error(f"Error calling Modal runner for assessment {assessment.id}: {e}")
@@ -227,6 +230,11 @@ async def add_assessment(
     arguments to pass through to the assessment function (e.g., `{"top_k": 5}`). Values
     must be scalar types (str, int, float, bool, null). Max 20 keys.
 
+    Supported kwargs:
+    - use_eflomal (bool): Only valid with type 'word-alignment'. When True, routes the
+      assessment to the eflomal aligner instead of the default aligner. The DB record is
+      stored as type 'word-alignment'; only the Modal runner call uses 'eflomal-alignment'.
+
     Add an assessment entry. For regular users, an entry is added for each group they are part of.
     For admin users, the entry is not linked to any specific group.
     """
@@ -255,6 +263,13 @@ async def add_assessment(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         a.kwargs = parsed_kwargs
+
+    if parsed_kwargs and parsed_kwargs.get("use_eflomal"):
+        if a.type != "word-alignment":
+            raise HTTPException(
+                status_code=400,
+                detail="use_eflomal=true is only valid with type 'word-alignment'",
+            )
 
     assessment = Assessment(
         revision_id=a.revision_id,
