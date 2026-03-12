@@ -88,7 +88,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_eflomal_target_word_count_lookup", table_name="eflomal_target_word_count")
+    op.drop_index(
+        "ix_eflomal_target_word_count_lookup", table_name="eflomal_target_word_count"
+    )
     op.drop_table("eflomal_target_word_count")
 
     op.drop_index("ix_eflomal_cooccurrence_lookup", table_name="eflomal_cooccurrence")
