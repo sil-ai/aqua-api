@@ -3,7 +3,7 @@ __version__ = "v3"
 import json
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 import fastapi
@@ -27,6 +27,8 @@ from models import AssessmentIn, AssessmentOut
 from security_routes.auth_routes import get_current_user
 
 load_dotenv()
+
+STALE_ASSESSMENT_HOURS = 2
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -254,6 +256,25 @@ async def add_assessment(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         a.kwargs = parsed_kwargs
+
+    # Check for duplicate in-progress assessment
+    stale_cutoff = datetime.now() - timedelta(hours=STALE_ASSESSMENT_HOURS)
+    dup_stmt = select(Assessment).where(
+        Assessment.revision_id == a.revision_id,
+        Assessment.reference_id == a.reference_id if a.reference_id is not None else Assessment.reference_id.is_(None),
+        Assessment.type == a.type,
+        Assessment.kwargs == parsed_kwargs if parsed_kwargs is not None else Assessment.kwargs.is_(None),
+        Assessment.status == "queued",
+        Assessment.deleted.is_(False),
+        Assessment.requested_time > stale_cutoff,
+    )
+    dup_result = await db.execute(dup_stmt)
+    existing = dup_result.scalars().first()
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Duplicate assessment already in progress (id={existing.id})",
+        )
 
     assessment = Assessment(
         revision_id=a.revision_id,
