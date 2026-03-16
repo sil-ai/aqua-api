@@ -205,7 +205,6 @@ async def add_assessment(
     a: AssessmentIn = Depends(),
     extra_kwargs: Optional[str] = Query(
         None,
-        alias="extra_kwargs",
         description="JSON-encoded dict of extra keyword arguments to pass to the assessment function",
     ),
     return_all_results: bool = False,
