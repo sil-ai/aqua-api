@@ -259,21 +259,27 @@ async def add_assessment(
 
     # Check for duplicate in-progress assessment
     stale_cutoff = datetime.now() - timedelta(hours=STALE_ASSESSMENT_HOURS)
-    dup_stmt = select(Assessment).where(
+    stmt = select(Assessment.id).where(
         Assessment.revision_id == a.revision_id,
-        Assessment.reference_id == a.reference_id if a.reference_id is not None else Assessment.reference_id.is_(None),
         Assessment.type == a.type,
-        Assessment.kwargs == parsed_kwargs if parsed_kwargs is not None else Assessment.kwargs.is_(None),
         Assessment.status == "queued",
         Assessment.deleted.is_(False),
         Assessment.requested_time > stale_cutoff,
     )
-    dup_result = await db.execute(dup_stmt)
-    existing = dup_result.scalars().first()
-    if existing:
+    if a.reference_id is not None:
+        stmt = stmt.where(Assessment.reference_id == a.reference_id)
+    else:
+        stmt = stmt.where(Assessment.reference_id.is_(None))
+    if a.kwargs is not None:
+        stmt = stmt.where(Assessment.kwargs == a.kwargs)
+    else:
+        stmt = stmt.where(Assessment.kwargs.is_(None))
+    result = await db.execute(stmt)
+    existing_id = result.scalar_one_or_none()
+    if existing_id is not None:
         raise HTTPException(
             status_code=409,
-            detail=f"Duplicate assessment already in progress (id={existing.id})",
+            detail=f"Duplicate assessment already in progress (id={existing_id})",
         )
 
     assessment = Assessment(
