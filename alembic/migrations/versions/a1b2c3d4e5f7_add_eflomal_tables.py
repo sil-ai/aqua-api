@@ -1,7 +1,7 @@
 """Add eflomal model, dictionary, cooccurrence, and target_word_count tables
 
 Revision ID: a1b2c3d4e5f7
-Revises: f6a7b8c9d0e1
+Revises: eca4f540a198
 Create Date: 2026-03-11
 
 """
@@ -11,7 +11,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "a1b2c3d4e5f7"
-down_revision = "f6a7b8c9d0e1"
+down_revision = "eca4f540a198"
 branch_labels = None
 depends_on = None
 
