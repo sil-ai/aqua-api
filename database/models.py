@@ -644,6 +644,13 @@ class AgentTranslation(Base):
 
 
 class EflomalModel(Base):
+    """One row per eflomal training run (one per assessment).
+
+    Stores metadata about the trained model. The source/target language pair
+    is derived from the assessment's revision and reference bible versions,
+    so it is not duplicated here.
+    """
+
     __tablename__ = "eflomal_model"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -661,6 +668,19 @@ class EflomalModel(Base):
 
 
 class EflomalDictionary(Base):
+    """Statistical dictionary of word-pair alignments learned during training.
+
+    Each row is a unique (source_word, target_word) pair aggregated across all
+    verses in the Bible corpus.  Words are stored in their original
+    (un-normalized) form.
+
+    - count: how many times this pair was aligned across all verses.
+    - probability: averaged per-word posterior probability (acc_ps) from
+      eflomal, representing the model's confidence in this alignment.
+
+    Used at inference time for greedy matching and link scoring.
+    """
+
     __tablename__ = "eflomal_dictionary"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -678,6 +698,21 @@ class EflomalDictionary(Base):
 
 
 class EflomalCooccurrence(Base):
+    """Verse-level co-occurrence statistics for word pairs.
+
+    Separate from EflomalDictionary because the key space differs:
+    - Dictionary contains only pairs the model actually aligned.
+    - This table contains ALL word pairs that co-occurred in any verse,
+      including pairs that were never aligned (co_occur > 0, aligned = 0).
+    Words are stored in normalized form (lowercase, alphanumeric only).
+
+    - co_occur_count: number of verses where both words appear.
+    - aligned_count: number of those verses where the model aligned them.
+
+    The ratio aligned/co_occur is used as a co-occurrence consistency signal
+    in the scoring formula (weighted geometric mean with dictionary probability).
+    """
+
     __tablename__ = "eflomal_cooccurrence"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -697,6 +732,18 @@ class EflomalCooccurrence(Base):
 
 
 class EflomalTargetWordCount(Base):
+    """Corpus-wide frequency of each target-language word.
+
+    Counts every occurrence of each word across all verses in the target
+    Bible text, regardless of whether the word was aligned or co-occurred
+    with any source word.  Words are stored in normalized form.
+
+    Used as the denominator in missing-word detection: a word that appears
+    500 times but is only aligned 10 times behaves very differently from one
+    that appears and is aligned 10 times.  Neither EflomalDictionary nor
+    EflomalCooccurrence captures this marginal frequency.
+    """
+
     __tablename__ = "eflomal_target_word_count"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
