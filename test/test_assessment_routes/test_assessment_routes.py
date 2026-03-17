@@ -579,9 +579,7 @@ def test_duplicate_assessment_stale_allowed(
 
         # Age the existing assessment beyond the stale cutoff
         assessment = (
-            db_session.query(Assessment)
-            .filter(Assessment.id == first_id)
-            .first()
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
         assessment.requested_time = datetime.now() - timedelta(hours=3)
         db_session.commit()
