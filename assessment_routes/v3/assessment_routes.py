@@ -270,10 +270,6 @@ async def add_assessment(
         stmt = stmt.where(Assessment.reference_id == a.reference_id)
     else:
         stmt = stmt.where(Assessment.reference_id.is_(None))
-    if a.kwargs is not None:
-        stmt = stmt.where(Assessment.kwargs == a.kwargs)
-    else:
-        stmt = stmt.where(Assessment.kwargs.is_(None))
     result = await db.execute(stmt)
     existing_id = result.scalar_one_or_none()
     if existing_id is not None:
