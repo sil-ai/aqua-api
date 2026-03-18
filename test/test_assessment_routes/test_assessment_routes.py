@@ -590,3 +590,68 @@ def test_duplicate_assessment_stale_allowed(
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
         assert second.status_code == 200
+
+
+def test_duplicate_assessment_running_returns_409(
+    client, regular_token1, db_session, test_db_session
+):
+    """Assessment with status 'running' should also block duplicates."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={"revision_id": revision_id, "type": "sentence-length"},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Simulate the assessment moving to "running" status
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "running"
+        db_session.commit()
+
+        second = client.post(
+            f"{prefix}/assessment",
+            params={"revision_id": revision_id, "type": "sentence-length"},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409
+        assert str(first_id) in second.json()["detail"]
+
+
+def test_duplicate_assessment_admin_bypass(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """Admin users should be able to run duplicate assessments."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    assessment_data = {"revision_id": revision_id, "type": "sentence-length"}
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert second.status_code == 200
