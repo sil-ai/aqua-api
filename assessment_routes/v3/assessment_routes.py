@@ -266,7 +266,7 @@ async def add_assessment(
                 Assessment.revision_id == a.revision_id,
                 Assessment.type == a.type,
                 Assessment.status.in_(["queued", "running"]),
-                Assessment.deleted.is_not(True),
+                Assessment.deleted.is_(False),
                 Assessment.requested_time > stale_cutoff,
             )
             .limit(1)

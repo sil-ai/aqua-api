@@ -631,7 +631,7 @@ def test_duplicate_assessment_running_returns_409(
 def test_duplicate_assessment_admin_bypass(
     client, regular_token1, admin_token, db_session, test_db_session
 ):
-    """Admin users should be able to run duplicate assessments."""
+    """Admin users can override any user's in-progress assessment."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
@@ -642,13 +642,15 @@ def test_duplicate_assessment_admin_bypass(
     ) as mock_runner:
         mock_runner.return_value = Mock(status_code=200)
 
+        # Regular user submits first
         first = client.post(
             f"{prefix}/assessment",
             params=assessment_data,
-            headers={"Authorization": f"Bearer {admin_token}"},
+            headers={"Authorization": f"Bearer {regular_token1}"},
         )
         assert first.status_code == 200
 
+        # Admin can submit duplicate over regular user's in-progress work
         second = client.post(
             f"{prefix}/assessment",
             params=assessment_data,
