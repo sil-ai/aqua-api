@@ -690,6 +690,15 @@ class EflomalDictionary(Base):
     probability = Column(Float, nullable=False)
 
     __table_args__ = (
+        # Unique constraint on the full pair
+        Index(
+            "ux_eflomal_dictionary_model_source_target",
+            "model_id",
+            "source_word",
+            "target_word",
+            unique=True,
+        ),
+        # Index for source word lookups at inference time
         Index("ix_eflomal_dictionary_model_source", "model_id", "source_word"),
     )
 
@@ -750,4 +759,11 @@ class EflomalTargetWordCount(Base):
     word = Column(String, nullable=False)
     count = Column(Integer, nullable=False)
 
-    __table_args__ = (Index("ix_eflomal_target_word_count_lookup", "model_id", "word"),)
+    __table_args__ = (
+        Index(
+            "ux_eflomal_target_word_count_model_word",
+            "model_id",
+            "word",
+            unique=True,
+        ),
+    )
