@@ -257,30 +257,31 @@ async def add_assessment(
             raise HTTPException(status_code=400, detail=str(e)) from e
         a.kwargs = parsed_kwargs
 
-    # Check for duplicate in-progress assessment
-    stale_cutoff = datetime.now() - timedelta(hours=STALE_ASSESSMENT_HOURS)
-    stmt = (
-        select(Assessment.id)
-        .where(
-            Assessment.revision_id == a.revision_id,
-            Assessment.type == a.type,
-            Assessment.status == "queued",
-            Assessment.deleted.is_not(True),
-            Assessment.requested_time > stale_cutoff,
+    # Check for duplicate in-progress assessment (admins can bypass)
+    if not current_user.is_admin:
+        stale_cutoff = datetime.now() - timedelta(hours=STALE_ASSESSMENT_HOURS)
+        stmt = (
+            select(Assessment.id)
+            .where(
+                Assessment.revision_id == a.revision_id,
+                Assessment.type == a.type,
+                Assessment.status.in_(["queued", "running"]),
+                Assessment.deleted.is_not(True),
+                Assessment.requested_time > stale_cutoff,
+            )
+            .limit(1)
         )
-        .limit(1)
-    )
-    if a.reference_id is not None:
-        stmt = stmt.where(Assessment.reference_id == a.reference_id)
-    else:
-        stmt = stmt.where(Assessment.reference_id.is_(None))
-    result = await db.execute(stmt)
-    existing_id = result.scalars().first()
-    if existing_id is not None:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Duplicate assessment already in progress (id={existing_id})",
-        )
+        if a.reference_id is not None:
+            stmt = stmt.where(Assessment.reference_id == a.reference_id)
+        else:
+            stmt = stmt.where(Assessment.reference_id.is_(None))
+        result = await db.execute(stmt)
+        existing_id = result.scalars().first()
+        if existing_id is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Duplicate assessment already in progress (id={existing_id})",
+            )
 
     assessment = Assessment(
         revision_id=a.revision_id,
