@@ -657,14 +657,11 @@ class EflomalModel(Base):
     assessment_id = Column(
         Integer, ForeignKey("assessment.id"), nullable=False, unique=True
     )
-    artifact_version = Column(Integer, nullable=False, default=2)
     num_verse_pairs = Column(Integer)
     num_alignment_links = Column(Integer)
     num_dictionary_entries = Column(Integer)
     num_missing_words = Column(Integer)
-    created_at = Column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
+    created_at = Column(TIMESTAMP, default=func.now())
 
 
 class EflomalDictionary(Base):
