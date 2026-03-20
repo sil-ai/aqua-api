@@ -22,7 +22,7 @@ services:
       - MODAL_ENV=${MODAL_ENV}
       # Loki Configuration (Observability)
       - LOKI_ENABLED=${LOKI_ENABLED:-false}
-      - LOKI_URL=${LOKI_URL:-https://observability.multilingualai.com/loki/api/v1/push}
+      - LOKI_URL=${LOKI_URL}
       - LOKI_AUTH_TOKEN=${LOKI_AUTH_TOKEN:-}
       - PROJECT_NAME=aqua-api
       - ENVIRONMENT_LOKI=${ENVIRONMENT_LOKI:-docker}
