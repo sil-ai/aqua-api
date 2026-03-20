@@ -1,10 +1,8 @@
 import http
-import logging
 import socket
 import time
 
 from jose import JWTError, jwt
-from pythonjsonlogger import jsonlogger
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from security_routes.utilities import ALGORITHM, SECRET_KEY

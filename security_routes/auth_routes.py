@@ -1,5 +1,4 @@
 # auth_routes.py
-import logging
 import socket
 from datetime import datetime, timedelta
 from typing import List, Optional

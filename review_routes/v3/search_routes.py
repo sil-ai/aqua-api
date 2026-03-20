@@ -1,6 +1,5 @@
 __version__ = "v3"
 
-import logging
 import re
 import socket
 from typing import Optional

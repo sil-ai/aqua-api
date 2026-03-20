@@ -1,7 +1,6 @@
 __version__ = "v3"
 # Standard library imports
 import json
-import logging
 import os
 import socket
 from datetime import date, datetime, timedelta

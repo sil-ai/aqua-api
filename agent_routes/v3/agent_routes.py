@@ -1,7 +1,6 @@
 __version__ = "v3"
 # Standard library imports
 import datetime
-import logging
 import socket
 
 import fastapi

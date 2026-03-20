@@ -1,7 +1,6 @@
 __version__ = "v3"
 
 import ast
-import logging
 import os
 import socket
 import time
