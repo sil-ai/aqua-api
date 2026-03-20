@@ -1,5 +1,6 @@
 import http
 import logging
+import socket
 import time
 
 from jose import JWTError, jwt
@@ -7,26 +8,17 @@ from pythonjsonlogger import jsonlogger
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from security_routes.utilities import ALGORITHM, SECRET_KEY
+from utils.logging_config import setup_logger
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
-        self.configure_logger()
-
-    def configure_logger(self):
-        # Configure the logger only once during initialization
-        logger = logging.getLogger(__name__)
-        # Check if the logger already has handlers to avoid duplicate logs
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            handler.setFormatter(
-                jsonlogger.JsonFormatter(
-                    fmt='{"host": "%(host)s", "port": "%(port)s", "method": "%(method)s", "url": "%(url)s", "status_code": %(status_code)s, "status_phrase": "%(status_phrase)s", "processing_time_ms": "%(formatted_process_time)s", "body": "%(body_str)s", "username": "%(username)s"}'
-                )
-            )
-            logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
+        # Use centralized logging setup
+        container_id = socket.gethostname()
+        self.logger = setup_logger(
+            __name__, container_id=container_id, enable_json=True
+        )
 
     def extract_username_from_token(self, authorization_header):
         if not authorization_header or not authorization_header.startswith("Bearer "):
@@ -41,7 +33,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             return "invalid_token"
 
     async def dispatch(self, request, call_next):
-        logger = logging.getLogger(__name__)
+        logger = self.logger
 
         url = (
             f"{request.url.path}?{request.query_params}"

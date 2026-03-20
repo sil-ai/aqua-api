@@ -110,3 +110,6 @@ isort==6.0.0
 pre-commit==4.2.0
 black==23.12.1
 pgvector==0.2.0
+
+# Observability - Centralized Logging
+git+https://github.com/sil-ai/observability-library.git@develop

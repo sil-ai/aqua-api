@@ -3,6 +3,7 @@ __version__ = "v3"
 import json
 import logging
 import os
+import socket
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
@@ -25,13 +26,14 @@ from database.models import UserGroup
 # Local application imports
 from models import AssessmentIn, AssessmentOut
 from security_routes.auth_routes import get_current_user
+from utils.logging_config import setup_logger
 
 load_dotenv()
 
 STALE_ASSESSMENT_HOURS = 2
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+container_id = socket.gethostname()
+logger = setup_logger(__name__, container_id=container_id)
 
 
 router = fastapi.APIRouter()
@@ -177,7 +179,19 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
     else:
         runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"
 
-    logger.info(f"Calling runner at {os.getenv('MODAL_ENV', 'main')}")
+    modal_env = os.getenv("MODAL_ENV", "main")
+    logger.info(
+        "Calling Modal runner",
+        extra={
+            "modal_env": modal_env,
+            "runner_url": runner_url,
+            "assessment_id": assessment.id,
+            "revision_id": assessment.revision_id,
+            "reference_id": assessment.reference_id,
+            "assessment_type": assessment.type,
+            "return_all_results": return_all_results,
+        },
+    )
     params = {
         "return_all_results": return_all_results,
     }
@@ -190,7 +204,15 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
                 runner_url, params=params, headers=headers, json=assessment.model_dump()
             )
     except (httpx.RequestError, httpx.HTTPStatusError) as e:
-        logger.error(f"Error calling Modal runner for assessment {assessment.id}: {e}")
+        logger.error(
+            "Modal runner request failed",
+            exc_info=True,
+            extra={
+                "assessment_id": assessment.id,
+                "runner_url": runner_url,
+                "error_type": type(e).__name__,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Assessment runner service is unavailable or failed.",
