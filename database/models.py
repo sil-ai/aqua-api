@@ -644,15 +644,15 @@ class AgentTranslation(Base):
     )
 
 
-class EflomalModel(Base):
+class EflomalAssessment(Base):
     """One row per eflomal training run (one per assessment).
 
-    Stores metadata about the trained model. The source/target language pair
+    Stores metadata about the training run. The source/target language pair
     is derived from the assessment's revision and reference bible versions,
     so it is not duplicated here.
     """
 
-    __tablename__ = "eflomal_model"
+    __tablename__ = "eflomal_assessment"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     assessment_id = Column(
@@ -682,8 +682,8 @@ class EflomalDictionary(Base):
     __tablename__ = "eflomal_dictionary"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    model_id = Column(
-        Integer, ForeignKey("eflomal_model.id", ondelete="CASCADE"), nullable=False
+    assessment_id = Column(
+        Integer, ForeignKey("eflomal_assessment.id", ondelete="CASCADE"), nullable=False
     )
     source_word = Column(String, nullable=False)
     target_word = Column(String, nullable=False)
@@ -693,14 +693,14 @@ class EflomalDictionary(Base):
     __table_args__ = (
         # Unique constraint on the full pair
         Index(
-            "ux_eflomal_dictionary_model_source_target",
-            "model_id",
+            "ux_eflomal_dictionary_assessment_source_target",
+            "assessment_id",
             "source_word",
             "target_word",
             unique=True,
         ),
         # Index for source word lookups at inference time
-        Index("ix_eflomal_dictionary_model_source", "model_id", "source_word"),
+        Index("ix_eflomal_dictionary_assessment_source", "assessment_id", "source_word"),
     )
 
 
@@ -723,8 +723,8 @@ class EflomalCooccurrence(Base):
     __tablename__ = "eflomal_cooccurrence"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    model_id = Column(
-        Integer, ForeignKey("eflomal_model.id", ondelete="CASCADE"), nullable=False
+    assessment_id = Column(
+        Integer, ForeignKey("eflomal_assessment.id", ondelete="CASCADE"), nullable=False
     )
     source_word = Column(String, nullable=False)
     target_word = Column(String, nullable=False)
@@ -733,7 +733,7 @@ class EflomalCooccurrence(Base):
 
     __table_args__ = (
         Index(
-            "ix_eflomal_cooccurrence_lookup", "model_id", "source_word", "target_word"
+            "ix_eflomal_cooccurrence_lookup", "assessment_id", "source_word", "target_word"
         ),
     )
 
@@ -754,16 +754,16 @@ class EflomalTargetWordCount(Base):
     __tablename__ = "eflomal_target_word_count"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    model_id = Column(
-        Integer, ForeignKey("eflomal_model.id", ondelete="CASCADE"), nullable=False
+    assessment_id = Column(
+        Integer, ForeignKey("eflomal_assessment.id", ondelete="CASCADE"), nullable=False
     )
     word = Column(String, nullable=False)
     count = Column(Integer, nullable=False)
 
     __table_args__ = (
         Index(
-            "ux_eflomal_target_word_count_model_word",
-            "model_id",
+            "ux_eflomal_target_word_count_assessment_word",
+            "assessment_id",
             "word",
             unique=True,
         ),
