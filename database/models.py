@@ -700,7 +700,9 @@ class EflomalDictionary(Base):
             unique=True,
         ),
         # Index for source word lookups at inference time
-        Index("ix_eflomal_dictionary_assessment_source", "assessment_id", "source_word"),
+        Index(
+            "ix_eflomal_dictionary_assessment_source", "assessment_id", "source_word"
+        ),
     )
 
 
@@ -733,7 +735,10 @@ class EflomalCooccurrence(Base):
 
     __table_args__ = (
         Index(
-            "ix_eflomal_cooccurrence_lookup", "assessment_id", "source_word", "target_word"
+            "ix_eflomal_cooccurrence_lookup",
+            "assessment_id",
+            "source_word",
+            "target_word",
         ),
     )
 
