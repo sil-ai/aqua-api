@@ -112,19 +112,7 @@ def get_container_id() -> str:
     Returns:
         Container identifier string
 
-    Example:
-        >>> container_id = get_container_id()
-        >>> print(container_id)
-        'aqua-api-1'
     """
-    # For Docker/Kubernetes
     container_id = socket.gethostname()
-
-    # For AWS ECS (if needed in future)
-    # import os
-    # ecs_metadata = os.environ.get('ECS_CONTAINER_METADATA_URI_V4')
-    # if ecs_metadata:
-    #     # Fetch container ID from ECS metadata endpoint
-    #     pass
 
     return container_id
