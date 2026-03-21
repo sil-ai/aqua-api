@@ -326,7 +326,12 @@ async def add_assessment(
         try:
             await db.delete(assessment)
             await db.commit()
-            raise HTTPException(status_code=response.status_code, detail=response.text)
+            # Extract the detail message from the runner's JSON error response
+            try:
+                error_detail = response.json().get("detail", response.text)
+            except Exception:
+                error_detail = response.text
+            raise HTTPException(status_code=response.status_code, detail=error_detail)
         except SQLAlchemyError as e:
             await db.rollback()
             raise HTTPException(status_code=response.status_code, detail=str(e)) from e
