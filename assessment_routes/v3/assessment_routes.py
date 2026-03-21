@@ -323,18 +323,18 @@ async def add_assessment(
     response = await call_assessment_runner(a, return_all_results)
 
     if not 200 <= response.status_code < 300:
+        # Extract the detail message from the runner's JSON error response
+        try:
+            error_detail = response.json().get("detail", response.text)
+        except Exception:
+            error_detail = response.text
         try:
             await db.delete(assessment)
             await db.commit()
-            # Extract the detail message from the runner's JSON error response
-            try:
-                error_detail = response.json().get("detail", response.text)
-            except Exception:
-                error_detail = response.text
-            raise HTTPException(status_code=response.status_code, detail=error_detail)
         except SQLAlchemyError as e:
             await db.rollback()
-            raise HTTPException(status_code=response.status_code, detail=str(e)) from e
+            logger.error(f"Failed to delete assessment {assessment.id} after runner error: {e}")
+        raise HTTPException(status_code=response.status_code, detail=error_detail)
 
     return [AssessmentOut.model_validate(assessment)]
 
