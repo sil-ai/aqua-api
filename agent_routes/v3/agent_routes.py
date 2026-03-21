@@ -107,7 +107,8 @@ async def add_word_alignment(
             extra={
                 "method": "POST",
                 "path": "/agent/word-alignment",
-                "revision_id": getattr(alignment, "revision_id", None),
+                "source_language": alignment.source_language,
+                "target_language": alignment.target_language,
                 "duration_s": duration,
             },
         )
@@ -164,83 +165,66 @@ async def add_word_alignments_bulk(
         from sqlalchemy.dialects.postgresql import insert
         from sqlalchemy.sql import func
 
-        if not request.alignments:
-            duration = round(time.perf_counter() - request_start, 2)
-            logger.info(
-                f"add_word_alignments_bulk completed in {duration}s",
-                extra={
-                    "method": "POST",
-                    "path": "/agent/word-alignment/bulk",
-                    "alignment_count": 0,
-                    "duration_s": duration,
+        result_list = []
+
+        if request.alignments:
+            # Prepare records for bulk upsert
+            records = [
+                {
+                    "source_word": item.source_word,
+                    "target_word": item.target_word,
+                    "source_language": request.source_language,
+                    "target_language": request.target_language,
+                    "score": item.score,
+                    "is_human_verified": item.is_human_verified,
+                }
+                for item in request.alignments
+            ]
+
+            # Use INSERT...ON CONFLICT DO UPDATE for atomic upsert
+            insert_stmt = insert(AgentWordAlignment).values(records)
+
+            upsert_stmt = insert_stmt.on_conflict_do_update(
+                index_elements=[
+                    "source_language",
+                    "target_language",
+                    "source_word",
+                    "target_word",
+                ],
+                set_={
+                    "score": insert_stmt.excluded.score,
+                    "is_human_verified": insert_stmt.excluded.is_human_verified,
+                    "last_updated": func.now(),
                 },
-            )
-            return []
+            ).returning(AgentWordAlignment.id)
 
-        # Prepare records for bulk upsert
-        records = [
-            {
-                "source_word": item.source_word,
-                "target_word": item.target_word,
-                "source_language": request.source_language,
-                "target_language": request.target_language,
-                "score": item.score,
-                "is_human_verified": item.is_human_verified,
-            }
-            for item in request.alignments
-        ]
+            result = await db.execute(upsert_stmt)
+            await db.commit()
 
-        # Use INSERT...ON CONFLICT DO UPDATE for atomic upsert
-        insert_stmt = insert(AgentWordAlignment).values(records)
-
-        upsert_stmt = insert_stmt.on_conflict_do_update(
-            index_elements=[
-                "source_language",
-                "target_language",
-                "source_word",
-                "target_word",
-            ],
-            set_={
-                "score": insert_stmt.excluded.score,
-                "is_human_verified": insert_stmt.excluded.is_human_verified,
-                "last_updated": func.now(),
-            },
-        ).returning(AgentWordAlignment.id)
-
-        result = await db.execute(upsert_stmt)
-        await db.commit()
-
-        # Fetch complete records by IDs
-        affected_ids = [row[0] for row in result.fetchall()]
-        if affected_ids:
-            fetch_result = await db.execute(
-                select(AgentWordAlignment).where(
-                    AgentWordAlignment.id.in_(affected_ids)
+            # Fetch complete records by IDs
+            affected_ids = [row[0] for row in result.fetchall()]
+            if affected_ids:
+                fetch_result = await db.execute(
+                    select(AgentWordAlignment).where(
+                        AgentWordAlignment.id.in_(affected_ids)
+                    )
                 )
-            )
-            alignments = fetch_result.scalars().all()
-            duration = round(time.perf_counter() - request_start, 2)
-            logger.info(
-                f"add_word_alignments_bulk completed in {duration}s",
-                extra={
-                    "method": "POST",
-                    "path": "/agent/word-alignment/bulk",
-                    "alignment_count": len(alignments),
-                    "duration_s": duration,
-                },
-            )
-            return [AgentWordAlignmentOut.model_validate(a) for a in alignments]
+                alignments = fetch_result.scalars().all()
+                result_list = [
+                    AgentWordAlignmentOut.model_validate(a) for a in alignments
+                ]
+
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
             f"add_word_alignments_bulk completed in {duration}s",
             extra={
                 "method": "POST",
                 "path": "/agent/word-alignment/bulk",
-                "alignment_count": 0,
+                "alignment_count": len(result_list),
                 "duration_s": duration,
             },
         )
-        return []
+        return result_list
 
     except SQLAlchemyError as e:
         await db.rollback()
@@ -1061,7 +1045,7 @@ async def patch_lexeme_card_by_id(
             f"patch_lexeme_card_by_id completed in {duration}s",
             extra={
                 "method": "PATCH",
-                "path": "/agent/lexeme-card/{card_id}",
+                "path": "/agent/lexeme-card",
                 "card_id": card_id,
                 "duration_s": duration,
             },
@@ -2001,7 +1985,7 @@ async def resolve_critique_issue(
             f"resolve_critique_issue completed in {duration}s",
             extra={
                 "method": "PATCH",
-                "path": "/agent/critique/{issue_id}/resolve",
+                "path": "/agent/critique/resolve",
                 "issue_id": issue_id,
                 "duration_s": duration,
             },
@@ -2079,7 +2063,7 @@ async def unresolve_critique_issue(
             f"unresolve_critique_issue completed in {duration}s",
             extra={
                 "method": "PATCH",
-                "path": "/agent/critique/{issue_id}/unresolve",
+                "path": "/agent/critique/unresolve",
                 "issue_id": issue_id,
                 "duration_s": duration,
             },

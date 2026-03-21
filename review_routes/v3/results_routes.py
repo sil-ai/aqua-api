@@ -1055,6 +1055,19 @@ async def compare_text_lengths(
 
     # Handle empty results
     if df_revision.empty or df_reference.empty:
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"compare_text_lengths completed in {duration}s (empty input)",
+            extra={
+                "method": "GET",
+                "path": "/compare_text_lengths",
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "total_count": 0,
+                "results_returned": 0,
+                "duration_s": duration,
+            },
+        )
         return {"results": [], "total_count": 0}
 
     # Determine merge strategy based on aggregation type
@@ -1092,6 +1105,19 @@ async def compare_text_lengths(
 
     # Handle empty merge result
     if merged_df.empty:
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"compare_text_lengths completed in {duration}s (empty merge)",
+            extra={
+                "method": "GET",
+                "path": "/compare_text_lengths",
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "total_count": 0,
+                "results_returned": 0,
+                "duration_s": duration,
+            },
+        )
         return {"results": [], "total_count": 0}
 
     # For verse-level data (no aggregation), apply verse range merging
@@ -2000,7 +2026,7 @@ async def get_alignment_scores(
             "page": page,
             "page_size": page_size,
             "total_count": total_count,
-            "results_returned": len(result_data),
+            "results_returned": len(result_list),
             "duration_s": duration,
         },
     )

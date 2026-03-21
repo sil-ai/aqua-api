@@ -194,7 +194,15 @@ async def search_revision_text(
         return {"results": filtered_results, "total_count": len(filtered_results)}
 
     except Exception as e:
-        logger.error(f"Error in text search: {str(e)}")
+        logger.error(
+            f"Error in text search: {str(e)}",
+            extra={
+                "method": "GET",
+                "path": "/textsearch",
+                "revision_id": revision_id,
+                "term": term,
+            },
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Error searching text: {str(e)}",
