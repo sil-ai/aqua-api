@@ -1,8 +1,8 @@
 __version__ = "v3"
 
 import ast
-import logging
 import os
+import socket
 import time
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
@@ -35,10 +35,11 @@ from models import Result_v2 as Result
 from models import TextLengthsResult, TfidfResult, WordAlignment
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
+from utils.logging_config import setup_logger
 from utils.verse_range_utils import merge_verse_ranges
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+container_id = socket.gethostname()
+logger = setup_logger(__name__, container_id=container_id)
 
 router = APIRouter()
 

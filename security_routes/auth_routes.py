@@ -1,5 +1,5 @@
 # auth_routes.py
-import logging
+import socket
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -14,6 +14,7 @@ from database.dependencies import get_db  # Function to get the database session
 from database.models import Group as GroupDB
 from database.models import UserDB, UserGroup
 from models import Group, Token, User
+from utils.logging_config import setup_logger
 
 from .utilities import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -23,8 +24,8 @@ from .utilities import (
 )
 
 router = APIRouter()
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+container_id = socket.gethostname()
+logger = setup_logger(__name__, container_id=container_id)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="latest/token")
 
@@ -70,8 +71,15 @@ async def get_current_user(
         user = result.scalars().first()
         if user is None:
             raise credentials_exception
-        logger.info(f"User {user.username} logged in.")
-        logger.info(f"Date {datetime.now()}.")
+        logger.info(
+            "User authenticated",
+            extra={
+                "username": user.username,
+                "user_id": user.id,
+                "is_admin": user.is_admin,
+                "timestamp": datetime.now().isoformat(),
+            },
+        )
         return user
     except JWTError:
         raise credentials_exception

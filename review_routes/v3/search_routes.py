@@ -1,7 +1,7 @@
 __version__ = "v3"
 
-import logging
 import re
+import socket
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,9 +15,10 @@ from database.models import UserDB as UserModel
 from database.models import VerseText
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_revision
+from utils.logging_config import setup_logger
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+container_id = socket.gethostname()
+logger = setup_logger(__name__, container_id=container_id)
 
 router = APIRouter()
 

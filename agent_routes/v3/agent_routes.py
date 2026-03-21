@@ -1,7 +1,7 @@
 __version__ = "v3"
 # Standard library imports
 import datetime
-import logging
+import socket
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
@@ -37,9 +37,10 @@ from security_routes.utilities import (
     get_authorized_revision_ids,
     is_user_authorized_for_assessment,
 )
+from utils.logging_config import setup_logger
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+container_id = socket.gethostname()
+logger = setup_logger(__name__, container_id=container_id)
 
 router = fastapi.APIRouter()
 
@@ -102,7 +103,17 @@ async def add_word_alignment(
 
     except SQLAlchemyError as e:
         await db.rollback()
-        logger.error(f"Error adding word alignment: {e}")
+        logger.error(
+            "Error adding word alignment",
+            exc_info=True,
+            extra={
+                "source_word": alignment.source_word,
+                "target_word": alignment.target_word,
+                "source_language": alignment.source_language,
+                "target_language": alignment.target_language,
+                "error_type": type(e).__name__,
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
