@@ -333,7 +333,9 @@ async def add_assessment(
             await db.commit()
         except SQLAlchemyError as e:
             await db.rollback()
-            logger.error(f"Failed to delete assessment {assessment.id} after runner error: {e}")
+            logger.error(
+                f"Failed to delete assessment {assessment.id} after runner error: {e}"
+            )
         raise HTTPException(status_code=response.status_code, detail=error_detail)
 
     return [AssessmentOut.model_validate(assessment)]
