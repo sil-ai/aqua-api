@@ -2,6 +2,7 @@ __version__ = "v3"
 # Standard library imports
 import datetime
 import socket
+import time
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
@@ -84,6 +85,7 @@ async def add_word_alignment(
     Returns:
     - AgentWordAlignmentOut: The created word alignment entry
     """
+    request_start = time.perf_counter()
     try:
         # Create new word alignment entry
         word_alignment = AgentWordAlignment(
@@ -99,6 +101,16 @@ async def add_word_alignment(
         await db.commit()
         await db.refresh(word_alignment)
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"add_word_alignment completed in {duration}s",
+            extra={
+                "method": "POST",
+                "path": "/agent/word-alignment",
+                "revision_id": getattr(alignment, "revision_id", None),
+                "duration_s": duration,
+            },
+        )
         return AgentWordAlignmentOut.model_validate(word_alignment)
 
     except SQLAlchemyError as e:
@@ -146,12 +158,23 @@ async def add_word_alignments_bulk(
     Returns:
     - List[AgentWordAlignmentOut]: List of created/updated word alignment entries
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import select
         from sqlalchemy.dialects.postgresql import insert
         from sqlalchemy.sql import func
 
         if not request.alignments:
+            duration = round(time.perf_counter() - request_start, 2)
+            logger.info(
+                f"add_word_alignments_bulk completed in {duration}s",
+                extra={
+                    "method": "POST",
+                    "path": "/agent/word-alignment/bulk",
+                    "alignment_count": 0,
+                    "duration_s": duration,
+                },
+            )
             return []
 
         # Prepare records for bulk upsert
@@ -196,7 +219,27 @@ async def add_word_alignments_bulk(
                 )
             )
             alignments = fetch_result.scalars().all()
+            duration = round(time.perf_counter() - request_start, 2)
+            logger.info(
+                f"add_word_alignments_bulk completed in {duration}s",
+                extra={
+                    "method": "POST",
+                    "path": "/agent/word-alignment/bulk",
+                    "alignment_count": len(alignments),
+                    "duration_s": duration,
+                },
+            )
             return [AgentWordAlignmentOut.model_validate(a) for a in alignments]
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"add_word_alignments_bulk completed in {duration}s",
+            extra={
+                "method": "POST",
+                "path": "/agent/word-alignment/bulk",
+                "alignment_count": 0,
+                "duration_s": duration,
+            },
+        )
         return []
 
     except SQLAlchemyError as e:
@@ -234,6 +277,7 @@ async def get_all_word_alignments(
     Returns:
     - List[AgentWordAlignmentOut]: List of word alignment entries
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import and_, select
 
@@ -266,6 +310,19 @@ async def get_all_word_alignments(
         result = await db.execute(query)
         alignments = result.scalars().all()
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"get_all_word_alignments completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/agent/word-alignment/all",
+                "source_language": source_language,
+                "target_language": target_language,
+                "page": page,
+                "page_size": page_size,
+                "duration_s": duration,
+            },
+        )
         return [AgentWordAlignmentOut.model_validate(a) for a in alignments]
 
     except HTTPException:
@@ -296,6 +353,7 @@ async def add_critique_issues(
     Returns:
     - List[CritiqueIssueOut]: List of all created critique issue entries
     """
+    request_start = time.perf_counter()
     try:
         import re
 
@@ -398,6 +456,16 @@ async def add_critique_issues(
         for issue in created_issues:
             await db.refresh(issue)
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"add_critique_issues completed in {duration}s",
+            extra={
+                "method": "POST",
+                "path": "/agent/critique",
+                "issue_count": len(created_issues),
+                "duration_s": duration,
+            },
+        )
         return [CritiqueIssueOut.model_validate(issue) for issue in created_issues]
 
     except HTTPException:
@@ -457,6 +525,7 @@ async def add_lexeme_card(
     - 409 Conflict: If a card with same target_lemma and language pair exists but
       has a different source_lemma. Response includes existing card ID for PATCH.
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import delete, select
         from sqlalchemy.sql import func
@@ -607,6 +676,16 @@ async def add_lexeme_card(
                 "last_updated": existing_card.last_updated,
                 "last_user_edit": existing_card.last_user_edit,
             }
+            duration = round(time.perf_counter() - request_start, 2)
+            logger.info(
+                f"add_lexeme_card completed in {duration}s",
+                extra={
+                    "method": "POST",
+                    "path": "/agent/lexeme-card",
+                    "revision_id": revision_id,
+                    "duration_s": duration,
+                },
+            )
             return LexemeCardOut.model_validate(card_dict)
         else:
             # Create new lexeme card entry
@@ -679,6 +758,16 @@ async def add_lexeme_card(
                 "last_updated": lexeme_card.last_updated,
                 "last_user_edit": lexeme_card.last_user_edit,
             }
+            duration = round(time.perf_counter() - request_start, 2)
+            logger.info(
+                f"add_lexeme_card completed in {duration}s",
+                extra={
+                    "method": "POST",
+                    "path": "/agent/lexeme-card",
+                    "revision_id": revision_id,
+                    "duration_s": duration,
+                },
+            )
             return LexemeCardOut.model_validate(card_dict)
 
     except IntegrityError as e:
@@ -946,6 +1035,7 @@ async def patch_lexeme_card_by_id(
     Returns:
     - LexemeCardOut: The updated lexeme card
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import select
 
@@ -963,9 +1053,20 @@ async def patch_lexeme_card_by_id(
                 detail=f"Lexeme card with id {card_id} not found",
             )
 
-        return await _apply_lexeme_card_patch(
+        result_card = await _apply_lexeme_card_patch(
             card, patch_data, list_mode, authorized_revision_ids, db, is_user_edit
         )
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"patch_lexeme_card_by_id completed in {duration}s",
+            extra={
+                "method": "PATCH",
+                "path": "/agent/lexeme-card/{card_id}",
+                "card_id": card_id,
+                "duration_s": duration,
+            },
+        )
+        return result_card
 
     except HTTPException:
         raise
@@ -1020,6 +1121,7 @@ async def patch_lexeme_card_by_lemma(
     Returns:
     - LexemeCardOut: The updated lexeme card
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import select
 
@@ -1061,9 +1163,22 @@ async def patch_lexeme_card_by_lemma(
 
         card = cards[0]
 
-        return await _apply_lexeme_card_patch(
+        result_card = await _apply_lexeme_card_patch(
             card, patch_data, list_mode, authorized_revision_ids, db, is_user_edit
         )
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"patch_lexeme_card_by_lemma completed in {duration}s",
+            extra={
+                "method": "PATCH",
+                "path": "/agent/lexeme-card",
+                "target_lemma": target_lemma,
+                "source_language": source_language,
+                "target_language": target_language,
+                "duration_s": duration,
+            },
+        )
+        return result_card
 
     except HTTPException:
         raise
@@ -1095,6 +1210,7 @@ async def deduplicate_lexeme_cards(
     Returns:
     - Summary with dry_run status, counts, and group details
     """
+    request_start = time.perf_counter()
     try:
         import json
 
@@ -1275,6 +1391,18 @@ async def deduplicate_lexeme_cards(
         if not dry_run:
             await db.commit()
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"deduplicate_lexeme_cards completed in {duration}s",
+            extra={
+                "method": "POST",
+                "path": "/agent/lexeme-card/deduplicate",
+                "source_language": source_language,
+                "target_language": target_language,
+                "dry_run": dry_run,
+                "duration_s": duration,
+            },
+        )
         return {
             "dry_run": dry_run,
             "duplicates_found": len(groups_summary),
@@ -1317,6 +1445,7 @@ async def get_word_alignments(
     Returns:
     - List[AgentWordAlignmentOut]: List of matching word alignment entries
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import or_, select
 
@@ -1362,6 +1491,19 @@ async def get_word_alignments(
         result = await db.execute(query)
         alignments = result.scalars().all()
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"get_word_alignments completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/agent/word-alignment",
+                "source_language": source_language,
+                "target_language": target_language,
+                "source_words": source_words,
+                "target_words": target_words,
+                "duration_s": duration,
+            },
+        )
         return [AgentWordAlignmentOut.model_validate(a) for a in alignments]
 
     except HTTPException:
@@ -1403,6 +1545,7 @@ async def get_lexeme_cards(
     - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending).
       Examples are filtered based on the user's access to Bible revisions.
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import desc, select, text
 
@@ -1502,6 +1645,20 @@ async def get_lexeme_cards(
 
             response_cards.append(LexemeCardOut.model_validate(card_dict))
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"get_lexeme_cards completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/agent/lexeme-card",
+                "source_language": source_language,
+                "target_language": target_language,
+                "source_word": source_word,
+                "target_word": target_word,
+                "pos": pos,
+                "duration_s": duration,
+            },
+        )
         return response_cards
 
     except SQLAlchemyError as e:
@@ -1531,6 +1688,7 @@ async def check_word_in_lexeme_cards(
     Returns:
     - count: int - Number of lexeme cards where the word matches (case-insensitive)
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import func, select, text
 
@@ -1565,6 +1723,18 @@ async def check_word_in_lexeme_cards(
         result = await db.execute(count_query)
         count = result.scalar()
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"check_word_in_lexeme_cards completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/agent/lexeme-card/check-word",
+                "word": word,
+                "source_language": source_language,
+                "target_language": target_language,
+                "duration_s": duration,
+            },
+        )
         return {"word": word, "count": count}
 
     except SQLAlchemyError as e:
@@ -1608,6 +1778,7 @@ async def get_critique_issues(
     Returns:
     - List[CritiqueIssueOut]: List of matching critique issues, ordered by book, chapter, verse, and severity
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import desc, select
 
@@ -1738,6 +1909,21 @@ async def get_critique_issues(
         result = await db.execute(query)
         issues = result.scalars().all()
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"get_critique_issues completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/agent/critique",
+                "assessment_id": assessment_id,
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "vref": vref,
+                "book": book,
+                "issue_type": issue_type,
+                "duration_s": duration,
+            },
+        )
         return [CritiqueIssueOut.model_validate(issue) for issue in issues]
 
     except HTTPException:
@@ -1769,6 +1955,7 @@ async def resolve_critique_issue(
     Returns:
     - CritiqueIssueOut: The updated critique issue with resolution information
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import select
         from sqlalchemy.sql import func
@@ -1809,6 +1996,16 @@ async def resolve_critique_issue(
         await db.commit()
         await db.refresh(issue)
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"resolve_critique_issue completed in {duration}s",
+            extra={
+                "method": "PATCH",
+                "path": "/agent/critique/{issue_id}/resolve",
+                "issue_id": issue_id,
+                "duration_s": duration,
+            },
+        )
         return CritiqueIssueOut.model_validate(issue)
 
     except HTTPException:
@@ -1837,6 +2034,7 @@ async def unresolve_critique_issue(
     Returns:
     - CritiqueIssueOut: The updated critique issue with resolution information cleared
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import select
 
@@ -1876,6 +2074,16 @@ async def unresolve_critique_issue(
         await db.commit()
         await db.refresh(issue)
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"unresolve_critique_issue completed in {duration}s",
+            extra={
+                "method": "PATCH",
+                "path": "/agent/critique/{issue_id}/unresolve",
+                "issue_id": issue_id,
+                "duration_s": duration,
+            },
+        )
         return CritiqueIssueOut.model_validate(issue)
 
     except HTTPException:
@@ -1910,6 +2118,7 @@ async def add_agent_translation(
     Returns:
     - AgentTranslationOut: The created translation entry with id, version, and created_at
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import func, select
 
@@ -1994,6 +2203,15 @@ async def add_agent_translation(
         await db.commit()
         await db.refresh(agent_translation)
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"add_agent_translation completed in {duration}s",
+            extra={
+                "method": "POST",
+                "path": "/agent/translation",
+                "duration_s": duration,
+            },
+        )
         return AgentTranslationOut.model_validate(agent_translation)
 
     except HTTPException:
@@ -2039,6 +2257,7 @@ async def add_agent_translations_bulk(
     Returns:
     - List[AgentTranslationOut]: List of created translation entries
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import func, select
 
@@ -2133,6 +2352,16 @@ async def add_agent_translations_bulk(
         )
         created_translations = result.scalars().all()
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"add_agent_translations_bulk completed in {duration}s",
+            extra={
+                "method": "POST",
+                "path": "/agent/translations",
+                "translation_count": len(created_translations),
+                "duration_s": duration,
+            },
+        )
         return [
             AgentTranslationOut.model_validate(trans) for trans in created_translations
         ]
@@ -2187,6 +2416,7 @@ async def get_agent_translations(
     Returns:
     - List[AgentTranslationOut]: List of matching translations, ordered by verse reference
     """
+    request_start = time.perf_counter()
     try:
         from sqlalchemy import and_, func, select
 
@@ -2427,6 +2657,20 @@ async def get_agent_translations(
         result = await db.execute(query)
         translations = result.scalars().all()
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"get_agent_translations completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/agent/translations",
+                "assessment_id": assessment_id,
+                "revision_id": revision_id,
+                "language": language,
+                "script": script,
+                "vref": vref,
+                "duration_s": duration,
+            },
+        )
         return [AgentTranslationOut.model_validate(t) for t in translations]
 
     except HTTPException:

@@ -554,17 +554,12 @@ async def get_result(
     missing word appears in the baseline reference texts, and so there is a higher likelihood that it is a word that should
     be included in the text being assessed.
     """
-    start = time.perf_counter()
-    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
-    logger.info(f"⏱️ validate_parameters: {time.perf_counter() - start:.2f}s")
+    request_start = time.perf_counter()
 
-    start = time.perf_counter()
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
+
     authorized = await is_user_authorized_for_assessment(
         current_user.id, assessment_id, db
-    )
-
-    logger.info(
-        f"⏱️ is_user_authorized_for_assessment: {time.perf_counter() - start:.2f}s"
     )
 
     if not authorized:
@@ -573,7 +568,6 @@ async def get_result(
             detail="User not authorized to see this assessment",
         )
 
-    start = time.perf_counter()
     query, count_query = await build_results_query(
         assessment_id,
         book,
@@ -585,13 +579,9 @@ async def get_result(
         reverse,
         db,
     )
-    logger.info(f"⏱️ build_results_query: {time.perf_counter() - start:.2f}s")
 
-    start = time.perf_counter()
     result_data, total_count = await execute_query(query, count_query, db)
-    logger.info(f"⏱️ execute_query: {time.perf_counter() - start:.2f}s")
 
-    start = time.perf_counter()
     result_list = []
     for row in result_data:
         vref = f"{row.book}"
@@ -621,7 +611,24 @@ async def get_result(
         )
         result_list.append(result_obj)
 
-    logger.info(f"⏱️ Result formatting: {time.perf_counter() - start:.2f}s")
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_result completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/result",
+            "assessment_id": assessment_id,
+            "book": book,
+            "chapter": chapter,
+            "verse": verse,
+            "page": page,
+            "page_size": page_size,
+            "aggregate": aggregate.value if aggregate else None,
+            "total_count": total_count,
+            "results_returned": len(result_list),
+            "duration_s": duration,
+        },
+    )
 
     return {"results": result_list, "total_count": total_count}
 
@@ -658,7 +665,7 @@ async def get_ngrams_result(
     Dict[str, Union[List[NgramResult], int]]
         A dictionary containing the list of results and the total count of results.
     """
-    logger.info("Assessment ID:", assessment_id)
+    request_start = time.perf_counter()
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -683,6 +690,21 @@ async def get_ngrams_result(
         )
         for row in result_data
     ]
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_ngrams_result completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/ngrams_result",
+            "assessment_id": assessment_id,
+            "page": page,
+            "page_size": page_size,
+            "total_count": total_count,
+            "results_returned": len(result_list),
+            "duration_s": duration,
+        },
+    )
 
     return {"results": result_list, "total_count": total_count}
 
@@ -731,6 +753,7 @@ async def get_text_lengths(
         A dictionary containing the list of results and the total count of results.
     """
 
+    request_start = time.perf_counter()
     await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
@@ -804,6 +827,25 @@ async def get_text_lengths(
         )
         result_list.append(result_obj)
 
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_text_lengths completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/text_lengths_result",
+            "assessment_id": assessment_id,
+            "book": book,
+            "chapter": chapter,
+            "verse": verse,
+            "page": page,
+            "page_size": page_size,
+            "aggregate": aggregate.value if aggregate else None,
+            "total_count": total_count,
+            "results_returned": len(result_list),
+            "duration_s": duration,
+        },
+    )
+
     return {"results": result_list, "total_count": total_count}
 
 
@@ -863,6 +905,8 @@ async def compare_text_lengths(
     Dict[str, Union[List[TextLengthsResult], int]]
         A dictionary containing the list of results (with differences) and the total count.
     """
+    request_start = time.perf_counter()
+
     await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     # Validate that exactly one pair of IDs is provided
@@ -1178,6 +1222,28 @@ async def compare_text_lengths(
         )
         result_list.append(result_obj)
 
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"compare_text_lengths completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/compare_text_lengths",
+            "revision_id": revision_id,
+            "reference_id": reference_id,
+            "revision_assessment_id": revision_assessment_id,
+            "reference_assessment_id": reference_assessment_id,
+            "book": book,
+            "chapter": chapter,
+            "verse": verse,
+            "page": page,
+            "page_size": page_size,
+            "aggregate": aggregate.value if aggregate else None,
+            "total_count": total_count,
+            "results_returned": len(result_list),
+            "duration_s": duration,
+        },
+    )
+
     return {"results": result_list, "total_count": total_count}
 
 
@@ -1213,6 +1279,8 @@ async def get_tfidf_result(
     Dict[str, Union[List[TfidfResult], int]]
         A dictionary containing the list of results and the total count of results.
     """
+    request_start = time.perf_counter()
+
     # Authorization check
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -1289,6 +1357,21 @@ async def get_tfidf_result(
         )
         for row in result_data
     ]
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_tfidf_result completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/tfidf_result",
+            "assessment_id": assessment_id,
+            "vref": vref,
+            "limit": limit,
+            "reference_id": reference_id,
+            "results_returned": len(result_list),
+            "duration_s": duration,
+        },
+    )
 
     return {"results": result_list, "total_count": len(result_list)}
 
@@ -1684,6 +1767,8 @@ async def get_compare_results(
         containing the score, average score and standard deviation for the baseline
         assessments, and z-score of the score with respect to this baseline average and standard deviation.
     """
+    request_start = time.perf_counter()
+
     await validate_parameters(book, chapter, verse, aggregate, page, page_size)
 
     (
@@ -1784,6 +1869,26 @@ async def get_compare_results(
         )
         result_list.append(result_obj)
 
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_compare_results completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/compareresults",
+            "revision_id": revision_id,
+            "reference_id": reference_id,
+            "book": book,
+            "chapter": chapter,
+            "verse": verse,
+            "page": page,
+            "page_size": page_size,
+            "aggregate": aggregate.value if aggregate else None,
+            "total_count": total_count,
+            "results_returned": len(result_list),
+            "duration_s": duration,
+        },
+    )
+
     return {"results": result_list, "total_count": total_count}
 
 
@@ -1823,6 +1928,8 @@ async def get_alignment_scores(
     Dict[str, Union[List[WordAlignment], int]]
         A dictionary containing the list of results and the total count of results.
     """
+    request_start = time.perf_counter()
+
     await validate_parameters(book, chapter, verse, None, page, page_size)
 
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
@@ -1880,6 +1987,24 @@ async def get_alignment_scores(
         # Add the Result object to the result list
         result_list.append(result_obj)
 
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_alignment_scores completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/alignmentscores",
+            "assessment_id": assessment_id,
+            "book": book,
+            "chapter": chapter,
+            "verse": verse,
+            "page": page,
+            "page_size": page_size,
+            "total_count": total_count,
+            "results_returned": len(result_data),
+            "duration_s": duration,
+        },
+    )
+
     return {"results": result_data, "total_count": total_count}
 
 
@@ -1920,6 +2045,8 @@ async def get_missing_words(
     Dict[str, Union[List[Result], int]]
         A dictionary containing the list of results and the total count of results.
     """
+    request_start = time.perf_counter()
+
     await validate_parameters(book, chapter, verse)
 
     if baseline_ids is None:
@@ -2044,6 +2171,24 @@ async def get_missing_words(
         )
         result_list.append(result_obj)
 
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_missing_words completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/missingwords",
+            "revision_id": revision_id,
+            "reference_id": reference_id,
+            "threshold": threshold,
+            "book": book,
+            "chapter": chapter,
+            "verse": verse,
+            "total_count": total_count,
+            "results_returned": len(result_list),
+            "duration_s": duration,
+        },
+    )
+
     return {"results": result_list, "total_count": total_count}
 
 
@@ -2072,6 +2217,8 @@ async def get_word_alignments(
         The minimum score for an alignment to be included in the results.
         If not set, the value of the ALIGNMENT_THRESHOLD environment variable will be used, if set, or 0.2.
     """
+    request_start = time.perf_counter()
+
     if threshold is None:
         threshold = os.getenv("ALIGNMENT_THRESHOLD", 0.2)
 
@@ -2141,6 +2288,21 @@ async def get_word_alignments(
         for result in alignment_data
     ]
 
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_word_alignments completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/alignmentmatches",
+            "revision_id": revision_id,
+            "reference_id": reference_id,
+            "word": word,
+            "threshold": threshold,
+            "results_returned": len(result_list),
+            "duration_s": duration,
+        },
+    )
+
     return {"results": result_list, "total_count": len(result_list)}
 
 
@@ -2187,6 +2349,8 @@ async def get_text_alignment_matches(
     - strength_margin_mass: Margin over next best match, weighted by support
     - strength_confidence: Confidence based on entropy and support
     """
+    request_start = time.perf_counter()
+
     # Get the latest finished word-alignment assessment for the given revision and reference
     assessment_result = await db.execute(
         select(Assessment)
@@ -2304,5 +2468,21 @@ async def get_text_alignment_matches(
         )
         for row in result_data
     ]
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_text_alignment_matches completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/textalignmentmatches",
+            "revision_id": revision_id,
+            "reference_id": reference_id,
+            "top_k": top_k,
+            "min_support": min_support,
+            "min_probability": min_probability,
+            "results_returned": len(result_list),
+            "duration_s": duration,
+        },
+    )
 
     return {"results": result_list, "total_count": len(result_list)}

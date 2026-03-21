@@ -2,6 +2,7 @@ __version__ = "v3"
 
 import re
 import socket
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -81,6 +82,8 @@ async def search_revision_text(
         - results: List of matching verses with book, chapter, verse, main_text, and optional comparison_text
         - total_count: Number of results returned
     """
+    request_start = time.perf_counter()
+
     # Check authorization for the main revision
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
@@ -171,6 +174,22 @@ async def search_revision_text(
                 # Stop processing once we reach the desired limit
                 if len(filtered_results) >= limit:
                     break
+
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"search_revision_text completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/textsearch",
+                "revision_id": revision_id,
+                "term": term,
+                "comparison_revision_id": comparison_revision_id,
+                "limit": limit,
+                "random": random,
+                "results_returned": len(filtered_results),
+                "duration_s": duration,
+            },
+        )
 
         return {"results": filtered_results, "total_count": len(filtered_results)}
 
