@@ -620,7 +620,8 @@ async def get_result(
             hide=row.hide if hasattr(row, "hide") else None,
         )
         result_list.append(result_obj)
-        logger.info(f"⏱️ Result formatting: {time.perf_counter() - start:.2f}s")
+
+    logger.info(f"⏱️ Result formatting: {time.perf_counter() - start:.2f}s")
 
     return {"results": result_list, "total_count": total_count}
 
