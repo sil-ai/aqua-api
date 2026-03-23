@@ -5,7 +5,7 @@ import datetime
 import fastapi
 from fastapi import Depends, HTTPException
 from sqlalchemy import insert, select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
@@ -148,9 +148,26 @@ async def push_eflomal_results(
         await db.refresh(eflomal_assessment)
 
         return eflomal_assessment
-    except SQLAlchemyError as e:
+    except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        # Race condition: another request inserted between our check and insert.
+        # Re-query and return the existing row (idempotent).
+        existing = await db.execute(
+            select(EflomalAssessmentModel).where(
+                EflomalAssessmentModel.assessment_id == body.assessment_id
+            )
+        )
+        eflomal_row = existing.scalars().first()
+        if eflomal_row is not None:
+            return eflomal_row
+        raise HTTPException(
+            status_code=500, detail="Failed to store eflomal results"
+        )
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500, detail="Failed to store eflomal results"
+        )
 
 
 @router.get(
