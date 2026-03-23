@@ -163,11 +163,6 @@ def test_pull_eflomal_results_success(
     assert "word" in first_twc
     assert "count" in first_twc
 
-    # BPE fields present but None (push payload had no BPE data)
-    assert data["src_bpe_model"] is None
-    assert data["tgt_bpe_model"] is None
-    assert data["bpe_priors"] is None
-
 
 def test_pull_eflomal_results_not_found(client, regular_token1):
     """Non-existent assessment_id should return 404."""

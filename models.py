@@ -939,9 +939,6 @@ class EflomalResultsPushRequest(BaseModel):
     num_alignment_links: int
     num_dictionary_entries: int
     num_missing_words: int
-    src_bpe_model: Optional[str] = None  # base64-encoded SentencePiece binary
-    tgt_bpe_model: Optional[str] = None  # base64-encoded SentencePiece binary
-    bpe_priors: Optional[str] = None  # plain text content of bpe_priors.txt
     dictionary: list[EflomalDictionaryItem]
     cooccurrences: list[EflomalCooccurrenceItem]
     target_word_counts: list[EflomalTargetWordCountItem]
@@ -973,9 +970,6 @@ class EflomalResultsPullResponse(BaseModel):
     num_dictionary_entries: int
     num_missing_words: int
     created_at: Optional[datetime.datetime] = None
-    src_bpe_model: Optional[str] = None  # base64-encoded SentencePiece binary
-    tgt_bpe_model: Optional[str] = None  # base64-encoded SentencePiece binary
-    bpe_priors: Optional[str] = None  # plain text content of bpe_priors.txt
     dictionary: list[EflomalDictionaryItem]
     cooccurrences: list[EflomalCooccurrenceItem]
     target_word_counts: list[EflomalTargetWordCountItem]

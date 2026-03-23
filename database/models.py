@@ -9,7 +9,6 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
-    LargeBinary,
     Numeric,
     String,
     Text,
@@ -663,9 +662,6 @@ class EflomalAssessment(Base):
     num_alignment_links = Column(Integer)
     num_dictionary_entries = Column(Integer)
     num_missing_words = Column(Integer)
-    src_bpe_model = Column(LargeBinary, nullable=True)
-    tgt_bpe_model = Column(LargeBinary, nullable=True)
-    bpe_priors = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP, default=func.now())
 
 

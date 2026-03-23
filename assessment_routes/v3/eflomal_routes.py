@@ -1,7 +1,5 @@
 __version__ = "v3"
 
-import base64
-import binascii
 import datetime
 
 import fastapi
@@ -81,20 +79,12 @@ async def push_eflomal_results(
         return eflomal_row
 
     # 4. Create EflomalAssessment row
-    try:
-        src_bpe = base64.b64decode(body.src_bpe_model) if body.src_bpe_model else None
-        tgt_bpe = base64.b64decode(body.tgt_bpe_model) if body.tgt_bpe_model else None
-    except binascii.Error:
-        raise HTTPException(status_code=422, detail="Invalid base64 in BPE model field")
     eflomal_assessment = EflomalAssessmentModel(
         assessment_id=body.assessment_id,
         num_verse_pairs=body.num_verse_pairs,
         num_alignment_links=body.num_alignment_links,
         num_dictionary_entries=body.num_dictionary_entries,
         num_missing_words=body.num_missing_words,
-        src_bpe_model=src_bpe,
-        tgt_bpe_model=tgt_bpe,
-        bpe_priors=body.bpe_priors,
     )
     db.add(eflomal_assessment)
     await db.flush()  # get PK without committing
@@ -218,7 +208,7 @@ async def pull_eflomal_results(
     )
     twc_rows = twc_result.scalars().all()
 
-    # 5. Build response, base64-encoding binary BPE model data for JSON transport
+    # 5. Build response
     return EflomalResultsPullResponse(
         assessment_id=eflomal.assessment_id,
         num_verse_pairs=eflomal.num_verse_pairs,
@@ -226,17 +216,6 @@ async def pull_eflomal_results(
         num_dictionary_entries=eflomal.num_dictionary_entries,
         num_missing_words=eflomal.num_missing_words,
         created_at=eflomal.created_at,
-        src_bpe_model=(
-            base64.b64encode(eflomal.src_bpe_model).decode("utf-8")
-            if eflomal.src_bpe_model
-            else None
-        ),
-        tgt_bpe_model=(
-            base64.b64encode(eflomal.tgt_bpe_model).decode("utf-8")
-            if eflomal.tgt_bpe_model
-            else None
-        ),
-        bpe_priors=eflomal.bpe_priors,
         dictionary=[
             EflomalDictionaryItem(
                 source_word=r.source_word,
