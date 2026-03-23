@@ -160,14 +160,10 @@ async def push_eflomal_results(
         eflomal_row = existing.scalars().first()
         if eflomal_row is not None:
             return eflomal_row
-        raise HTTPException(
-            status_code=500, detail="Failed to store eflomal results"
-        )
+        raise HTTPException(status_code=500, detail="Failed to store eflomal results")
     except SQLAlchemyError:
         await db.rollback()
-        raise HTTPException(
-            status_code=500, detail="Failed to store eflomal results"
-        )
+        raise HTTPException(status_code=500, detail="Failed to store eflomal results")
 
 
 @router.get(
