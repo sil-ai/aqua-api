@@ -2,7 +2,6 @@ __version__ = "v3"
 
 import base64
 import datetime
-import logging
 
 import fastapi
 from fastapi import Depends, HTTPException
