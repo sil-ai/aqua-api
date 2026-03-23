@@ -36,7 +36,7 @@ def _eflomal_payload(assessment_id, n_dict=10, n_cooc=20, n_twc=5):
 
 
 def test_push_eflomal_results_success(
-    client, regular_token1, test_eflomal_assessment_id, db_session
+    client, regular_token1, test_eflomal_assessment_id
 ):
     """Push a small dataset and verify the summary response."""
     payload = _eflomal_payload(test_eflomal_assessment_id)
