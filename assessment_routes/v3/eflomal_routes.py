@@ -1,6 +1,7 @@
 __version__ = "v3"
 
 import base64
+import binascii
 import datetime
 
 import fastapi
@@ -80,18 +81,19 @@ async def push_eflomal_results(
         return eflomal_row
 
     # 4. Create EflomalAssessment row
+    try:
+        src_bpe = base64.b64decode(body.src_bpe_model) if body.src_bpe_model else None
+        tgt_bpe = base64.b64decode(body.tgt_bpe_model) if body.tgt_bpe_model else None
+    except binascii.Error:
+        raise HTTPException(status_code=422, detail="Invalid base64 in BPE model field")
     eflomal_assessment = EflomalAssessmentModel(
         assessment_id=body.assessment_id,
         num_verse_pairs=body.num_verse_pairs,
         num_alignment_links=body.num_alignment_links,
         num_dictionary_entries=body.num_dictionary_entries,
         num_missing_words=body.num_missing_words,
-        src_bpe_model=(
-            base64.b64decode(body.src_bpe_model) if body.src_bpe_model else None
-        ),
-        tgt_bpe_model=(
-            base64.b64decode(body.tgt_bpe_model) if body.tgt_bpe_model else None
-        ),
+        src_bpe_model=src_bpe,
+        tgt_bpe_model=tgt_bpe,
         bpe_priors=body.bpe_priors,
     )
     db.add(eflomal_assessment)

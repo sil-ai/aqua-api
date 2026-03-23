@@ -1,5 +1,7 @@
 # test_eflomal_routes.py
 
+import pytest
+
 prefix = "v3"
 
 
@@ -61,15 +63,21 @@ def test_push_eflomal_results_idempotent(
 ):
     """Pushing the same assessment_id twice returns the existing row (200)."""
     payload = _eflomal_payload(test_eflomal_assessment_id)
-    # Second push — results already exist from the previous test
-    response = client.post(
+    # First push
+    first = client.post(
         f"{prefix}/assessment/eflomal/results",
         json=payload,
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["assessment_id"] == test_eflomal_assessment_id
+    assert first.status_code == 200
+    # Second push — should be idempotent and return the existing row
+    second = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json=payload,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert second.status_code == 200
+    assert second.json()["assessment_id"] == test_eflomal_assessment_id
 
 
 def test_push_eflomal_results_nonexistent_assessment(client, regular_token1):
@@ -97,12 +105,25 @@ def test_push_eflomal_results_unauthorized(
 
 
 # ---------------------------------------------------------------------------
-# Pull (GET) tests — depend on push having populated data in the module scope
+# Pull (GET) tests
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(scope="module")
+def _ensure_eflomal_pushed(client, regular_token1, test_eflomal_assessment_id):
+    """Ensure eflomal results exist for the test assessment before pull tests run."""
+    payload = _eflomal_payload(test_eflomal_assessment_id)
+    response = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json=payload,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
 def test_pull_eflomal_results_success(
-    client, regular_token1, test_eflomal_assessment_id
+    client, regular_token1, test_eflomal_assessment_id, _ensure_eflomal_pushed
 ):
     """Pull the full dataset and verify all three data tables are present."""
     response = client.get(
