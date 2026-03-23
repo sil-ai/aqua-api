@@ -234,6 +234,9 @@ async def build_ngrams_query(
     """
     Builds a query to fetch n-gram results for an assessment.
 
+    Uses a window function to include the total count in each row,
+    eliminating the need for a separate count query.
+
     Args:
         assessment_id (int): The ID of the assessment to fetch n-gram results for.
         page (Optional[int]): The page number for pagination. Default is None.
@@ -241,11 +244,11 @@ async def build_ngrams_query(
         db (Session): The database session object to execute queries against.
 
     Returns:
-        Tuple: A tuple containing the base query object and the count query object.
+        A query that includes a total_count column via window function.
     """
 
-    # Select ngrams and their corresponding vrefs
-    base_query = (
+    # Subquery: aggregate vrefs per ngram
+    ngram_with_vrefs = (
         select(
             NgramsTable.id,
             NgramsTable.assessment_id,
@@ -257,19 +260,24 @@ async def build_ngrams_query(
         .where(NgramsTable.assessment_id == assessment_id)
         .group_by(NgramsTable.id)
         .order_by(NgramsTable.id)
+        .subquery()
+    )
+
+    # Outer query: add total_count via window function
+    base_query = select(
+        ngram_with_vrefs.c.id,
+        ngram_with_vrefs.c.assessment_id,
+        ngram_with_vrefs.c.ngram,
+        ngram_with_vrefs.c.ngram_size,
+        ngram_with_vrefs.c.vrefs,
+        func.count().over().label("total_count"),
     )
 
     # Apply pagination
     if page is not None and page_size is not None:
         base_query = base_query.offset((page - 1) * page_size).limit(page_size)
 
-    count_query = (
-        select(func.count())
-        .select_from(NgramsTable)
-        .where(NgramsTable.assessment_id == assessment_id)
-    )
-
-    return base_query, count_query
+    return base_query
 
 
 async def build_text_lengths_query(
@@ -672,21 +680,22 @@ async def get_ngrams_result(
             detail="User not authorized to see this assessment",
         )
 
-    # ✅ Build and execute the query for ngrams
-    query, count_query = await build_ngrams_query(assessment_id, page, page_size, db)
+    # Build and execute the query for ngrams (includes total_count via window function)
+    query = await build_ngrams_query(assessment_id, page, page_size, db)
 
-    result_data, total_count = await execute_query(query, count_query, db)
+    result_data = (await db.execute(query)).fetchall()
 
-    # ✅ Process and format the results
+    # Extract total_count from the first row (same value on every row)
+    total_count = result_data[0].total_count if result_data else 0
+
+    # Process and format the results
     result_list = [
         NgramResult(
             id=row.id,
             assessment_id=row.assessment_id,
             ngram=row.ngram,
             ngram_size=row.ngram_size,
-            vrefs=(
-                row.vrefs if row.vrefs is not None else []
-            ),  # Ensure it's always a list
+            vrefs=row.vrefs if row.vrefs is not None else [],
         )
         for row in result_data
     ]
