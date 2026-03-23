@@ -192,9 +192,7 @@ def test_pull_eflomal_results_no_auth(client, test_eflomal_assessment_id):
     assert response.status_code == 401
 
 
-def test_push_eflomal_results_wrong_type(
-    client, regular_token1, test_assessment_id
-):
+def test_push_eflomal_results_wrong_type(client, regular_token1, test_assessment_id):
     """Pushing to a non-word-alignment assessment should return 400."""
     payload = _eflomal_payload(test_assessment_id)
     response = client.post(
