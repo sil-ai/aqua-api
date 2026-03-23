@@ -1,7 +1,8 @@
 __version__ = "v3"
 
-import logging
 import re
+import socket
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -15,9 +16,10 @@ from database.models import UserDB as UserModel
 from database.models import VerseText
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_revision
+from utils.logging_config import setup_logger
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+container_id = socket.gethostname()
+logger = setup_logger(__name__, container_id=container_id)
 
 router = APIRouter()
 
@@ -80,6 +82,8 @@ async def search_revision_text(
         - results: List of matching verses with book, chapter, verse, main_text, and optional comparison_text
         - total_count: Number of results returned
     """
+    request_start = time.perf_counter()
+
     # Check authorization for the main revision
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
@@ -171,10 +175,34 @@ async def search_revision_text(
                 if len(filtered_results) >= limit:
                     break
 
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"search_revision_text completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/textsearch",
+                "revision_id": revision_id,
+                "term": term,
+                "comparison_revision_id": comparison_revision_id,
+                "limit": limit,
+                "random": random,
+                "results_returned": len(filtered_results),
+                "duration_s": duration,
+            },
+        )
+
         return {"results": filtered_results, "total_count": len(filtered_results)}
 
     except Exception as e:
-        logger.error(f"Error in text search: {str(e)}")
+        logger.error(
+            f"Error in text search: {str(e)}",
+            extra={
+                "method": "GET",
+                "path": "/textsearch",
+                "revision_id": revision_id,
+                "term": term,
+            },
+        )
         raise HTTPException(
             status_code=500,
             detail=f"Error searching text: {str(e)}",

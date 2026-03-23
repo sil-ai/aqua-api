@@ -78,6 +78,11 @@ The environment file should have the following variables:
 - ADMIN_PASSWORD
 - TEST_USER
 - TEST_PASSWORD
+- LOKI_ENABLED (optional, default: false)
+- LOKI_URL (optional)
+- LOKI_AUTH_TOKEN (optional)
+- PROJECT_NAME (optional, default: aqua-api)
+- ENVIRONMENT_LOKI (optional, default: local)
 
 ## Swagger
 
