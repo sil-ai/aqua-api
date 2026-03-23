@@ -159,6 +159,23 @@ def test_eflomal_assessment_id(test_db_session, test_revision_id, test_revision_
 
 
 @pytest.fixture(scope="module")
+def test_eflomal_assessment_unpushed_id(
+    test_db_session, test_revision_id, test_revision_id_2
+):
+    """Create a word-alignment assessment with no eflomal results pushed."""
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="word-alignment",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+    return assessment.id
+
+
+@pytest.fixture(scope="module")
 def agent_test_access(test_db_session):
     """Grant Group1 access to loading_test version for agent tests.
 

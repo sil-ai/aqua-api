@@ -190,3 +190,27 @@ def test_pull_eflomal_results_no_auth(client, test_eflomal_assessment_id):
         f"{prefix}/assessment/eflomal/results/{test_eflomal_assessment_id}",
     )
     assert response.status_code == 401
+
+
+def test_push_eflomal_results_wrong_type(
+    client, regular_token1, test_assessment_id
+):
+    """Pushing to a non-word-alignment assessment should return 400."""
+    payload = _eflomal_payload(test_assessment_id)
+    response = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json=payload,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 400
+
+
+def test_pull_eflomal_results_no_eflomal_data(
+    client, regular_token1, test_eflomal_assessment_unpushed_id
+):
+    """Pulling for an assessment that exists but has no eflomal results should return 404."""
+    response = client.get(
+        f"{prefix}/assessment/eflomal/results/{test_eflomal_assessment_unpushed_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404

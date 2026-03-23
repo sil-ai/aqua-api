@@ -5,6 +5,7 @@ import datetime
 import fastapi
 from fastapi import Depends, HTTPException
 from sqlalchemy import insert, select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
@@ -78,74 +79,78 @@ async def push_eflomal_results(
     if eflomal_row is not None:
         return eflomal_row
 
-    # 4. Create EflomalAssessment row
-    eflomal_assessment = EflomalAssessmentModel(
-        assessment_id=body.assessment_id,
-        num_verse_pairs=body.num_verse_pairs,
-        num_alignment_links=body.num_alignment_links,
-        num_dictionary_entries=body.num_dictionary_entries,
-        num_missing_words=body.num_missing_words,
-    )
-    db.add(eflomal_assessment)
-    await db.flush()  # get PK without committing
-
-    ea_id = eflomal_assessment.id
-
-    # 5. Batch-insert dictionary entries
-    dict_rows = [
-        {
-            "assessment_id": ea_id,
-            "source_word": item.source_word,
-            "target_word": item.target_word,
-            "count": item.count,
-            "probability": item.probability,
-        }
-        for item in body.dictionary
-    ]
-    for i in range(0, len(dict_rows), _BATCH_SIZE):
-        await db.execute(
-            insert(EflomalDictionary).values(dict_rows[i : i + _BATCH_SIZE])
+    try:
+        # 4. Create EflomalAssessment row
+        eflomal_assessment = EflomalAssessmentModel(
+            assessment_id=body.assessment_id,
+            num_verse_pairs=body.num_verse_pairs,
+            num_alignment_links=body.num_alignment_links,
+            num_dictionary_entries=body.num_dictionary_entries,
+            num_missing_words=body.num_missing_words,
         )
+        db.add(eflomal_assessment)
+        await db.flush()  # get PK without committing
 
-    # 6. Batch-insert cooccurrence entries
-    cooc_rows = [
-        {
-            "assessment_id": ea_id,
-            "source_word": item.source_word,
-            "target_word": item.target_word,
-            "co_occur_count": item.co_occur_count,
-            "aligned_count": item.aligned_count,
-        }
-        for item in body.cooccurrences
-    ]
-    for i in range(0, len(cooc_rows), _BATCH_SIZE):
-        await db.execute(
-            insert(EflomalCooccurrence).values(cooc_rows[i : i + _BATCH_SIZE])
-        )
+        ea_id = eflomal_assessment.id
 
-    # 7. Batch-insert target word counts
-    twc_rows = [
-        {
-            "assessment_id": ea_id,
-            "word": item.word,
-            "count": item.count,
-        }
-        for item in body.target_word_counts
-    ]
-    for i in range(0, len(twc_rows), _BATCH_SIZE):
-        await db.execute(
-            insert(EflomalTargetWordCount).values(twc_rows[i : i + _BATCH_SIZE])
-        )
+        # 5. Batch-insert dictionary entries
+        dict_rows = [
+            {
+                "assessment_id": ea_id,
+                "source_word": item.source_word,
+                "target_word": item.target_word,
+                "count": item.count,
+                "probability": item.probability,
+            }
+            for item in body.dictionary
+        ]
+        for i in range(0, len(dict_rows), _BATCH_SIZE):
+            await db.execute(
+                insert(EflomalDictionary).values(dict_rows[i : i + _BATCH_SIZE])
+            )
 
-    # 8. Update assessment status
-    assessment.status = "finished"
-    assessment.end_time = datetime.datetime.utcnow()
+        # 6. Batch-insert cooccurrence entries
+        cooc_rows = [
+            {
+                "assessment_id": ea_id,
+                "source_word": item.source_word,
+                "target_word": item.target_word,
+                "co_occur_count": item.co_occur_count,
+                "aligned_count": item.aligned_count,
+            }
+            for item in body.cooccurrences
+        ]
+        for i in range(0, len(cooc_rows), _BATCH_SIZE):
+            await db.execute(
+                insert(EflomalCooccurrence).values(cooc_rows[i : i + _BATCH_SIZE])
+            )
 
-    # 9. Commit atomically
-    await db.commit()
-    await db.refresh(eflomal_assessment)
+        # 7. Batch-insert target word counts
+        twc_rows = [
+            {
+                "assessment_id": ea_id,
+                "word": item.word,
+                "count": item.count,
+            }
+            for item in body.target_word_counts
+        ]
+        for i in range(0, len(twc_rows), _BATCH_SIZE):
+            await db.execute(
+                insert(EflomalTargetWordCount).values(twc_rows[i : i + _BATCH_SIZE])
+            )
 
-    return eflomal_assessment
+        # 8. Update assessment status
+        assessment.status = "finished"
+        assessment.end_time = datetime.datetime.utcnow()
+
+        # 9. Commit atomically
+        await db.commit()
+        await db.refresh(eflomal_assessment)
+
+        return eflomal_assessment
+    except SQLAlchemyError as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get(
