@@ -1,5 +1,6 @@
 __version__ = "v3"
 
+import base64
 import datetime
 import logging
 
@@ -19,7 +20,14 @@ from database.models import (
     EflomalTargetWordCount,
 )
 from database.models import UserDB as UserModel
-from models import EflomalAssessmentOut, EflomalResultsPushRequest
+from models import (
+    EflomalAssessmentOut,
+    EflomalCooccurrenceItem,
+    EflomalDictionaryItem,
+    EflomalResultsPullResponse,
+    EflomalResultsPushRequest,
+    EflomalTargetWordCountItem,
+)
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 
@@ -81,6 +89,13 @@ async def push_eflomal_results(
         num_alignment_links=body.num_alignment_links,
         num_dictionary_entries=body.num_dictionary_entries,
         num_missing_words=body.num_missing_words,
+        src_bpe_model=(
+            base64.b64decode(body.src_bpe_model) if body.src_bpe_model else None
+        ),
+        tgt_bpe_model=(
+            base64.b64decode(body.tgt_bpe_model) if body.tgt_bpe_model else None
+        ),
+        bpe_priors=body.bpe_priors,
     )
     db.add(eflomal_assessment)
     await db.flush()  # get PK without committing
@@ -142,3 +157,110 @@ async def push_eflomal_results(
     await db.refresh(eflomal_assessment)
 
     return eflomal_assessment
+
+
+@router.get(
+    "/assessment/eflomal/results/{assessment_id}",
+    response_model=EflomalResultsPullResponse,
+)
+async def pull_eflomal_results(
+    assessment_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pull all eflomal training artifacts for a given assessment.
+
+    Replaces Modal's load_artifacts() — returns everything needed to run
+    realtime_assess() in a single response for the caller to load and cache.
+    """
+    # 1. Check assessment exists
+    assessment_result = await db.execute(
+        select(Assessment).where(Assessment.id == assessment_id)
+    )
+    if assessment_result.scalars().first() is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    # 2. Authorize
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    # 3. Look up the EflomalAssessment row
+    result = await db.execute(
+        select(EflomalAssessmentModel).where(
+            EflomalAssessmentModel.assessment_id == assessment_id
+        )
+    )
+    eflomal = result.scalars().first()
+    if eflomal is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No eflomal results found for this assessment",
+        )
+
+    ea_id = eflomal.id  # FK used in child tables
+
+    # 4. Fetch all three child tables
+    dict_result = await db.execute(
+        select(EflomalDictionary).where(EflomalDictionary.assessment_id == ea_id)
+    )
+    dictionary_rows = dict_result.scalars().all()
+
+    cooc_result = await db.execute(
+        select(EflomalCooccurrence).where(EflomalCooccurrence.assessment_id == ea_id)
+    )
+    cooccurrence_rows = cooc_result.scalars().all()
+
+    twc_result = await db.execute(
+        select(EflomalTargetWordCount).where(
+            EflomalTargetWordCount.assessment_id == ea_id
+        )
+    )
+    twc_rows = twc_result.scalars().all()
+
+    # 5. Build response, base64-encoding binary BPE model data for JSON transport
+    return EflomalResultsPullResponse(
+        assessment_id=eflomal.assessment_id,
+        num_verse_pairs=eflomal.num_verse_pairs,
+        num_alignment_links=eflomal.num_alignment_links,
+        num_dictionary_entries=eflomal.num_dictionary_entries,
+        num_missing_words=eflomal.num_missing_words,
+        created_at=eflomal.created_at,
+        src_bpe_model=(
+            base64.b64encode(eflomal.src_bpe_model).decode("utf-8")
+            if eflomal.src_bpe_model
+            else None
+        ),
+        tgt_bpe_model=(
+            base64.b64encode(eflomal.tgt_bpe_model).decode("utf-8")
+            if eflomal.tgt_bpe_model
+            else None
+        ),
+        bpe_priors=eflomal.bpe_priors,
+        dictionary=[
+            EflomalDictionaryItem(
+                source_word=r.source_word,
+                target_word=r.target_word,
+                count=r.count,
+                probability=r.probability,
+            )
+            for r in dictionary_rows
+        ],
+        cooccurrences=[
+            EflomalCooccurrenceItem(
+                source_word=r.source_word,
+                target_word=r.target_word,
+                co_occur_count=r.co_occur_count,
+                aligned_count=r.aligned_count,
+            )
+            for r in cooccurrence_rows
+        ],
+        target_word_counts=[
+            EflomalTargetWordCountItem(
+                word=r.word,
+                count=r.count,
+            )
+            for r in twc_rows
+        ],
+    )

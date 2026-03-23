@@ -94,3 +94,83 @@ def test_push_eflomal_results_unauthorized(
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Pull (GET) tests — depend on push having populated data in the module scope
+# ---------------------------------------------------------------------------
+
+
+def test_pull_eflomal_results_success(
+    client, regular_token1, test_eflomal_assessment_id
+):
+    """Pull the full dataset and verify all three data tables are present."""
+    response = client.get(
+        f"{prefix}/assessment/eflomal/results/{test_eflomal_assessment_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Summary fields
+    assert data["assessment_id"] == test_eflomal_assessment_id
+    assert data["num_verse_pairs"] == 100
+    assert data["num_alignment_links"] == 500
+    assert data["num_dictionary_entries"] == 10
+    assert data["num_missing_words"] == 3
+    assert data["created_at"] is not None
+
+    # Dictionary entries (n_dict=10 in _eflomal_payload)
+    assert len(data["dictionary"]) == 10
+    first_dict = data["dictionary"][0]
+    assert "source_word" in first_dict
+    assert "target_word" in first_dict
+    assert "count" in first_dict
+    assert "probability" in first_dict
+
+    # Cooccurrence entries (n_cooc=20 in _eflomal_payload)
+    assert len(data["cooccurrences"]) == 20
+    first_cooc = data["cooccurrences"][0]
+    assert "source_word" in first_cooc
+    assert "target_word" in first_cooc
+    assert "co_occur_count" in first_cooc
+    assert "aligned_count" in first_cooc
+
+    # Target word counts (n_twc=5 in _eflomal_payload)
+    assert len(data["target_word_counts"]) == 5
+    first_twc = data["target_word_counts"][0]
+    assert "word" in first_twc
+    assert "count" in first_twc
+
+    # BPE fields present but None (push payload had no BPE data)
+    assert data["src_bpe_model"] is None
+    assert data["tgt_bpe_model"] is None
+    assert data["bpe_priors"] is None
+
+
+def test_pull_eflomal_results_not_found(client, regular_token1):
+    """Non-existent assessment_id should return 404."""
+    response = client.get(
+        f"{prefix}/assessment/eflomal/results/999999",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_pull_eflomal_results_unauthorized(
+    client, regular_token2, test_eflomal_assessment_id
+):
+    """User without access should receive 403."""
+    response = client.get(
+        f"{prefix}/assessment/eflomal/results/{test_eflomal_assessment_id}",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+
+
+def test_pull_eflomal_results_no_auth(client, test_eflomal_assessment_id):
+    """Request without auth token should fail (401)."""
+    response = client.get(
+        f"{prefix}/assessment/eflomal/results/{test_eflomal_assessment_id}",
+    )
+    assert response.status_code == 401
