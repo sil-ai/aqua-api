@@ -225,23 +225,23 @@ async def build_results_query(
     )
 
 
-async def build_ngrams_query(
+def build_ngrams_query(
     assessment_id: int,
     page: Optional[int],
     page_size: Optional[int],
-    db: AsyncSession,
 ):
     """
     Builds a query to fetch n-gram results for an assessment.
 
-    Uses a window function to include the total count in each row,
-    eliminating the need for a separate count query.
+    Uses a window function (COUNT() OVER()) to include the total count in each
+    row, eliminating the need for a separate count query. Window functions are
+    evaluated before LIMIT/OFFSET, so total_count reflects the full result set
+    even when paginated.
 
     Args:
         assessment_id (int): The ID of the assessment to fetch n-gram results for.
         page (Optional[int]): The page number for pagination. Default is None.
         page_size (Optional[int]): The number of results per page. Default is None.
-        db (Session): The database session object to execute queries against.
 
     Returns:
         A query that includes a total_count column via window function.
@@ -259,18 +259,20 @@ async def build_ngrams_query(
         .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
         .where(NgramsTable.assessment_id == assessment_id)
         .group_by(NgramsTable.id)
-        .order_by(NgramsTable.id)
         .subquery()
     )
 
     # Outer query: add total_count via window function
-    base_query = select(
-        ngram_with_vrefs.c.id,
-        ngram_with_vrefs.c.assessment_id,
-        ngram_with_vrefs.c.ngram,
-        ngram_with_vrefs.c.ngram_size,
-        ngram_with_vrefs.c.vrefs,
-        func.count().over().label("total_count"),
+    base_query = (
+        select(
+            ngram_with_vrefs.c.id,
+            ngram_with_vrefs.c.assessment_id,
+            ngram_with_vrefs.c.ngram,
+            ngram_with_vrefs.c.ngram_size,
+            ngram_with_vrefs.c.vrefs,
+            func.count().over().label("total_count"),
+        )
+        .order_by(ngram_with_vrefs.c.id)
     )
 
     # Apply pagination
@@ -674,6 +676,8 @@ async def get_ngrams_result(
         A dictionary containing the list of results and the total count of results.
     """
     request_start = time.perf_counter()
+    await validate_parameters(None, None, None, None, page, page_size)
+
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -681,12 +685,21 @@ async def get_ngrams_result(
         )
 
     # Build and execute the query for ngrams (includes total_count via window function)
-    query = await build_ngrams_query(assessment_id, page, page_size, db)
+    query = build_ngrams_query(assessment_id, page, page_size)
 
     result_data = (await db.execute(query)).fetchall()
 
-    # Extract total_count from the first row (same value on every row)
-    total_count = result_data[0].total_count if result_data else 0
+    # Extract total_count from the first row. If result_data is empty (e.g.
+    # out-of-range page), fall back to a separate count query so callers can
+    # still see how many ngrams exist for this assessment.
+    if result_data:
+        total_count = result_data[0].total_count
+    else:
+        total_count = await db.scalar(
+            select(func.count())
+            .select_from(NgramsTable)
+            .where(NgramsTable.assessment_id == assessment_id)
+        )
 
     # Process and format the results
     result_list = [
