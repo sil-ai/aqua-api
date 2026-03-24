@@ -696,8 +696,9 @@ async def get_ngrams_result(
         total_count = result_data[0].total_count
     else:
         total_count = await db.scalar(
-            select(func.count())
+            select(func.count(NgramsTable.id.distinct()))
             .select_from(NgramsTable)
+            .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
             .where(NgramsTable.assessment_id == assessment_id)
         )
 
