@@ -263,17 +263,14 @@ def build_ngrams_query(
     )
 
     # Outer query: add total_count via window function
-    base_query = (
-        select(
-            ngram_with_vrefs.c.id,
-            ngram_with_vrefs.c.assessment_id,
-            ngram_with_vrefs.c.ngram,
-            ngram_with_vrefs.c.ngram_size,
-            ngram_with_vrefs.c.vrefs,
-            func.count().over().label("total_count"),
-        )
-        .order_by(ngram_with_vrefs.c.id)
-    )
+    base_query = select(
+        ngram_with_vrefs.c.id,
+        ngram_with_vrefs.c.assessment_id,
+        ngram_with_vrefs.c.ngram,
+        ngram_with_vrefs.c.ngram_size,
+        ngram_with_vrefs.c.vrefs,
+        func.count().over().label("total_count"),
+    ).order_by(ngram_with_vrefs.c.id)
 
     # Apply pagination
     if page is not None and page_size is not None:
