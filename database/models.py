@@ -1,4 +1,3 @@
-from idna.compat import Optional
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     TIMESTAMP,
@@ -659,8 +658,8 @@ class EflomalAssessment(Base):
     assessment_id = Column(
         Integer, ForeignKey("assessment.id"), nullable=False, unique=True
     )
-    source_language: Optional[str] = None
-    target_language: Optional[str] = None
+    source_language = Column(String(3), nullable=True)
+    target_language = Column(String(3), nullable=True)
     num_verse_pairs = Column(Integer)
     num_alignment_links = Column(Integer)
     num_dictionary_entries = Column(Integer)
