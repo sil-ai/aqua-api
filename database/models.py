@@ -1,3 +1,4 @@
+from idna.compat import Optional
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     TIMESTAMP,
@@ -647,9 +648,9 @@ class AgentTranslation(Base):
 class EflomalAssessment(Base):
     """One row per eflomal training run (one per assessment).
 
-    Stores metadata about the training run. The source/target language pair
-    is derived from the assessment's revision and reference bible versions,
-    so it is not duplicated here.
+    Stores metadata about the training run. Can query by source/target language
+    or assessment_id.
+
     """
 
     __tablename__ = "eflomal_assessment"
@@ -658,6 +659,8 @@ class EflomalAssessment(Base):
     assessment_id = Column(
         Integer, ForeignKey("assessment.id"), nullable=False, unique=True
     )
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
     num_verse_pairs = Column(Integer)
     num_alignment_links = Column(Integer)
     num_dictionary_entries = Column(Integer)
