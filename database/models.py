@@ -666,6 +666,14 @@ class EflomalAssessment(Base):
     num_missing_words = Column(Integer)
     created_at = Column(TIMESTAMP, default=func.now())
 
+    __table_args__ = (
+        Index(
+            "ix_eflomal_assessment_language_pair",
+            "source_language",
+            "target_language",
+        ),
+    )
+
 
 class EflomalDictionary(Base):
     """Statistical dictionary of word-pair alignments learned during training.
