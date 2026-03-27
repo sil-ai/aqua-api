@@ -145,9 +145,7 @@ def test_eflomal_assessment_language_id(
 
 
 @pytest.fixture(scope="module")
-def _ensure_eflomal_pushed(
-    client, regular_token1, test_eflomal_assessment_language_id
-):
+def _ensure_eflomal_pushed(client, regular_token1, test_eflomal_assessment_language_id):
     """Ensure eflomal results exist for the test assessment before pull tests run."""
     payload = _eflomal_payload(
         test_eflomal_assessment_language_id,
