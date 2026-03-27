@@ -1,7 +1,7 @@
 """create training_job table
 
 Revision ID: 0858bc754cc3
-Revises: f6a7b8c9d0e1
+Revises: 12b965d1c880
 Create Date: 2026-02-26
 """
 
@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 # revision identifiers, used by Alembic.
 revision = "0858bc754cc3"
-down_revision = "f6a7b8c9d0e1"
+down_revision = "12b965d1c880"
 branch_labels = None
 depends_on = None
 
