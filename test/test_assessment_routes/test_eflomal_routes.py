@@ -167,7 +167,8 @@ def test_pull_eflomal_results_success(
 ):
     """Pull the full dataset and verify all three data tables are present."""
     response = client.get(
-        f"{prefix}/assessment/eflomal/results/{test_eflomal_assessment_id}",
+        f"{prefix}/assessment/eflomal/results",
+        params={"assessment_id": test_eflomal_assessment_id},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
@@ -207,7 +208,8 @@ def test_pull_eflomal_results_success(
 def test_pull_eflomal_results_not_found(client, regular_token1):
     """Non-existent assessment_id should return 404."""
     response = client.get(
-        f"{prefix}/assessment/eflomal/results/999999",
+        f"{prefix}/assessment/eflomal/results",
+        params={"assessment_id": 999999},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 404
@@ -218,7 +220,8 @@ def test_pull_eflomal_results_unauthorized(
 ):
     """User without access should receive 403."""
     response = client.get(
-        f"{prefix}/assessment/eflomal/results/{test_eflomal_assessment_id}",
+        f"{prefix}/assessment/eflomal/results",
+        params={"assessment_id": test_eflomal_assessment_id},
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
     assert response.status_code == 403
@@ -227,7 +230,8 @@ def test_pull_eflomal_results_unauthorized(
 def test_pull_eflomal_results_no_auth(client, test_eflomal_assessment_id):
     """Request without auth token should fail (401)."""
     response = client.get(
-        f"{prefix}/assessment/eflomal/results/{test_eflomal_assessment_id}",
+        f"{prefix}/assessment/eflomal/results",
+        params={"assessment_id": test_eflomal_assessment_id},
     )
     assert response.status_code == 401
 

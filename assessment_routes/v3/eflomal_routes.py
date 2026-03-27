@@ -231,35 +231,52 @@ async def push_eflomal_results(
     "/assessment/eflomal/results",
     response_model=EflomalResultsPullResponse,
 )
-async def pull_eflomal_results_by_language(
-    source_language: str,
-    target_language: str,
+async def pull_eflomal_results(
+    assessment_id: int | None = None,
+    source_language: str | None = None,
+    target_language: str | None = None,
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Pull the most recent eflomal training artifacts for a language pair.
+    """Pull eflomal training artifacts by assessment ID or language pair.
 
-    Returns the same payload as pull_eflomal_results but looked up by
-    source/target ISO 639-3 language codes instead of assessment_id.
+    Provide either assessment_id or both source_language and target_language.
+    When querying by language pair, returns the most recent results.
     """
-    # 1. Find most recent EflomalAssessment for this language pair
-    result = await db.execute(
-        select(EflomalAssessmentModel)
-        .where(
-            EflomalAssessmentModel.source_language == source_language,
-            EflomalAssessmentModel.target_language == target_language,
+    if assessment_id is not None:
+        result = await db.execute(
+            select(EflomalAssessmentModel).where(
+                EflomalAssessmentModel.assessment_id == assessment_id
+            )
         )
-        .order_by(desc(EflomalAssessmentModel.created_at))
-        .limit(1)
-    )
-    eflomal = result.scalars().first()
-    if eflomal is None:
+        eflomal = result.scalars().first()
+        if eflomal is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No eflomal results found for this assessment",
+            )
+    elif source_language is not None and target_language is not None:
+        result = await db.execute(
+            select(EflomalAssessmentModel)
+            .where(
+                EflomalAssessmentModel.source_language == source_language,
+                EflomalAssessmentModel.target_language == target_language,
+            )
+            .order_by(desc(EflomalAssessmentModel.created_at))
+            .limit(1)
+        )
+        eflomal = result.scalars().first()
+        if eflomal is None:
+            raise HTTPException(
+                status_code=404,
+                detail="No eflomal results found for this language pair",
+            )
+    else:
         raise HTTPException(
-            status_code=404,
-            detail="No eflomal results found for this language pair",
+            status_code=400,
+            detail="Provide either assessment_id or both source_language and target_language",
         )
 
-    # 2. Authorize
     if not await is_user_authorized_for_assessment(
         current_user.id, eflomal.assessment_id, db
     ):
@@ -267,49 +284,4 @@ async def pull_eflomal_results_by_language(
             status_code=403, detail="Not authorized for this assessment"
         )
 
-    # 3. Fetch child tables and build response
-    return await _fetch_eflomal_response(eflomal, db)
-
-
-@router.get(
-    "/assessment/eflomal/results/{assessment_id}",
-    response_model=EflomalResultsPullResponse,
-)
-async def pull_eflomal_results(
-    assessment_id: int,
-    current_user: UserModel = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Pull all eflomal training artifacts for a given assessment.
-
-    Replaces Modal's load_artifacts() — returns everything needed to run
-    realtime_assess() in a single response for the caller to load and cache.
-    """
-    # 1. Check assessment exists
-    assessment_result = await db.execute(
-        select(Assessment).where(Assessment.id == assessment_id)
-    )
-    if assessment_result.scalars().first() is None:
-        raise HTTPException(status_code=404, detail="Assessment not found")
-
-    # 2. Authorize
-    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
-        raise HTTPException(
-            status_code=403, detail="Not authorized for this assessment"
-        )
-
-    # 3. Look up the EflomalAssessment row
-    result = await db.execute(
-        select(EflomalAssessmentModel).where(
-            EflomalAssessmentModel.assessment_id == assessment_id
-        )
-    )
-    eflomal = result.scalars().first()
-    if eflomal is None:
-        raise HTTPException(
-            status_code=404,
-            detail="No eflomal results found for this assessment",
-        )
-
-    # 4. Fetch child tables and build response
     return await _fetch_eflomal_response(eflomal, db)
