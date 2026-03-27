@@ -316,3 +316,35 @@ def test_pull_eflomal_results_by_language_no_auth(client):
         params={"source_language": "eng", "target_language": "swh"},
     )
     assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Ambiguous / incomplete parameter validation
+# ---------------------------------------------------------------------------
+
+
+def test_pull_eflomal_results_both_selectors(
+    client, regular_token1, _ensure_eflomal_pushed
+):
+    """Providing both assessment_id and language pair should return 400."""
+    pushed = _ensure_eflomal_pushed
+    response = client.get(
+        f"{prefix}/assessment/eflomal/results",
+        params={
+            "assessment_id": pushed["assessment_id"],
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 400
+
+
+def test_pull_eflomal_results_partial_language(client, regular_token1):
+    """Providing only one language param (no assessment_id) should return 400."""
+    response = client.get(
+        f"{prefix}/assessment/eflomal/results",
+        params={"source_language": "eng"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 400

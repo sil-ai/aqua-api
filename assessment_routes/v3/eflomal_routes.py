@@ -253,6 +253,14 @@ async def pull_eflomal_results(
     Provide either assessment_id or both source_language and target_language.
     When querying by language pair, returns the most recent results.
     """
+    has_languages = source_language is not None or target_language is not None
+
+    if assessment_id is not None and has_languages:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either assessment_id or language pair, not both",
+        )
+
     if assessment_id is not None:
         result = await db.execute(
             select(EflomalAssessmentModel).where(
