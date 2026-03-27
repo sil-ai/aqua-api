@@ -157,6 +157,59 @@ class Assessment(Base):
     )
 
 
+class TrainingJob(Base):
+    __tablename__ = "training_job"
+
+    id = Column(Integer, primary_key=True)
+    type = Column(Text, nullable=False)
+    source_revision_id = Column(
+        Integer, ForeignKey("bible_revision.id"), nullable=False
+    )
+    target_revision_id = Column(
+        Integer, ForeignKey("bible_revision.id"), nullable=False
+    )
+    source_language = Column(
+        String(3), ForeignKey("iso_language.iso639"), nullable=False
+    )
+    target_language = Column(
+        String(3), ForeignKey("iso_language.iso639"), nullable=False
+    )
+
+    status = Column(Text, nullable=False, default="queued")
+    status_detail = Column(Text, nullable=True)
+    percent_complete = Column(Float, nullable=True)
+
+    external_ids = Column(JSONB, nullable=True)
+    result_url = Column(Text, nullable=True)
+    result_metadata = Column(JSONB, nullable=True)
+    options = Column(JSONB, nullable=True)
+
+    requested_time = Column(TIMESTAMP, default=func.now())
+    start_time = Column(TIMESTAMP, nullable=True)
+    end_time = Column(TIMESTAMP, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    deleted = Column(Boolean, default=False)
+    deleted_at = Column(TIMESTAMP, nullable=True)
+
+    source_revision = relationship("BibleRevision", foreign_keys=[source_revision_id])
+    target_revision = relationship("BibleRevision", foreign_keys=[target_revision_id])
+    owner = relationship("UserDB")
+
+    __table_args__ = (
+        Index("ix_training_job_status", "status"),
+        Index("ix_training_job_type_status", "type", "status"),
+        Index("ix_training_job_lang_pair", "source_language", "target_language"),
+        Index(
+            "ix_training_job_revisions_type_status",
+            "source_revision_id",
+            "target_revision_id",
+            "type",
+            "status",
+        ),
+    )
+
+
 class AssessmentResult(Base):
     __tablename__ = "assessment_result"
 
@@ -647,9 +700,9 @@ class AgentTranslation(Base):
 class EflomalAssessment(Base):
     """One row per eflomal training run (one per assessment).
 
-    Stores metadata about the training run. The source/target language pair
-    is derived from the assessment's revision and reference bible versions,
-    so it is not duplicated here.
+    Stores metadata about the training run. Can query by source/target language
+    or assessment_id.
+
     """
 
     __tablename__ = "eflomal_assessment"
@@ -658,11 +711,21 @@ class EflomalAssessment(Base):
     assessment_id = Column(
         Integer, ForeignKey("assessment.id"), nullable=False, unique=True
     )
+    source_language = Column(String(3), nullable=True)
+    target_language = Column(String(3), nullable=True)
     num_verse_pairs = Column(Integer)
     num_alignment_links = Column(Integer)
     num_dictionary_entries = Column(Integer)
     num_missing_words = Column(Integer)
     created_at = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_eflomal_assessment_language_pair",
+            "source_language",
+            "target_language",
+        ),
+    )
 
 
 class EflomalDictionary(Base):

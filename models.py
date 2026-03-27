@@ -906,6 +906,66 @@ class AgentTranslationOut(BaseModel):
     }
 
 
+# Training models
+
+
+class TrainingType(str, Enum):
+    serval_nmt = "serval-nmt"
+
+
+class TrainingStatus(str, Enum):
+    queued = "queued"
+    preparing = "preparing"
+    training = "training"
+    downloading = "downloading"
+    uploading = "uploading"
+    completed = "completed"
+    completed_with_errors = "completed_with_errors"
+    failed = "failed"
+
+
+class TrainingJobIn(BaseModel):
+    source_revision_id: int
+    target_revision_id: int
+    type: TrainingType
+    options: Optional[Dict[str, Any]] = None
+
+    model_config = {"use_enum_values": True}
+
+
+class TrainingJobOut(BaseModel):
+    id: int
+    type: str
+    source_revision_id: int
+    target_revision_id: int
+    source_language: str
+    target_language: str
+    status: str
+    status_detail: Optional[str] = None
+    percent_complete: Optional[float] = None
+    external_ids: Optional[Dict[str, Any]] = None
+    result_url: Optional[str] = None
+    result_metadata: Optional[Dict[str, Any]] = None
+    options: Optional[Dict[str, Any]] = None
+    requested_time: Optional[datetime.datetime] = None
+    start_time: Optional[datetime.datetime] = None
+    end_time: Optional[datetime.datetime] = None
+    owner_id: Optional[int] = None
+
+    model_config = {"from_attributes": True, "use_enum_values": True}
+
+
+class TrainingJobStatusUpdate(BaseModel):
+    status: TrainingStatus
+    status_detail: Optional[str] = None
+    percent_complete: Optional[float] = Field(None, ge=0.0, le=100.0)
+    external_ids: Optional[Dict[str, Any]] = None
+    result_url: Optional[str] = None
+    result_metadata: Optional[Dict[str, Any]] = None
+
+    model_config = {"use_enum_values": True}
+
+
 class EflomalDictionaryItem(BaseModel):
     """Dictionary entry. Words in original form (case preserved)."""
 
