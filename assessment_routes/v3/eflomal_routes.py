@@ -226,9 +226,11 @@ async def push_eflomal_results(
         constraint = getattr(exc.orig, "constraint_name", None) or ""
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate data in payload (constraint: {constraint})"
-            if constraint
-            else "Duplicate data in payload",
+            detail=(
+                f"Duplicate data in payload (constraint: {constraint})"
+                if constraint
+                else "Duplicate data in payload"
+            ),
         )
     except SQLAlchemyError:
         await db.rollback()

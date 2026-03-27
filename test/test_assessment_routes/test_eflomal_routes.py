@@ -162,9 +162,7 @@ def _ensure_eflomal_pushed(client, regular_token1, test_eflomal_assessment_langu
     return response.json()
 
 
-def test_pull_eflomal_results_success(
-    client, regular_token1, _ensure_eflomal_pushed
-):
+def test_pull_eflomal_results_success(client, regular_token1, _ensure_eflomal_pushed):
     """Pull the full dataset and verify all three data tables are present."""
     pushed = _ensure_eflomal_pushed
     response = client.get(
