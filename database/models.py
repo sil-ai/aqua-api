@@ -700,9 +700,9 @@ class AgentTranslation(Base):
 class EflomalAssessment(Base):
     """One row per eflomal training run (one per assessment).
 
-    Stores metadata about the training run. The source/target language pair
-    is derived from the assessment's revision and reference bible versions,
-    so it is not duplicated here.
+    Stores metadata about the training run. Can query by source/target language
+    or assessment_id.
+
     """
 
     __tablename__ = "eflomal_assessment"
@@ -711,11 +711,21 @@ class EflomalAssessment(Base):
     assessment_id = Column(
         Integer, ForeignKey("assessment.id"), nullable=False, unique=True
     )
+    source_language = Column(String(3), nullable=True)
+    target_language = Column(String(3), nullable=True)
     num_verse_pairs = Column(Integer)
     num_alignment_links = Column(Integer)
     num_dictionary_entries = Column(Integer)
     num_missing_words = Column(Integer)
     created_at = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_eflomal_assessment_language_pair",
+            "source_language",
+            "target_language",
+        ),
+    )
 
 
 class EflomalDictionary(Base):
