@@ -6,7 +6,7 @@ This file contains development notes and instructions for working with this code
 
 ### Virtual Environment
 
-The project uses a `.venv` in the repo root. All CLI tools (`alembic`, `pytest`, etc.) are at `.venv/bin/`.
+The project uses a `venv` in the repo root. All CLI tools (`alembic`, `pytest`, etc.) are at `venv/bin/`.
 
 ### Prerequisites
 
@@ -36,10 +36,10 @@ Set the `AQUA_DB` environment variable and run pytest:
 
 ```bash
 # Run all agent routes tests
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" .venv/bin/python -m pytest test/test_agent_routes/test_agent_routes.py -v
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" venv/bin/python -m pytest test/test_agent_routes/test_agent_routes.py -v
 
 # Run specific tests by keyword
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" .venv/bin/python -m pytest test/test_agent_routes/test_agent_routes.py -k word_alignment -v
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" venv/bin/python -m pytest test/test_agent_routes/test_agent_routes.py -k word_alignment -v
 ```
 
 ### Stopping the Database
@@ -62,20 +62,20 @@ Migrations are located in `alembic/migrations/versions/`. The alembic config is 
 cd alembic
 
 # Check current heads
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../.venv/bin/alembic heads
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../venv/bin/alembic heads
 
 # View migration history
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../.venv/bin/alembic history
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../venv/bin/alembic history
 
 # Check current database revision
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../.venv/bin/alembic current
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../venv/bin/alembic current
 ```
 
 ### Running Migrations
 
 ```bash
 cd alembic
-AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../.venv/bin/alembic upgrade head
+AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" ../venv/bin/alembic upgrade head
 ```
 
 ### Creating New Migrations

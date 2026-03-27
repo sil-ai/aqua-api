@@ -35,6 +35,65 @@ router = fastapi.APIRouter()
 _BATCH_SIZE = 10_000
 
 
+async def _fetch_eflomal_response(
+    eflomal: EflomalAssessmentModel, db: AsyncSession
+) -> EflomalResultsPullResponse:
+    ea_id = eflomal.id
+
+    dict_result = await db.execute(
+        select(EflomalDictionary).where(EflomalDictionary.assessment_id == ea_id)
+    )
+    dictionary_rows = dict_result.scalars().all()
+
+    cooc_result = await db.execute(
+        select(EflomalCooccurrence).where(EflomalCooccurrence.assessment_id == ea_id)
+    )
+    cooccurrence_rows = cooc_result.scalars().all()
+
+    twc_result = await db.execute(
+        select(EflomalTargetWordCount).where(
+            EflomalTargetWordCount.assessment_id == ea_id
+        )
+    )
+    twc_rows = twc_result.scalars().all()
+
+    return EflomalResultsPullResponse(
+        assessment_id=eflomal.assessment_id,
+        source_language=eflomal.source_language,
+        target_language=eflomal.target_language,
+        num_verse_pairs=eflomal.num_verse_pairs,
+        num_alignment_links=eflomal.num_alignment_links,
+        num_dictionary_entries=eflomal.num_dictionary_entries,
+        num_missing_words=eflomal.num_missing_words,
+        created_at=eflomal.created_at,
+        dictionary=[
+            EflomalDictionaryItem(
+                source_word=r.source_word,
+                target_word=r.target_word,
+                count=r.count,
+                probability=r.probability,
+            )
+            for r in dictionary_rows
+        ],
+        cooccurrences=[
+            EflomalCooccurrenceItem(
+                source_word=r.source_word,
+                target_word=r.target_word,
+                co_occur_count=r.co_occur_count,
+                aligned_count=r.aligned_count,
+            )
+            for r in cooccurrence_rows
+        ],
+        target_word_counts=[
+            EflomalTargetWordCountItem(
+                word=r.word,
+                count=r.count,
+            )
+            for r in twc_rows
+        ],
+    )
+
+
 @router.post("/assessment/eflomal/results", response_model=EflomalAssessmentOut)
 async def push_eflomal_results(
     body: EflomalResultsPushRequest,
@@ -208,62 +267,8 @@ async def pull_eflomal_results_by_language(
             status_code=403, detail="Not authorized for this assessment"
         )
 
-    ea_id = eflomal.id
-
-    # 3. Fetch all three child tables
-    dict_result = await db.execute(
-        select(EflomalDictionary).where(EflomalDictionary.assessment_id == ea_id)
-    )
-    dictionary_rows = dict_result.scalars().all()
-
-    cooc_result = await db.execute(
-        select(EflomalCooccurrence).where(EflomalCooccurrence.assessment_id == ea_id)
-    )
-    cooccurrence_rows = cooc_result.scalars().all()
-
-    twc_result = await db.execute(
-        select(EflomalTargetWordCount).where(
-            EflomalTargetWordCount.assessment_id == ea_id
-        )
-    )
-    twc_rows = twc_result.scalars().all()
-
-    # 4. Build response
-    return EflomalResultsPullResponse(
-        assessment_id=eflomal.assessment_id,
-        source_language=eflomal.source_language,
-        target_language=eflomal.target_language,
-        num_verse_pairs=eflomal.num_verse_pairs,
-        num_alignment_links=eflomal.num_alignment_links,
-        num_dictionary_entries=eflomal.num_dictionary_entries,
-        num_missing_words=eflomal.num_missing_words,
-        created_at=eflomal.created_at,
-        dictionary=[
-            EflomalDictionaryItem(
-                source_word=r.source_word,
-                target_word=r.target_word,
-                count=r.count,
-                probability=r.probability,
-            )
-            for r in dictionary_rows
-        ],
-        cooccurrences=[
-            EflomalCooccurrenceItem(
-                source_word=r.source_word,
-                target_word=r.target_word,
-                co_occur_count=r.co_occur_count,
-                aligned_count=r.aligned_count,
-            )
-            for r in cooccurrence_rows
-        ],
-        target_word_counts=[
-            EflomalTargetWordCountItem(
-                word=r.word,
-                count=r.count,
-            )
-            for r in twc_rows
-        ],
-    )
+    # 3. Fetch child tables and build response
+    return await _fetch_eflomal_response(eflomal, db)
 
 
 @router.get(
@@ -306,59 +311,5 @@ async def pull_eflomal_results(
             detail="No eflomal results found for this assessment",
         )
 
-    ea_id = eflomal.id  # FK used in child tables
-
-    # 4. Fetch all three child tables
-    dict_result = await db.execute(
-        select(EflomalDictionary).where(EflomalDictionary.assessment_id == ea_id)
-    )
-    dictionary_rows = dict_result.scalars().all()
-
-    cooc_result = await db.execute(
-        select(EflomalCooccurrence).where(EflomalCooccurrence.assessment_id == ea_id)
-    )
-    cooccurrence_rows = cooc_result.scalars().all()
-
-    twc_result = await db.execute(
-        select(EflomalTargetWordCount).where(
-            EflomalTargetWordCount.assessment_id == ea_id
-        )
-    )
-    twc_rows = twc_result.scalars().all()
-
-    # 5. Build response
-    return EflomalResultsPullResponse(
-        assessment_id=eflomal.assessment_id,
-        source_language=eflomal.source_language,
-        target_language=eflomal.target_language,
-        num_verse_pairs=eflomal.num_verse_pairs,
-        num_alignment_links=eflomal.num_alignment_links,
-        num_dictionary_entries=eflomal.num_dictionary_entries,
-        num_missing_words=eflomal.num_missing_words,
-        created_at=eflomal.created_at,
-        dictionary=[
-            EflomalDictionaryItem(
-                source_word=r.source_word,
-                target_word=r.target_word,
-                count=r.count,
-                probability=r.probability,
-            )
-            for r in dictionary_rows
-        ],
-        cooccurrences=[
-            EflomalCooccurrenceItem(
-                source_word=r.source_word,
-                target_word=r.target_word,
-                co_occur_count=r.co_occur_count,
-                aligned_count=r.aligned_count,
-            )
-            for r in cooccurrence_rows
-        ],
-        target_word_counts=[
-            EflomalTargetWordCountItem(
-                word=r.word,
-                count=r.count,
-            )
-            for r in twc_rows
-        ],
-    )
+    # 4. Fetch child tables and build response
+    return await _fetch_eflomal_response(eflomal, db)
