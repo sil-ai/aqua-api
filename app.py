@@ -16,6 +16,7 @@ from review_routes.v3.results_routes import router as results_router_v3
 from review_routes.v3.search_routes import router as search_router_v3
 from security_routes.admin_routes import router as admin_router
 from security_routes.auth_routes import router as security_router
+from train_routes.v3.train_routes import router as train_router_v3
 
 omit_previous_versions = os.getenv("OMIT_PREVIOUS_VERSIONS", False)
 
@@ -98,6 +99,7 @@ def configure_routing(app):
     app.include_router(results_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(search_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(agent_router_v3, prefix="/v3", tags=["Version 3"])
+    app.include_router(train_router_v3, prefix="/v3", tags=["Version 3"])
 
     app.include_router(
         language_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
@@ -113,6 +115,7 @@ def configure_routing(app):
     app.include_router(results_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(search_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(agent_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(train_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
 
     app.include_router(security_router, prefix="/latest", tags=["Latest"])
     app.include_router(admin_router, prefix="/latest", tags=["Latest"])
