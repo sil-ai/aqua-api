@@ -209,7 +209,7 @@ async def push_eflomal_results(
         await db.refresh(eflomal_assessment)
 
         return eflomal_assessment
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
         # Race condition: another request inserted between our check and insert.
         # Re-query and return the existing row (idempotent).
@@ -221,7 +221,15 @@ async def push_eflomal_results(
         eflomal_row = existing.scalars().first()
         if eflomal_row is not None:
             return eflomal_row
-        raise HTTPException(status_code=500, detail="Failed to store eflomal results")
+        # Not a race — likely duplicate entries in payload hitting a unique
+        # constraint on a child table (dictionary, cooccurrence, or word count).
+        constraint = getattr(exc.orig, "constraint_name", None) or ""
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate data in payload (constraint: {constraint})"
+            if constraint
+            else "Duplicate data in payload",
+        )
     except SQLAlchemyError:
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to store eflomal results")

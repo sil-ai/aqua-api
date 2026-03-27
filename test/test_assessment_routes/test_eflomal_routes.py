@@ -163,19 +163,20 @@ def _ensure_eflomal_pushed(client, regular_token1, test_eflomal_assessment_langu
 
 
 def test_pull_eflomal_results_success(
-    client, regular_token1, test_eflomal_assessment_id, _ensure_eflomal_pushed
+    client, regular_token1, _ensure_eflomal_pushed
 ):
     """Pull the full dataset and verify all three data tables are present."""
+    pushed = _ensure_eflomal_pushed
     response = client.get(
         f"{prefix}/assessment/eflomal/results",
-        params={"assessment_id": test_eflomal_assessment_id},
+        params={"assessment_id": pushed["assessment_id"]},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
     data = response.json()
 
     # Summary fields
-    assert data["assessment_id"] == test_eflomal_assessment_id
+    assert data["assessment_id"] == pushed["assessment_id"]
     assert data["num_verse_pairs"] == 100
     assert data["num_alignment_links"] == 500
     assert data["num_dictionary_entries"] == 10
@@ -252,7 +253,8 @@ def test_pull_eflomal_results_no_eflomal_data(
 ):
     """Pulling for an assessment that exists but has no eflomal results should return 404."""
     response = client.get(
-        f"{prefix}/assessment/eflomal/results/{test_eflomal_assessment_unpushed_id}",
+        f"{prefix}/assessment/eflomal/results",
+        params={"assessment_id": test_eflomal_assessment_unpushed_id},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 404
