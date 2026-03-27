@@ -4,7 +4,7 @@ import datetime
 
 import fastapi
 from fastapi import Depends, HTTPException
-from sqlalchemy import insert, select
+from sqlalchemy import desc, insert, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -83,6 +83,8 @@ async def push_eflomal_results(
         # 4. Create EflomalAssessment row
         eflomal_assessment = EflomalAssessmentModel(
             assessment_id=body.assessment_id,
+            source_language=body.source_language,
+            target_language=body.target_language,
             num_verse_pairs=body.num_verse_pairs,
             num_alignment_links=body.num_alignment_links,
             num_dictionary_entries=body.num_dictionary_entries,
@@ -167,6 +169,104 @@ async def push_eflomal_results(
 
 
 @router.get(
+    "/assessment/eflomal/results",
+    response_model=EflomalResultsPullResponse,
+)
+async def pull_eflomal_results_by_language(
+    source_language: str,
+    target_language: str,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Pull the most recent eflomal training artifacts for a language pair.
+
+    Returns the same payload as pull_eflomal_results but looked up by
+    source/target ISO 639-3 language codes instead of assessment_id.
+    """
+    # 1. Find most recent EflomalAssessment for this language pair
+    result = await db.execute(
+        select(EflomalAssessmentModel)
+        .where(
+            EflomalAssessmentModel.source_language == source_language,
+            EflomalAssessmentModel.target_language == target_language,
+        )
+        .order_by(desc(EflomalAssessmentModel.created_at))
+        .limit(1)
+    )
+    eflomal = result.scalars().first()
+    if eflomal is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No eflomal results found for this language pair",
+        )
+
+    # 2. Authorize
+    if not await is_user_authorized_for_assessment(
+        current_user.id, eflomal.assessment_id, db
+    ):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    ea_id = eflomal.id
+
+    # 3. Fetch all three child tables
+    dict_result = await db.execute(
+        select(EflomalDictionary).where(EflomalDictionary.assessment_id == ea_id)
+    )
+    dictionary_rows = dict_result.scalars().all()
+
+    cooc_result = await db.execute(
+        select(EflomalCooccurrence).where(EflomalCooccurrence.assessment_id == ea_id)
+    )
+    cooccurrence_rows = cooc_result.scalars().all()
+
+    twc_result = await db.execute(
+        select(EflomalTargetWordCount).where(
+            EflomalTargetWordCount.assessment_id == ea_id
+        )
+    )
+    twc_rows = twc_result.scalars().all()
+
+    # 4. Build response
+    return EflomalResultsPullResponse(
+        assessment_id=eflomal.assessment_id,
+        source_language=eflomal.source_language,
+        target_language=eflomal.target_language,
+        num_verse_pairs=eflomal.num_verse_pairs,
+        num_alignment_links=eflomal.num_alignment_links,
+        num_dictionary_entries=eflomal.num_dictionary_entries,
+        num_missing_words=eflomal.num_missing_words,
+        created_at=eflomal.created_at,
+        dictionary=[
+            EflomalDictionaryItem(
+                source_word=r.source_word,
+                target_word=r.target_word,
+                count=r.count,
+                probability=r.probability,
+            )
+            for r in dictionary_rows
+        ],
+        cooccurrences=[
+            EflomalCooccurrenceItem(
+                source_word=r.source_word,
+                target_word=r.target_word,
+                co_occur_count=r.co_occur_count,
+                aligned_count=r.aligned_count,
+            )
+            for r in cooccurrence_rows
+        ],
+        target_word_counts=[
+            EflomalTargetWordCountItem(
+                word=r.word,
+                count=r.count,
+            )
+            for r in twc_rows
+        ],
+    )
+
+
+@router.get(
     "/assessment/eflomal/results/{assessment_id}",
     response_model=EflomalResultsPullResponse,
 )
@@ -229,6 +329,8 @@ async def pull_eflomal_results(
     # 5. Build response
     return EflomalResultsPullResponse(
         assessment_id=eflomal.assessment_id,
+        source_language=eflomal.source_language,
+        target_language=eflomal.target_language,
         num_verse_pairs=eflomal.num_verse_pairs,
         num_alignment_links=eflomal.num_alignment_links,
         num_dictionary_entries=eflomal.num_dictionary_entries,

@@ -995,6 +995,8 @@ class EflomalResultsPushRequest(BaseModel):
     """Replaces Modal's save_artifacts(). Pushes all training data to DB."""
 
     assessment_id: int
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
     num_verse_pairs: int
     num_alignment_links: int
     num_dictionary_entries: int
@@ -1009,6 +1011,8 @@ class EflomalAssessmentOut(BaseModel):
 
     id: int
     assessment_id: int
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
     num_verse_pairs: int
     num_alignment_links: int
     num_dictionary_entries: int
@@ -1025,6 +1029,8 @@ class EflomalResultsPullResponse(BaseModel):
     """
 
     assessment_id: int
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
     num_verse_pairs: int
     num_alignment_links: int
     num_dictionary_entries: int
