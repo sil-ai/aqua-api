@@ -964,3 +964,78 @@ class TrainingJobStatusUpdate(BaseModel):
     result_metadata: Optional[Dict[str, Any]] = None
 
     model_config = {"use_enum_values": True}
+
+
+class EflomalDictionaryItem(BaseModel):
+    """Dictionary entry. Words in original form (case preserved)."""
+
+    source_word: str
+    target_word: str
+    count: int
+    probability: float
+
+
+class EflomalCooccurrenceItem(BaseModel):
+    """Co-occurrence entry. Words in normalized form (lowercase, alphanumeric)."""
+
+    source_word: str
+    target_word: str
+    co_occur_count: int
+    aligned_count: int
+
+
+class EflomalTargetWordCountItem(BaseModel):
+    """Target word frequency. Word in normalized form."""
+
+    word: str
+    count: int
+
+
+class EflomalResultsPushRequest(BaseModel):
+    """Replaces Modal's save_artifacts(). Pushes all training data to DB."""
+
+    assessment_id: int
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
+    num_verse_pairs: int
+    num_alignment_links: int
+    num_dictionary_entries: int
+    num_missing_words: int
+    dictionary: list[EflomalDictionaryItem]
+    cooccurrences: list[EflomalCooccurrenceItem]
+    target_word_counts: list[EflomalTargetWordCountItem]
+
+
+class EflomalAssessmentOut(BaseModel):
+    """Push response — summary only, not the 470K+ data rows."""
+
+    id: int
+    assessment_id: int
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
+    num_verse_pairs: int
+    num_alignment_links: int
+    num_dictionary_entries: int
+    num_missing_words: int
+    created_at: Optional[datetime.datetime] = None
+    model_config = {"from_attributes": True}
+
+
+class EflomalResultsPullResponse(BaseModel):
+    """Full eflomal training artifacts for inference consumption.
+
+    Replaces Modal's load_artifacts() — all data needed to run realtime_assess()
+    is returned in a single response for the caller to load and cache.
+    """
+
+    assessment_id: int
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
+    num_verse_pairs: int
+    num_alignment_links: int
+    num_dictionary_entries: int
+    num_missing_words: int
+    created_at: Optional[datetime.datetime] = None
+    dictionary: list[EflomalDictionaryItem]
+    cooccurrences: list[EflomalCooccurrenceItem]
+    target_word_counts: list[EflomalTargetWordCountItem]
