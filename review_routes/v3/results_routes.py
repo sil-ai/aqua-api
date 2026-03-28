@@ -1990,29 +1990,6 @@ async def get_alignment_scores(
     result_data = await db.execute(base_query_paginated)
     result_data = result_data.scalars().all()
 
-    result_list = []
-    for row in result_data:
-        # Constructing the verse reference string
-        vref = f"{row.book}"
-        if hasattr(row, "chapter") and row.chapter is not None:
-            vref += f" {row.chapter}"
-            if hasattr(row, "verse") and row.verse is not None:
-                vref += f":{row.verse}"
-        # Building the Result object
-        result_obj = WordAlignment(
-            id=row.id if hasattr(row, "id") else None,
-            assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
-            vref=vref,
-            source=str(row.source) if hasattr(row, "source") else None,
-            target=str(row.target) if hasattr(row, "target") else None,
-            score=row.score,
-            flag=row.flag if hasattr(row, "flag") else None,
-            note=row.note if hasattr(row, "note") else None,
-            hide=row.hide if hasattr(row, "hide") else None,
-        )
-        # Add the Result object to the result list
-        result_list.append(result_obj)
-
     duration = round(time.perf_counter() - request_start, 2)
     logger.info(
         f"get_alignment_scores completed in {duration}s",
@@ -2026,7 +2003,7 @@ async def get_alignment_scores(
             "page": page,
             "page_size": page_size,
             "total_count": total_count,
-            "results_returned": len(result_list),
+            "results_returned": len(result_data),
             "duration_s": duration,
         },
     )
