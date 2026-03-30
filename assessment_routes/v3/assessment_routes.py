@@ -260,6 +260,13 @@ async def add_assessment(
             status_code=400, detail=f"Assessment type {a.type} requires a reference_id."
         )
 
+    if a.type == "semantic-similarity" and a.train:
+        if not a.source_language or not a.target_language:
+            raise HTTPException(
+                status_code=400,
+                detail="semantic-similarity training requires source_language and target_language",
+            )
+
     # Parse extra_kwargs JSON string into a validated dict
     parsed_kwargs = None
     if extra_kwargs is not None:

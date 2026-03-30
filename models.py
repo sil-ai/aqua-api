@@ -282,6 +282,17 @@ class AssessmentOut(BaseModel):
     }
 
 
+class SemanticSimilarityRequest(BaseModel):
+    text1: str
+    text2: str
+    source_language: str
+    target_language: str
+
+
+class SemanticSimilarityResponse(BaseModel):
+    score: float
+
+
 # Results model to record in the DB.
 
 
