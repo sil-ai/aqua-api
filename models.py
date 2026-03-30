@@ -978,7 +978,7 @@ class TrainingJobOut(BaseModel):
 
 class InferenceReadiness(BaseModel):
     ready: bool
-    pending_training: List[str] = []
+    pending_training: List[str] = Field(default_factory=list)
 
 
 class TrainingResponse(BaseModel):

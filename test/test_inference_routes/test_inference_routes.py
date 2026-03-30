@@ -5,7 +5,7 @@ prefix = "v3"
 
 
 def test_inference_success(client, regular_token1):
-    """POST /assessment/inference/semantic-similarity returns score."""
+    """POST /inference/semantic-similarity returns score."""
     with patch(
         "inference_routes.v3.inference_routes.modal.Function"
     ) as mock_function_cls:
