@@ -310,6 +310,57 @@ async def list_training_jobs(
     return [TrainingJobOut.model_validate(j) for j in jobs]
 
 
+@router.get("/train/status", response_model=TrainingResponse)
+async def get_training_status(
+    session_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Get the status of a training session by session_id."""
+    stmt = select(TrainingJob).where(
+        TrainingJob.session_id == session_id,
+        TrainingJob.deleted.is_(False),
+    )
+
+    if not current_user.is_admin:
+        version_ids = await _get_accessible_version_ids(current_user, db)
+        SourceRevision = aliased(BibleRevision)
+        TargetRevision = aliased(BibleRevision)
+        stmt = (
+            stmt.join(
+                SourceRevision,
+                SourceRevision.id == TrainingJob.source_revision_id,
+            )
+            .join(
+                TargetRevision,
+                TargetRevision.id == TrainingJob.target_revision_id,
+            )
+            .where(
+                SourceRevision.bible_version_id.in_(version_ids),
+                TargetRevision.bible_version_id.in_(version_ids),
+            )
+        )
+
+    result = await db.execute(stmt)
+    jobs = result.scalars().all()
+
+    if not jobs:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No training jobs found for session_id={session_id}",
+        )
+
+    readiness = await _compute_inference_readiness(
+        jobs[0].source_revision_id, jobs[0].target_revision_id, db
+    )
+
+    return TrainingResponse(
+        session_id=session_id,
+        training_jobs=[TrainingJobOut.model_validate(j) for j in jobs],
+        inference_readiness=readiness,
+    )
+
+
 @router.get("/train/{job_id}", response_model=TrainingJobOut)
 async def get_training_job(
     job_id: int,

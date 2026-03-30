@@ -655,3 +655,109 @@ def test_dispatch_failure_marks_job_failed(
     for job in _get_jobs(response):
         assert job["status"] == "failed"
         assert "dispatch_failed" in job["status_detail"]
+
+
+# -- Training status endpoint tests --
+
+
+def test_get_training_status(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """GET /train/status?session_id=... returns session status with inference readiness."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "status_endpoint_test"},
+    )
+    session_id = create_resp.json()["session_id"]
+
+    response = client.get(
+        f"{prefix}/train/status",
+        params={"session_id": session_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == session_id
+    assert len(data["training_jobs"]) == 2
+    assert "inference_readiness" in data
+    assert "semantic-similarity" in data["inference_readiness"]
+
+
+def test_get_training_status_not_found(client, regular_token1):
+    """GET /train/status with unknown session_id returns 404."""
+    response = client.get(
+        f"{prefix}/train/status",
+        params={"session_id": "nonexistent-uuid"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_get_training_status_no_auth(client):
+    """GET /train/status without auth returns 401."""
+    response = client.get(
+        f"{prefix}/train/status",
+        params={"session_id": "some-uuid"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_get_training_status_readiness_updates(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Inference readiness reflects completed training jobs."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "readiness_update_test"},
+    )
+    data = create_resp.json()
+    session_id = data["session_id"]
+
+    # Initially not ready
+    status_resp = client.get(
+        f"{prefix}/train/status",
+        params={"session_id": session_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert (
+        status_resp.json()["inference_readiness"]["semantic-similarity"]["ready"]
+        is False
+    )
+
+    # Mark the semantic-similarity job as completed
+    sem_sim_job = [
+        j for j in data["training_jobs"] if j["type"] == "semantic-similarity"
+    ][0]
+    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
+        for next_status in [
+            "preparing",
+            "training",
+            "downloading",
+            "uploading",
+            "completed",
+        ]:
+            client.patch(
+                f"{prefix}/train/{sem_sim_job['id']}/status",
+                json={"status": next_status},
+                headers=_webhook_headers(),
+            )
+
+    # Now check readiness again
+    status_resp = client.get(
+        f"{prefix}/train/status",
+        params={"session_id": session_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert (
+        status_resp.json()["inference_readiness"]["semantic-similarity"]["ready"]
+        is True
+    )
