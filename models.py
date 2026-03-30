@@ -922,6 +922,7 @@ class AgentTranslationOut(BaseModel):
 
 class TrainingType(str, Enum):
     serval_nmt = "serval-nmt"
+    semantic_similarity = "semantic-similarity"
 
 
 class TrainingStatus(str, Enum):
@@ -938,10 +939,7 @@ class TrainingStatus(str, Enum):
 class TrainingJobIn(BaseModel):
     source_revision_id: int
     target_revision_id: int
-    type: TrainingType
     options: Optional[Dict[str, Any]] = None
-
-    model_config = {"use_enum_values": True}
 
 
 class TrainingJobOut(BaseModel):

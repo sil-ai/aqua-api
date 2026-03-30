@@ -1,5 +1,6 @@
 __version__ = "v3"
 
+import asyncio
 import logging
 import os
 from datetime import datetime
@@ -25,7 +26,7 @@ from database.models import (
     UserGroup,
     VerseText,
 )
-from models import TrainingJobIn, TrainingJobOut, TrainingJobStatusUpdate
+from models import TrainingJobIn, TrainingJobOut, TrainingJobStatusUpdate, TrainingType
 from security_routes.auth_routes import get_current_user
 from utils.verse_range_utils import merge_verse_ranges
 
@@ -80,13 +81,13 @@ async def _get_accessible_version_ids(
     return [row[0] for row in result.all()]
 
 
-@router.post("/train", response_model=TrainingJobOut)
+@router.post("/train", response_model=List[TrainingJobOut])
 async def create_training_job(
     job_in: TrainingJobIn,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Create and dispatch a training job."""
+    """Create and dispatch training jobs for all types in parallel."""
     # Validate both revision IDs exist
     source_rev = await db.get(BibleRevision, job_in.source_revision_id)
     if not source_rev:
@@ -107,55 +108,92 @@ async def create_training_job(
     source_language = source_version.iso_language
     target_language = target_version.iso_language
 
-    # Duplicate check: same revisions, type, options, and non-terminal status
-    dup_stmt = select(TrainingJob).where(
-        TrainingJob.source_revision_id == job_in.source_revision_id,
-        TrainingJob.target_revision_id == job_in.target_revision_id,
-        TrainingJob.type == job_in.type,
-        TrainingJob.deleted.is_(False),
-        TrainingJob.status.notin_(list(TERMINAL_STATUSES)),
-    )
-    dup_result = await db.execute(dup_stmt)
-    for existing_job in dup_result.scalars().all():
-        if existing_job.options == job_in.options:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Active training job already exists (id={existing_job.id})",
-            )
+    modal_env = os.getenv("MODAL_ENV", "main")
+    training_jobs = []
 
-    # Create training job record
-    training_job = TrainingJob(
-        type=job_in.type,
-        source_revision_id=job_in.source_revision_id,
-        target_revision_id=job_in.target_revision_id,
-        source_language=source_language,
-        target_language=target_language,
-        status="queued",
-        options=job_in.options,
-        requested_time=datetime.utcnow(),
-        owner_id=current_user.id,
-    )
-    db.add(training_job)
-    await db.commit()
-    await db.refresh(training_job)
-
-    # Dispatch to Modal runner
-    job_out = TrainingJobOut.model_validate(training_job)
-    try:
-        modal_env = os.getenv("MODAL_ENV", "main")
-        f = modal.Function.from_name(
-            "train-runner", "run_training_job", environment_name=modal_env
+    for training_type in TrainingType:
+        # Duplicate check per type
+        dup_stmt = select(TrainingJob).where(
+            TrainingJob.source_revision_id == job_in.source_revision_id,
+            TrainingJob.target_revision_id == job_in.target_revision_id,
+            TrainingJob.type == training_type.value,
+            TrainingJob.deleted.is_(False),
+            TrainingJob.status.notin_(list(TERMINAL_STATUSES)),
         )
-        await f.spawn.aio(job_out.model_dump(mode="json"))
-    except Exception as e:
-        logger.error(f"Error dispatching training job {training_job.id}: {e}")
-        training_job.status = "failed"
-        training_job.status_detail = f"dispatch_failed: {type(e).__name__}: {e}"
-        training_job.end_time = datetime.utcnow()
-        await db.commit()
-        await db.refresh(training_job)
+        dup_result = await db.execute(dup_stmt)
+        duplicate = False
+        for existing_job in dup_result.scalars().all():
+            if existing_job.options == job_in.options:
+                duplicate = True
+                break
+        if duplicate:
+            logger.info(
+                f"Skipping {training_type.value}: active job already exists"
+            )
+            continue
 
-    return TrainingJobOut.model_validate(training_job)
+        # Create training job record
+        training_job = TrainingJob(
+            type=training_type.value,
+            source_revision_id=job_in.source_revision_id,
+            target_revision_id=job_in.target_revision_id,
+            source_language=source_language,
+            target_language=target_language,
+            status="queued",
+            options=job_in.options,
+            requested_time=datetime.utcnow(),
+            owner_id=current_user.id,
+        )
+        db.add(training_job)
+        training_jobs.append(training_job)
+
+    if not training_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Active training jobs already exist for all types",
+        )
+
+    await db.commit()
+    for job in training_jobs:
+        await db.refresh(job)
+
+    # Dispatch all jobs to Modal in parallel
+    async def dispatch_job(job: TrainingJob):
+        try:
+            if job.type == TrainingType.semantic_similarity.value:
+                f = modal.Function.from_name(
+                    "semantic-similarity", "assess", environment_name=modal_env
+                )
+                payload = {
+                    "id": job.id,
+                    "revision_id": job_in.source_revision_id,
+                    "reference_id": job_in.target_revision_id,
+                    "type": "semantic-similarity",
+                    "train": True,
+                    "source_language": source_language,
+                    "target_language": target_language,
+                }
+                if job_in.options:
+                    payload["kwargs"] = job_in.options
+                await f.spawn.aio(payload, AQUA_DB=os.getenv("AQUA_DB", ""))
+            else:
+                f = modal.Function.from_name(
+                    "train-runner", "run_training_job", environment_name=modal_env
+                )
+                job_out = TrainingJobOut.model_validate(job)
+                await f.spawn.aio(job_out.model_dump(mode="json"))
+        except Exception as e:
+            logger.error(f"Error dispatching training job {job.id} ({job.type}): {e}")
+            job.status = "failed"
+            job.status_detail = f"dispatch_failed: {type(e).__name__}: {e}"
+            job.end_time = datetime.utcnow()
+
+    await asyncio.gather(*(dispatch_job(job) for job in training_jobs))
+    await db.commit()
+    for job in training_jobs:
+        await db.refresh(job)
+
+    return [TrainingJobOut.model_validate(job) for job in training_jobs]
 
 
 @router.get("/train", response_model=List[TrainingJobOut])
