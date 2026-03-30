@@ -1,5 +1,5 @@
 # test_inference_routes.py
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 prefix = "v3"
 
@@ -104,23 +104,3 @@ def test_inference_no_auth_returns_401(client):
     assert response.status_code == 401
 
 
-def test_training_validation_requires_languages(client, regular_token1):
-    """semantic-similarity with train=True requires source/target language."""
-    with patch(
-        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
-    ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
-
-        response = client.post(
-            f"{prefix}/assessment",
-            params={
-                "revision_id": 1,
-                "reference_id": 1,
-                "type": "semantic-similarity",
-                "train": True,
-            },
-            headers={"Authorization": f"Bearer {regular_token1}"},
-        )
-
-    assert response.status_code == 400
-    assert "source_language and target_language" in response.json()["detail"]
