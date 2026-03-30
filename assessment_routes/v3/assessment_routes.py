@@ -144,7 +144,7 @@ async def get_assessments(
                 ReferenceRevision, ReferenceRevision.id == Assessment.reference_id
             )
             .filter(
-                Assessment.deleted.is_(False),
+                Assessment.deleted.is_not(True),
                 BibleRevision.bible_version_id.in_(version_ids),
                 or_(
                     Assessment.reference_id.is_(None),
@@ -290,7 +290,7 @@ async def add_assessment(
                 Assessment.revision_id == a.revision_id,
                 Assessment.type == a.type,
                 Assessment.status == "finished",
-                Assessment.deleted.is_(False),
+                Assessment.deleted.is_not(True),
             )
             .order_by(Assessment.end_time.desc())
             .limit(1)
@@ -327,7 +327,7 @@ async def add_assessment(
                 Assessment.revision_id == a.revision_id,
                 Assessment.type == a.type,
                 Assessment.status.in_(["queued", "running"]),
-                Assessment.deleted.is_(False),
+                Assessment.deleted.is_not(True),
                 Assessment.requested_time > stale_cutoff,
             )
             .limit(1)
