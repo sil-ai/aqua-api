@@ -72,7 +72,7 @@ async def _compute_inference_readiness(
     stmt = select(TrainingJob.type).where(
         TrainingJob.source_revision_id == source_revision_id,
         TrainingJob.target_revision_id == target_revision_id,
-        TrainingJob.deleted.is_(False),
+        TrainingJob.deleted.is_not(True),
         TrainingJob.status.in_(list(COMPLETED_STATUSES)),
     )
     result = await db.execute(stmt)
@@ -162,6 +162,15 @@ async def create_training_job(
     source_language = source_version.iso_language
     target_language = target_version.iso_language
 
+    # Auth: non-admin users must have group access to both bible versions
+    if not current_user.is_admin:
+        version_ids = await _get_accessible_version_ids(current_user, db)
+        if source_version.id not in version_ids or target_version.id not in version_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access one or both bible versions for training",
+            )
+
     modal_env = os.getenv("MODAL_ENV", "main")
     session_id = str(uuid.uuid4())
     training_jobs = []
@@ -173,7 +182,7 @@ async def create_training_job(
             TrainingJob.source_revision_id == job_in.source_revision_id,
             TrainingJob.target_revision_id == job_in.target_revision_id,
             TrainingJob.type == training_type.value,
-            TrainingJob.deleted.is_(False),
+            TrainingJob.deleted.is_not(True),
             TrainingJob.status.notin_(list(TERMINAL_STATUSES)),
         )
         dup_result = await db.execute(dup_stmt)
@@ -275,7 +284,7 @@ async def list_training_jobs(
     current_user: UserModel = Depends(get_current_user),
 ):
     """List training jobs accessible to the current user."""
-    stmt = select(TrainingJob).where(TrainingJob.deleted.is_(False))
+    stmt = select(TrainingJob).where(TrainingJob.deleted.is_not(True))
 
     if status_filter:
         stmt = stmt.where(TrainingJob.status == status_filter)
@@ -319,7 +328,7 @@ async def get_training_status(
     """Get the status of a training session by session_id."""
     stmt = select(TrainingJob).where(
         TrainingJob.session_id == session_id,
-        TrainingJob.deleted.is_(False),
+        TrainingJob.deleted.is_not(True),
     )
 
     if not current_user.is_admin:
