@@ -1,8 +1,8 @@
 __version__ = "v3"
 
 import asyncio
-import logging
 import os
+import socket
 import uuid
 from datetime import datetime
 from typing import List, Optional
@@ -36,12 +36,13 @@ from models import (
     TrainingType,
 )
 from security_routes.auth_routes import get_current_user
+from utils.logging_config import setup_logger
 from utils.verse_range_utils import merge_verse_ranges
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+container_id = socket.gethostname()
+logger = setup_logger(__name__, container_id=container_id)
 
 router = fastapi.APIRouter()
 
@@ -89,7 +90,12 @@ async def _compute_inference_readiness(
 
 async def verify_webhook_token(authorization: str = Header(...)) -> None:
     """Verify the Modal webhook token from Authorization header."""
-    expected_token = os.getenv("MODAL_WEBHOOK_TOKEN", "")
+    expected_token = os.getenv("MODAL_WEBHOOK_TOKEN")
+    if not expected_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook token not configured",
+        )
     if not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -142,13 +148,24 @@ async def create_training_job(
 
     # Look up languages via BibleVersion
     source_version = await db.get(BibleVersion, source_rev.bible_version_id)
+    if not source_version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bible version for source revision {job_in.source_revision_id} not found",
+        )
     target_version = await db.get(BibleVersion, target_rev.bible_version_id)
+    if not target_version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bible version for target revision {job_in.target_revision_id} not found",
+        )
     source_language = source_version.iso_language
     target_language = target_version.iso_language
 
     modal_env = os.getenv("MODAL_ENV", "main")
     session_id = str(uuid.uuid4())
     training_jobs = []
+    skipped_job_ids = []
 
     for training_type in TrainingType:
         # Duplicate check per type
@@ -164,6 +181,7 @@ async def create_training_job(
         for existing_job in dup_result.scalars().all():
             if existing_job.options == job_in.options:
                 duplicate = True
+                skipped_job_ids.append(existing_job.id)
                 break
         if duplicate:
             logger.info(f"Skipping {training_type.value}: active job already exists")
@@ -188,7 +206,7 @@ async def create_training_job(
     if not training_jobs:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Active training jobs already exist for all types",
+            detail=f"Active training jobs already exist for all types (job ids: {skipped_job_ids})",
         )
 
     await db.commit()
@@ -197,6 +215,7 @@ async def create_training_job(
 
     # Dispatch all jobs to Modal in parallel
     async def dispatch_job(job: TrainingJob):
+        """Returns (job, exception) tuple. Does NOT mutate the DB session."""
         try:
             if job.type == TrainingType.semantic_similarity.value:
                 f = modal.Function.from_name(
@@ -213,20 +232,24 @@ async def create_training_job(
                 }
                 if job_in.options:
                     payload["kwargs"] = job_in.options
-                await f.spawn.aio(payload, AQUA_DB=os.getenv("AQUA_DB", ""))
+                await f.spawn.aio(payload)
             else:
                 f = modal.Function.from_name(
                     "train-runner", "run_training_job", environment_name=modal_env
                 )
                 job_out = TrainingJobOut.model_validate(job)
                 await f.spawn.aio(job_out.model_dump(mode="json"))
+            return job, None
         except Exception as e:
             logger.error(f"Error dispatching training job {job.id} ({job.type}): {e}")
-            job.status = "failed"
-            job.status_detail = f"dispatch_failed: {type(e).__name__}: {e}"
-            job.end_time = datetime.utcnow()
+            return job, e
 
-    await asyncio.gather(*(dispatch_job(job) for job in training_jobs))
+    results = await asyncio.gather(*(dispatch_job(j) for j in training_jobs))
+    for job, exc in results:
+        if exc:
+            job.status = "failed"
+            job.status_detail = f"dispatch_failed: {type(exc).__name__}: {exc}"
+            job.end_time = datetime.utcnow()
     await db.commit()
     for job in training_jobs:
         await db.refresh(job)

@@ -283,10 +283,21 @@ class AssessmentOut(BaseModel):
 
 
 class SemanticSimilarityRequest(BaseModel):
-    text1: str
-    text2: str
-    source_language: str
-    target_language: str
+    text1: str = Field(..., max_length=10000)
+    text2: str = Field(..., max_length=10000)
+    source_language: str = Field(..., max_length=10)
+    target_language: str = Field(..., max_length=10)
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "text1": "Hapo mwanzo Mungu aliumba mbingu na dunia.",
+                "text2": "In the beginning God created the heavens and the earth.",
+                "source_language": "swh",
+                "target_language": "eng",
+            }
+        }
+    }
 
 
 class SemanticSimilarityResponse(BaseModel):

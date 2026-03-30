@@ -49,7 +49,7 @@ def test_inference_modal_error_returns_503(client, regular_token1):
         )
 
     assert response.status_code == 503
-    assert "Inference service error" in response.json()["detail"]
+    assert "temporarily unavailable" in response.json()["detail"]
 
 
 def test_inference_no_model_returns_422(client, regular_token1):

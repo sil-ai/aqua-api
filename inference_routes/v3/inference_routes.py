@@ -47,10 +47,10 @@ async def semantic_similarity_inference(
             target_language=request.target_language,
         )
     except Exception as e:
-        logger.error(f"Semantic similarity inference failed: {e}")
+        logger.error(f"Semantic similarity inference failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Inference service error: {type(e).__name__}: {e}",
+            detail="Inference service temporarily unavailable. Please try again later.",
         ) from e
 
     if "error" in result:
