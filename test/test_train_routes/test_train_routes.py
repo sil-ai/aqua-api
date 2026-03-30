@@ -34,12 +34,14 @@ def _create_training_jobs_via_api(client, token, source_rev, target_rev, options
     return response
 
 
-def _get_job_by_type(response, job_type="serval-nmt"):
-    """Extract a specific job type from the create response list."""
-    for job in response.json():
-        if job["type"] == job_type:
-            return job
-    return None
+def _get_jobs(response):
+    """Extract training_jobs list from the create response."""
+    return response.json()["training_jobs"]
+
+
+def _get_first_job_id(response):
+    """Extract the first training job ID from the create response."""
+    return response.json()["training_jobs"][0]["id"]
 
 
 def test_create_training_job_success(
@@ -52,20 +54,26 @@ def test_create_training_job_success(
 
     assert response.status_code == 200
     data = response.json()
-    assert isinstance(data, list)
-    assert len(data) == 2  # serval-nmt and semantic-similarity
+    jobs = data["training_jobs"]
+    assert len(jobs) == 2  # serval-nmt and semantic-similarity
 
-    types = {job["type"] for job in data}
+    types = {job["type"] for job in jobs}
     assert "serval-nmt" in types
     assert "semantic-similarity" in types
 
-    for job in data:
+    for job in jobs:
         assert job["source_revision_id"] == test_revision_id
         assert job["target_revision_id"] == test_revision_id_2
         assert job["status"] == "queued"
         assert job["id"] is not None
         assert job["source_language"] == "eng"
         assert job["target_language"] == "eng"
+
+    # Check inference readiness
+    readiness = data["inference_readiness"]
+    assert "semantic-similarity" in readiness
+    assert readiness["semantic-similarity"]["ready"] is False
+    assert "semantic-similarity" in readiness["semantic-similarity"]["pending_training"]
 
 
 def test_create_training_job_invalid_revision(client, regular_token1, test_revision_id):
@@ -168,7 +176,7 @@ def test_get_training_job_single(
         test_revision_id_2,
         options={"tag": "single_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     response = client.get(
         f"{prefix}/train/{job_id}",
@@ -198,7 +206,7 @@ def test_patch_status_valid_transitions(
         test_revision_id_2,
         options={"tag": "status_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         # queued -> preparing
@@ -269,7 +277,7 @@ def test_patch_status_invalid_transition(
         test_revision_id_2,
         options={"tag": "invalid_transition_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         # queued -> training (skipping preparing) should fail
@@ -300,7 +308,7 @@ def test_patch_status_terminal_rejected(
         test_revision_id_2,
         options={"tag": "terminal_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         # Move to failed
@@ -330,7 +338,7 @@ def test_patch_status_failed_from_any(
         test_revision_id_2,
         options={"tag": "failed_any_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         resp = client.patch(
@@ -353,7 +361,7 @@ def test_patch_status_completed_with_errors(
         test_revision_id_2,
         options={"tag": "completed_errors_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         # Walk to uploading
@@ -387,7 +395,7 @@ def test_patch_status_invalid_webhook_token(
         test_revision_id_2,
         options={"tag": "bad_token_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         resp = client.patch(
@@ -465,7 +473,7 @@ def test_get_training_data_filter(
         test_revision_id_2,
         options={"tag": "data_filter_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         # Default (filter) - should exclude range verses
@@ -497,7 +505,7 @@ def test_get_training_data_merge(
         test_revision_id_2,
         options={"tag": "data_merge_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         resp = client.get(
@@ -521,7 +529,7 @@ def test_get_training_data_empty(
         test_revision_id_2,
         options={"tag": "data_empty_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         resp = client.get(
@@ -548,7 +556,7 @@ def test_delete_training_job_terminal(
         test_revision_id_2,
         options={"tag": "delete_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     # Move to failed (terminal)
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
@@ -584,7 +592,7 @@ def test_delete_training_job_active_rejected(
         test_revision_id_2,
         options={"tag": "delete_active_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     resp = client.delete(
         f"{prefix}/train/{job_id}",
@@ -604,7 +612,7 @@ def test_delete_training_job_unauthorized(
         test_revision_id_2,
         options={"tag": "delete_unauth_test"},
     )
-    job_id = create_resp.json()[0]["id"]
+    job_id = _get_first_job_id(create_resp)
 
     # Move to failed
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
@@ -644,6 +652,6 @@ def test_dispatch_failure_marks_job_failed(
         )
 
     assert response.status_code == 200
-    for job in response.json():
+    for job in _get_jobs(response):
         assert job["status"] == "failed"
         assert "dispatch_failed" in job["status_detail"]

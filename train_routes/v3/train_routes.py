@@ -26,7 +26,14 @@ from database.models import (
     UserGroup,
     VerseText,
 )
-from models import TrainingJobIn, TrainingJobOut, TrainingJobStatusUpdate, TrainingType
+from models import (
+    InferenceReadiness,
+    TrainingJobIn,
+    TrainingJobOut,
+    TrainingJobStatusUpdate,
+    TrainingResponse,
+    TrainingType,
+)
 from security_routes.auth_routes import get_current_user
 from utils.verse_range_utils import merge_verse_ranges
 
@@ -47,6 +54,36 @@ VALID_TRANSITIONS = {
 }
 
 TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed"}
+COMPLETED_STATUSES = {"completed", "completed_with_errors"}
+
+# Maps each inference type to the training types it requires
+INFERENCE_DEPENDENCIES = {
+    "semantic-similarity": ["semantic-similarity"],
+}
+
+
+async def _compute_inference_readiness(
+    source_revision_id: int, target_revision_id: int, db: AsyncSession
+) -> dict:
+    """Check which inference types are ready based on completed training jobs."""
+    # Find all completed training jobs for this revision pair
+    stmt = select(TrainingJob.type).where(
+        TrainingJob.source_revision_id == source_revision_id,
+        TrainingJob.target_revision_id == target_revision_id,
+        TrainingJob.deleted.is_(False),
+        TrainingJob.status.in_(list(COMPLETED_STATUSES)),
+    )
+    result = await db.execute(stmt)
+    completed_types = {row[0] for row in result.all()}
+
+    readiness = {}
+    for inference_type, required_training in INFERENCE_DEPENDENCIES.items():
+        pending = [t for t in required_training if t not in completed_types]
+        readiness[inference_type] = InferenceReadiness(
+            ready=len(pending) == 0,
+            pending_training=pending,
+        )
+    return readiness
 
 
 async def verify_webhook_token(authorization: str = Header(...)) -> None:
@@ -81,7 +118,7 @@ async def _get_accessible_version_ids(
     return [row[0] for row in result.all()]
 
 
-@router.post("/train", response_model=List[TrainingJobOut])
+@router.post("/train", response_model=TrainingResponse)
 async def create_training_job(
     job_in: TrainingJobIn,
     db: AsyncSession = Depends(get_db),
@@ -193,7 +230,14 @@ async def create_training_job(
     for job in training_jobs:
         await db.refresh(job)
 
-    return [TrainingJobOut.model_validate(job) for job in training_jobs]
+    readiness = await _compute_inference_readiness(
+        job_in.source_revision_id, job_in.target_revision_id, db
+    )
+
+    return TrainingResponse(
+        training_jobs=[TrainingJobOut.model_validate(job) for job in training_jobs],
+        inference_readiness=readiness,
+    )
 
 
 @router.get("/train", response_model=List[TrainingJobOut])

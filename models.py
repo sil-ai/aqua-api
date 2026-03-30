@@ -964,6 +964,16 @@ class TrainingJobOut(BaseModel):
     model_config = {"from_attributes": True, "use_enum_values": True}
 
 
+class InferenceReadiness(BaseModel):
+    ready: bool
+    pending_training: List[str] = []
+
+
+class TrainingResponse(BaseModel):
+    training_jobs: List[TrainingJobOut]
+    inference_readiness: Dict[str, InferenceReadiness]
+
+
 class TrainingJobStatusUpdate(BaseModel):
     status: TrainingStatus
     status_detail: Optional[str] = None
