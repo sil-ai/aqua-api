@@ -227,6 +227,10 @@ async def add_assessment(
         None,
         description="JSON-encoded dict of extra keyword arguments to pass to the assessment function",
     ),
+    force: bool = Query(
+        False,
+        description="Force rerun even if a completed assessment already exists",
+    ),
     return_all_results: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -277,6 +281,33 @@ async def add_assessment(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         a.kwargs = parsed_kwargs
+
+    # Check for already-completed assessment (force=true bypasses this)
+    if not force:
+        completed_stmt = (
+            select(Assessment)
+            .where(
+                Assessment.revision_id == a.revision_id,
+                Assessment.type == a.type,
+                Assessment.status == "completed",
+                Assessment.deleted.is_not(True),
+            )
+            .order_by(Assessment.end_time.desc())
+            .limit(1)
+        )
+        if a.reference_id is not None:
+            completed_stmt = completed_stmt.where(
+                Assessment.reference_id == a.reference_id
+            )
+        else:
+            completed_stmt = completed_stmt.where(Assessment.reference_id.is_(None))
+        result = await db.execute(completed_stmt)
+        existing = result.scalars().first()
+        if existing is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Assessment already completed (id={existing.id}). Use force=true to rerun.",
+            )
 
     # Check for duplicate in-progress assessment (admins can bypass)
     if not current_user.is_admin:

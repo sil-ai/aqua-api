@@ -657,3 +657,136 @@ def test_duplicate_assessment_admin_bypass(
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert second.status_code == 200
+
+
+def test_completed_assessment_returns_409(
+    client, regular_token1, db_session, test_db_session
+):
+    """POST assessment that already completed returns 409 with existing ID."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    assessment_data = {"revision_id": revision_id, "type": "sentence-length"}
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark the assessment as completed
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "completed"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        second = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409
+        assert str(first_id) in second.json()["detail"]
+        assert "already completed" in second.json()["detail"]
+
+
+def test_completed_assessment_force_rerun(
+    client, regular_token1, db_session, test_db_session
+):
+    """force=true allows rerunning a completed assessment."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    assessment_data = {"revision_id": revision_id, "type": "sentence-length"}
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark the assessment as completed
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "completed"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # force=true should allow rerun
+        second = client.post(
+            f"{prefix}/assessment",
+            params={**assessment_data, "force": True},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 200
+        second_id = second.json()[0]["id"]
+        assert second_id != first_id
+
+
+def test_completed_assessment_different_type_allowed(
+    client, regular_token1, db_session, test_db_session
+):
+    """Completed assessment of different type should not block."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as completed
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "completed"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Different type should succeed
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "semantic-similarity",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 200
