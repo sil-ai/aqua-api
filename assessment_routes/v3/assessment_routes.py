@@ -289,8 +289,8 @@ async def add_assessment(
             .where(
                 Assessment.revision_id == a.revision_id,
                 Assessment.type == a.type,
-                Assessment.status == "completed",
-                Assessment.deleted.is_not(True),
+                Assessment.status == "finished",
+                Assessment.deleted.is_(False),
             )
             .order_by(Assessment.end_time.desc())
             .limit(1)
@@ -304,6 +304,15 @@ async def add_assessment(
         result = await db.execute(completed_stmt)
         existing = result.scalars().first()
         if existing is not None:
+            logger.info(
+                "Blocked duplicate of finished assessment",
+                extra={
+                    "existing_id": existing.id,
+                    "user_id": current_user.id,
+                    "revision_id": a.revision_id,
+                    "type": a.type,
+                },
+            )
             raise HTTPException(
                 status_code=409,
                 detail=f"Assessment already completed (id={existing.id}). Use force=true to rerun.",
@@ -318,7 +327,7 @@ async def add_assessment(
                 Assessment.revision_id == a.revision_id,
                 Assessment.type == a.type,
                 Assessment.status.in_(["queued", "running"]),
-                Assessment.deleted.is_not(True),
+                Assessment.deleted.is_(False),
                 Assessment.requested_time > stale_cutoff,
             )
             .limit(1)

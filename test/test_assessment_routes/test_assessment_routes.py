@@ -683,11 +683,11 @@ def test_completed_assessment_returns_409(
         assert first.status_code == 200
         first_id = first.json()[0]["id"]
 
-        # Mark the assessment as completed
+        # Mark the assessment as finished
         assessment = (
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
-        assessment.status = "completed"
+        assessment.status = "finished"
         assessment.end_time = datetime.now()
         db_session.commit()
 
@@ -725,11 +725,11 @@ def test_completed_assessment_force_rerun(
         assert first.status_code == 200
         first_id = first.json()[0]["id"]
 
-        # Mark the assessment as completed
+        # Mark the assessment as finished
         assessment = (
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
-        assessment.status = "completed"
+        assessment.status = "finished"
         assessment.end_time = datetime.now()
         db_session.commit()
 
@@ -771,11 +771,11 @@ def test_completed_assessment_different_type_allowed(
         assert first.status_code == 200
         first_id = first.json()[0]["id"]
 
-        # Mark as completed
+        # Mark as finished
         assessment = (
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
-        assessment.status = "completed"
+        assessment.status = "finished"
         assessment.end_time = datetime.now()
         db_session.commit()
 
@@ -790,3 +790,100 @@ def test_completed_assessment_different_type_allowed(
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
         assert second.status_code == 200
+
+
+def test_completed_assessment_different_kwargs_blocked(
+    client, regular_token1, db_session, test_db_session
+):
+    """Finished assessment with different kwargs still blocks (same type+revision)."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"top_k": 5}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Different kwargs on same type+revision still blocked
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"top_k": 10}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409
+        assert str(first_id) in second.json()["detail"]
+
+
+def test_completed_assessment_admin_also_blocked(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """Admin users are also blocked by completed assessment check (must use force)."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    assessment_data = {"revision_id": revision_id, "type": "sentence-length"}
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Admin without force should still be blocked
+        second = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert second.status_code == 409
+
+        # Admin with force should succeed
+        third = client.post(
+            f"{prefix}/assessment",
+            params={**assessment_data, "force": True},
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert third.status_code == 200
