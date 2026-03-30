@@ -960,6 +960,7 @@ class TrainingJobOut(BaseModel):
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
+    session_id: Optional[str] = None
 
     model_config = {"from_attributes": True, "use_enum_values": True}
 
@@ -970,6 +971,7 @@ class InferenceReadiness(BaseModel):
 
 
 class TrainingResponse(BaseModel):
+    session_id: str
     training_jobs: List[TrainingJobOut]
     inference_readiness: Dict[str, InferenceReadiness]
 

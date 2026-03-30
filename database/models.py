@@ -189,6 +189,8 @@ class TrainingJob(Base):
     end_time = Column(TIMESTAMP, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
+    session_id = Column(Text, nullable=True)
+
     deleted = Column(Boolean, default=False)
     deleted_at = Column(TIMESTAMP, nullable=True)
 
@@ -207,6 +209,7 @@ class TrainingJob(Base):
             "type",
             "status",
         ),
+        Index("ix_training_job_session_id", "session_id"),
     )
 
 

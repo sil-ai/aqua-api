@@ -3,6 +3,7 @@ __version__ = "v3"
 import asyncio
 import logging
 import os
+import uuid
 from datetime import datetime
 from typing import List, Optional
 
@@ -146,6 +147,7 @@ async def create_training_job(
     target_language = target_version.iso_language
 
     modal_env = os.getenv("MODAL_ENV", "main")
+    session_id = str(uuid.uuid4())
     training_jobs = []
 
     for training_type in TrainingType:
@@ -180,6 +182,7 @@ async def create_training_job(
             options=job_in.options,
             requested_time=datetime.utcnow(),
             owner_id=current_user.id,
+            session_id=session_id,
         )
         db.add(training_job)
         training_jobs.append(training_job)
@@ -235,6 +238,7 @@ async def create_training_job(
     )
 
     return TrainingResponse(
+        session_id=session_id,
         training_jobs=[TrainingJobOut.model_validate(job) for job in training_jobs],
         inference_readiness=readiness,
     )
