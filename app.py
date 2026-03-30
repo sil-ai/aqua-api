@@ -8,7 +8,7 @@ from fastapi.openapi.utils import get_openapi
 from agent_routes.v3.agent_routes import router as agent_router_v3
 from assessment_routes.v3.assessment_routes import router as assessment_router_v3
 from assessment_routes.v3.eflomal_routes import router as eflomal_router_v3
-from assessment_routes.v3.inference_routes import router as inference_router_v3
+from inference_routes.v3.inference_routes import router as inference_router_v3
 from bible_routes.v3.language_routes import router as language_router_v3
 from bible_routes.v3.revision_routes import router as revision_router_v3
 from bible_routes.v3.verse_routes import router as verse_router_v3

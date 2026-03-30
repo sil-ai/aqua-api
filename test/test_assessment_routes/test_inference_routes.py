@@ -7,14 +7,14 @@ prefix = "v3"
 def test_inference_success(client, regular_token1):
     """POST /assessment/inference/semantic-similarity returns score."""
     with patch(
-        "assessment_routes.v3.inference_routes.modal.Function"
+        "inference_routes.v3.inference_routes.modal.Function"
     ) as mock_function_cls:
         mock_fn = AsyncMock()
         mock_fn.remote.aio = AsyncMock(return_value={"score": 0.85})
         mock_function_cls.from_name.return_value = mock_fn
 
         response = client.post(
-            f"{prefix}/assessment/inference/semantic-similarity",
+            f"{prefix}/inference/semantic-similarity",
             json={
                 "text1": "Pakutandika Mulungu apelile kisu na si.",
                 "text2": "Hapo mwanzo Mungu aliumba mbingu na dunia.",
@@ -31,14 +31,14 @@ def test_inference_success(client, regular_token1):
 def test_inference_modal_error_returns_503(client, regular_token1):
     """Modal connection/dispatch errors return 503."""
     with patch(
-        "assessment_routes.v3.inference_routes.modal.Function"
+        "inference_routes.v3.inference_routes.modal.Function"
     ) as mock_function_cls:
         mock_fn = AsyncMock()
         mock_fn.remote.aio = AsyncMock(side_effect=Exception("Modal unavailable"))
         mock_function_cls.from_name.return_value = mock_fn
 
         response = client.post(
-            f"{prefix}/assessment/inference/semantic-similarity",
+            f"{prefix}/inference/semantic-similarity",
             json={
                 "text1": "hello",
                 "text2": "hola",
@@ -55,7 +55,7 @@ def test_inference_modal_error_returns_503(client, regular_token1):
 def test_inference_no_model_returns_422(client, regular_token1):
     """Modal returns error dict when no fine-tuned model exists."""
     with patch(
-        "assessment_routes.v3.inference_routes.modal.Function"
+        "inference_routes.v3.inference_routes.modal.Function"
     ) as mock_function_cls:
         mock_fn = AsyncMock()
         mock_fn.remote.aio = AsyncMock(
@@ -64,7 +64,7 @@ def test_inference_no_model_returns_422(client, regular_token1):
         mock_function_cls.from_name.return_value = mock_fn
 
         response = client.post(
-            f"{prefix}/assessment/inference/semantic-similarity",
+            f"{prefix}/inference/semantic-similarity",
             json={
                 "text1": "hello",
                 "text2": "hola",
@@ -81,7 +81,7 @@ def test_inference_no_model_returns_422(client, regular_token1):
 def test_inference_missing_fields_returns_422(client, regular_token1):
     """Missing required fields return 422."""
     response = client.post(
-        f"{prefix}/assessment/inference/semantic-similarity",
+        f"{prefix}/inference/semantic-similarity",
         json={"text1": "hello"},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
@@ -92,7 +92,7 @@ def test_inference_missing_fields_returns_422(client, regular_token1):
 def test_inference_no_auth_returns_401(client):
     """Request without auth token returns 401."""
     response = client.post(
-        f"{prefix}/assessment/inference/semantic-similarity",
+        f"{prefix}/inference/semantic-similarity",
         json={
             "text1": "hello",
             "text2": "hola",

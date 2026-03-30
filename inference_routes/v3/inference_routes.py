@@ -19,7 +19,7 @@ router = fastapi.APIRouter()
 
 
 @router.post(
-    "/assessment/inference/semantic-similarity",
+    "/inference/semantic-similarity",
     response_model=SemanticSimilarityResponse,
 )
 async def semantic_similarity_inference(
