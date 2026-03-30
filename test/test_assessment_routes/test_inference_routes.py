@@ -102,5 +102,3 @@ def test_inference_no_auth_returns_401(client):
     )
 
     assert response.status_code == 401
-
-
