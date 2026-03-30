@@ -166,9 +166,7 @@ async def create_training_job(
                 duplicate = True
                 break
         if duplicate:
-            logger.info(
-                f"Skipping {training_type.value}: active job already exists"
-            )
+            logger.info(f"Skipping {training_type.value}: active job already exists")
             continue
 
         # Create training job record
