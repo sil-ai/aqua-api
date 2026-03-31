@@ -1,15 +1,13 @@
 # test_train_routes.py
-import os
 from unittest.mock import AsyncMock, patch
 
 from database.models import TrainingJob, VerseText
 
 prefix = "v3"
-WEBHOOK_TOKEN = "test-webhook-token"
 
 
-def _webhook_headers():
-    return {"Authorization": f"Bearer {WEBHOOK_TOKEN}"}
+def _auth_headers(token):
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _create_training_jobs_via_api(client, token, source_rev, target_rev, options=None):
@@ -208,62 +206,61 @@ def test_patch_status_valid_transitions(
     )
     job_id = _get_first_job_id(create_resp)
 
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        # queued -> preparing
-        resp = client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={
-                "status": "preparing",
-                "external_ids": {"engine_id": "eng123"},
-            },
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "preparing"
-        assert data["start_time"] is not None
-        assert data["external_ids"] == {"engine_id": "eng123"}
+    # queued -> preparing
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={
+            "status": "preparing",
+            "external_ids": {"engine_id": "eng123"},
+        },
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "preparing"
+    assert data["start_time"] is not None
+    assert data["external_ids"] == {"engine_id": "eng123"}
 
-        # preparing -> training
-        resp = client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "training", "percent_complete": 10.0},
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 200
-        assert resp.json()["percent_complete"] == 10.0
+    # preparing -> training
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "training", "percent_complete": 10.0},
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["percent_complete"] == 10.0
 
-        # training -> downloading
-        resp = client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "downloading"},
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 200
+    # training -> downloading
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "downloading"},
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 200
 
-        # downloading -> uploading
-        resp = client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "uploading"},
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 200
+    # downloading -> uploading
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "uploading"},
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 200
 
-        # uploading -> completed
-        resp = client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={
-                "status": "completed",
-                "result_url": "https://huggingface.co/sil-ai/test-model",
-                "result_metadata": {"bleu": 32.5},
-            },
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["status"] == "completed"
-        assert data["end_time"] is not None
-        assert data["result_url"] == "https://huggingface.co/sil-ai/test-model"
+    # uploading -> completed
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={
+            "status": "completed",
+            "result_url": "https://huggingface.co/sil-ai/test-model",
+            "result_metadata": {"bleu": 32.5},
+        },
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "completed"
+    assert data["end_time"] is not None
+    assert data["result_url"] == "https://huggingface.co/sil-ai/test-model"
 
 
 def test_patch_status_invalid_transition(
@@ -279,22 +276,21 @@ def test_patch_status_invalid_transition(
     )
     job_id = _get_first_job_id(create_resp)
 
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        # queued -> training (skipping preparing) should fail
-        resp = client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "training"},
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 422
+    # queued -> training (skipping preparing) should fail
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "training"},
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 422
 
-        # queued -> completed should fail
-        resp = client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "completed"},
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 422
+    # queued -> completed should fail
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "completed"},
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 422
 
 
 def test_patch_status_terminal_rejected(
@@ -310,21 +306,20 @@ def test_patch_status_terminal_rejected(
     )
     job_id = _get_first_job_id(create_resp)
 
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        # Move to failed
-        client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "failed", "status_detail": "test failure"},
-            headers=_webhook_headers(),
-        )
+    # Move to failed
+    client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "failed", "status_detail": "test failure"},
+        headers=_auth_headers(regular_token1),
+    )
 
-        # Try to update again
-        resp = client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "preparing"},
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 409
+    # Try to update again
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "preparing"},
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 409
 
 
 def test_patch_status_failed_from_any(
@@ -340,14 +335,13 @@ def test_patch_status_failed_from_any(
     )
     job_id = _get_first_job_id(create_resp)
 
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        resp = client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "failed", "status_detail": "queued_to_failed"},
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "failed"
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "failed", "status_detail": "queued_to_failed"},
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "failed"
 
 
 def test_patch_status_completed_with_errors(
@@ -363,31 +357,30 @@ def test_patch_status_completed_with_errors(
     )
     job_id = _get_first_job_id(create_resp)
 
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        # Walk to uploading
-        for next_status in ["preparing", "training", "downloading", "uploading"]:
-            client.patch(
-                f"{prefix}/train/{job_id}/status",
-                json={"status": next_status},
-                headers=_webhook_headers(),
-            )
-
-        resp = client.patch(
+    # Walk to uploading
+    for next_status in ["preparing", "training", "downloading", "uploading"]:
+        client.patch(
             f"{prefix}/train/{job_id}/status",
-            json={
-                "status": "completed_with_errors",
-                "status_detail": "completed_with_errors: huggingface upload failed",
-            },
-            headers=_webhook_headers(),
+            json={"status": next_status},
+            headers=_auth_headers(regular_token1),
         )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "completed_with_errors"
+
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={
+            "status": "completed_with_errors",
+            "status_detail": "completed_with_errors: huggingface upload failed",
+        },
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "completed_with_errors"
 
 
-def test_patch_status_invalid_webhook_token(
+def test_patch_status_unauthenticated(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """PATCH /train/{job_id}/status rejects invalid webhook token."""
+    """PATCH /train/{job_id}/status rejects unauthenticated requests."""
     create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
@@ -397,13 +390,11 @@ def test_patch_status_invalid_webhook_token(
     )
     job_id = _get_first_job_id(create_resp)
 
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        resp = client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "preparing"},
-            headers={"Authorization": "Bearer wrong-token"},
-        )
-        assert resp.status_code == 401
+    resp = client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "preparing"},
+    )
+    assert resp.status_code == 401
 
 
 def test_get_training_data_filter(
@@ -475,21 +466,20 @@ def test_get_training_data_filter(
     )
     job_id = _get_first_job_id(create_resp)
 
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        # Default (filter) - should exclude range verses
-        resp = client.get(
-            f"{prefix}/train/{job_id}/data",
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert len(data) == 2
-        assert data[0]["vref"] == "GEN 1:1"
-        assert data[0]["source"] == "In the beginning"
-        assert data[0]["target"] == "Hapo mwanzo"
-        # No range verse in filtered results
-        vrefs = [d["vref"] for d in data]
-        assert "GEN 1:3" not in vrefs
+    # Default (filter) - should exclude range verses
+    resp = client.get(
+        f"{prefix}/train/{job_id}/data",
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 2
+    assert data[0]["vref"] == "GEN 1:1"
+    assert data[0]["source"] == "In the beginning"
+    assert data[0]["target"] == "Hapo mwanzo"
+    # No range verse in filtered results
+    vrefs = [d["vref"] for d in data]
+    assert "GEN 1:3" not in vrefs
 
 
 def test_get_training_data_merge(
@@ -507,15 +497,14 @@ def test_get_training_data_merge(
     )
     job_id = _get_first_job_id(create_resp)
 
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        resp = client.get(
-            f"{prefix}/train/{job_id}/data?range_handling=merge",
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        # GEN 1:2 and GEN 1:3 (range) should be merged
-        assert len(data) >= 1
+    resp = client.get(
+        f"{prefix}/train/{job_id}/data?range_handling=merge",
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # GEN 1:2 and GEN 1:3 (range) should be merged
+    assert len(data) >= 1
 
 
 def test_get_training_data_empty(
@@ -531,18 +520,17 @@ def test_get_training_data_empty(
     )
     job_id = _get_first_job_id(create_resp)
 
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        resp = client.get(
-            f"{prefix}/train/{job_id}/data?range_handling=empty",
-            headers=_webhook_headers(),
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        # Range verse should have empty strings
-        range_verse = [d for d in data if d["vref"] == "GEN 1:3"]
-        if range_verse:
-            assert range_verse[0]["source"] == ""
-            assert range_verse[0]["target"] == ""
+    resp = client.get(
+        f"{prefix}/train/{job_id}/data?range_handling=empty",
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # Range verse should have empty strings
+    range_verse = [d for d in data if d["vref"] == "GEN 1:3"]
+    if range_verse:
+        assert range_verse[0]["source"] == ""
+        assert range_verse[0]["target"] == ""
 
 
 def test_delete_training_job_terminal(
@@ -559,12 +547,11 @@ def test_delete_training_job_terminal(
     job_id = _get_first_job_id(create_resp)
 
     # Move to failed (terminal)
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "failed"},
-            headers=_webhook_headers(),
-        )
+    client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "failed"},
+        headers=_auth_headers(regular_token1),
+    )
 
     # Now delete
     resp = client.delete(
@@ -615,12 +602,11 @@ def test_delete_training_job_unauthorized(
     job_id = _get_first_job_id(create_resp)
 
     # Move to failed
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": "failed"},
-            headers=_webhook_headers(),
-        )
+    client.patch(
+        f"{prefix}/train/{job_id}/status",
+        json={"status": "failed"},
+        headers=_auth_headers(regular_token1),
+    )
 
     # testuser2 is not owner
     resp = client.delete(
@@ -737,19 +723,18 @@ def test_get_training_status_readiness_updates(
     sem_sim_job = [
         j for j in data["training_jobs"] if j["type"] == "semantic-similarity"
     ][0]
-    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
-        for next_status in [
-            "preparing",
-            "training",
-            "downloading",
-            "uploading",
-            "completed",
-        ]:
-            client.patch(
-                f"{prefix}/train/{sem_sim_job['id']}/status",
-                json={"status": next_status},
-                headers=_webhook_headers(),
-            )
+    for next_status in [
+        "preparing",
+        "training",
+        "downloading",
+        "uploading",
+        "completed",
+    ]:
+        client.patch(
+            f"{prefix}/train/{sem_sim_job['id']}/status",
+            json={"status": next_status},
+            headers=_auth_headers(regular_token1),
+        )
 
     # Now check readiness again
     status_resp = client.get(
