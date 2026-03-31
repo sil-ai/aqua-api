@@ -12,8 +12,10 @@ ADD fixtures/ /app/fixtures/
 ADD agent_routes/ /app/agent_routes/
 ADD bible_routes/ /app/bible_routes/
 ADD assessment_routes/ /app/assessment_routes/
+ADD inference_routes/ /app/inference_routes/
 ADD review_routes/ /app/review_routes/
 ADD security_routes/ /app/security_routes/
+ADD train_routes/ /app/train_routes/
 ADD database/ /app/database
 ADD alembic/ /app/database
 ADD utils/ /app/utils
