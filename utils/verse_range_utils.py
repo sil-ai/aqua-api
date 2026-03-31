@@ -202,12 +202,15 @@ def merge_verse_ranges(
     result = []
     for group in verse_groups:
         if len(group) == 1:
-            # Single verse, filter fields and add as-is
+            # Single verse, filter fields — clear range markers from orphan range verses
             verse = group[0]
             filtered_verse = {verse_ref_field: verse[verse_ref_field]}
             for field in combine_fields:
                 if field in verse:
-                    filtered_verse[field] = verse[field]
+                    value = verse[field]
+                    if is_range_marker(value):
+                        value = ""
+                    filtered_verse[field] = value
             result.append(filtered_verse)
         else:
             # Multiple verses, merge them

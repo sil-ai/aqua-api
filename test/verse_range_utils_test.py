@@ -61,7 +61,7 @@ def test_no_ranges():
 
 
 def test_range_at_beginning():
-    """Test that <range> marker at the beginning is kept as-is."""
+    """Test that orphan <range> at beginning has marker cleared to empty string."""
     verses = [
         {"vrefs": ["GAL 1:1"], "target_text": "<range>", "source_text": "Source 1"},
         {"vrefs": ["GAL 1:2"], "target_text": "Text 2", "source_text": "Source 2"},
@@ -71,7 +71,8 @@ def test_range_at_beginning():
 
     assert len(result) == 2
     assert result[0]["vrefs"] == ["GAL 1:1"]
-    assert result[0]["target_text"] == "<range>"
+    assert result[0]["target_text"] == ""
+    assert result[0]["source_text"] == "Source 1"
     assert result[1]["vrefs"] == ["GAL 1:2"]
 
 
