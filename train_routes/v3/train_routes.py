@@ -395,6 +395,20 @@ async def update_training_job_status(
             detail="Training job not found",
         )
 
+    # Auth: admin, owner, or group access to both revisions
+    if not current_user.is_admin and job.owner_id != current_user.id:
+        version_ids = await _get_accessible_version_ids(current_user, db)
+        source_rev = await db.get(BibleRevision, job.source_revision_id)
+        target_rev = await db.get(BibleRevision, job.target_revision_id)
+        if (
+            source_rev.bible_version_id not in version_ids
+            or target_rev.bible_version_id not in version_ids
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this training job",
+            )
+
     if job.status in TERMINAL_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -449,6 +463,20 @@ async def get_training_data(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Training job not found",
         )
+
+    # Auth: admin, owner, or group access to both revisions
+    if not current_user.is_admin and job.owner_id != current_user.id:
+        version_ids = await _get_accessible_version_ids(current_user, db)
+        source_rev = await db.get(BibleRevision, job.source_revision_id)
+        target_rev = await db.get(BibleRevision, job.target_revision_id)
+        if (
+            source_rev.bible_version_id not in version_ids
+            or target_rev.bible_version_id not in version_ids
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this training job's data",
+            )
 
     # Self-join VerseText on verse_reference for both revisions
     SourceVerse = aliased(VerseText)
