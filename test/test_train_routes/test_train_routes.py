@@ -12,12 +12,11 @@ def _webhook_headers():
     return {"Authorization": f"Bearer {WEBHOOK_TOKEN}"}
 
 
-def _create_training_job_via_api(client, token, source_rev, target_rev, options=None):
-    """Helper to POST /train with mocked Modal dispatch."""
+def _create_training_jobs_via_api(client, token, source_rev, target_rev, options=None):
+    """Helper to POST /train with mocked Modal dispatch. Returns list of jobs."""
     data = {
         "source_revision_id": source_rev,
         "target_revision_id": target_rev,
-        "type": "serval-nmt",
     }
     if options is not None:
         data["options"] = options
@@ -35,28 +34,51 @@ def _create_training_job_via_api(client, token, source_rev, target_rev, options=
     return response
 
 
+def _get_jobs(response):
+    """Extract training_jobs list from the create response."""
+    return response.json()["training_jobs"]
+
+
+def _get_first_job_id(response):
+    """Extract the first training job ID from the create response."""
+    return response.json()["training_jobs"][0]["id"]
+
+
 def test_create_training_job_success(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """POST /train creates job with status=queued."""
-    response = _create_training_job_via_api(
+    """POST /train creates jobs for all types with status=queued."""
+    response = _create_training_jobs_via_api(
         client, regular_token1, test_revision_id, test_revision_id_2
     )
 
     assert response.status_code == 200
     data = response.json()
-    assert data["type"] == "serval-nmt"
-    assert data["source_revision_id"] == test_revision_id
-    assert data["target_revision_id"] == test_revision_id_2
-    assert data["status"] == "queued"
-    assert data["id"] is not None
-    assert data["source_language"] == "eng"
-    assert data["target_language"] == "eng"
+    jobs = data["training_jobs"]
+    assert len(jobs) == 2  # serval-nmt and semantic-similarity
+
+    types = {job["type"] for job in jobs}
+    assert "serval-nmt" in types
+    assert "semantic-similarity" in types
+
+    for job in jobs:
+        assert job["source_revision_id"] == test_revision_id
+        assert job["target_revision_id"] == test_revision_id_2
+        assert job["status"] == "queued"
+        assert job["id"] is not None
+        assert job["source_language"] == "eng"
+        assert job["target_language"] == "eng"
+
+    # Check inference readiness
+    readiness = data["inference_readiness"]
+    assert "semantic-similarity" in readiness
+    assert readiness["semantic-similarity"]["ready"] is False
+    assert "semantic-similarity" in readiness["semantic-similarity"]["pending_training"]
 
 
 def test_create_training_job_invalid_revision(client, regular_token1, test_revision_id):
     """POST /train with invalid revision returns 404."""
-    response = _create_training_job_via_api(
+    response = _create_training_jobs_via_api(
         client, regular_token1, test_revision_id, 999999
     )
     assert response.status_code == 404
@@ -70,19 +92,19 @@ def test_create_training_job_duplicate_detection(
     opts = {"tag": "dup_test_base"}
 
     # First job succeeds
-    response1 = _create_training_job_via_api(
+    response1 = _create_training_jobs_via_api(
         client, regular_token1, test_revision_id, test_revision_id_2, options=opts
     )
     assert response1.status_code == 200
 
-    # Same params -> 409
-    response2 = _create_training_job_via_api(
+    # Same params -> 409 (all types already have active jobs)
+    response2 = _create_training_jobs_via_api(
         client, regular_token1, test_revision_id, test_revision_id_2, options=opts
     )
     assert response2.status_code == 409
 
     # Different options -> allowed
-    response3 = _create_training_job_via_api(
+    response3 = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
@@ -108,7 +130,6 @@ def test_create_training_job_unauthenticated(
         json={
             "source_revision_id": test_revision_id,
             "target_revision_id": test_revision_id_2,
-            "type": "serval-nmt",
         },
     )
     assert response.status_code == 401
@@ -118,8 +139,8 @@ def test_list_training_jobs(
     client, regular_token1, admin_token, test_revision_id, test_revision_id_2
 ):
     """GET /train returns jobs, respects auth."""
-    # Create a job
-    _create_training_job_via_api(
+    # Create jobs
+    _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
@@ -127,7 +148,7 @@ def test_list_training_jobs(
         options={"tag": "list_test"},
     )
 
-    # Regular user can see it (has group access)
+    # Regular user can see them (has group access)
     response = client.get(
         f"{prefix}/train",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -135,7 +156,7 @@ def test_list_training_jobs(
     assert response.status_code == 200
     assert len(response.json()) >= 1
 
-    # Admin can see it
+    # Admin can see them
     response = client.get(
         f"{prefix}/train",
         headers={"Authorization": f"Bearer {admin_token}"},
@@ -148,14 +169,14 @@ def test_get_training_job_single(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
     """GET /train/{job_id} returns job details."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "single_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     response = client.get(
         f"{prefix}/train/{job_id}",
@@ -178,14 +199,14 @@ def test_patch_status_valid_transitions(
     client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):
     """PATCH /train/{job_id}/status updates fields and enforces state machine."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "status_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         # queued -> preparing
@@ -249,14 +270,14 @@ def test_patch_status_invalid_transition(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
     """PATCH /train/{job_id}/status rejects invalid state transitions."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "invalid_transition_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         # queued -> training (skipping preparing) should fail
@@ -280,14 +301,14 @@ def test_patch_status_terminal_rejected(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
     """PATCH /train/{job_id}/status rejects updates to terminal jobs."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "terminal_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         # Move to failed
@@ -310,14 +331,14 @@ def test_patch_status_failed_from_any(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
     """Any non-terminal status can transition to failed."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "failed_any_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         resp = client.patch(
@@ -333,14 +354,14 @@ def test_patch_status_completed_with_errors(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
     """uploading -> completed_with_errors is valid."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "completed_errors_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         # Walk to uploading
@@ -367,14 +388,14 @@ def test_patch_status_invalid_webhook_token(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
     """PATCH /train/{job_id}/status rejects invalid webhook token."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "bad_token_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         resp = client.patch(
@@ -444,15 +465,15 @@ def test_get_training_data_filter(
     db_session.add_all(verses)
     db_session.commit()
 
-    # Create a training job
-    create_resp = _create_training_job_via_api(
+    # Create training jobs
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "data_filter_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         # Default (filter) - should exclude range verses
@@ -476,15 +497,15 @@ def test_get_training_data_merge(
 ):
     """GET /train/{job_id}/data with merge mode combines range verses."""
     # Verse text was already inserted by test_get_training_data_filter
-    # Create a training job
-    create_resp = _create_training_job_via_api(
+    # Create training jobs
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "data_merge_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         resp = client.get(
@@ -501,14 +522,14 @@ def test_get_training_data_empty(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
     """GET /train/{job_id}/data with empty mode replaces range with empty strings."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "data_empty_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
         resp = client.get(
@@ -528,14 +549,14 @@ def test_delete_training_job_terminal(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
     """DELETE /train/{job_id} soft deletes terminal jobs."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "delete_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     # Move to failed (terminal)
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
@@ -564,14 +585,14 @@ def test_delete_training_job_active_rejected(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
     """DELETE /train/{job_id} returns 409 for active jobs."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "delete_active_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     resp = client.delete(
         f"{prefix}/train/{job_id}",
@@ -584,14 +605,14 @@ def test_delete_training_job_unauthorized(
     client, regular_token1, regular_token2, test_revision_id, test_revision_id_2
 ):
     """DELETE /train/{job_id} rejects non-owner non-admin."""
-    create_resp = _create_training_job_via_api(
+    create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "delete_unauth_test"},
     )
-    job_id = create_resp.json()["id"]
+    job_id = _get_first_job_id(create_resp)
 
     # Move to failed
     with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
@@ -612,11 +633,10 @@ def test_delete_training_job_unauthorized(
 def test_dispatch_failure_marks_job_failed(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """POST /train marks job as failed when Modal dispatch fails."""
+    """POST /train marks jobs as failed when Modal dispatch fails."""
     data = {
         "source_revision_id": test_revision_id,
         "target_revision_id": test_revision_id_2,
-        "type": "serval-nmt",
         "options": {"tag": "dispatch_fail_test"},
     }
 
@@ -632,5 +652,112 @@ def test_dispatch_failure_marks_job_failed(
         )
 
     assert response.status_code == 200
-    assert response.json()["status"] == "failed"
-    assert "dispatch_failed" in response.json()["status_detail"]
+    for job in _get_jobs(response):
+        assert job["status"] == "failed"
+        assert "dispatch_failed" in job["status_detail"]
+
+
+# -- Training status endpoint tests --
+
+
+def test_get_training_status(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """GET /train/status?session_id=... returns session status with inference readiness."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "status_endpoint_test"},
+    )
+    session_id = create_resp.json()["session_id"]
+
+    response = client.get(
+        f"{prefix}/train/status",
+        params={"session_id": session_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == session_id
+    assert len(data["training_jobs"]) == 2
+    assert "inference_readiness" in data
+    assert "semantic-similarity" in data["inference_readiness"]
+
+
+def test_get_training_status_not_found(client, regular_token1):
+    """GET /train/status with unknown session_id returns 404."""
+    response = client.get(
+        f"{prefix}/train/status",
+        params={"session_id": "nonexistent-uuid"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 404
+
+
+def test_get_training_status_no_auth(client):
+    """GET /train/status without auth returns 401."""
+    response = client.get(
+        f"{prefix}/train/status",
+        params={"session_id": "some-uuid"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_get_training_status_readiness_updates(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Inference readiness reflects completed training jobs."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "readiness_update_test"},
+    )
+    data = create_resp.json()
+    session_id = data["session_id"]
+
+    # Initially not ready
+    status_resp = client.get(
+        f"{prefix}/train/status",
+        params={"session_id": session_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert (
+        status_resp.json()["inference_readiness"]["semantic-similarity"]["ready"]
+        is False
+    )
+
+    # Mark the semantic-similarity job as completed
+    sem_sim_job = [
+        j for j in data["training_jobs"] if j["type"] == "semantic-similarity"
+    ][0]
+    with patch.dict(os.environ, {"MODAL_WEBHOOK_TOKEN": WEBHOOK_TOKEN}):
+        for next_status in [
+            "preparing",
+            "training",
+            "downloading",
+            "uploading",
+            "completed",
+        ]:
+            client.patch(
+                f"{prefix}/train/{sem_sim_job['id']}/status",
+                json={"status": next_status},
+                headers=_webhook_headers(),
+            )
+
+    # Now check readiness again
+    status_resp = client.get(
+        f"{prefix}/train/status",
+        params={"session_id": session_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert (
+        status_resp.json()["inference_readiness"]["semantic-similarity"]["ready"]
+        is True
+    )

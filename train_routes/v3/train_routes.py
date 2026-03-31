@@ -1,7 +1,9 @@
 __version__ = "v3"
 
-import logging
+import asyncio
 import os
+import socket
+import uuid
 from datetime import datetime
 from typing import List, Optional
 
@@ -25,14 +27,22 @@ from database.models import (
     UserGroup,
     VerseText,
 )
-from models import TrainingJobIn, TrainingJobOut, TrainingJobStatusUpdate
+from models import (
+    InferenceReadiness,
+    TrainingJobIn,
+    TrainingJobOut,
+    TrainingJobStatusUpdate,
+    TrainingResponse,
+    TrainingType,
+)
 from security_routes.auth_routes import get_current_user
+from utils.logging_config import setup_logger
 from utils.verse_range_utils import merge_verse_ranges
 
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+container_id = socket.gethostname()
+logger = setup_logger(__name__, container_id=container_id)
 
 router = fastapi.APIRouter()
 
@@ -46,11 +56,46 @@ VALID_TRANSITIONS = {
 }
 
 TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed"}
+COMPLETED_STATUSES = {"completed", "completed_with_errors"}
+
+# Maps each inference type to the training types it requires
+INFERENCE_DEPENDENCIES = {
+    "semantic-similarity": ["semantic-similarity"],
+}
+
+
+async def _compute_inference_readiness(
+    source_revision_id: int, target_revision_id: int, db: AsyncSession
+) -> dict:
+    """Check which inference types are ready based on completed training jobs."""
+    # Find all completed training jobs for this revision pair
+    stmt = select(TrainingJob.type).where(
+        TrainingJob.source_revision_id == source_revision_id,
+        TrainingJob.target_revision_id == target_revision_id,
+        TrainingJob.deleted.is_not(True),
+        TrainingJob.status.in_(list(COMPLETED_STATUSES)),
+    )
+    result = await db.execute(stmt)
+    completed_types = {row[0] for row in result.all()}
+
+    readiness = {}
+    for inference_type, required_training in INFERENCE_DEPENDENCIES.items():
+        pending = [t for t in required_training if t not in completed_types]
+        readiness[inference_type] = InferenceReadiness(
+            ready=len(pending) == 0,
+            pending_training=pending,
+        )
+    return readiness
 
 
 async def verify_webhook_token(authorization: str = Header(...)) -> None:
     """Verify the Modal webhook token from Authorization header."""
-    expected_token = os.getenv("MODAL_WEBHOOK_TOKEN", "")
+    expected_token = os.getenv("MODAL_WEBHOOK_TOKEN")
+    if not expected_token:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Webhook token not configured",
+        )
     if not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -80,13 +125,13 @@ async def _get_accessible_version_ids(
     return [row[0] for row in result.all()]
 
 
-@router.post("/train", response_model=TrainingJobOut)
+@router.post("/train", response_model=TrainingResponse)
 async def create_training_job(
     job_in: TrainingJobIn,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Create and dispatch a training job."""
+    """Create and dispatch training jobs for all types in parallel."""
     # Validate both revision IDs exist
     source_rev = await db.get(BibleRevision, job_in.source_revision_id)
     if not source_rev:
@@ -103,59 +148,130 @@ async def create_training_job(
 
     # Look up languages via BibleVersion
     source_version = await db.get(BibleVersion, source_rev.bible_version_id)
+    if not source_version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bible version for source revision {job_in.source_revision_id} not found",
+        )
     target_version = await db.get(BibleVersion, target_rev.bible_version_id)
+    if not target_version:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Bible version for target revision {job_in.target_revision_id} not found",
+        )
     source_language = source_version.iso_language
     target_language = target_version.iso_language
 
-    # Duplicate check: same revisions, type, options, and non-terminal status
-    dup_stmt = select(TrainingJob).where(
-        TrainingJob.source_revision_id == job_in.source_revision_id,
-        TrainingJob.target_revision_id == job_in.target_revision_id,
-        TrainingJob.type == job_in.type,
-        TrainingJob.deleted.is_(False),
-        TrainingJob.status.notin_(list(TERMINAL_STATUSES)),
-    )
-    dup_result = await db.execute(dup_stmt)
-    for existing_job in dup_result.scalars().all():
-        if existing_job.options == job_in.options:
+    # Auth: non-admin users must have group access to both bible versions
+    if not current_user.is_admin:
+        version_ids = await _get_accessible_version_ids(current_user, db)
+        if source_version.id not in version_ids or target_version.id not in version_ids:
             raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Active training job already exists (id={existing_job.id})",
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access one or both bible versions for training",
             )
 
-    # Create training job record
-    training_job = TrainingJob(
-        type=job_in.type,
-        source_revision_id=job_in.source_revision_id,
-        target_revision_id=job_in.target_revision_id,
-        source_language=source_language,
-        target_language=target_language,
-        status="queued",
-        options=job_in.options,
-        requested_time=datetime.utcnow(),
-        owner_id=current_user.id,
-    )
-    db.add(training_job)
-    await db.commit()
-    await db.refresh(training_job)
+    modal_env = os.getenv("MODAL_ENV", "main")
+    session_id = str(uuid.uuid4())
+    training_jobs = []
+    skipped_job_ids = []
 
-    # Dispatch to Modal runner
-    job_out = TrainingJobOut.model_validate(training_job)
-    try:
-        modal_env = os.getenv("MODAL_ENV", "main")
-        f = modal.Function.from_name(
-            "train-runner", "run_training_job", environment_name=modal_env
+    for training_type in TrainingType:
+        # Duplicate check per type
+        dup_stmt = select(TrainingJob).where(
+            TrainingJob.source_revision_id == job_in.source_revision_id,
+            TrainingJob.target_revision_id == job_in.target_revision_id,
+            TrainingJob.type == training_type.value,
+            TrainingJob.deleted.is_not(True),
+            TrainingJob.status.notin_(list(TERMINAL_STATUSES)),
         )
-        await f.spawn.aio(job_out.model_dump(mode="json"))
-    except Exception as e:
-        logger.error(f"Error dispatching training job {training_job.id}: {e}")
-        training_job.status = "failed"
-        training_job.status_detail = f"dispatch_failed: {type(e).__name__}: {e}"
-        training_job.end_time = datetime.utcnow()
-        await db.commit()
-        await db.refresh(training_job)
+        dup_result = await db.execute(dup_stmt)
+        duplicate = False
+        for existing_job in dup_result.scalars().all():
+            if existing_job.options == job_in.options:
+                duplicate = True
+                skipped_job_ids.append(existing_job.id)
+                break
+        if duplicate:
+            logger.info(f"Skipping {training_type.value}: active job already exists")
+            continue
 
-    return TrainingJobOut.model_validate(training_job)
+        # Create training job record
+        training_job = TrainingJob(
+            type=training_type.value,
+            source_revision_id=job_in.source_revision_id,
+            target_revision_id=job_in.target_revision_id,
+            source_language=source_language,
+            target_language=target_language,
+            status="queued",
+            options=job_in.options,
+            requested_time=datetime.utcnow(),
+            owner_id=current_user.id,
+            session_id=session_id,
+        )
+        db.add(training_job)
+        training_jobs.append(training_job)
+
+    if not training_jobs:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Active training jobs already exist for all types (job ids: {skipped_job_ids})",
+        )
+
+    await db.commit()
+    for job in training_jobs:
+        await db.refresh(job)
+
+    # Dispatch all jobs to Modal in parallel
+    async def dispatch_job(job: TrainingJob):
+        """Returns (job, exception) tuple. Does NOT mutate the DB session."""
+        try:
+            if job.type == TrainingType.semantic_similarity.value:
+                f = modal.Function.from_name(
+                    "semantic-similarity", "assess", environment_name=modal_env
+                )
+                payload = {
+                    "id": job.id,
+                    "revision_id": job_in.source_revision_id,
+                    "reference_id": job_in.target_revision_id,
+                    "type": "semantic-similarity",
+                    "train": True,
+                    "source_language": source_language,
+                    "target_language": target_language,
+                }
+                if job_in.options:
+                    payload["kwargs"] = job_in.options
+                await f.spawn.aio(payload, AQUA_DB=os.getenv("AQUA_DB", ""))
+            else:
+                f = modal.Function.from_name(
+                    "train-runner", "run_training_job", environment_name=modal_env
+                )
+                job_out = TrainingJobOut.model_validate(job)
+                await f.spawn.aio(job_out.model_dump(mode="json"))
+            return job, None
+        except Exception as e:
+            logger.error(f"Error dispatching training job {job.id} ({job.type}): {e}")
+            return job, e
+
+    results = await asyncio.gather(*(dispatch_job(j) for j in training_jobs))
+    for job, exc in results:
+        if exc:
+            job.status = "failed"
+            job.status_detail = f"dispatch_failed: {type(exc).__name__}: {exc}"
+            job.end_time = datetime.utcnow()
+    await db.commit()
+    for job in training_jobs:
+        await db.refresh(job)
+
+    readiness = await _compute_inference_readiness(
+        job_in.source_revision_id, job_in.target_revision_id, db
+    )
+
+    return TrainingResponse(
+        session_id=session_id,
+        training_jobs=[TrainingJobOut.model_validate(job) for job in training_jobs],
+        inference_readiness=readiness,
+    )
 
 
 @router.get("/train", response_model=List[TrainingJobOut])
@@ -168,7 +284,7 @@ async def list_training_jobs(
     current_user: UserModel = Depends(get_current_user),
 ):
     """List training jobs accessible to the current user."""
-    stmt = select(TrainingJob).where(TrainingJob.deleted.is_(False))
+    stmt = select(TrainingJob).where(TrainingJob.deleted.is_not(True))
 
     if status_filter:
         stmt = stmt.where(TrainingJob.status == status_filter)
@@ -201,6 +317,57 @@ async def list_training_jobs(
     result = await db.execute(stmt)
     jobs = result.scalars().all()
     return [TrainingJobOut.model_validate(j) for j in jobs]
+
+
+@router.get("/train/status", response_model=TrainingResponse)
+async def get_training_status(
+    session_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Get the status of a training session by session_id."""
+    stmt = select(TrainingJob).where(
+        TrainingJob.session_id == session_id,
+        TrainingJob.deleted.is_not(True),
+    )
+
+    if not current_user.is_admin:
+        version_ids = await _get_accessible_version_ids(current_user, db)
+        SourceRevision = aliased(BibleRevision)
+        TargetRevision = aliased(BibleRevision)
+        stmt = (
+            stmt.join(
+                SourceRevision,
+                SourceRevision.id == TrainingJob.source_revision_id,
+            )
+            .join(
+                TargetRevision,
+                TargetRevision.id == TrainingJob.target_revision_id,
+            )
+            .where(
+                SourceRevision.bible_version_id.in_(version_ids),
+                TargetRevision.bible_version_id.in_(version_ids),
+            )
+        )
+
+    result = await db.execute(stmt)
+    jobs = result.scalars().all()
+
+    if not jobs:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No training jobs found for session_id={session_id}",
+        )
+
+    readiness = await _compute_inference_readiness(
+        jobs[0].source_revision_id, jobs[0].target_revision_id, db
+    )
+
+    return TrainingResponse(
+        session_id=session_id,
+        training_jobs=[TrainingJobOut.model_validate(j) for j in jobs],
+        inference_readiness=readiness,
+    )
 
 
 @router.get("/train/{job_id}", response_model=TrainingJobOut)

@@ -12,6 +12,7 @@ from bible_routes.v3.language_routes import router as language_router_v3
 from bible_routes.v3.revision_routes import router as revision_router_v3
 from bible_routes.v3.verse_routes import router as verse_router_v3
 from bible_routes.v3.version_routes import router as version_router_v3
+from inference_routes.v3.inference_routes import router as inference_router_v3
 from middleware import LoggingMiddleware
 from review_routes.v3.results_routes import router as results_router_v3
 from review_routes.v3.search_routes import router as search_router_v3
@@ -102,6 +103,7 @@ def configure_routing(app):
     app.include_router(agent_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(train_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(eflomal_router_v3, prefix="/v3", tags=["Version 3"])
+    app.include_router(inference_router_v3, prefix="/v3", tags=["Version 3"])
 
     app.include_router(
         language_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
@@ -119,6 +121,9 @@ def configure_routing(app):
     app.include_router(agent_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(train_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(eflomal_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(
+        inference_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
+    )
 
     app.include_router(security_router, prefix="/latest", tags=["Latest"])
     app.include_router(admin_router, prefix="/latest", tags=["Latest"])

@@ -282,6 +282,28 @@ class AssessmentOut(BaseModel):
     }
 
 
+class SemanticSimilarityRequest(BaseModel):
+    text1: str = Field(..., max_length=10000)
+    text2: str = Field(..., max_length=10000)
+    source_language: str = Field(..., max_length=10)
+    target_language: str = Field(..., max_length=10)
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "text1": "Hapo mwanzo Mungu aliumba mbingu na dunia.",
+                "text2": "In the beginning God created the heavens and the earth.",
+                "source_language": "swh",
+                "target_language": "eng",
+            }
+        }
+    }
+
+
+class SemanticSimilarityResponse(BaseModel):
+    score: float
+
+
 # Results model to record in the DB.
 
 
@@ -911,6 +933,7 @@ class AgentTranslationOut(BaseModel):
 
 class TrainingType(str, Enum):
     serval_nmt = "serval-nmt"
+    semantic_similarity = "semantic-similarity"
 
 
 class TrainingStatus(str, Enum):
@@ -927,10 +950,7 @@ class TrainingStatus(str, Enum):
 class TrainingJobIn(BaseModel):
     source_revision_id: int
     target_revision_id: int
-    type: TrainingType
     options: Optional[Dict[str, Any]] = None
-
-    model_config = {"use_enum_values": True}
 
 
 class TrainingJobOut(BaseModel):
@@ -951,8 +971,20 @@ class TrainingJobOut(BaseModel):
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
+    session_id: Optional[str] = None
 
     model_config = {"from_attributes": True, "use_enum_values": True}
+
+
+class InferenceReadiness(BaseModel):
+    ready: bool
+    pending_training: List[str] = Field(default_factory=list)
+
+
+class TrainingResponse(BaseModel):
+    session_id: str
+    training_jobs: List[TrainingJobOut]
+    inference_readiness: Dict[str, InferenceReadiness]
 
 
 class TrainingJobStatusUpdate(BaseModel):
