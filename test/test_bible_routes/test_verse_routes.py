@@ -822,12 +822,13 @@ def test_texts_endpoint_range_at_chapter_boundary(client, regular_token1, db_ses
     assert response.status_code == 200
     data = response.json()
 
-    # GEN 2:1 should NOT be merged with the last verse of chapter 1
-    # Find entries by checking verse_reference
-    rev2_vrefs = [v["verse_reference"] for v in data[str(revision_id2)]]
+    # GEN 2:1 should exist as a standalone entry (not merged with chapter 1)
+    rev2_verses = {v["verse_reference"]: v for v in data[str(revision_id2)]}
+    assert "GEN 2:1" in rev2_verses, "GEN 2:1 should exist as standalone entry"
+    assert rev2_verses["GEN 2:1"]["text"] == ""  # orphan range cleared
 
-    # There should be no cross-chapter range like "GEN 1:31-2:1"
-    for vref in rev2_vrefs:
+    # No cross-chapter range like "GEN 1:31-2:1" should exist
+    for vref in rev2_verses:
         if "GEN 1:" in vref and "-" in vref:
             assert "2:" not in vref, f"Cross-chapter merge detected: {vref}"
 
@@ -919,11 +920,21 @@ def test_texts_endpoint_range_on_first_verse(client, regular_token1, db_session)
     assert response.status_code == 200
     data = response.json()
 
-    # Both revisions should still return data
+    # Both revisions should still return data and be aligned
     assert len(data[str(revision_id1)]) > 0
-    assert len(data[str(revision_id2)]) > 0
+    assert len(data[str(revision_id1)]) == len(data[str(revision_id2)])
 
-    # No <range> markers should appear in output text
+    # GEN 1:1 should appear as standalone with cleared text in rev2
+    first_rev2 = data[str(revision_id2)][0]
+    assert first_rev2["verse_reference"] == "GEN 1:1"
+    assert first_rev2["text"] == ""
+
+    # Rev1 GEN 1:1 should still have its original text
+    first_rev1 = data[str(revision_id1)][0]
+    assert first_rev1["verse_reference"] == "GEN 1:1"
+    assert "beginning" in first_rev1["text"].lower()
+
+    # No <range> markers should appear in any output text
     for v in data[str(revision_id2)]:
         assert "<range>" not in v["text"]
 

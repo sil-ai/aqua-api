@@ -209,7 +209,7 @@ def merge_verse_ranges(
                 if field in verse:
                     value = verse[field]
                     if is_range_marker(value):
-                        value = ""
+                        value = combine_function(field, [])
                     filtered_verse[field] = value
             result.append(filtered_verse)
         else:
