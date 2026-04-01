@@ -1030,15 +1030,15 @@ def test_texts_exclude_empty_all_removes_when_all_empty(
     revision_id1 = upload_revision(client, regular_token1, version_id1)
     revision_id2 = upload_revision(client, regular_token1, version_id2)
 
-    # Delete GEN 1:3 from BOTH revisions so all are empty
+    # Set GEN 1:3 to empty text in BOTH revisions
     db_session.query(VerseTextModel).filter(
         VerseTextModel.revision_id == revision_id1,
         VerseTextModel.verse_reference == "GEN 1:3",
-    ).delete()
+    ).update({"text": ""})
     db_session.query(VerseTextModel).filter(
         VerseTextModel.revision_id == revision_id2,
         VerseTextModel.verse_reference == "GEN 1:3",
-    ).delete()
+    ).update({"text": ""})
     db_session.commit()
 
     headers = {"Authorization": f"Bearer {regular_token1}"}

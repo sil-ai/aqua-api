@@ -622,10 +622,10 @@ async def get_texts(
     exclude_empty: ExcludeEmpty = Query(
         ExcludeEmpty.all,
         description=(
-            "Filter verses with empty text. "
+            "Filter verses with empty or whitespace-only text. "
             "'none': no filtering. "
-            "'any': exclude verses where ANY revision has empty text (intersection only). "
-            "'all': exclude verses where ALL revisions have empty text (default)."
+            "'any': exclude verses where ANY revision has empty/blank text (intersection only). "
+            "'all': exclude verses where ALL revisions have empty/blank text (default)."
         ),
     ),
     db: AsyncSession = Depends(get_db),
@@ -640,8 +640,8 @@ async def get_texts(
     Input:
     - revision_ids: List[int]
     Description: List of revision IDs to fetch (minimum 2).
-    - exclude_empty: str (none|any|all, default "all")
-    Description: Filter out verses with empty text after range merging.
+    - exclude_empty: ExcludeEmpty (none|any|all, default "all")
+    Description: Filter out verses with empty or whitespace-only text after range merging.
 
     Returns:
     Dict[str, List[VerseText]]: Dictionary keyed by revision_id (as string),
