@@ -937,7 +937,9 @@ def test_patch_assessment_status_valid_transitions(
 
     # running -> running (progress update with status_detail)
     resp = _patch_status(
-        client, regular_token1, aid,
+        client,
+        regular_token1,
+        aid,
         {"status": "running", "status_detail": "50% complete"},
     )
     assert resp.status_code == 200

@@ -399,9 +399,7 @@ async def update_assessment_status(
     Auth: admin, assessment owner, or any user with group access to the
     assessment's bible version.  This mirrors the training PATCH pattern.
     """
-    result = await db.execute(
-        select(Assessment).where(Assessment.id == assessment_id)
-    )
+    result = await db.execute(select(Assessment).where(Assessment.id == assessment_id))
     assessment = result.scalars().first()
     if not assessment or assessment.deleted:
         raise HTTPException(
