@@ -1071,3 +1071,31 @@ class EflomalResultsPullResponse(BaseModel):
     dictionary: list[EflomalDictionaryItem]
     cooccurrences: list[EflomalCooccurrenceItem]
     target_word_counts: list[EflomalTargetWordCountItem]
+
+
+class WordAlignmentInferenceRequest(BaseModel):
+    text1: str = Field(..., max_length=10_000)
+    text2: str = Field(..., max_length=10_000)
+    source_language: str = Field(..., max_length=10)
+    target_language: str = Field(..., max_length=10)
+    assessment_id: Optional[int] = None
+
+
+class AlignmentLink(BaseModel):
+    source_word: str
+    target_word: str
+    score: float
+
+
+class MissingWord(BaseModel):
+    target_word: str
+    known_sources: str
+    score: float
+
+
+class WordAlignmentInferenceResponse(BaseModel):
+    verse_score: float
+    avg_link_score: float
+    coverage: float
+    alignment_links: list[AlignmentLink]
+    missing_words: list[MissingWord]

@@ -176,6 +176,128 @@ def test_eflomal_assessment_unpushed_id(
 
 
 @pytest.fixture(scope="module")
+def test_eflomal_inference_assessment_id(
+    client, test_db_session, test_revision_id, test_revision_id_2, regular_token1
+):
+    """Word-alignment assessment pre-loaded with realistic eflomal artifacts for inference tests.
+
+    Dictionary uses English->Swahili pairs with known probabilities so tests can
+    assert on specific alignment outputs.
+    """
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="word-alignment",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+    assessment_id = assessment.id
+
+    payload = {
+        "assessment_id": assessment_id,
+        "source_language": "eng",
+        "target_language": "swh",
+        "num_verse_pairs": 31102,
+        "num_alignment_links": 100000,
+        "num_dictionary_entries": 6,
+        "num_missing_words": 0,
+        "dictionary": [
+            {
+                "source_word": "God",
+                "target_word": "Mungu",
+                "count": 500,
+                "probability": 0.92,
+            },
+            {
+                "source_word": "created",
+                "target_word": "aliumba",
+                "count": 50,
+                "probability": 0.85,
+            },
+            {
+                "source_word": "earth",
+                "target_word": "nchi",
+                "count": 200,
+                "probability": 0.78,
+            },
+            {
+                "source_word": "beginning",
+                "target_word": "mwanzo",
+                "count": 30,
+                "probability": 0.88,
+            },
+            {
+                "source_word": "heavens",
+                "target_word": "mbingu",
+                "count": 150,
+                "probability": 0.81,
+            },
+            {
+                "source_word": "In",
+                "target_word": "Hapo",
+                "count": 100,
+                "probability": 0.70,
+            },
+        ],
+        "cooccurrences": [
+            {
+                "source_word": "god",
+                "target_word": "mungu",
+                "co_occur_count": 520,
+                "aligned_count": 495,
+            },
+            {
+                "source_word": "created",
+                "target_word": "aliumba",
+                "co_occur_count": 55,
+                "aligned_count": 48,
+            },
+            {
+                "source_word": "earth",
+                "target_word": "nchi",
+                "co_occur_count": 210,
+                "aligned_count": 188,
+            },
+            {
+                "source_word": "beginning",
+                "target_word": "mwanzo",
+                "co_occur_count": 32,
+                "aligned_count": 28,
+            },
+            {
+                "source_word": "heavens",
+                "target_word": "mbingu",
+                "co_occur_count": 160,
+                "aligned_count": 140,
+            },
+            {
+                "source_word": "in",
+                "target_word": "hapo",
+                "co_occur_count": 110,
+                "aligned_count": 85,
+            },
+        ],
+        "target_word_counts": [
+            {"word": "mungu", "count": 600},
+            {"word": "aliumba", "count": 60},
+            {"word": "nchi", "count": 250},
+            {"word": "mwanzo", "count": 40},
+            {"word": "mbingu", "count": 180},
+            {"word": "hapo", "count": 120},
+        ],
+    }
+    response = client.post(
+        "v3/assessment/eflomal/results",
+        json=payload,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    return assessment_id
+
+
+@pytest.fixture(scope="module")
 def agent_test_access(test_db_session):
     """Grant Group1 access to loading_test version for agent tests.
 
