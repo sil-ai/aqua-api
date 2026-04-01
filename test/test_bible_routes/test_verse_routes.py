@@ -748,6 +748,197 @@ def test_texts_endpoint_empty_verse_not_treated_as_range(
     assert gen_1_2_rev2["text"] != ""  # Rev2 still has the original KJV text
 
 
+def test_texts_endpoint_multi_verse_range(client, regular_token1, db_session):
+    """Test /texts endpoint with 3+ consecutive <range> markers (GEN 1:2 and 1:3 both <range>)."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:2 and GEN 1:3 to <range> in revision 2
+    for vref in ["GEN 1:2", "GEN 1:3"]:
+        verse = (
+            db_session.query(VerseTextModel)
+            .filter(
+                VerseTextModel.revision_id == revision_id2,
+                VerseTextModel.verse_reference == vref,
+            )
+            .first()
+        )
+        verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # First entry should be merged GEN 1:1-3
+    first_rev1 = data[str(revision_id1)][0]
+    first_rev2 = data[str(revision_id2)][0]
+    assert first_rev1["verse_reference"] == "GEN 1:1-3"
+    assert first_rev2["verse_reference"] == "GEN 1:1-3"
+
+    # Rev1 text should combine all three verses
+    assert "beginning" in first_rev1["text"].lower()  # GEN 1:1
+    assert "without form" in first_rev1["text"].lower()  # GEN 1:2
+    assert "light" in first_rev1["text"].lower()  # GEN 1:3
+
+    # Rev2 text should NOT contain <range>
+    assert "<range>" not in first_rev2["text"]
+
+
+def test_texts_endpoint_range_at_chapter_boundary(client, regular_token1, db_session):
+    """Test that <range> markers don't merge across chapter boundaries."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set the first verse of GEN chapter 2 to <range> in revision 2
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id2,
+            VerseTextModel.verse_reference == "GEN 2:1",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # GEN 2:1 should exist as a standalone entry (not merged with chapter 1)
+    rev2_verses = {v["verse_reference"]: v for v in data[str(revision_id2)]}
+    assert "GEN 2:1" in rev2_verses, "GEN 2:1 should exist as standalone entry"
+    assert rev2_verses["GEN 2:1"]["text"] == ""  # orphan range cleared
+
+    # No cross-chapter range like "GEN 1:31-2:1" should exist
+    for vref in rev2_verses:
+        if "GEN 1:" in vref and "-" in vref:
+            assert "2:" not in vref, f"Cross-chapter merge detected: {vref}"
+
+
+def test_texts_endpoint_both_revisions_different_ranges(
+    client, regular_token1, db_session
+):
+    """Test /texts when both revisions have <range> on different verses."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Rev1: GEN 1:2 is <range> (merges 1:1-2)
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id1,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+
+    # Rev2: GEN 1:4 is <range> (merges 1:3-4)
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id2,
+            VerseTextModel.verse_reference == "GEN 1:4",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+    rev2_vrefs = [v["verse_reference"] for v in data[str(revision_id2)]]
+
+    # Both revisions should have the same verse references (aligned)
+    assert rev1_vrefs == rev2_vrefs
+
+    # Both GEN 1:1-2 and GEN 1:3-4 merges should be present
+    assert "GEN 1:1-2" in rev1_vrefs
+    assert "GEN 1:3-4" in rev1_vrefs
+
+    # Neither revision should contain <range> in any text
+    for v in data[str(revision_id1)] + data[str(revision_id2)]:
+        assert "<range>" not in v["text"]
+
+
+def test_texts_endpoint_range_on_first_verse(client, regular_token1, db_session):
+    """Test <range> on the very first verse of a revision (no preceding verse to merge into)."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:1 (first verse) to <range> in revision 2
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id2,
+            VerseTextModel.verse_reference == "GEN 1:1",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    # Should not crash - either handles gracefully or skips the orphan range
+    assert response.status_code == 200
+    data = response.json()
+
+    # Both revisions should still return data and be aligned
+    assert len(data[str(revision_id1)]) > 0
+    assert len(data[str(revision_id1)]) == len(data[str(revision_id2)])
+
+    # GEN 1:1 should appear as standalone with cleared text in rev2
+    first_rev2 = data[str(revision_id2)][0]
+    assert first_rev2["verse_reference"] == "GEN 1:1"
+    assert first_rev2["text"] == ""
+
+    # Rev1 GEN 1:1 should still have its original text
+    first_rev1 = data[str(revision_id1)][0]
+    assert first_rev1["verse_reference"] == "GEN 1:1"
+    assert "beginning" in first_rev1["text"].lower()
+
+    # No <range> markers should appear in any output text
+    for v in data[str(revision_id2)]:
+        assert "<range>" not in v["text"]
+
+
 def test_chapters_endpoint_basic(client, regular_token1, db_session):
     """Test /chapters endpoint returns available chapters for a revision."""
     version_id = create_bible_version(client, regular_token1, db_session)

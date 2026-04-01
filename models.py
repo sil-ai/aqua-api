@@ -1076,3 +1076,55 @@ class EflomalResultsPullResponse(BaseModel):
     dictionary: list[EflomalDictionaryItem]
     cooccurrences: list[EflomalCooccurrenceItem]
     target_word_counts: list[EflomalTargetWordCountItem]
+
+
+# --- Assessment Results Push/Delete models ---
+
+
+class AssessmentResultItem(BaseModel):
+    vref: str
+    score: float
+    flag: bool = False
+    source: Optional[str] = None
+    target: Optional[Any] = None
+    note: Optional[str] = None
+
+
+class AlignmentScoreItem(BaseModel):
+    vref: str
+    score: float
+    flag: bool = False
+    source: Optional[str] = None
+    target: Optional[str] = None
+    note: Optional[str] = None
+
+
+class TextLengthsItem(BaseModel):
+    vref: str
+    word_lengths: float
+    char_lengths: float
+    word_lengths_z: float
+    char_lengths_z: float
+
+
+class TfidfPcaVectorItem(BaseModel):
+    vref: str
+    vector: List[float] = Field(..., min_length=300, max_length=300)
+
+
+class NgramItem(BaseModel):
+    ngram: str
+    ngram_size: int
+    vrefs: List[str] = Field(..., max_length=50_000)
+
+
+class InsertResponse(BaseModel):
+    ids: List[int]
+
+
+class DeleteRequest(BaseModel):
+    ids: List[int]
+
+
+class DeleteResponse(BaseModel):
+    deleted: int
