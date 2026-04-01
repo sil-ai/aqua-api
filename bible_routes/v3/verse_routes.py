@@ -719,27 +719,8 @@ async def get_texts(
 
     # Determine verse ordering based on include_verses mode
     if include_verses == IncludeVerses.all:
-        # Fetch all canonical verse references in canonical order
-        all_vrefs_stmt = (
-            select(VerseReferenceModel.full_verse_id)
-            .join(
-                ChapterReferenceModel,
-                VerseReferenceModel.chapter
-                == ChapterReferenceModel.full_chapter_id,
-            )
-            .join(
-                BookReferenceModel,
-                VerseReferenceModel.book_reference
-                == BookReferenceModel.abbreviation,
-            )
-            .order_by(
-                BookReferenceModel.number,
-                ChapterReferenceModel.number,
-                VerseReferenceModel.number,
-            )
-        )
-        all_vrefs_result = await db.execute(all_vrefs_stmt)
-        vref_order = [row[0] for row in all_vrefs_result.all()]
+        # Use the canonical vref list loaded at module startup
+        vref_order = _VREF_LIST
     else:
         vref_order = queried_vref_order
 
@@ -780,21 +761,19 @@ async def get_texts(
     if include_verses == IncludeVerses.intersection:
         # Keep only records where ALL revisions have non-empty text
         merged_records = [
-            r for r in merged_records
-            if all(r[f].strip() for f in text_fields)
+            r for r in merged_records if all(r[f].strip() for f in text_fields)
         ]
     elif include_verses == IncludeVerses.union:
         # Keep records where at least one revision has non-empty text
         merged_records = [
-            r for r in merged_records
-            if any(r[f].strip() for f in text_fields)
+            r for r in merged_records if any(r[f].strip() for f in text_fields)
         ]
     # IncludeVerses.all: no filtering
 
     # Split back to per-revision lists (use string keys for JSON compatibility)
     # Pre-compute string keys and field names to avoid repeated string operations
     rev_id_strs = [str(rev_id) for rev_id in revision_ids]
-    rev_field_names = [f"text_{rev_id}" for rev_id in revision_ids]
+    rev_field_names = text_fields
     result_dict: Dict[str, List[VerseText]] = {key: [] for key in rev_id_strs}
 
     for record in merged_records:

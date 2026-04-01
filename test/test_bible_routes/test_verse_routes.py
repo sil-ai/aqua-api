@@ -955,7 +955,9 @@ def test_texts_include_verses_all(client, regular_token1, db_session):
     # Rev1: full KJV Bible, Rev2: only Genesis 1:1-3
     revision_id1 = upload_revision(client, regular_token1, version_id1)
     revision_id2 = upload_revision(
-        client, regular_token1, version_id2,
+        client,
+        regular_token1,
+        version_id2,
         fixture="fixtures/eng-genesis-partial.txt",
     )
 
@@ -986,8 +988,8 @@ def test_texts_include_verses_all(client, regular_token1, db_session):
     rev1_verses = data[str(revision_id1)]
     rev2_vrefs = {v["verse_reference"]: v for v in data[str(revision_id2)]}
 
-    # 'all' should return more verses than 'union' (canonical vrefs beyond
-    # what either revision covers)
+    # 'all' should return all 41,899 canonical verses
+    assert len(rev1_verses) == 41899
     assert len(rev1_verses) > union_count
 
     # Rev2 should have GEN 1:1-3 with text, but EXO 1:1 with empty text
