@@ -1,0 +1,342 @@
+__version__ = "v3"
+
+import re
+from typing import List
+
+import fastapi
+from fastapi import Depends, HTTPException
+from sqlalchemy import delete, func, insert, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database.dependencies import get_db
+from database.models import (
+    AlignmentTopSourceScores,
+    Assessment,
+    AssessmentResult,
+    NgramsTable,
+    NgramVrefTable,
+    TextLengthsTable,
+    TfidfPcaVector,
+)
+from database.models import UserDB as UserModel
+from models import (
+    AssessmentResultItem,
+    DeleteRequest,
+    DeleteResponse,
+    InsertResponse,
+    NgramItem,
+    TextLengthsItem,
+    TfidfPcaVectorItem,
+)
+from security_routes.auth_routes import get_current_user
+from security_routes.utilities import is_user_authorized_for_assessment
+
+router = fastapi.APIRouter()
+
+_BATCH_SIZE = 10_000
+
+_VREF_RE = re.compile(r"^(\w+)\s+(\d+):(\d+)$")
+
+
+def _parse_vref(vref: str):
+    m = _VREF_RE.match(vref)
+    if not m:
+        raise HTTPException(status_code=400, detail=f"Invalid vref format: {vref!r}")
+    return m.group(1), int(m.group(2)), int(m.group(3))
+
+
+async def _get_authorized_assessment(
+    assessment_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Assessment:
+    result = await db.execute(select(Assessment).where(Assessment.id == assessment_id))
+    assessment = result.scalars().first()
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+    return assessment
+
+
+async def _batch_insert(db, model_cls, rows):
+    inserted_ids = []
+    for i in range(0, len(rows), _BATCH_SIZE):
+        batch = rows[i : i + _BATCH_SIZE]
+        stmt = insert(model_cls).values(batch).returning(model_cls.id)
+        result = await db.execute(stmt)
+        inserted_ids.extend(r[0] for r in result.fetchall())
+    return inserted_ids
+
+
+def _build_score_rows(assessment_id: int, items: List[AssessmentResultItem]):
+    rows = []
+    for item in items:
+        book, chapter, verse = _parse_vref(item.vref)
+        rows.append(
+            {
+                "assessment_id": assessment_id,
+                "vref": item.vref,
+                "score": item.score,
+                "flag": item.flag,
+                "source": item.source,
+                "target": item.target,
+                "note": item.note,
+                "book": book,
+                "chapter": chapter,
+                "verse": verse,
+            }
+        )
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# POST endpoints — one per result type
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/assessment/{assessment_id}/results",
+    response_model=InsertResponse,
+)
+async def push_results(
+    assessment_id: int,
+    body: List[AssessmentResultItem],
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk insert assessment results (assessment_result table)."""
+    if not body:
+        return InsertResponse(ids=[])
+    try:
+        rows = _build_score_rows(assessment_id, body)
+        ids = await _batch_insert(db, AssessmentResult, rows)
+        await db.commit()
+        return InsertResponse(ids=ids)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"IntegrityError: {exc}")
+
+
+@router.post(
+    "/assessment/{assessment_id}/alignment-scores",
+    response_model=InsertResponse,
+)
+async def push_alignment_scores(
+    assessment_id: int,
+    body: List[AssessmentResultItem],
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk insert alignment top source scores."""
+    if not body:
+        return InsertResponse(ids=[])
+    try:
+        rows = _build_score_rows(assessment_id, body)
+        ids = await _batch_insert(db, AlignmentTopSourceScores, rows)
+        await db.commit()
+        return InsertResponse(ids=ids)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"IntegrityError: {exc}")
+
+
+@router.post(
+    "/assessment/{assessment_id}/text-lengths",
+    response_model=InsertResponse,
+)
+async def push_text_lengths(
+    assessment_id: int,
+    body: List[TextLengthsItem],
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk insert text length statistics."""
+    if not body:
+        return InsertResponse(ids=[])
+    try:
+        rows = [
+            {
+                "assessment_id": assessment_id,
+                "vref": item.vref,
+                "word_lengths": item.word_lengths,
+                "char_lengths": item.char_lengths,
+                "word_lengths_z": item.word_lengths_z,
+                "char_lengths_z": item.char_lengths_z,
+            }
+            for item in body
+        ]
+        ids = await _batch_insert(db, TextLengthsTable, rows)
+        await db.commit()
+        return InsertResponse(ids=ids)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"IntegrityError: {exc}")
+
+
+@router.post(
+    "/assessment/{assessment_id}/tfidf-vectors",
+    response_model=InsertResponse,
+)
+async def push_tfidf_vectors(
+    assessment_id: int,
+    body: List[TfidfPcaVectorItem],
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk insert TF-IDF PCA vectors."""
+    if not body:
+        return InsertResponse(ids=[])
+    try:
+        rows = [
+            {
+                "assessment_id": assessment_id,
+                "vref": item.vref,
+                "vector": item.vector,
+            }
+            for item in body
+        ]
+        ids = await _batch_insert(db, TfidfPcaVector, rows)
+        await db.commit()
+        return InsertResponse(ids=ids)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"IntegrityError: {exc}")
+
+
+@router.post(
+    "/assessment/{assessment_id}/ngrams",
+    response_model=InsertResponse,
+)
+async def push_ngrams(
+    assessment_id: int,
+    body: List[NgramItem],
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk insert ngram results with their verse references."""
+    if not body:
+        return InsertResponse(ids=[])
+    try:
+        ngram_ids = []
+        for i in range(0, len(body), _BATCH_SIZE):
+            batch = body[i : i + _BATCH_SIZE]
+            ngram_rows = [
+                {
+                    "assessment_id": assessment_id,
+                    "ngram": item.ngram,
+                    "ngram_size": item.ngram_size,
+                }
+                for item in batch
+            ]
+            stmt = insert(NgramsTable).values(ngram_rows).returning(NgramsTable.id)
+            result = await db.execute(stmt)
+            batch_ids = [r[0] for r in result.fetchall()]
+            ngram_ids.extend(batch_ids)
+
+            vref_rows = []
+            for ngram_id, item in zip(batch_ids, batch):
+                for vref in item.vrefs:
+                    vref_rows.append({"ngram_id": ngram_id, "vref": vref})
+            if vref_rows:
+                for j in range(0, len(vref_rows), _BATCH_SIZE):
+                    await db.execute(
+                        insert(NgramVrefTable).values(vref_rows[j : j + _BATCH_SIZE])
+                    )
+
+        await db.commit()
+        return InsertResponse(ids=ngram_ids)
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"IntegrityError: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# DELETE endpoints
+# ---------------------------------------------------------------------------
+
+
+async def _delete_from_table(model_cls, assessment_id, ids, db):
+    result = await db.execute(
+        delete(model_cls)
+        .where(model_cls.id.in_(ids), model_cls.assessment_id == assessment_id)
+        .returning(model_cls.id)
+    )
+    return len(result.fetchall())
+
+
+@router.delete(
+    "/assessment/{assessment_id}/results",
+    response_model=DeleteResponse,
+)
+async def delete_results(
+    assessment_id: int,
+    body: DeleteRequest,
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete assessment results by ID."""
+    if not body.ids:
+        return DeleteResponse(deleted=0)
+    deleted = await _delete_from_table(AssessmentResult, assessment_id, body.ids, db)
+    await db.commit()
+    return DeleteResponse(deleted=deleted)
+
+
+@router.delete(
+    "/assessment/{assessment_id}/alignment-scores",
+    response_model=DeleteResponse,
+)
+async def delete_alignment_scores(
+    assessment_id: int,
+    body: DeleteRequest,
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete alignment top source scores by ID."""
+    if not body.ids:
+        return DeleteResponse(deleted=0)
+    deleted = await _delete_from_table(
+        AlignmentTopSourceScores, assessment_id, body.ids, db
+    )
+    await db.commit()
+    return DeleteResponse(deleted=deleted)
+
+
+@router.delete(
+    "/assessment/{assessment_id}/text-lengths",
+    response_model=DeleteResponse,
+)
+async def delete_text_lengths(
+    assessment_id: int,
+    body: DeleteRequest,
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete text length rows by ID."""
+    if not body.ids:
+        return DeleteResponse(deleted=0)
+    deleted = await _delete_from_table(TextLengthsTable, assessment_id, body.ids, db)
+    await db.commit()
+    return DeleteResponse(deleted=deleted)
+
+
+@router.delete(
+    "/assessment/{assessment_id}/tfidf-vectors",
+    response_model=DeleteResponse,
+)
+async def delete_tfidf_vectors(
+    assessment_id: int,
+    body: DeleteRequest,
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete TF-IDF PCA vector rows by ID."""
+    if not body.ids:
+        return DeleteResponse(deleted=0)
+    deleted = await _delete_from_table(TfidfPcaVector, assessment_id, body.ids, db)
+    await db.commit()
+    return DeleteResponse(deleted=deleted)
