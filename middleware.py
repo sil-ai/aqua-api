@@ -50,8 +50,6 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             "/change-password",
         ]  # Add other sensitive paths here
         is_sensitive_path = any(path in url for path in sensitive_paths)
-        print(request.method)
-        print(url)
         post_revision = request.method == "POST" and "revision" in url
         if is_sensitive_path or post_revision:
             body_str = "Sensitive Data - Not Logged"
@@ -69,7 +67,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             status_phrase = ""
 
         logger.info(
-            "Request processed:",
+            f"{request.method} {url} {response.status_code} {status_phrase} {formatted_process_time}ms user={username}",
             extra={
                 "host": host,
                 "port": port,

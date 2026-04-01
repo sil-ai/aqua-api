@@ -71,13 +71,12 @@ async def get_current_user(
         user = result.scalars().first()
         if user is None:
             raise credentials_exception
-        logger.info(
-            "User authenticated",
+        logger.debug(
+            f"Authenticated user={user.username} id={user.id} is_admin={user.is_admin}",
             extra={
                 "username": user.username,
                 "user_id": user.id,
                 "is_admin": user.is_admin,
-                "timestamp": datetime.now().isoformat(),
             },
         )
         return user
