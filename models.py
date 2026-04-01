@@ -304,6 +304,11 @@ class SemanticSimilarityResponse(BaseModel):
     score: float
 
 
+class TextLengthsInferenceResponse(BaseModel):
+    word_count_difference: int
+    char_count_difference: int
+
+
 # Results model to record in the DB.
 
 
