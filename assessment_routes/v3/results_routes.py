@@ -418,3 +418,38 @@ async def delete_tfidf_vectors(
     except SQLAlchemyError:
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to delete rows")
+
+
+@router.delete(
+    "/assessment/{assessment_id}/ngrams",
+    response_model=DeleteResponse,
+)
+async def delete_ngrams(
+    assessment_id: int,
+    body: DeleteRequest,
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete ngrams and their associated vref rows by ngram ID."""
+    if not body.ids:
+        return DeleteResponse(deleted=0)
+    try:
+        # Delete vref associations first (child rows)
+        await db.execute(
+            delete(NgramVrefTable).where(NgramVrefTable.ngram_id.in_(body.ids))
+        )
+        # Then delete the ngrams themselves
+        result = await db.execute(
+            delete(NgramsTable)
+            .where(
+                NgramsTable.id.in_(body.ids),
+                NgramsTable.assessment_id == assessment_id,
+            )
+            .returning(NgramsTable.id)
+        )
+        deleted = len(result.fetchall())
+        await db.commit()
+        return DeleteResponse(deleted=deleted)
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete rows")

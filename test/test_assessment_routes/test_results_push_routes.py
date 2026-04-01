@@ -401,3 +401,42 @@ def test_delete_tfidf_vectors_nonexistent(client, regular_token1):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DELETE /assessment/{id}/ngrams
+# ---------------------------------------------------------------------------
+
+
+def test_delete_ngrams(client, regular_token1, push_assessment_id):
+    # Insert ngrams with vrefs
+    insert_resp = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/ngrams",
+        json=[
+            {"ngram": "delete me", "ngram_size": 2, "vrefs": ["GEN 1:1", "GEN 1:2"]},
+            {"ngram": "also delete", "ngram_size": 2, "vrefs": ["GEN 1:3"]},
+        ],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert insert_resp.status_code == 200
+    ids = insert_resp.json()["ids"]
+
+    # Delete should cascade to vref rows
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/ngrams",
+        json={"ids": ids},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 2
+
+
+def test_delete_ngrams_nonexistent(client, regular_token1):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/999999/ngrams",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
