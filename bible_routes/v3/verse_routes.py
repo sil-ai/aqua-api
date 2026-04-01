@@ -3,7 +3,7 @@ __version__ = "v3"
 import pathlib
 import unicodedata
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
@@ -755,13 +755,13 @@ async def get_texts(
         # Keep only records where ALL revisions have non-empty text
         merged_records = [
             r for r in merged_records
-            if all(r.get(f).strip() for f in text_fields)
+            if all(r[f].strip() for f in text_fields)
         ]
     elif exclude_empty == ExcludeEmpty.all:
         # Keep records where at least one revision has non-empty text
         merged_records = [
             r for r in merged_records
-            if any(r.get(f).strip() for f in text_fields)
+            if any(r[f].strip() for f in text_fields)
         ]
     # ExcludeEmpty.none: no filtering
 

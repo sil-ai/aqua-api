@@ -1018,3 +1018,87 @@ def test_texts_exclude_empty_all_default(client, regular_token1, db_session):
     # Verify rev2's GEN 1:3 has empty text
     rev2_map = {v["verse_reference"]: v for v in data[str(revision_id2)]}
     assert rev2_map["GEN 1:3"]["text"] == ""
+
+
+def test_texts_exclude_empty_all_removes_when_all_empty(
+    client, regular_token1, db_session
+):
+    """Test exclude_empty=all removes verses where ALL revisions have empty text."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Delete GEN 1:3 from BOTH revisions so all are empty
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id1,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).delete()
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).delete()
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "exclude_empty": "all",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+
+    # GEN 1:3 should be excluded (both revisions have no text)
+    assert "GEN 1:3" not in rev1_vrefs
+    # Other verses should still be present
+    assert "GEN 1:1" in rev1_vrefs
+    assert "GEN 1:2" in rev1_vrefs
+
+
+def test_texts_exclude_empty_whitespace_treated_as_empty(
+    client, regular_token1, db_session
+):
+    """Test that whitespace-only text is treated as empty by exclude_empty."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:3 to whitespace-only in both revisions
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id1,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).update({"text": "   "})
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).update({"text": "  \t "})
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # With exclude_empty=all, whitespace-only should count as empty
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "exclude_empty": "all",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+
+    # GEN 1:3 should be excluded (whitespace-only = empty)
+    assert "GEN 1:3" not in rev1_vrefs
