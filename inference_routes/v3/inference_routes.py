@@ -82,5 +82,3 @@ async def text_lengths_inference(
         word_count_difference=words_a - words_b,
         char_count_difference=len(text1) - len(text2),
     )
-
-    return SemanticSimilarityResponse(score=result["score"])
