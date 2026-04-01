@@ -283,3 +283,121 @@ def test_delete_results_unauthorized(client, regular_token2, push_assessment_id)
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# DELETE /assessment/{id}/alignment-scores
+# ---------------------------------------------------------------------------
+
+
+def test_delete_alignment_scores(client, regular_token1, push_assessment_id):
+    insert_resp = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-scores",
+        json=[
+            {
+                "vref": "GEN 1:1",
+                "score": 0.9,
+                "source": "beginning",
+                "target": "mwanzo",
+            },
+            {"vref": "GEN 1:2", "score": 0.85, "source": "earth", "target": "dunia"},
+        ],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert insert_resp.status_code == 200
+    ids = insert_resp.json()["ids"]
+
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/alignment-scores",
+        json={"ids": ids},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 2
+
+
+def test_delete_alignment_scores_nonexistent(client, regular_token1):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/999999/alignment-scores",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DELETE /assessment/{id}/text-lengths
+# ---------------------------------------------------------------------------
+
+
+def test_delete_text_lengths(client, regular_token1, push_assessment_id):
+    insert_resp = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/text-lengths",
+        json=[
+            {
+                "vref": "GEN 1:3",
+                "word_lengths": 5.0,
+                "char_lengths": 25.0,
+                "word_lengths_z": 0.3,
+                "char_lengths_z": -0.1,
+            },
+        ],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert insert_resp.status_code == 200
+    ids = insert_resp.json()["ids"]
+
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/text-lengths",
+        json={"ids": ids},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 1
+
+
+def test_delete_text_lengths_nonexistent(client, regular_token1):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/999999/text-lengths",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DELETE /assessment/{id}/tfidf-vectors
+# ---------------------------------------------------------------------------
+
+
+def test_delete_tfidf_vectors(client, regular_token1, push_assessment_id):
+    insert_resp = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/tfidf-vectors",
+        json=[{"vref": "GEN 1:3", "vector": [0.1] * 300}],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert insert_resp.status_code == 200
+    ids = insert_resp.json()["ids"]
+
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/tfidf-vectors",
+        json={"ids": ids},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 1
+
+
+def test_delete_tfidf_vectors_nonexistent(client, regular_token1):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/999999/tfidf-vectors",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404

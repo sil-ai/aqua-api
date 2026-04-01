@@ -21,6 +21,7 @@ from database.models import (
 )
 from database.models import UserDB as UserModel
 from models import (
+    AlignmentScoreItem,
     AssessmentResultItem,
     DeleteRequest,
     DeleteResponse,
@@ -138,6 +139,9 @@ async def push_results(
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
 
 
 @router.post(
@@ -146,7 +150,7 @@ async def push_results(
 )
 async def push_alignment_scores(
     assessment_id: int,
-    body: List[AssessmentResultItem],
+    body: List[AlignmentScoreItem],
     assessment: Assessment = Depends(_get_authorized_assessment),
     db: AsyncSession = Depends(get_db),
 ):
@@ -154,7 +158,23 @@ async def push_alignment_scores(
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
-    rows = _build_score_rows(assessment_id, body)
+    rows = []
+    for item in body:
+        book, chapter, verse = _parse_vref(item.vref)
+        rows.append(
+            {
+                "assessment_id": assessment_id,
+                "vref": item.vref,
+                "score": item.score,
+                "flag": item.flag,
+                "source": item.source,
+                "target": item.target,
+                "note": item.note,
+                "book": book,
+                "chapter": chapter,
+                "verse": verse,
+            }
+        )
     try:
         ids = await _batch_insert(db, AlignmentTopSourceScores, rows)
         await db.commit()
@@ -162,6 +182,9 @@ async def push_alignment_scores(
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
 
 
 @router.post(
@@ -196,6 +219,9 @@ async def push_text_lengths(
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
 
 
 @router.post(
@@ -227,6 +253,9 @@ async def push_tfidf_vectors(
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
 
 
 @router.post(
@@ -278,6 +307,9 @@ async def push_ngrams(
     except IntegrityError:
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
 
 
 # ---------------------------------------------------------------------------

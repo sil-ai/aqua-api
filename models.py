@@ -1090,6 +1090,15 @@ class AssessmentResultItem(BaseModel):
     note: Optional[str] = None
 
 
+class AlignmentScoreItem(BaseModel):
+    vref: str
+    score: float
+    flag: bool = False
+    source: Optional[str] = None
+    target: Optional[str] = None
+    note: Optional[str] = None
+
+
 class TextLengthsItem(BaseModel):
     vref: str
     word_lengths: float
@@ -1100,7 +1109,7 @@ class TextLengthsItem(BaseModel):
 
 class TfidfPcaVectorItem(BaseModel):
     vref: str
-    vector: List[float]
+    vector: List[float] = Field(..., min_length=300, max_length=300)
 
 
 class NgramItem(BaseModel):
