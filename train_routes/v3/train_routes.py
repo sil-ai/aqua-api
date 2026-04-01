@@ -220,7 +220,9 @@ async def create_training_job(
                 }
                 if job_in.options:
                     config["kwargs"] = job_in.options
-                await f.spawn.aio(config, os.getenv("AQUA_DB", ""), train_job_id=job.id)
+                await f.spawn.aio(
+                    config, os.getenv("AQUA_DB", ""), train_job_id=job.id
+                )
             else:
                 f = modal.Function.from_name(
                     "train-runner", "run_training_job", environment_name=modal_env
