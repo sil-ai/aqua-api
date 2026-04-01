@@ -50,7 +50,7 @@ router = fastapi.APIRouter()
 VALID_TRANSITIONS = {
     "queued": {"preparing", "failed"},
     "preparing": {"training", "failed"},
-    "training": {"downloading", "failed"},
+    "training": {"training", "downloading", "failed"},
     "downloading": {"uploading", "failed"},
     "uploading": {"completed", "completed_with_errors", "failed"},
 }
