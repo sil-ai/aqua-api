@@ -610,22 +610,22 @@ def format_verse_range(first_vref: str, last_vref: str) -> str:
         return f"{book_first} {cv_first}-{cv_last}"
 
 
-class ExcludeEmpty(str, Enum):
-    none = "none"
-    any = "any"
+class IncludeVerses(str, Enum):
     all = "all"
+    union = "union"
+    intersection = "intersection"
 
 
 @router.get("/texts", response_model=Dict[str, List[VerseText]])
 async def get_texts(
     revision_ids: List[int] = Query(..., min_items=2),
-    exclude_empty: ExcludeEmpty = Query(
-        ExcludeEmpty.all,
+    include_verses: IncludeVerses = Query(
+        IncludeVerses.union,
         description=(
-            "Filter verses with empty or whitespace-only text. "
-            "'none': no filtering. "
-            "'any': exclude verses where ANY revision has empty/blank text (intersection only). "
-            "'all': exclude verses where ALL revisions have empty/blank text (default)."
+            "Which verses to include in the response. "
+            "'all': all 41,899 canonical verses, with empty text for missing verses. "
+            "'union': verses where at least one revision has text (default). "
+            "'intersection': only verses where every revision has text."
         ),
     ),
     db: AsyncSession = Depends(get_db),
@@ -640,8 +640,8 @@ async def get_texts(
     Input:
     - revision_ids: List[int]
     Description: List of revision IDs to fetch (minimum 2).
-    - exclude_empty: ExcludeEmpty (none|any|all, default "all")
-    Description: Filter out verses with empty or whitespace-only text after range merging.
+    - include_verses: IncludeVerses (all|union|intersection, default "union")
+    Description: Which verses to include in the response.
 
     Returns:
     Dict[str, List[VerseText]]: Dictionary keyed by revision_id (as string),
@@ -653,8 +653,8 @@ async def get_texts(
       revision_id.
     - If a revision contains no verses, its value will be an empty list.
     - If a verse exists in one revision but not another, the missing revision
-      will have an empty string for that verse's text (unless filtered by
-      exclude_empty).
+      will have an empty string for that verse's text (controlled by
+      include_verses).
     """
     # Deduplicate revision IDs while preserving order
     revision_ids = list(dict.fromkeys(revision_ids))
@@ -707,15 +707,41 @@ async def get_texts(
 
     # Group by verse_reference: {vref -> {revision_id -> verse_row}}
     vref_to_revisions: Dict[str, Dict[int, Any]] = {}
-    # Track ordering of vrefs (first seen order from canonical query)
-    vref_order: List[str] = []
+    # Track ordering of vrefs from the query (canonical order)
+    queried_vref_order: List[str] = []
 
     for verse in all_verses:
         vref = verse.verse_reference
         if vref not in vref_to_revisions:
             vref_to_revisions[vref] = {}
-            vref_order.append(vref)
+            queried_vref_order.append(vref)
         vref_to_revisions[vref][verse.revision_id] = verse
+
+    # Determine verse ordering based on include_verses mode
+    if include_verses == IncludeVerses.all:
+        # Fetch all canonical verse references in canonical order
+        all_vrefs_stmt = (
+            select(VerseReferenceModel.full_verse_id)
+            .join(
+                ChapterReferenceModel,
+                VerseReferenceModel.chapter
+                == ChapterReferenceModel.full_chapter_id,
+            )
+            .join(
+                BookReferenceModel,
+                VerseReferenceModel.book_reference
+                == BookReferenceModel.abbreviation,
+            )
+            .order_by(
+                BookReferenceModel.number,
+                ChapterReferenceModel.number,
+                VerseReferenceModel.number,
+            )
+        )
+        all_vrefs_result = await db.execute(all_vrefs_stmt)
+        vref_order = [row[0] for row in all_vrefs_result.all()]
+    else:
+        vref_order = queried_vref_order
 
     # Create combined records with text field per revision
     # Each record: {"vrefs": ["GEN 1:1"], "text_123": "...", "text_456": "..."}
@@ -750,20 +776,20 @@ async def get_texts(
         ),
     )
 
-    # Apply exclude_empty filtering
-    if exclude_empty == ExcludeEmpty.any:
+    # Apply include_verses filtering
+    if include_verses == IncludeVerses.intersection:
         # Keep only records where ALL revisions have non-empty text
         merged_records = [
             r for r in merged_records
             if all(r[f].strip() for f in text_fields)
         ]
-    elif exclude_empty == ExcludeEmpty.all:
+    elif include_verses == IncludeVerses.union:
         # Keep records where at least one revision has non-empty text
         merged_records = [
             r for r in merged_records
             if any(r[f].strip() for f in text_fields)
         ]
-    # ExcludeEmpty.none: no filtering
+    # IncludeVerses.all: no filtering
 
     # Split back to per-revision lists (use string keys for JSON compatibility)
     # Pre-compute string keys and field names to avoid repeated string operations

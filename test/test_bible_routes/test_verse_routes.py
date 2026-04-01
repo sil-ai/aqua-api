@@ -901,12 +901,12 @@ def test_vref_text_endpoint_unauthorized(
 
 
 # =============================================================================
-# /texts exclude_empty parameter tests
+# /texts include_verses parameter tests
 # =============================================================================
 
 
-def test_texts_exclude_empty_any(client, regular_token1, db_session):
-    """Test exclude_empty=any removes verses where any revision has empty text."""
+def test_texts_include_verses_intersection(client, regular_token1, db_session):
+    """Test include_verses=intersection only keeps verses where all revisions have text."""
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
@@ -922,12 +922,11 @@ def test_texts_exclude_empty_any(client, regular_token1, db_session):
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
-    # With exclude_empty=any, GEN 1:3 should be excluded (rev2 has no text)
     response = client.get(
         f"/{prefix}/texts",
         params={
             "revision_ids": [revision_id1, revision_id2],
-            "exclude_empty": "any",
+            "include_verses": "intersection",
         },
         headers=headers,
     )
@@ -948,8 +947,8 @@ def test_texts_exclude_empty_any(client, regular_token1, db_session):
     assert "GEN 1:2" in rev1_vrefs
 
 
-def test_texts_exclude_empty_none(client, regular_token1, db_session):
-    """Test exclude_empty=none keeps all verses including empty ones."""
+def test_texts_include_verses_all(client, regular_token1, db_session):
+    """Test include_verses=all returns all canonical verses with empty text for missing ones."""
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
@@ -965,27 +964,42 @@ def test_texts_exclude_empty_none(client, regular_token1, db_session):
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
-    # With exclude_empty=none, GEN 1:3 should still be present with empty text
     response = client.get(
         f"/{prefix}/texts",
         params={
             "revision_ids": [revision_id1, revision_id2],
-            "exclude_empty": "none",
+            "include_verses": "all",
         },
         headers=headers,
     )
     assert response.status_code == 200
     data = response.json()
 
+    rev1_verses = data[str(revision_id1)]
     rev2_vrefs = {v["verse_reference"]: v for v in data[str(revision_id2)]}
 
-    # GEN 1:3 should be present with empty text
+    # Should return many more verses than just the uploaded ones
+    assert len(rev1_verses) > 3
+
+    # GEN 1:3 should be present with empty text for rev2
     assert "GEN 1:3" in rev2_vrefs
     assert rev2_vrefs["GEN 1:3"]["text"] == ""
 
+    # Verses not in either revision should also appear with empty text
+    # (e.g. a verse from a book not in the uploaded data)
+    rev1_vrefs = {v["verse_reference"]: v for v in rev1_verses}
+    # Find any vref that exists in results but wasn't in our upload
+    non_genesis_vrefs = [
+        v for v in rev1_vrefs if not v.startswith("GEN")
+    ]
+    assert len(non_genesis_vrefs) > 0
+    # Those should all have empty text
+    for vref in non_genesis_vrefs[:5]:
+        assert rev1_vrefs[vref]["text"] == ""
 
-def test_texts_exclude_empty_all_default(client, regular_token1, db_session):
-    """Test that default (exclude_empty=all) keeps verses where at least one revision has text."""
+
+def test_texts_include_verses_union_default(client, regular_token1, db_session):
+    """Test that default (include_verses=union) keeps verses where at least one revision has text."""
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
@@ -1001,7 +1015,7 @@ def test_texts_exclude_empty_all_default(client, regular_token1, db_session):
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
-    # Default (no exclude_empty param) should behave as exclude_empty=all
+    # Default (no include_verses param) should behave as union
     response = client.get(
         f"/{prefix}/texts",
         params={"revision_ids": [revision_id1, revision_id2]},
@@ -1012,7 +1026,7 @@ def test_texts_exclude_empty_all_default(client, regular_token1, db_session):
 
     rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
 
-    # GEN 1:3 should still be present (rev1 has text, so not ALL are empty)
+    # GEN 1:3 should still be present (rev1 has text)
     assert "GEN 1:3" in rev1_vrefs
 
     # Verify rev2's GEN 1:3 has empty text
@@ -1020,10 +1034,10 @@ def test_texts_exclude_empty_all_default(client, regular_token1, db_session):
     assert rev2_map["GEN 1:3"]["text"] == ""
 
 
-def test_texts_exclude_empty_all_removes_when_all_empty(
+def test_texts_include_verses_union_removes_when_all_empty(
     client, regular_token1, db_session
 ):
-    """Test exclude_empty=all removes verses where ALL revisions have empty text."""
+    """Test union removes verses where ALL revisions have empty text."""
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
@@ -1047,7 +1061,7 @@ def test_texts_exclude_empty_all_removes_when_all_empty(
         f"/{prefix}/texts",
         params={
             "revision_ids": [revision_id1, revision_id2],
-            "exclude_empty": "all",
+            "include_verses": "union",
         },
         headers=headers,
     )
@@ -1063,10 +1077,10 @@ def test_texts_exclude_empty_all_removes_when_all_empty(
     assert "GEN 1:2" in rev1_vrefs
 
 
-def test_texts_exclude_empty_whitespace_treated_as_empty(
+def test_texts_include_verses_whitespace_treated_as_empty(
     client, regular_token1, db_session
 ):
-    """Test that whitespace-only text is treated as empty by exclude_empty."""
+    """Test that whitespace-only text is treated as empty by include_verses filtering."""
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
@@ -1086,12 +1100,12 @@ def test_texts_exclude_empty_whitespace_treated_as_empty(
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
-    # With exclude_empty=all, whitespace-only should count as empty
+    # With union, whitespace-only should count as empty
     response = client.get(
         f"/{prefix}/texts",
         params={
             "revision_ids": [revision_id1, revision_id2],
-            "exclude_empty": "all",
+            "include_verses": "union",
         },
         headers=headers,
     )
