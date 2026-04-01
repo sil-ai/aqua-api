@@ -192,6 +192,28 @@ class VerseText(BaseModel):
     }
 
 
+class AssessmentStatus(str, Enum):
+    queued = "queued"
+    running = "running"
+    finished = "finished"
+    failed = "failed"
+
+
+ASSESSMENT_VALID_TRANSITIONS = {
+    "queued": {"running", "failed"},
+    "running": {"running", "finished", "failed"},
+}
+
+ASSESSMENT_TERMINAL_STATUSES = {"finished", "failed"}
+
+
+class AssessmentStatusUpdate(BaseModel):
+    status: AssessmentStatus
+    status_detail: Optional[str] = None
+
+    model_config = {"use_enum_values": True}
+
+
 class AssessmentType(Enum):
     word_alignment = "word-alignment"
     sentence_length = "sentence-length"
