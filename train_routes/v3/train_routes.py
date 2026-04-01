@@ -207,9 +207,9 @@ async def create_training_job(
         try:
             if job.type == TrainingType.semantic_similarity.value:
                 f = modal.Function.from_name(
-                    "semantic-similarity", "assess", environment_name=modal_env
+                    "runner", "run_assessment_runner", environment_name=modal_env
                 )
-                payload = {
+                config = {
                     "id": job.id,
                     "revision_id": job_in.source_revision_id,
                     "reference_id": job_in.target_revision_id,
@@ -219,8 +219,10 @@ async def create_training_job(
                     "target_language": target_language,
                 }
                 if job_in.options:
-                    payload["kwargs"] = job_in.options
-                await f.spawn.aio(payload, os.getenv("AQUA_DB", ""))
+                    config["kwargs"] = job_in.options
+                await f.spawn.aio(
+                    config, os.getenv("AQUA_DB", ""), train_job_id=job.id
+                )
             else:
                 f = modal.Function.from_name(
                     "train-runner", "run_training_job", environment_name=modal_env
