@@ -35,13 +35,13 @@ def create_bible_version(client, regular_token1, db_session):
     return version_id
 
 
-def upload_revision(client, token, version_id):
+def upload_revision(client, token, version_id, fixture="fixtures/eng-eng-kjv.txt"):
     headers = {"Authorization": f"Bearer {token}"}
     test_revision = {
         "version_id": version_id,
         "name": "Test Revision",
     }
-    test_upload_file = Path("fixtures/eng-eng-kjv.txt")
+    test_upload_file = Path(fixture)
 
     with open(test_upload_file, "rb") as file:
         files = {"file": file}
@@ -952,17 +952,25 @@ def test_texts_include_verses_all(client, regular_token1, db_session):
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
+    # Rev1: full KJV Bible, Rev2: only Genesis 1:1-3
     revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
-
-    # Delete GEN 1:3 from revision 2
-    db_session.query(VerseTextModel).filter(
-        VerseTextModel.revision_id == revision_id2,
-        VerseTextModel.verse_reference == "GEN 1:3",
-    ).delete()
-    db_session.commit()
+    revision_id2 = upload_revision(
+        client, regular_token1, version_id2,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Get union count for comparison (only verses with text in at least one rev)
+    response_union = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "union",
+        },
+        headers=headers,
+    )
+    union_count = len(response_union.json()[str(revision_id1)])
 
     response = client.get(
         f"/{prefix}/texts",
@@ -978,24 +986,14 @@ def test_texts_include_verses_all(client, regular_token1, db_session):
     rev1_verses = data[str(revision_id1)]
     rev2_vrefs = {v["verse_reference"]: v for v in data[str(revision_id2)]}
 
-    # Should return many more verses than just the uploaded ones
-    assert len(rev1_verses) > 3
+    # 'all' should return more verses than 'union' (canonical vrefs beyond
+    # what either revision covers)
+    assert len(rev1_verses) > union_count
 
-    # GEN 1:3 should be present with empty text for rev2
-    assert "GEN 1:3" in rev2_vrefs
-    assert rev2_vrefs["GEN 1:3"]["text"] == ""
-
-    # Verses not in either revision should also appear with empty text
-    # (e.g. a verse from a book not in the uploaded data)
-    rev1_vrefs = {v["verse_reference"]: v for v in rev1_verses}
-    # Find any vref that exists in results but wasn't in our upload
-    non_genesis_vrefs = [
-        v for v in rev1_vrefs if not v.startswith("GEN")
-    ]
-    assert len(non_genesis_vrefs) > 0
-    # Those should all have empty text
-    for vref in non_genesis_vrefs[:5]:
-        assert rev1_vrefs[vref]["text"] == ""
+    # Rev2 should have GEN 1:1-3 with text, but EXO 1:1 with empty text
+    assert rev2_vrefs["GEN 1:1"]["text"] != ""
+    assert "EXO 1:1" in rev2_vrefs
+    assert rev2_vrefs["EXO 1:1"]["text"] == ""
 
 
 def test_texts_include_verses_union_default(client, regular_token1, db_session):

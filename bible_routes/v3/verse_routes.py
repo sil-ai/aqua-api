@@ -749,7 +749,7 @@ async def get_texts(
     combined_records: List[Dict] = []
 
     for vref in vref_order:
-        rev_verses = vref_to_revisions[vref]
+        rev_verses = vref_to_revisions.get(vref, {})
         record = {"vrefs": [vref]}
         for rev_id in revision_ids:
             field_name = f"text_{rev_id}"
