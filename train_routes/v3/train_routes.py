@@ -10,7 +10,7 @@ from typing import List, Optional
 import fastapi
 import modal
 from dotenv import load_dotenv
-from fastapi import Depends, Header, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -86,27 +86,6 @@ async def _compute_inference_readiness(
             pending_training=pending,
         )
     return readiness
-
-
-async def verify_webhook_token(authorization: str = Header(...)) -> None:
-    """Verify the Modal webhook token from Authorization header."""
-    expected_token = os.getenv("MODAL_WEBHOOK_TOKEN")
-    if not expected_token:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Webhook token not configured",
-        )
-    if not authorization.startswith("Bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header format",
-        )
-    token = authorization[len("Bearer ") :]
-    if token != expected_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid webhook token",
-        )
 
 
 async def _get_accessible_version_ids(
@@ -406,7 +385,7 @@ async def update_training_job_status(
     job_id: int,
     update: TrainingJobStatusUpdate,
     db: AsyncSession = Depends(get_db),
-    _auth: None = Depends(verify_webhook_token),
+    current_user: UserModel = Depends(get_current_user),
 ):
     """Runner callback to update training job status."""
     job = await db.get(TrainingJob, job_id)
@@ -415,6 +394,20 @@ async def update_training_job_status(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Training job not found",
         )
+
+    # Auth: admin, owner, or group access to both revisions
+    if not current_user.is_admin and job.owner_id != current_user.id:
+        version_ids = await _get_accessible_version_ids(current_user, db)
+        source_rev = await db.get(BibleRevision, job.source_revision_id)
+        target_rev = await db.get(BibleRevision, job.target_revision_id)
+        if (
+            source_rev.bible_version_id not in version_ids
+            or target_rev.bible_version_id not in version_ids
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this training job",
+            )
 
     if job.status in TERMINAL_STATUSES:
         raise HTTPException(
@@ -461,7 +454,7 @@ async def get_training_data(
     job_id: int,
     range_handling: str = Query("filter", pattern="^(filter|merge|empty)$"),
     db: AsyncSession = Depends(get_db),
-    _auth: None = Depends(verify_webhook_token),
+    current_user: UserModel = Depends(get_current_user),
 ):
     """Return parallel verse text for the training runner."""
     job = await db.get(TrainingJob, job_id)
@@ -470,6 +463,20 @@ async def get_training_data(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Training job not found",
         )
+
+    # Auth: admin, owner, or group access to both revisions
+    if not current_user.is_admin and job.owner_id != current_user.id:
+        version_ids = await _get_accessible_version_ids(current_user, db)
+        source_rev = await db.get(BibleRevision, job.source_revision_id)
+        target_rev = await db.get(BibleRevision, job.target_revision_id)
+        if (
+            source_rev.bible_version_id not in version_ids
+            or target_rev.bible_version_id not in version_ids
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this training job's data",
+            )
 
     # Self-join VerseText on verse_reference for both revisions
     SourceVerse = aliased(VerseText)

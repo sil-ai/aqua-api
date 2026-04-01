@@ -143,7 +143,7 @@ Create a new Alembic migration based on the current head revision in the alembic
 3. Look up languages: `BibleRevision` → `BibleVersion.iso_language` (models.py lines 208, 236)
 4. Duplicate check: query for existing job with same (source_revision_id, target_revision_id, type, options) and status not in ("completed", "completed_with_errors", "failed") → return 409 with existing job. Jobs with different options (e.g., different hyperparameters) for the same revision pair and type are treated as distinct.
 5. Create `TrainingJob` record, status="queued", `requested_time` set to `datetime.utcnow()`
-6. Dispatch to Modal runner (POST with `TrainingJobOut` JSON, `MODAL_WEBHOOK_TOKEN` auth)
+6. Dispatch to Modal runner (via `modal.Function.from_name().spawn.aio()`)
 7. On Modal error: set status to "failed" with `status_detail` explaining the dispatch failure (keep the record for observability rather than deleting it)
 8. Return `TrainingJobOut`
 
@@ -159,7 +159,7 @@ Auth: admin, owner, or group access to both revisions.
 
 ### `PATCH /train/{job_id}/status` — Runner callback
 
-Auth: `Authorization: Bearer {MODAL_WEBHOOK_TOKEN}` (same token used for Modal dispatch; not user JWT).
+Auth: Standard JWT auth (`get_current_user`). Admin, job owner, or users with group access to both revisions.
 
 Accepts `TrainingJobStatusUpdate`. Validates:
 - Job exists and is not soft-deleted
@@ -173,7 +173,7 @@ Sets `start_time` on first non-queued status, `end_time` on terminal status.
 
 ### `GET /train/{job_id}/data` — Parallel text for runner
 
-Authenticated via `Authorization: Bearer {MODAL_WEBHOOK_TOKEN}` (same token as status callback).
+Auth: Standard JWT auth (`get_current_user`). Admin, job owner, or users with group access to both revisions.
 
 Query param: `range_handling` = `filter` (default), `merge`, or `empty`.
 
