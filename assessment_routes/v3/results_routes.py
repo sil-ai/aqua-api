@@ -5,8 +5,8 @@ from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException
-from sqlalchemy import delete, func, insert, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import delete, insert, select
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
@@ -35,8 +35,9 @@ from security_routes.utilities import is_user_authorized_for_assessment
 router = fastapi.APIRouter()
 
 _BATCH_SIZE = 10_000
+_MAX_BODY_ITEMS = 50_000
 
-_VREF_RE = re.compile(r"^(\w+)\s+(\d+):(\d+)$")
+_VREF_RE = re.compile(r"^([A-Z0-9]+)\s+(\d+):(\d+)$")
 
 
 def _parse_vref(vref: str):
@@ -44,6 +45,11 @@ def _parse_vref(vref: str):
     if not m:
         raise HTTPException(status_code=400, detail=f"Invalid vref format: {vref!r}")
     return m.group(1), int(m.group(2)), int(m.group(3))
+
+
+def _validate_vrefs(vrefs: List[str]):
+    for vref in vrefs:
+        _parse_vref(vref)
 
 
 async def _get_authorized_assessment(
@@ -63,6 +69,10 @@ async def _get_authorized_assessment(
 
 
 async def _batch_insert(db, model_cls, rows):
+    """Batch-insert rows and return their auto-generated IDs.
+
+    IDs are returned in the same positional order as the input rows.
+    """
     inserted_ids = []
     for i in range(0, len(rows), _BATCH_SIZE):
         batch = rows[i : i + _BATCH_SIZE]
@@ -93,6 +103,14 @@ def _build_score_rows(assessment_id: int, items: List[AssessmentResultItem]):
     return rows
 
 
+def _check_body_size(body):
+    if len(body) > _MAX_BODY_ITEMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Request body too large: {len(body)} items (max {_MAX_BODY_ITEMS})",
+        )
+
+
 # ---------------------------------------------------------------------------
 # POST endpoints — one per result type
 # ---------------------------------------------------------------------------
@@ -111,14 +129,15 @@ async def push_results(
     """Bulk insert assessment results (assessment_result table)."""
     if not body:
         return InsertResponse(ids=[])
+    _check_body_size(body)
+    rows = _build_score_rows(assessment_id, body)
     try:
-        rows = _build_score_rows(assessment_id, body)
         ids = await _batch_insert(db, AssessmentResult, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"IntegrityError: {exc}")
+        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
 
 
 @router.post(
@@ -134,14 +153,15 @@ async def push_alignment_scores(
     """Bulk insert alignment top source scores."""
     if not body:
         return InsertResponse(ids=[])
+    _check_body_size(body)
+    rows = _build_score_rows(assessment_id, body)
     try:
-        rows = _build_score_rows(assessment_id, body)
         ids = await _batch_insert(db, AlignmentTopSourceScores, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"IntegrityError: {exc}")
+        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
 
 
 @router.post(
@@ -157,6 +177,7 @@ async def push_text_lengths(
     """Bulk insert text length statistics."""
     if not body:
         return InsertResponse(ids=[])
+    _check_body_size(body)
     try:
         rows = [
             {
@@ -172,9 +193,9 @@ async def push_text_lengths(
         ids = await _batch_insert(db, TextLengthsTable, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"IntegrityError: {exc}")
+        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
 
 
 @router.post(
@@ -190,6 +211,7 @@ async def push_tfidf_vectors(
     """Bulk insert TF-IDF PCA vectors."""
     if not body:
         return InsertResponse(ids=[])
+    _check_body_size(body)
     try:
         rows = [
             {
@@ -202,9 +224,9 @@ async def push_tfidf_vectors(
         ids = await _batch_insert(db, TfidfPcaVector, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"IntegrityError: {exc}")
+        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
 
 
 @router.post(
@@ -220,6 +242,10 @@ async def push_ngrams(
     """Bulk insert ngram results with their verse references."""
     if not body:
         return InsertResponse(ids=[])
+    _check_body_size(body)
+    # Validate all vrefs up front before touching the DB
+    for item in body:
+        _validate_vrefs(item.vrefs)
     try:
         ngram_ids = []
         for i in range(0, len(body), _BATCH_SIZE):
@@ -249,9 +275,9 @@ async def push_ngrams(
 
         await db.commit()
         return InsertResponse(ids=ngram_ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"IntegrityError: {exc}")
+        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
 
 
 # ---------------------------------------------------------------------------
@@ -281,9 +307,15 @@ async def delete_results(
     """Delete assessment results by ID."""
     if not body.ids:
         return DeleteResponse(deleted=0)
-    deleted = await _delete_from_table(AssessmentResult, assessment_id, body.ids, db)
-    await db.commit()
-    return DeleteResponse(deleted=deleted)
+    try:
+        deleted = await _delete_from_table(
+            AssessmentResult, assessment_id, body.ids, db
+        )
+        await db.commit()
+        return DeleteResponse(deleted=deleted)
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete rows")
 
 
 @router.delete(
@@ -299,11 +331,15 @@ async def delete_alignment_scores(
     """Delete alignment top source scores by ID."""
     if not body.ids:
         return DeleteResponse(deleted=0)
-    deleted = await _delete_from_table(
-        AlignmentTopSourceScores, assessment_id, body.ids, db
-    )
-    await db.commit()
-    return DeleteResponse(deleted=deleted)
+    try:
+        deleted = await _delete_from_table(
+            AlignmentTopSourceScores, assessment_id, body.ids, db
+        )
+        await db.commit()
+        return DeleteResponse(deleted=deleted)
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete rows")
 
 
 @router.delete(
@@ -319,9 +355,15 @@ async def delete_text_lengths(
     """Delete text length rows by ID."""
     if not body.ids:
         return DeleteResponse(deleted=0)
-    deleted = await _delete_from_table(TextLengthsTable, assessment_id, body.ids, db)
-    await db.commit()
-    return DeleteResponse(deleted=deleted)
+    try:
+        deleted = await _delete_from_table(
+            TextLengthsTable, assessment_id, body.ids, db
+        )
+        await db.commit()
+        return DeleteResponse(deleted=deleted)
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete rows")
 
 
 @router.delete(
@@ -337,6 +379,10 @@ async def delete_tfidf_vectors(
     """Delete TF-IDF PCA vector rows by ID."""
     if not body.ids:
         return DeleteResponse(deleted=0)
-    deleted = await _delete_from_table(TfidfPcaVector, assessment_id, body.ids, db)
-    await db.commit()
-    return DeleteResponse(deleted=deleted)
+    try:
+        deleted = await _delete_from_table(TfidfPcaVector, assessment_id, body.ids, db)
+        await db.commit()
+        return DeleteResponse(deleted=deleted)
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to delete rows")

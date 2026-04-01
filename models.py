@@ -1086,7 +1086,7 @@ class AssessmentResultItem(BaseModel):
     score: float
     flag: bool = False
     source: Optional[str] = None
-    target: Optional[str] = None
+    target: Optional[Any] = None
     note: Optional[str] = None
 
 
@@ -1106,7 +1106,7 @@ class TfidfPcaVectorItem(BaseModel):
 class NgramItem(BaseModel):
     ngram: str
     ngram_size: int
-    vrefs: List[str]
+    vrefs: List[str] = Field(..., max_length=50_000)
 
 
 class InsertResponse(BaseModel):
