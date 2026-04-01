@@ -35,13 +35,13 @@ def create_bible_version(client, regular_token1, db_session):
     return version_id
 
 
-def upload_revision(client, token, version_id):
+def upload_revision(client, token, version_id, fixture="fixtures/eng-eng-kjv.txt"):
     headers = {"Authorization": f"Bearer {token}"}
     test_revision = {
         "version_id": version_id,
         "name": "Test Revision",
     }
-    test_upload_file = Path("fixtures/eng-eng-kjv.txt")
+    test_upload_file = Path(fixture)
 
     with open(test_upload_file, "rb") as file:
         files = {"file": file}
@@ -898,3 +898,222 @@ def test_vref_text_endpoint_unauthorized(
     )
     assert response.status_code == 403
     assert "not authorized" in response.json()["detail"].lower()
+
+
+# =============================================================================
+# /texts include_verses parameter tests
+# =============================================================================
+
+
+def test_texts_include_verses_intersection(client, regular_token1, db_session):
+    """Test include_verses=intersection only keeps verses where all revisions have text."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Delete GEN 1:3 from revision 2 so it has empty text
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).delete()
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "intersection",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+    rev2_vrefs = [v["verse_reference"] for v in data[str(revision_id2)]]
+
+    # Both should be aligned (same vrefs)
+    assert rev1_vrefs == rev2_vrefs
+
+    # GEN 1:3 should NOT be present (excluded because rev2 has no text)
+    assert "GEN 1:3" not in rev1_vrefs
+
+    # GEN 1:1 and GEN 1:2 should still be present
+    assert "GEN 1:1" in rev1_vrefs
+    assert "GEN 1:2" in rev1_vrefs
+
+
+def test_texts_include_verses_all(client, regular_token1, db_session):
+    """Test include_verses=all returns all canonical verses with empty text for missing ones."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    # Rev1: full KJV Bible, Rev2: only Genesis 1:1-3
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(
+        client,
+        regular_token1,
+        version_id2,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Get union count for comparison (only verses with text in at least one rev)
+    response_union = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "union",
+        },
+        headers=headers,
+    )
+    assert response_union.status_code == 200
+    union_count = len(response_union.json()[str(revision_id1)])
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "all",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_verses = data[str(revision_id1)]
+    rev2_vrefs = {v["verse_reference"]: v for v in data[str(revision_id2)]}
+
+    # 'all' should return all 41,899 canonical verses
+    assert len(rev1_verses) == 41899
+    assert len(rev1_verses) > union_count
+
+    # Rev2 should have GEN 1:1-3 with text, but EXO 1:1 with empty text
+    assert rev2_vrefs["GEN 1:1"]["text"] != ""
+    assert "EXO 1:1" in rev2_vrefs
+    assert rev2_vrefs["EXO 1:1"]["text"] == ""
+
+
+def test_texts_include_verses_union_default(client, regular_token1, db_session):
+    """Test that default (include_verses=union) keeps verses where at least one revision has text."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Delete GEN 1:3 from revision 2
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).delete()
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Default (no include_verses param) should behave as union
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+
+    # GEN 1:3 should still be present (rev1 has text)
+    assert "GEN 1:3" in rev1_vrefs
+
+    # Verify rev2's GEN 1:3 has empty text
+    rev2_map = {v["verse_reference"]: v for v in data[str(revision_id2)]}
+    assert rev2_map["GEN 1:3"]["text"] == ""
+
+
+def test_texts_include_verses_union_removes_when_all_empty(
+    client, regular_token1, db_session
+):
+    """Test union removes verses where ALL revisions have empty text."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:3 to empty text in BOTH revisions
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id1,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).update({"text": ""})
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).update({"text": ""})
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "union",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+
+    # GEN 1:3 should be excluded (both revisions have no text)
+    assert "GEN 1:3" not in rev1_vrefs
+    # Other verses should still be present
+    assert "GEN 1:1" in rev1_vrefs
+    assert "GEN 1:2" in rev1_vrefs
+
+
+def test_texts_include_verses_whitespace_treated_as_empty(
+    client, regular_token1, db_session
+):
+    """Test that whitespace-only text is treated as empty by include_verses filtering."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:3 to whitespace-only in both revisions
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id1,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).update({"text": "   "})
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).update({"text": "  \t "})
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # With union, whitespace-only should count as empty
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "union",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+
+    # GEN 1:3 should be excluded (whitespace-only = empty)
+    assert "GEN 1:3" not in rev1_vrefs
