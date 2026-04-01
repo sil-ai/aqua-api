@@ -394,9 +394,13 @@ async def update_assessment_status(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Runner callback to update assessment status."""
+    """Runner callback to update assessment status.
+
+    Auth: admin, assessment owner, or any user with group access to the
+    assessment's bible version.  This mirrors the training PATCH pattern.
+    """
     result = await db.execute(
-        select(Assessment).filter(Assessment.id == assessment_id)
+        select(Assessment).where(Assessment.id == assessment_id)
     )
     assessment = result.scalars().first()
     if not assessment or assessment.deleted:
@@ -407,6 +411,11 @@ async def update_assessment_status(
 
     if not current_user.is_admin and assessment.owner_id != current_user.id:
         revision = await db.get(BibleRevision, assessment.revision_id)
+        if not revision:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment revision not found",
+            )
         version_access = await db.execute(
             select(BibleVersionAccess.bible_version_id).where(
                 BibleVersionAccess.group_id.in_(
@@ -441,10 +450,10 @@ async def update_assessment_status(
         assessment.status_detail = update.status_detail
 
     if assessment.start_time is None and update.status != "queued":
-        assessment.start_time = datetime.now()
+        assessment.start_time = datetime.utcnow()
 
     if update.status in ASSESSMENT_TERMINAL_STATUSES:
-        assessment.end_time = datetime.now()
+        assessment.end_time = datetime.utcnow()
 
     await db.commit()
     await db.refresh(assessment)

@@ -200,11 +200,16 @@ class AssessmentStatus(str, Enum):
 
 
 ASSESSMENT_VALID_TRANSITIONS = {
-    "queued": {"running", "failed"},
-    "running": {"running", "finished", "failed"},
+    AssessmentStatus.queued: {AssessmentStatus.running, AssessmentStatus.failed},
+    # running → running is intentional: allows runners to send progress updates
+    AssessmentStatus.running: {
+        AssessmentStatus.running,
+        AssessmentStatus.finished,
+        AssessmentStatus.failed,
+    },
 }
 
-ASSESSMENT_TERMINAL_STATUSES = {"finished", "failed"}
+ASSESSMENT_TERMINAL_STATUSES = {AssessmentStatus.finished, AssessmentStatus.failed}
 
 
 class AssessmentStatusUpdate(BaseModel):
@@ -283,8 +288,7 @@ class AssessmentOut(BaseModel):
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
-    # class Config:
-    #     use_enum_values = True
+    status_detail: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
@@ -293,7 +297,7 @@ class AssessmentOut(BaseModel):
                 "revision_id": 1,
                 "reference_id": 1,
                 "type": "word-alignment",
-                "status": "completed",
+                "status": "finished",
                 "requested_time": "2024-06-01T12:00:00",
                 "start_time": "2024-06-01T12:00:00",
                 "end_time": "2024-06-01T12:00:00",
