@@ -972,6 +972,7 @@ def test_texts_include_verses_all(client, regular_token1, db_session):
         },
         headers=headers,
     )
+    assert response_union.status_code == 200
     union_count = len(response_union.json()[str(revision_id1)])
 
     response = client.get(

@@ -651,10 +651,11 @@ async def get_texts(
     Notes:
     - The returned dictionary will include an entry for every requested
       revision_id.
-    - If a revision contains no verses, its value will be an empty list.
+    - With include_verses='all', every revision gets all 41,899 canonical
+      verses (empty text for missing ones). With 'union' or 'intersection',
+      a revision with no matching verses will have an empty list.
     - If a verse exists in one revision but not another, the missing revision
-      will have an empty string for that verse's text (controlled by
-      include_verses).
+      will have an empty string for that verse's text.
     """
     # Deduplicate revision IDs while preserving order
     revision_ids = list(dict.fromkeys(revision_ids))
