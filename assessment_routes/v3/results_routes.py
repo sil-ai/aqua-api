@@ -434,10 +434,19 @@ async def delete_ngrams(
     if not body.ids:
         return DeleteResponse(deleted=0)
     try:
-        # Delete vref associations first (child rows)
-        await db.execute(
-            delete(NgramVrefTable).where(NgramVrefTable.ngram_id.in_(body.ids))
+        # Scope to only ngram IDs that belong to this assessment
+        valid_result = await db.execute(
+            select(NgramsTable.id).where(
+                NgramsTable.id.in_(body.ids),
+                NgramsTable.assessment_id == assessment_id,
+            )
         )
+        valid_ids = [r[0] for r in valid_result.fetchall()]
+        # Delete vref associations first (child rows)
+        if valid_ids:
+            await db.execute(
+                delete(NgramVrefTable).where(NgramVrefTable.ngram_id.in_(valid_ids))
+            )
         # Then delete the ngrams themselves
         result = await db.execute(
             delete(NgramsTable)
