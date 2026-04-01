@@ -898,3 +898,123 @@ def test_vref_text_endpoint_unauthorized(
     )
     assert response.status_code == 403
     assert "not authorized" in response.json()["detail"].lower()
+
+
+# =============================================================================
+# /texts exclude_empty parameter tests
+# =============================================================================
+
+
+def test_texts_exclude_empty_any(client, regular_token1, db_session):
+    """Test exclude_empty=any removes verses where any revision has empty text."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Delete GEN 1:3 from revision 2 so it has empty text
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).delete()
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # With exclude_empty=any, GEN 1:3 should be excluded (rev2 has no text)
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "exclude_empty": "any",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+    rev2_vrefs = [v["verse_reference"] for v in data[str(revision_id2)]]
+
+    # Both should be aligned (same vrefs)
+    assert rev1_vrefs == rev2_vrefs
+
+    # GEN 1:3 should NOT be present (excluded because rev2 has no text)
+    assert "GEN 1:3" not in rev1_vrefs
+
+    # GEN 1:1 and GEN 1:2 should still be present
+    assert "GEN 1:1" in rev1_vrefs
+    assert "GEN 1:2" in rev1_vrefs
+
+
+def test_texts_exclude_empty_none(client, regular_token1, db_session):
+    """Test exclude_empty=none keeps all verses including empty ones."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Delete GEN 1:3 from revision 2
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).delete()
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # With exclude_empty=none, GEN 1:3 should still be present with empty text
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "exclude_empty": "none",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev2_vrefs = {v["verse_reference"]: v for v in data[str(revision_id2)]}
+
+    # GEN 1:3 should be present with empty text
+    assert "GEN 1:3" in rev2_vrefs
+    assert rev2_vrefs["GEN 1:3"]["text"] == ""
+
+
+def test_texts_exclude_empty_all_default(client, regular_token1, db_session):
+    """Test that default (exclude_empty=all) keeps verses where at least one revision has text."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Delete GEN 1:3 from revision 2
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).delete()
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Default (no exclude_empty param) should behave as exclude_empty=all
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+
+    # GEN 1:3 should still be present (rev1 has text, so not ALL are empty)
+    assert "GEN 1:3" in rev1_vrefs
+
+    # Verify rev2's GEN 1:3 has empty text
+    rev2_map = {v["verse_reference"]: v for v in data[str(revision_id2)]}
+    assert rev2_map["GEN 1:3"]["text"] == ""

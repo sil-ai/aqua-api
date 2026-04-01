@@ -2,7 +2,8 @@ __version__ = "v3"
 
 import pathlib
 import unicodedata
-from typing import Any, Dict, List
+from enum import Enum
+from typing import Any, Dict, List, Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
@@ -609,9 +610,24 @@ def format_verse_range(first_vref: str, last_vref: str) -> str:
         return f"{book_first} {cv_first}-{cv_last}"
 
 
+class ExcludeEmpty(str, Enum):
+    none = "none"
+    any = "any"
+    all = "all"
+
+
 @router.get("/texts", response_model=Dict[str, List[VerseText]])
 async def get_texts(
     revision_ids: List[int] = Query(..., min_items=2),
+    exclude_empty: ExcludeEmpty = Query(
+        ExcludeEmpty.all,
+        description=(
+            "Filter verses with empty text. "
+            "'none': no filtering. "
+            "'any': exclude verses where ANY revision has empty text (intersection only). "
+            "'all': exclude verses where ALL revisions have empty text (default)."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -624,6 +640,8 @@ async def get_texts(
     Input:
     - revision_ids: List[int]
     Description: List of revision IDs to fetch (minimum 2).
+    - exclude_empty: str (none|any|all, default "all")
+    Description: Filter out verses with empty text after range merging.
 
     Returns:
     Dict[str, List[VerseText]]: Dictionary keyed by revision_id (as string),
@@ -635,7 +653,8 @@ async def get_texts(
       revision_id.
     - If a revision contains no verses, its value will be an empty list.
     - If a verse exists in one revision but not another, the missing revision
-      will have an empty string for that verse's text.
+      will have an empty string for that verse's text (unless filtered by
+      exclude_empty).
     """
     # Deduplicate revision IDs while preserving order
     revision_ids = list(dict.fromkeys(revision_ids))
@@ -730,6 +749,21 @@ async def get_texts(
             v for v in values if v and v != "<range>"
         ),
     )
+
+    # Apply exclude_empty filtering
+    if exclude_empty == ExcludeEmpty.any:
+        # Keep only records where ALL revisions have non-empty text
+        merged_records = [
+            r for r in merged_records
+            if all(r.get(f).strip() for f in text_fields)
+        ]
+    elif exclude_empty == ExcludeEmpty.all:
+        # Keep records where at least one revision has non-empty text
+        merged_records = [
+            r for r in merged_records
+            if any(r.get(f).strip() for f in text_fields)
+        ]
+    # ExcludeEmpty.none: no filtering
 
     # Split back to per-revision lists (use string keys for JSON compatibility)
     # Pre-compute string keys and field names to avoid repeated string operations
