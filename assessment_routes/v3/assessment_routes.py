@@ -295,9 +295,14 @@ async def add_assessment(
 
     # Fold the use_eflomal query param into kwargs so it reaches Modal and the dedup check
     if use_eflomal:
-        parsed_kwargs = parsed_kwargs or {}
-        parsed_kwargs["use_eflomal"] = True
-        a.kwargs = parsed_kwargs
+        combined_kwargs = dict(a.kwargs or {})
+        combined_kwargs["use_eflomal"] = True
+        try:
+            combined_kwargs = AssessmentIn.validate_kwargs(combined_kwargs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        a.kwargs = combined_kwargs
+        parsed_kwargs = combined_kwargs
 
     # Eflomal word-alignment requires source and target languages
     is_eflomal = a.kwargs and a.kwargs.get("use_eflomal")
