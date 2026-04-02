@@ -23,7 +23,13 @@ from database.models import UserDB as UserModel
 from database.models import UserGroup
 
 # Local application imports
-from models import AssessmentIn, AssessmentOut
+from models import (
+    ASSESSMENT_TERMINAL_STATUSES,
+    ASSESSMENT_VALID_TRANSITIONS,
+    AssessmentIn,
+    AssessmentOut,
+    AssessmentStatusUpdate,
+)
 from security_routes.auth_routes import get_current_user
 from utils.logging_config import setup_logger
 
@@ -379,6 +385,77 @@ async def add_assessment(
         raise HTTPException(status_code=response.status_code, detail=error_detail)
 
     return [AssessmentOut.model_validate(assessment)]
+
+
+@router.patch("/assessment/{assessment_id}/status", response_model=AssessmentOut)
+async def update_assessment_status(
+    assessment_id: int,
+    update: AssessmentStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Runner callback to update assessment status.
+
+    Auth: admin, assessment owner, or any user with group access to the
+    assessment's bible version.  This mirrors the training PATCH pattern.
+    """
+    result = await db.execute(select(Assessment).where(Assessment.id == assessment_id))
+    assessment = result.scalars().first()
+    if not assessment or assessment.deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found",
+        )
+
+    if not current_user.is_admin and assessment.owner_id != current_user.id:
+        revision = await db.get(BibleRevision, assessment.revision_id)
+        if not revision:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment revision not found",
+            )
+        version_access = await db.execute(
+            select(BibleVersionAccess.bible_version_id).where(
+                BibleVersionAccess.group_id.in_(
+                    select(UserGroup.group_id).where(
+                        UserGroup.user_id == current_user.id
+                    )
+                )
+            )
+        )
+        accessible_version_ids = {row[0] for row in version_access.all()}
+        if revision.bible_version_id not in accessible_version_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this assessment",
+            )
+
+    if assessment.status in ASSESSMENT_TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Assessment is already in terminal status '{assessment.status}'",
+        )
+
+    allowed_next = ASSESSMENT_VALID_TRANSITIONS.get(assessment.status, set())
+    if update.status not in allowed_next:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid transition from '{assessment.status}' to '{update.status}'",
+        )
+
+    assessment.status = update.status
+    if update.status_detail is not None:
+        assessment.status_detail = update.status_detail
+
+    if assessment.start_time is None and update.status != "queued":
+        assessment.start_time = datetime.utcnow()
+
+    if update.status in ASSESSMENT_TERMINAL_STATUSES:
+        assessment.end_time = datetime.utcnow()
+
+    await db.commit()
+    await db.refresh(assessment)
+    return AssessmentOut.model_validate(assessment)
 
 
 @router.delete("/assessment")

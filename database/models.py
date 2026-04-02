@@ -122,6 +122,7 @@ class Assessment(Base):
     reference_id = Column(Integer, ForeignKey("bible_revision.id"))
     type = Column(Text)
     status = Column(Text)
+    status_detail = Column(Text, nullable=True)
     requested_time = Column(TIMESTAMP, default=func.now())
     start_time = Column(TIMESTAMP)
     end_time = Column(TIMESTAMP)
