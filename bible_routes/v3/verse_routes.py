@@ -334,12 +334,83 @@ async def get_text(
             detail="User not authorized to access this revision.",
         )
     stmt = (
-        select(VerseModel)
+        select(
+            VerseModel.id,
+            VerseModel.text,
+            VerseModel.verse_reference,
+            VerseModel.revision_id,
+            VerseModel.book,
+            VerseModel.chapter,
+            VerseModel.verse,
+        )
+        .join(
+            VerseReferenceModel,
+            VerseModel.verse_reference == VerseReferenceModel.full_verse_id,
+        )
+        .join(
+            ChapterReferenceModel,
+            VerseReferenceModel.chapter == ChapterReferenceModel.full_chapter_id,
+        )
+        .join(
+            BookReferenceModel,
+            VerseReferenceModel.book_reference == BookReferenceModel.abbreviation,
+        )
         .where(VerseModel.revision_id == revision_id)
-        .order_by(VerseModel.id)
+        .order_by(
+            BookReferenceModel.number,
+            ChapterReferenceModel.number,
+            VerseReferenceModel.number,
+        )
     )
     result = await db.execute(stmt)
-    verses = result.scalars().all()
+    all_verses = result.all()
+
+    # Build records for merge_verse_ranges
+    combined_records = []
+    for verse in all_verses:
+        combined_records.append(
+            {
+                "vrefs": [verse.verse_reference],
+                "text": verse.text or "",
+            }
+        )
+
+    merged_records = merge_verse_ranges(
+        combined_records,
+        verse_ref_field="vrefs",
+        combine_fields=["text"],
+        check_fields=["text"],
+        is_range_marker=lambda x: x == "<range>",
+        combine_function=lambda field, values: " ".join(
+            v for v in values if v and v != "<range>"
+        ),
+    )
+
+    # Convert merged records back to VerseText objects
+    verses = []
+    for record in merged_records:
+        vrefs = record["vrefs"]
+        if len(vrefs) == 1:
+            verse_ref = vrefs[0]
+        else:
+            verse_ref = format_verse_range(vrefs[0], vrefs[-1])
+
+        first_vref = vrefs[0]
+        book, cv = first_vref.split(" ", 1)
+        chapter_str, verse_str = cv.split(":")
+
+        verses.append(
+            VerseText(
+                id=None,
+                text=record["text"],
+                verse_reference=verse_ref,
+                revision_id=revision_id,
+                book=book,
+                chapter=int(chapter_str),
+                verse=int(verse_str),
+            )
+        )
+
     return verses
 
 
