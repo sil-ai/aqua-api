@@ -102,3 +102,69 @@ def test_inference_no_auth_returns_401(client):
     )
 
     assert response.status_code == 401
+
+
+# --- GET /inference/text-lengths tests ---
+
+
+def test_text_lengths_basic(client, regular_token1):
+    """Returns correct word and char count differences."""
+    response = client.get(
+        f"{prefix}/inference/text-lengths",
+        params={"text1": "hello world foo", "text2": "hello world"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["word_count_difference"] == 1
+    assert data["char_count_difference"] == 4
+
+
+def test_text_lengths_equal_texts(client, regular_token1):
+    """Equal texts return zero differences."""
+    response = client.get(
+        f"{prefix}/inference/text-lengths",
+        params={"text1": "same text", "text2": "same text"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["word_count_difference"] == 0
+    assert data["char_count_difference"] == 0
+
+
+def test_text_lengths_empty_text(client, regular_token1):
+    """Empty text1 treated as 0 words."""
+    response = client.get(
+        f"{prefix}/inference/text-lengths",
+        params={"text1": "", "text2": "hello world"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["word_count_difference"] == -2
+    assert data["char_count_difference"] == -11
+
+
+def test_text_lengths_no_auth_returns_401(client):
+    """Request without auth token returns 401."""
+    response = client.get(
+        f"{prefix}/inference/text-lengths",
+        params={"text1": "hello", "text2": "world"},
+    )
+
+    assert response.status_code == 401
+
+
+def test_text_lengths_missing_params_returns_422(client, regular_token1):
+    """Missing required query params return 422."""
+    response = client.get(
+        f"{prefix}/inference/text-lengths",
+        params={"text1": "hello"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 422

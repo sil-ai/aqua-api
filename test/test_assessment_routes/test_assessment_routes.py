@@ -887,3 +887,134 @@ def test_completed_assessment_admin_also_blocked(
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert third.status_code == 200
+
+
+# --- PATCH /assessment/{id}/status tests ---
+
+
+def _create_assessment(client, token, db_session):
+    """Helper: create a version, revision, and queued assessment. Returns assessment_id."""
+    version_id = create_bible_version(client, token, db_session)
+    revision_id = upload_revision(client, token, version_id)
+    reference_id = upload_revision(client, token, version_id)
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+        resp = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        return resp.json()[0]["id"]
+
+
+def _patch_status(client, token, assessment_id, payload):
+    return client.patch(
+        f"{prefix}/assessment/{assessment_id}/status",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_patch_assessment_status_valid_transitions(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status walks through valid transitions."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    # queued -> running
+    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "running"
+    assert data["start_time"] is not None
+
+    # running -> running (progress update with status_detail)
+    resp = _patch_status(
+        client,
+        regular_token1,
+        aid,
+        {"status": "running", "status_detail": "50% complete"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status_detail"] == "50% complete"
+
+    # running -> finished
+    resp = _patch_status(client, regular_token1, aid, {"status": "finished"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "finished"
+    assert data["end_time"] is not None
+
+
+def test_patch_assessment_status_invalid_transition(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status rejects invalid state transitions."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    # queued -> finished (skipping running) should fail
+    resp = _patch_status(client, regular_token1, aid, {"status": "finished"})
+    assert resp.status_code == 422
+
+
+def test_patch_assessment_status_terminal_rejected(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status rejects updates to terminal assessments."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    # Move to failed
+    resp = _patch_status(client, regular_token1, aid, {"status": "failed"})
+    assert resp.status_code == 200
+
+    # Try to update again
+    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+    assert resp.status_code == 409
+
+
+def test_patch_assessment_status_not_found(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status returns 404 for non-existent assessment."""
+    resp = _patch_status(client, regular_token1, 99999, {"status": "running"})
+    assert resp.status_code == 404
+
+
+def test_patch_assessment_status_deleted(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status returns 404 for deleted assessment."""
+    aid = _create_assessment(client, regular_token1, db_session)
+    delete_assessment(client, regular_token1, aid)
+
+    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+    assert resp.status_code == 404
+
+
+def test_patch_assessment_status_unauthorized(
+    client, regular_token1, regular_token2, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status rejects unauthorized users."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    # regular_token2 is in a different group and should not have access
+    resp = _patch_status(client, regular_token2, aid, {"status": "running"})
+    assert resp.status_code == 403
+
+
+def test_patch_assessment_status_admin_can_update(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status allows admin to update any assessment."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _patch_status(client, admin_token, aid, {"status": "running"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "running"

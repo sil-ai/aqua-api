@@ -173,6 +173,8 @@ class VerseText(BaseModel):
     id: Optional[int] = None
     text: str
     verse_reference: str
+    verse_references: Optional[List[str]] = None
+    first_verse_reference: Optional[str] = None
     revision_id: int
     book: Optional[str] = None
     chapter: Optional[int] = None
@@ -183,6 +185,8 @@ class VerseText(BaseModel):
             "example": {
                 "text": "In the beginning God created the heaven and the earth.",
                 "verse_reference": "GEN 1:1",
+                "verse_references": ["GEN 1:1"],
+                "first_verse_reference": "GEN 1:1",
                 "revision_id": 1,
                 "book": "GEN",
                 "chapter": 1,
@@ -190,6 +194,33 @@ class VerseText(BaseModel):
             }
         },
     }
+
+
+class AssessmentStatus(str, Enum):
+    queued = "queued"
+    running = "running"
+    finished = "finished"
+    failed = "failed"
+
+
+ASSESSMENT_VALID_TRANSITIONS = {
+    AssessmentStatus.queued: {AssessmentStatus.running, AssessmentStatus.failed},
+    # running → running is intentional: allows runners to send progress updates
+    AssessmentStatus.running: {
+        AssessmentStatus.running,
+        AssessmentStatus.finished,
+        AssessmentStatus.failed,
+    },
+}
+
+ASSESSMENT_TERMINAL_STATUSES = {AssessmentStatus.finished, AssessmentStatus.failed}
+
+
+class AssessmentStatusUpdate(BaseModel):
+    status: AssessmentStatus
+    status_detail: Optional[str] = None
+
+    model_config = {"use_enum_values": True}
 
 
 class AssessmentType(Enum):
@@ -261,8 +292,7 @@ class AssessmentOut(BaseModel):
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
-    # class Config:
-    #     use_enum_values = True
+    status_detail: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
@@ -271,7 +301,7 @@ class AssessmentOut(BaseModel):
                 "revision_id": 1,
                 "reference_id": 1,
                 "type": "word-alignment",
-                "status": "completed",
+                "status": "finished",
                 "requested_time": "2024-06-01T12:00:00",
                 "start_time": "2024-06-01T12:00:00",
                 "end_time": "2024-06-01T12:00:00",
@@ -302,6 +332,11 @@ class SemanticSimilarityRequest(BaseModel):
 
 class SemanticSimilarityResponse(BaseModel):
     score: float
+
+
+class TextLengthsInferenceResponse(BaseModel):
+    word_count_difference: int
+    char_count_difference: int
 
 
 # Results model to record in the DB.
@@ -1024,7 +1059,12 @@ class EflomalTargetWordCountItem(BaseModel):
 
 
 class EflomalResultsPushRequest(BaseModel):
-    """Replaces Modal's save_artifacts(). Pushes all training data to DB."""
+    """Create the eflomal_assessment metadata row (no bulk data).
+
+    After this call succeeds, push dictionary, cooccurrences, and
+    target-word-counts via their own endpoints, then PATCH the
+    assessment status to 'finished'.
+    """
 
     assessment_id: int
     source_language: Optional[str] = None
@@ -1033,9 +1073,6 @@ class EflomalResultsPushRequest(BaseModel):
     num_alignment_links: int
     num_dictionary_entries: int
     num_missing_words: int
-    dictionary: list[EflomalDictionaryItem]
-    cooccurrences: list[EflomalCooccurrenceItem]
-    target_word_counts: list[EflomalTargetWordCountItem]
 
 
 class EflomalAssessmentOut(BaseModel):
@@ -1071,3 +1108,55 @@ class EflomalResultsPullResponse(BaseModel):
     dictionary: list[EflomalDictionaryItem]
     cooccurrences: list[EflomalCooccurrenceItem]
     target_word_counts: list[EflomalTargetWordCountItem]
+
+
+# --- Assessment Results Push/Delete models ---
+
+
+class AssessmentResultItem(BaseModel):
+    vref: str
+    score: float
+    flag: bool = False
+    source: Optional[str] = None
+    target: Optional[Any] = None
+    note: Optional[str] = None
+
+
+class AlignmentScoreItem(BaseModel):
+    vref: str
+    score: float
+    flag: bool = False
+    source: Optional[str] = None
+    target: Optional[str] = None
+    note: Optional[str] = None
+
+
+class TextLengthsItem(BaseModel):
+    vref: str
+    word_lengths: float
+    char_lengths: float
+    word_lengths_z: float
+    char_lengths_z: float
+
+
+class TfidfPcaVectorItem(BaseModel):
+    vref: str
+    vector: List[float] = Field(..., min_length=300, max_length=300)
+
+
+class NgramItem(BaseModel):
+    ngram: str
+    ngram_size: int
+    vrefs: List[str] = Field(..., max_length=50_000)
+
+
+class InsertResponse(BaseModel):
+    ids: List[int]
+
+
+class DeleteRequest(BaseModel):
+    ids: List[int]
+
+
+class DeleteResponse(BaseModel):
+    deleted: int

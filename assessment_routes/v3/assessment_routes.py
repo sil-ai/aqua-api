@@ -23,7 +23,13 @@ from database.models import UserDB as UserModel
 from database.models import UserGroup
 
 # Local application imports
-from models import AssessmentIn, AssessmentOut
+from models import (
+    ASSESSMENT_TERMINAL_STATUSES,
+    ASSESSMENT_VALID_TRANSITIONS,
+    AssessmentIn,
+    AssessmentOut,
+    AssessmentStatusUpdate,
+)
 from security_routes.auth_routes import get_current_user
 from utils.logging_config import setup_logger
 
@@ -227,6 +233,10 @@ async def add_assessment(
         None,
         description="JSON-encoded dict of extra keyword arguments to pass to the assessment function",
     ),
+    use_eflomal: Optional[bool] = Query(
+        None,
+        description="Run eflomal-based word alignment. Requires source_language and target_language.",
+    ),
     force: bool = Query(
         False,
         description="Force rerun even if a completed assessment already exists",
@@ -241,7 +251,8 @@ async def add_assessment(
     Currently supported assessment types are:
     - semantic-similarity (requires reference)
     - sentence-length
-    - word-alignment (requires reference)
+    - word-alignment (requires reference; pass `{"use_eflomal": true}` in extra_kwargs
+      along with source_language and target_language to run eflomal-based alignment)
     - ngrams
     - tfidf
     - text-lengths
@@ -282,6 +293,26 @@ async def add_assessment(
             raise HTTPException(status_code=400, detail=str(e)) from e
         a.kwargs = parsed_kwargs
 
+    # Fold the use_eflomal query param into kwargs so it reaches Modal and the dedup check
+    if use_eflomal:
+        parsed_kwargs = parsed_kwargs or {}
+        parsed_kwargs["use_eflomal"] = True
+        a.kwargs = parsed_kwargs
+
+    # Eflomal word-alignment requires source and target languages
+    is_eflomal = a.kwargs and a.kwargs.get("use_eflomal")
+    if is_eflomal:
+        if a.type != "word-alignment":
+            raise HTTPException(
+                status_code=400,
+                detail="use_eflomal is only valid for word-alignment assessments.",
+            )
+        if not a.source_language or not a.target_language:
+            raise HTTPException(
+                status_code=400,
+                detail="Eflomal word-alignment requires source_language and target_language.",
+            )
+
     # Check for already-completed assessment (force=true bypasses this)
     if not force:
         completed_stmt = (
@@ -301,6 +332,18 @@ async def add_assessment(
             )
         else:
             completed_stmt = completed_stmt.where(Assessment.reference_id.is_(None))
+        # Distinguish eflomal from regular word-alignment
+        if is_eflomal:
+            completed_stmt = completed_stmt.where(
+                Assessment.kwargs.op("@>")({"use_eflomal": True})
+            )
+        elif a.type == "word-alignment":
+            completed_stmt = completed_stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.op("@>")({"use_eflomal": True}),
+                )
+            )
         result = await db.execute(completed_stmt)
         existing = result.scalars().first()
         if existing is not None:
@@ -336,6 +379,16 @@ async def add_assessment(
             stmt = stmt.where(Assessment.reference_id == a.reference_id)
         else:
             stmt = stmt.where(Assessment.reference_id.is_(None))
+        # Distinguish eflomal from regular word-alignment
+        if is_eflomal:
+            stmt = stmt.where(Assessment.kwargs.op("@>")({"use_eflomal": True}))
+        elif a.type == "word-alignment":
+            stmt = stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.op("@>")({"use_eflomal": True}),
+                )
+            )
         result = await db.execute(stmt)
         existing_id = result.scalars().first()
         if existing_id is not None:
@@ -379,6 +432,77 @@ async def add_assessment(
         raise HTTPException(status_code=response.status_code, detail=error_detail)
 
     return [AssessmentOut.model_validate(assessment)]
+
+
+@router.patch("/assessment/{assessment_id}/status", response_model=AssessmentOut)
+async def update_assessment_status(
+    assessment_id: int,
+    update: AssessmentStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Runner callback to update assessment status.
+
+    Auth: admin, assessment owner, or any user with group access to the
+    assessment's bible version.  This mirrors the training PATCH pattern.
+    """
+    result = await db.execute(select(Assessment).where(Assessment.id == assessment_id))
+    assessment = result.scalars().first()
+    if not assessment or assessment.deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found",
+        )
+
+    if not current_user.is_admin and assessment.owner_id != current_user.id:
+        revision = await db.get(BibleRevision, assessment.revision_id)
+        if not revision:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment revision not found",
+            )
+        version_access = await db.execute(
+            select(BibleVersionAccess.bible_version_id).where(
+                BibleVersionAccess.group_id.in_(
+                    select(UserGroup.group_id).where(
+                        UserGroup.user_id == current_user.id
+                    )
+                )
+            )
+        )
+        accessible_version_ids = {row[0] for row in version_access.all()}
+        if revision.bible_version_id not in accessible_version_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this assessment",
+            )
+
+    if assessment.status in ASSESSMENT_TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Assessment is already in terminal status '{assessment.status}'",
+        )
+
+    allowed_next = ASSESSMENT_VALID_TRANSITIONS.get(assessment.status, set())
+    if update.status not in allowed_next:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid transition from '{assessment.status}' to '{update.status}'",
+        )
+
+    assessment.status = update.status
+    if update.status_detail is not None:
+        assessment.status_detail = update.status_detail
+
+    if assessment.start_time is None and update.status != "queued":
+        assessment.start_time = datetime.utcnow()
+
+    if update.status in ASSESSMENT_TERMINAL_STATUSES:
+        assessment.end_time = datetime.utcnow()
+
+    await db.commit()
+    await db.refresh(assessment)
+    return AssessmentOut.model_validate(assessment)
 
 
 @router.delete("/assessment")

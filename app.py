@@ -8,14 +8,15 @@ from fastapi.openapi.utils import get_openapi
 from agent_routes.v3.agent_routes import router as agent_router_v3
 from assessment_routes.v3.assessment_routes import router as assessment_router_v3
 from assessment_routes.v3.eflomal_routes import router as eflomal_router_v3
+from assessment_routes.v3.results_push_routes import router as results_write_router_v3
+from assessment_routes.v3.results_query_routes import router as results_router_v3
+from assessment_routes.v3.search_routes import router as search_router_v3
 from bible_routes.v3.language_routes import router as language_router_v3
 from bible_routes.v3.revision_routes import router as revision_router_v3
 from bible_routes.v3.verse_routes import router as verse_router_v3
 from bible_routes.v3.version_routes import router as version_router_v3
 from inference_routes.v3.inference_routes import router as inference_router_v3
 from middleware import LoggingMiddleware
-from review_routes.v3.results_routes import router as results_router_v3
-from review_routes.v3.search_routes import router as search_router_v3
 from security_routes.admin_routes import router as admin_router
 from security_routes.auth_routes import router as security_router
 from train_routes.v3.train_routes import router as train_router_v3
@@ -103,6 +104,7 @@ def configure_routing(app):
     app.include_router(agent_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(train_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(eflomal_router_v3, prefix="/v3", tags=["Version 3"])
+    app.include_router(results_write_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(inference_router_v3, prefix="/v3", tags=["Version 3"])
 
     app.include_router(
@@ -121,6 +123,9 @@ def configure_routing(app):
     app.include_router(agent_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(train_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(eflomal_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(
+        results_write_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
+    )
     app.include_router(
         inference_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
     )
