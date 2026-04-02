@@ -860,6 +860,42 @@ async def get_texts(
     # Create combined records with text field per revision
     # Each record: {"vrefs": ["GEN 1:1"], "text_123": "...", "text_456": "..."}
     text_fields = [f"text_{rev_id}" for rev_id in revision_ids]
+    rev_id_strs = [str(rev_id) for rev_id in revision_ids]
+    result_dict: Dict[str, List[VerseText]] = {key: [] for key in rev_id_strs}
+
+    if include_verses == IncludeVerses.all:
+        # Return exactly 41,899 rows per revision — no merging,
+        # <range> markers replaced with empty strings
+        for vref in _VREF_LIST:
+            rev_verses = vref_to_revisions.get(vref, {})
+            book, cv = vref.split(" ", 1)
+            chapter_str, verse_str = cv.split(":")
+            chapter = int(chapter_str)
+            verse_num = int(verse_str)
+
+            for rev_id, rev_id_str in zip(revision_ids, rev_id_strs):
+                if rev_id in rev_verses:
+                    text = rev_verses[rev_id].text or ""
+                    text = "" if text == "<range>" else text
+                else:
+                    text = ""
+                result_dict[rev_id_str].append(
+                    VerseText(
+                        id=None,
+                        text=text,
+                        verse_reference=vref,
+                        verse_references=[vref],
+                        first_verse_reference=vref,
+                        revision_id=rev_id,
+                        book=book,
+                        chapter=chapter,
+                        verse=verse_num,
+                    )
+                )
+
+        return result_dict
+
+    # union / intersection: merge <range> markers, then filter
     combined_records: List[Dict] = []
 
     for vref in vref_order:
@@ -890,18 +926,11 @@ async def get_texts(
         merged_records = [
             r for r in merged_records if all(r[f].strip() for f in text_fields)
         ]
-    elif include_verses == IncludeVerses.union:
-        # Keep records where at least one revision has non-empty text
+    else:
+        # union: keep records where at least one revision has non-empty text
         merged_records = [
             r for r in merged_records if any(r[f].strip() for f in text_fields)
         ]
-    # IncludeVerses.all: no filtering
-
-    # Split back to per-revision lists (use string keys for JSON compatibility)
-    # Pre-compute string keys and field names to avoid repeated string operations
-    rev_id_strs = [str(rev_id) for rev_id in revision_ids]
-    rev_field_names = text_fields
-    result_dict: Dict[str, List[VerseText]] = {key: [] for key in rev_id_strs}
 
     for record in merged_records:
         vrefs = record["vrefs"]
@@ -920,7 +949,7 @@ async def get_texts(
 
         # Create VerseText for each revision
         for rev_id, rev_id_str, field_name in zip(
-            revision_ids, rev_id_strs, rev_field_names
+            revision_ids, rev_id_strs, text_fields
         ):
             result_dict[rev_id_str].append(
                 VerseText(
