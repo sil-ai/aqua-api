@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 router = fastapi.APIRouter()
 
+# _BATCH_SIZE controls DB insert chunking; _MAX_BODY_ITEMS caps HTTP request
+# size.  They are intentionally equal — one HTTP request = one DB batch.
 _BATCH_SIZE = 5_000
 _MAX_BODY_ITEMS = 5_000
 
@@ -223,6 +225,18 @@ async def push_eflomal_metadata(
         )
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to store eflomal metadata")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error storing eflomal metadata for assessment_id=%s",
+            body.assessment_id,
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected error storing eflomal metadata",
+        )
 
 
 @router.post(
@@ -266,13 +280,13 @@ async def push_eflomal_dictionary(
         ids = await _batch_insert(db, EflomalDictionary, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} dictionary entries for assessment {assessment_id}: {exc}",
+            detail=f"Duplicate or constraint violation inserting {len(rows)} dictionary entries for assessment {assessment_id}",
         )
-    except SQLAlchemyError as exc:
+    except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for eflomal_dictionary, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -281,9 +295,11 @@ async def push_eflomal_dictionary(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(rows)} dictionary entries for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Database error inserting {len(rows)} dictionary entries for assessment {assessment_id}",
         )
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception(
             "Unexpected error pushing eflomal dictionary, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -292,7 +308,7 @@ async def push_eflomal_dictionary(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(rows)} dictionary entries for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Unexpected error inserting {len(rows)} dictionary entries for assessment {assessment_id}",
         )
 
 
@@ -337,13 +353,13 @@ async def push_eflomal_cooccurrences(
         ids = await _batch_insert(db, EflomalCooccurrence, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} cooccurrences for assessment {assessment_id}: {exc}",
+            detail=f"Duplicate or constraint violation inserting {len(rows)} cooccurrences for assessment {assessment_id}",
         )
-    except SQLAlchemyError as exc:
+    except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for eflomal_cooccurrence, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -352,9 +368,11 @@ async def push_eflomal_cooccurrences(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(rows)} cooccurrences for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Database error inserting {len(rows)} cooccurrences for assessment {assessment_id}",
         )
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception(
             "Unexpected error pushing eflomal cooccurrences, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -363,7 +381,7 @@ async def push_eflomal_cooccurrences(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(rows)} cooccurrences for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Unexpected error inserting {len(rows)} cooccurrences for assessment {assessment_id}",
         )
 
 
@@ -406,13 +424,13 @@ async def push_eflomal_target_word_counts(
         ids = await _batch_insert(db, EflomalTargetWordCount, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} target word counts for assessment {assessment_id}: {exc}",
+            detail=f"Duplicate or constraint violation inserting {len(rows)} target word counts for assessment {assessment_id}",
         )
-    except SQLAlchemyError as exc:
+    except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for eflomal_target_word_count, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -421,9 +439,11 @@ async def push_eflomal_target_word_counts(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(rows)} target word counts for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Database error inserting {len(rows)} target word counts for assessment {assessment_id}",
         )
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception(
             "Unexpected error pushing eflomal target word counts, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -432,7 +452,7 @@ async def push_eflomal_target_word_counts(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(rows)} target word counts for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Unexpected error inserting {len(rows)} target word counts for assessment {assessment_id}",
         )
 
 

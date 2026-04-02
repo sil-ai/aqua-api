@@ -38,6 +38,8 @@ logger = logging.getLogger(__name__)
 
 router = fastapi.APIRouter()
 
+# _BATCH_SIZE controls DB insert chunking; _MAX_BODY_ITEMS caps HTTP request
+# size.  They are intentionally equal — one HTTP request = one DB batch.
 _BATCH_SIZE = 5_000
 _MAX_BODY_ITEMS = 5_000
 
@@ -149,13 +151,13 @@ async def push_results(
         ids = await _batch_insert(db, AssessmentResult, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} results for assessment {assessment_id}: {exc}",
+            detail=f"Duplicate or constraint violation inserting {len(rows)} results for assessment {assessment_id}",
         )
-    except SQLAlchemyError as exc:
+    except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for assessment_result, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -164,9 +166,11 @@ async def push_results(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(rows)} results for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Database error inserting {len(rows)} results for assessment {assessment_id}",
         )
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception(
             "Unexpected error pushing results, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -175,7 +179,7 @@ async def push_results(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(rows)} results for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Unexpected error inserting {len(rows)} results for assessment {assessment_id}",
         )
 
 
@@ -220,13 +224,13 @@ async def push_alignment_scores(
         ids = await _batch_insert(db, AlignmentTopSourceScores, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} alignment scores for assessment {assessment_id}: {exc}",
+            detail=f"Duplicate or constraint violation inserting {len(rows)} alignment scores for assessment {assessment_id}",
         )
-    except SQLAlchemyError as exc:
+    except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for alignment_top_source_scores, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -235,9 +239,11 @@ async def push_alignment_scores(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(rows)} alignment scores for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Database error inserting {len(rows)} alignment scores for assessment {assessment_id}",
         )
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception(
             "Unexpected error pushing alignment scores, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -246,7 +252,7 @@ async def push_alignment_scores(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(rows)} alignment scores for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Unexpected error inserting {len(rows)} alignment scores for assessment {assessment_id}",
         )
 
 
@@ -285,33 +291,35 @@ async def push_text_lengths(
         ids = await _batch_insert(db, TextLengthsTable, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} text lengths for assessment {assessment_id}: {exc}",
+            detail=f"Duplicate or constraint violation inserting {len(body)} text lengths for assessment {assessment_id}",
         )
-    except SQLAlchemyError as exc:
+    except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for text_lengths_table, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(rows),
+            len(body),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(rows)} text lengths for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Database error inserting {len(body)} text lengths for assessment {assessment_id}",
         )
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception(
             "Unexpected error pushing text lengths, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(rows),
+            len(body),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(rows)} text lengths for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Unexpected error inserting {len(body)} text lengths for assessment {assessment_id}",
         )
 
 
@@ -347,33 +355,35 @@ async def push_tfidf_vectors(
         ids = await _batch_insert(db, TfidfPcaVector, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} tfidf vectors for assessment {assessment_id}: {exc}",
+            detail=f"Duplicate or constraint violation inserting {len(body)} tfidf vectors for assessment {assessment_id}",
         )
-    except SQLAlchemyError as exc:
+    except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for tfidf_pca_vector, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(rows),
+            len(body),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(rows)} tfidf vectors for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Database error inserting {len(body)} tfidf vectors for assessment {assessment_id}",
         )
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception(
             "Unexpected error pushing tfidf vectors, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(rows),
+            len(body),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(rows)} tfidf vectors for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Unexpected error inserting {len(body)} tfidf vectors for assessment {assessment_id}",
         )
 
 
@@ -429,13 +439,13 @@ async def push_ngrams(
 
         await db.commit()
         return InsertResponse(ids=ngram_ids)
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(body)} ngrams for assessment {assessment_id}: {exc}",
+            detail=f"Duplicate or constraint violation inserting {len(body)} ngrams for assessment {assessment_id}",
         )
-    except SQLAlchemyError as exc:
+    except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for ngrams, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -444,9 +454,11 @@ async def push_ngrams(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(body)} ngrams for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Database error inserting {len(body)} ngrams for assessment {assessment_id}",
         )
-    except Exception as exc:
+    except HTTPException:
+        raise
+    except Exception:
         logger.exception(
             "Unexpected error pushing ngrams, assessment_id=%s, item_count=%d",
             assessment_id,
@@ -455,7 +467,7 @@ async def push_ngrams(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(body)} ngrams for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+            detail=f"Unexpected error inserting {len(body)} ngrams for assessment {assessment_id}",
         )
 
 
@@ -493,8 +505,16 @@ async def delete_results(
         await db.commit()
         return DeleteResponse(deleted=deleted)
     except SQLAlchemyError:
+        logger.exception(
+            "Failed to delete results, assessment_id=%s, id_count=%d",
+            assessment_id,
+            len(body.ids),
+        )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to delete rows")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete {len(body.ids)} results for assessment {assessment_id}",
+        )
 
 
 @router.delete(
@@ -517,8 +537,16 @@ async def delete_alignment_scores(
         await db.commit()
         return DeleteResponse(deleted=deleted)
     except SQLAlchemyError:
+        logger.exception(
+            "Failed to delete alignment scores, assessment_id=%s, id_count=%d",
+            assessment_id,
+            len(body.ids),
+        )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to delete rows")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete {len(body.ids)} alignment scores for assessment {assessment_id}",
+        )
 
 
 @router.delete(
@@ -541,8 +569,16 @@ async def delete_text_lengths(
         await db.commit()
         return DeleteResponse(deleted=deleted)
     except SQLAlchemyError:
+        logger.exception(
+            "Failed to delete text lengths, assessment_id=%s, id_count=%d",
+            assessment_id,
+            len(body.ids),
+        )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to delete rows")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete {len(body.ids)} text lengths for assessment {assessment_id}",
+        )
 
 
 @router.delete(
@@ -563,8 +599,16 @@ async def delete_tfidf_vectors(
         await db.commit()
         return DeleteResponse(deleted=deleted)
     except SQLAlchemyError:
+        logger.exception(
+            "Failed to delete tfidf vectors, assessment_id=%s, id_count=%d",
+            assessment_id,
+            len(body.ids),
+        )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to delete rows")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete {len(body.ids)} tfidf vectors for assessment {assessment_id}",
+        )
 
 
 @router.delete(
@@ -607,5 +651,13 @@ async def delete_ngrams(
         await db.commit()
         return DeleteResponse(deleted=deleted)
     except SQLAlchemyError:
+        logger.exception(
+            "Failed to delete ngrams, assessment_id=%s, id_count=%d",
+            assessment_id,
+            len(body.ids),
+        )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to delete rows")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete {len(body.ids)} ngrams for assessment {assessment_id}",
+        )
