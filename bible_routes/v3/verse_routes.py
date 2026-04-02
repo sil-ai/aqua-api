@@ -29,6 +29,14 @@ _VREF_PATH = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "vref.tx
 _VREF_LIST = _VREF_PATH.read_text(encoding="utf-8").splitlines()
 
 
+def _is_range_marker(x):
+    return x == "<range>"
+
+
+def _combine_text(field, values):
+    return " ".join(v for v in values if v and v != "<range>")
+
+
 def extract_unique_words(text: str) -> List[str]:
     """
     Extract unique words from text using sophisticated Unicode-aware splitting logic.
@@ -334,12 +342,87 @@ async def get_text(
             detail="User not authorized to access this revision.",
         )
     stmt = (
-        select(VerseModel)
+        select(
+            VerseModel.id,
+            VerseModel.text,
+            VerseModel.verse_reference,
+            VerseModel.revision_id,
+            VerseModel.book,
+            VerseModel.chapter,
+            VerseModel.verse,
+        )
+        .join(
+            VerseReferenceModel,
+            VerseModel.verse_reference == VerseReferenceModel.full_verse_id,
+        )
+        .join(
+            ChapterReferenceModel,
+            VerseReferenceModel.chapter == ChapterReferenceModel.full_chapter_id,
+        )
+        .join(
+            BookReferenceModel,
+            VerseReferenceModel.book_reference == BookReferenceModel.abbreviation,
+        )
         .where(VerseModel.revision_id == revision_id)
-        .order_by(VerseModel.id)
+        .order_by(
+            BookReferenceModel.number,
+            ChapterReferenceModel.number,
+            VerseReferenceModel.number,
+        )
     )
     result = await db.execute(stmt)
-    verses = result.scalars().all()
+    all_verses = result.all()
+
+    # Map vref -> verse info for preserving DB values after merge
+    vref_to_info = {
+        verse.verse_reference: {
+            "id": verse.id,
+            "book": verse.book,
+            "chapter": verse.chapter,
+            "verse": verse.verse,
+        }
+        for verse in all_verses
+    }
+
+    combined_records = [
+        {"vrefs": [v.verse_reference], "text": v.text or ""} for v in all_verses
+    ]
+
+    merged_records = merge_verse_ranges(
+        combined_records,
+        verse_ref_field="vrefs",
+        combine_fields=["text"],
+        check_fields=["text"],
+        is_range_marker=_is_range_marker,
+        combine_function=_combine_text,
+    )
+
+    # Convert merged records back to VerseText objects
+    verses = []
+    for record in merged_records:
+        vrefs = record["vrefs"]
+        if len(vrefs) == 1:
+            verse_ref = vrefs[0]
+        else:
+            verse_ref = format_verse_range(vrefs[0], vrefs[-1])
+
+        first_vref = vrefs[0]
+        info = vref_to_info.get(first_vref, {})
+
+        verses.append(
+            VerseText(
+                id=info.get("id"),
+                text=record["text"],
+                verse_reference=verse_ref,
+                verse_references=vrefs,
+                first_verse_reference=first_vref,
+                revision_id=revision_id,
+                book=info.get("book"),
+                chapter=info.get("chapter"),
+                verse=info.get("verse"),
+            )
+        )
+
     return verses
 
 
@@ -748,14 +831,8 @@ async def get_texts(
         verse_ref_field="vrefs",
         combine_fields=text_fields,
         check_fields=text_fields,
-        is_range_marker=lambda x: x == "<range>",
-        # combine_function filters out empty strings and "<range>" markers:
-        # - empty strings represent "no verse text" for that revision
-        # - "<range>" is a structural marker, not actual text content
-        # Only actual text content is joined with spaces.
-        combine_function=lambda field, values: " ".join(
-            v for v in values if v and v != "<range>"
-        ),
+        is_range_marker=_is_range_marker,
+        combine_function=_combine_text,
     )
 
     # Apply include_verses filtering
@@ -801,6 +878,8 @@ async def get_texts(
                     id=None,
                     text=record[field_name],
                     verse_reference=verse_ref,
+                    verse_references=vrefs,
+                    first_verse_reference=first_vref,
                     revision_id=rev_id,
                     book=book,
                     chapter=chapter,

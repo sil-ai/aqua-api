@@ -173,6 +173,8 @@ class VerseText(BaseModel):
     id: Optional[int] = None
     text: str
     verse_reference: str
+    verse_references: Optional[List[str]] = None
+    first_verse_reference: Optional[str] = None
     revision_id: int
     book: Optional[str] = None
     chapter: Optional[int] = None
@@ -183,6 +185,8 @@ class VerseText(BaseModel):
             "example": {
                 "text": "In the beginning God created the heaven and the earth.",
                 "verse_reference": "GEN 1:1",
+                "verse_references": ["GEN 1:1"],
+                "first_verse_reference": "GEN 1:1",
                 "revision_id": 1,
                 "book": "GEN",
                 "chapter": 1,
