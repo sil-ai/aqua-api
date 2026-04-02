@@ -491,6 +491,8 @@ def test_text_endpoint_basic(client, regular_token1, db_session):
     assert len(data) > 0
     first_verse = data[0]
     assert first_verse["verse_reference"] == "GEN 1:1"
+    assert first_verse["verse_references"] == ["GEN 1:1"]
+    assert first_verse["first_verse_reference"] == "GEN 1:1"
     assert first_verse["book"] == "GEN"
     assert first_verse["chapter"] == 1
     assert first_verse["verse"] == 1
@@ -526,6 +528,8 @@ def test_text_endpoint_with_range_markers(client, regular_token1, db_session):
     # First entry should be merged GEN 1:1-2
     first = data[0]
     assert first["verse_reference"] == "GEN 1:1-2"
+    assert first["verse_references"] == ["GEN 1:1", "GEN 1:2"]
+    assert first["first_verse_reference"] == "GEN 1:1"
     assert "beginning" in first["text"].lower()  # GEN 1:1
     assert "<range>" not in first["text"]
 
@@ -567,6 +571,8 @@ def test_text_endpoint_multi_verse_range(client, regular_token1, db_session):
 
     first = data[0]
     assert first["verse_reference"] == "GEN 1:1-3"
+    assert first["verse_references"] == ["GEN 1:1", "GEN 1:2", "GEN 1:3"]
+    assert first["first_verse_reference"] == "GEN 1:1"
     assert "beginning" in first["text"].lower()  # GEN 1:1
     assert "<range>" not in first["text"]
 
@@ -755,6 +761,8 @@ def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
 
     # First entry should be merged (GEN 1:1-2)
     assert first_verse_rev1["verse_reference"] == "GEN 1:1-2"
+    assert first_verse_rev1["verse_references"] == ["GEN 1:1", "GEN 1:2"]
+    assert first_verse_rev1["first_verse_reference"] == "GEN 1:1"
     assert first_verse_rev1["verse_reference"] == first_verse_rev2["verse_reference"]
 
     # Revision 1's merged text should combine verses 1 and 2 (KJV text)
