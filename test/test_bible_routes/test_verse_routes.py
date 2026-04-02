@@ -696,6 +696,128 @@ def test_text_endpoint_empty_verse_not_treated_as_range(
     assert "beginning" in gen_1_1["text"].lower()
 
 
+def test_text_endpoint_include_verses_all(client, regular_token1, db_session):
+    """Test /text endpoint with include_verses=all returns all 41,899 canonical verses."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Default (union) should return only verses with text
+    response_default = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    assert response_default.status_code == 200
+    default_count = len(response_default.json())
+
+    # include_verses=all should return all 41,899 canonical verses
+    response_all = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "all"},
+        headers=headers,
+    )
+    assert response_all.status_code == 200
+    all_data = response_all.json()
+    assert len(all_data) == 41899
+    assert len(all_data) > default_count
+
+    # GEN 1:1 should have text
+    gen_1_1 = next(v for v in all_data if v["verse_reference"] == "GEN 1:1")
+    assert gen_1_1["text"] != ""
+
+    # A verse not in the revision should have empty text
+    # (the KJV fixture has many verses, so pick one from a book not in it)
+    empty_verses = [v for v in all_data if v["text"] == ""]
+    assert len(empty_verses) > 0
+
+
+def test_text_endpoint_include_verses_all_no_merging(
+    client, regular_token1, db_session
+):
+    """Test /text with include_verses=all returns exactly 41,899 rows even with <range> markers."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    # Set GEN 1:2 to <range>
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "all"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Must be exactly 41,899 rows (no merging)
+    assert len(data) == 41899
+
+    # GEN 1:2 should appear as its own row with empty text (range replaced)
+    verse_map = {v["verse_reference"]: v for v in data}
+    assert "GEN 1:2" in verse_map
+    assert verse_map["GEN 1:2"]["text"] == ""
+
+    # GEN 1:1 should not be merged with GEN 1:2
+    assert verse_map["GEN 1:1"]["verse_references"] == ["GEN 1:1"]
+
+
+def test_text_endpoint_include_verses_union_is_default(
+    client, regular_token1, db_session
+):
+    """Test that include_verses=union matches default behavior."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response_default = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    response_union = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "union"},
+        headers=headers,
+    )
+
+    assert response_default.status_code == 200
+    assert response_union.status_code == 200
+    assert response_default.json() == response_union.json()
+
+
+def test_text_endpoint_include_verses_intersection(client, regular_token1, db_session):
+    """Test that include_verses=intersection is treated identically to union for single revision."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response_union = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "union"},
+        headers=headers,
+    )
+    response_intersection = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "intersection"},
+        headers=headers,
+    )
+
+    assert response_union.status_code == 200
+    assert response_intersection.status_code == 200
+    assert response_union.json() == response_intersection.json()
+
+
 def test_texts_endpoint_basic(client, regular_token1, db_session):
     """Test /texts endpoint with two revisions without ranges."""
     version_id = create_bible_version(client, regular_token1, db_session)
@@ -1417,6 +1539,55 @@ def test_texts_include_verses_all(client, regular_token1, db_session):
     assert rev2_vrefs["GEN 1:1"]["text"] != ""
     assert "EXO 1:1" in rev2_vrefs
     assert rev2_vrefs["EXO 1:1"]["text"] == ""
+
+
+def test_texts_include_verses_all_no_merging(client, regular_token1, db_session):
+    """Test include_verses=all returns exactly 41,899 rows even with <range> markers."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:2 to <range> in revision 1
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id1,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "all",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_verses = data[str(revision_id1)]
+    rev2_verses = data[str(revision_id2)]
+
+    # Both revisions must have exactly 41,899 rows (no merging in all mode)
+    assert len(rev1_verses) == 41899
+    assert len(rev2_verses) == 41899
+
+    # GEN 1:2 should appear as its own row with empty text (range replaced)
+    rev1_map = {v["verse_reference"]: v for v in rev1_verses}
+    assert "GEN 1:2" in rev1_map
+    assert rev1_map["GEN 1:2"]["text"] == ""
+
+    # GEN 1:1 should not be merged with GEN 1:2
+    assert rev1_map["GEN 1:1"]["verse_references"] == ["GEN 1:1"]
 
 
 def test_texts_include_verses_union_default(client, regular_token1, db_session):
