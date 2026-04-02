@@ -226,6 +226,7 @@ async def push_eflomal_dictionary(
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk insert dictionary entries for an eflomal assessment."""
+    eflomal = await _get_eflomal_assessment(assessment_id, db)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=403, detail="Not authorized for this assessment"
@@ -235,7 +236,6 @@ async def push_eflomal_dictionary(
         return InsertResponse(ids=[])
     _check_body_size(body)
 
-    eflomal = await _get_eflomal_assessment(assessment_id, db)
     rows = [
         {
             "assessment_id": eflomal.id,
@@ -269,6 +269,7 @@ async def push_eflomal_cooccurrences(
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk insert cooccurrence entries for an eflomal assessment."""
+    eflomal = await _get_eflomal_assessment(assessment_id, db)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=403, detail="Not authorized for this assessment"
@@ -278,7 +279,6 @@ async def push_eflomal_cooccurrences(
         return InsertResponse(ids=[])
     _check_body_size(body)
 
-    eflomal = await _get_eflomal_assessment(assessment_id, db)
     rows = [
         {
             "assessment_id": eflomal.id,
@@ -312,6 +312,7 @@ async def push_eflomal_target_word_counts(
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk insert target word count entries for an eflomal assessment."""
+    eflomal = await _get_eflomal_assessment(assessment_id, db)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=403, detail="Not authorized for this assessment"
@@ -321,7 +322,6 @@ async def push_eflomal_target_word_counts(
         return InsertResponse(ids=[])
     _check_body_size(body)
 
-    eflomal = await _get_eflomal_assessment(assessment_id, db)
     rows = [
         {
             "assessment_id": eflomal.id,

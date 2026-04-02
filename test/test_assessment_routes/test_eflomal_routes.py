@@ -183,9 +183,22 @@ def test_push_eflomal_metadata_wrong_type(client, regular_token1, test_assessmen
 # ---------------------------------------------------------------------------
 
 
-def test_push_eflomal_dictionary(client, regular_token1, test_eflomal_assessment_id):
+@pytest.fixture(scope="module")
+def _ensure_metadata_pushed(client, regular_token1, test_eflomal_assessment_id):
+    """Idempotently push eflomal metadata so bulk push tests can run independently."""
+    payload = _metadata_payload(test_eflomal_assessment_id)
+    response = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json=payload,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+
+
+def test_push_eflomal_dictionary(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
     """Push dictionary entries for an existing eflomal assessment."""
-    # Metadata already pushed by test_push_eflomal_metadata_success
     headers = {"Authorization": f"Bearer {regular_token1}"}
     response = client.post(
         f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-dictionary",
@@ -196,7 +209,9 @@ def test_push_eflomal_dictionary(client, regular_token1, test_eflomal_assessment
     assert len(response.json()["ids"]) == 5
 
 
-def test_push_eflomal_cooccurrences(client, regular_token1, test_eflomal_assessment_id):
+def test_push_eflomal_cooccurrences(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
     """Push cooccurrence entries."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
     response = client.post(
@@ -209,7 +224,7 @@ def test_push_eflomal_cooccurrences(client, regular_token1, test_eflomal_assessm
 
 
 def test_push_eflomal_target_word_counts(
-    client, regular_token1, test_eflomal_assessment_id
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
     """Push target word count entries."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
