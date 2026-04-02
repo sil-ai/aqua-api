@@ -751,7 +751,32 @@ def test_text_endpoint_include_verses_union_is_default(
 
     assert response_default.status_code == 200
     assert response_union.status_code == 200
-    assert len(response_default.json()) == len(response_union.json())
+    assert response_default.json() == response_union.json()
+
+
+def test_text_endpoint_include_verses_intersection(
+    client, regular_token1, db_session
+):
+    """Test that include_verses=intersection is treated identically to union for single revision."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response_union = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "union"},
+        headers=headers,
+    )
+    response_intersection = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "intersection"},
+        headers=headers,
+    )
+
+    assert response_union.status_code == 200
+    assert response_intersection.status_code == 200
+    assert response_union.json() == response_intersection.json()
 
 
 def test_texts_endpoint_basic(client, regular_token1, db_session):

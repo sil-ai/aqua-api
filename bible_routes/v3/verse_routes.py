@@ -322,7 +322,7 @@ async def get_text(
             "Which verses to include in the response. "
             "'all': all 41,899 canonical verses, with empty text for missing verses. "
             "'union': only verses that have text (default). "
-            "'intersection': same as 'union' for a single revision."
+            "'intersection': treated identically to 'union' for a single revision."
         ),
     ),
     db: AsyncSession = Depends(get_db),
@@ -336,8 +336,8 @@ async def get_text(
     Description: The unique identifier for the revision.
     - include_verses: IncludeVerses (all|union|intersection, default "union")
     Description: Which verses to include. 'all' returns all 41,899 canonical
-    verses with empty text for missing ones. 'union' and 'intersection' both
-    return only verses that have text (they are equivalent for a single revision).
+    verses with empty text for missing ones. 'union' and 'intersection' are
+    treated identically for a single revision (both return only verses that have text).
 
     Returns:
     Fields(VerseText):
@@ -405,15 +405,42 @@ async def get_text(
         for verse in all_verses
     }
 
-    # Determine verse ordering based on include_verses mode
     if include_verses == IncludeVerses.all:
-        vref_order = _VREF_LIST
-    else:
-        vref_order = [v.verse_reference for v in all_verses]
+        # Return exactly 41,899 rows — one per canonical verse, no merging
+        verses = []
+        for vref in _VREF_LIST:
+            info = vref_to_info.get(vref)
+            if info:
+                book = info["book"]
+                chapter = info["chapter"]
+                verse_num = info["verse"]
+                verse_id = info["id"]
+                text = "" if info["text"] == "<range>" else info["text"]
+            else:
+                book, cv = vref.split(" ", 1)
+                chapter_str, verse_str = cv.split(":")
+                chapter = int(chapter_str)
+                verse_num = int(verse_str)
+                verse_id = None
+                text = ""
+            verses.append(
+                VerseText(
+                    id=verse_id,
+                    text=text,
+                    verse_reference=vref,
+                    verse_references=[vref],
+                    first_verse_reference=vref,
+                    revision_id=revision_id,
+                    book=book,
+                    chapter=chapter,
+                    verse=verse_num,
+                )
+            )
+        return verses
 
+    # union / intersection: merge <range> markers, return only DB verses
     combined_records = [
-        {"vrefs": [vref], "text": vref_to_info[vref]["text"] if vref in vref_to_info else ""}
-        for vref in vref_order
+        {"vrefs": [v.verse_reference], "text": v.text or ""} for v in all_verses
     ]
 
     merged_records = merge_verse_ranges(
@@ -435,32 +462,19 @@ async def get_text(
             verse_ref = format_verse_range(vrefs[0], vrefs[-1])
 
         first_vref = vrefs[0]
-        info = vref_to_info.get(first_vref)
-
-        if info:
-            book = info["book"]
-            chapter = info["chapter"]
-            verse_num = info["verse"]
-            verse_id = info["id"]
-        else:
-            # Parse from vref string for verses not in the DB
-            book, cv = first_vref.split(" ", 1)
-            chapter_str, verse_str = cv.split(":")
-            chapter = int(chapter_str)
-            verse_num = int(verse_str)
-            verse_id = None
+        info = vref_to_info.get(first_vref, {})
 
         verses.append(
             VerseText(
-                id=verse_id,
+                id=info.get("id"),
                 text=record["text"],
                 verse_reference=verse_ref,
                 verse_references=vrefs,
                 first_verse_reference=first_vref,
                 revision_id=revision_id,
-                book=book,
-                chapter=chapter,
-                verse=verse_num,
+                book=info.get("book"),
+                chapter=info.get("chapter"),
+                verse=info.get("verse"),
             )
         )
 
