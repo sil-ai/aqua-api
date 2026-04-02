@@ -365,15 +365,12 @@ async def get_text(
     result = await db.execute(stmt)
     all_verses = result.all()
 
-    # Build records for merge_verse_ranges
-    combined_records = []
-    for verse in all_verses:
-        combined_records.append(
-            {
-                "vrefs": [verse.verse_reference],
-                "text": verse.text or "",
-            }
-        )
+    # Map vref -> DB id for preserving ids after merge (first verse's id for ranges)
+    vref_to_id = {verse.verse_reference: verse.id for verse in all_verses}
+
+    combined_records = [
+        {"vrefs": [v.verse_reference], "text": v.text or ""} for v in all_verses
+    ]
 
     merged_records = merge_verse_ranges(
         combined_records,
@@ -401,7 +398,7 @@ async def get_text(
 
         verses.append(
             VerseText(
-                id=None,
+                id=vref_to_id.get(first_vref),
                 text=record["text"],
                 verse_reference=verse_ref,
                 revision_id=revision_id,
