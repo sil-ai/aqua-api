@@ -34,7 +34,7 @@ def _dictionary_items(n=10):
             "source_word": f"src_{i}",
             "target_word": f"tgt_{i}",
             "count": i + 1,
-            "probability": 0.5 + i * 0.01,
+            "probability": 0.5 + (i % 50) * 0.01,
         }
         for i in range(n)
     ]
