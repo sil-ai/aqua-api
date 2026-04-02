@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 router = fastapi.APIRouter()
 
 _BATCH_SIZE = 5_000
-_MAX_BODY_ITEMS = 50_000
+_MAX_BODY_ITEMS = 5_000
 
 _VREF_RE = re.compile(r"^([A-Z0-9]+)\s+(\d+):(\d+)$")
 
@@ -111,7 +111,11 @@ def _check_body_size(body):
     if len(body) > _MAX_BODY_ITEMS:
         raise HTTPException(
             status_code=400,
-            detail=f"Request body too large: {len(body)} items (max {_MAX_BODY_ITEMS})",
+            detail=(
+                f"Request body too large: {len(body)} items "
+                f"(max {_MAX_BODY_ITEMS}). "
+                f"Please split into batches of {_MAX_BODY_ITEMS} or fewer."
+            ),
         )
 
 
@@ -130,7 +134,13 @@ async def push_results(
     assessment: Assessment = Depends(_get_authorized_assessment),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert assessment results (assessment_result table)."""
+    """Bulk insert assessment results (assessment_result table).
+
+    Maximum of 5,000 items per request. For larger datasets, split into
+    multiple requests of 5,000 items or fewer.
+
+    Returns the list of inserted row IDs in the same order as the input.
+    """
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
@@ -139,15 +149,34 @@ async def push_results(
         ids = await _batch_insert(db, AssessmentResult, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
-    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate or constraint violation inserting {len(rows)} results for assessment {assessment_id}: {exc}",
+        )
+    except SQLAlchemyError as exc:
         logger.exception(
-            "Bulk insert failed for assessment_result, assessment_id=%s", assessment_id
+            "Bulk insert failed for assessment_result, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
         )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Database error")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting {len(rows)} results for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+        )
+    except Exception as exc:
+        logger.exception(
+            "Unexpected error pushing results, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting {len(rows)} results for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+        )
 
 
 @router.post(
@@ -160,7 +189,13 @@ async def push_alignment_scores(
     assessment: Assessment = Depends(_get_authorized_assessment),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert alignment top source scores."""
+    """Bulk insert alignment top source scores.
+
+    Maximum of 5,000 items per request. For larger datasets, split into
+    multiple requests of 5,000 items or fewer.
+
+    Returns the list of inserted row IDs in the same order as the input.
+    """
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
@@ -185,16 +220,34 @@ async def push_alignment_scores(
         ids = await _batch_insert(db, AlignmentTopSourceScores, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
-    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate or constraint violation inserting {len(rows)} alignment scores for assessment {assessment_id}: {exc}",
+        )
+    except SQLAlchemyError as exc:
         logger.exception(
-            "Bulk insert failed for alignment_top_source_scores, assessment_id=%s",
+            "Bulk insert failed for alignment_top_source_scores, assessment_id=%s, item_count=%d",
             assessment_id,
+            len(rows),
         )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Database error")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting {len(rows)} alignment scores for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+        )
+    except Exception as exc:
+        logger.exception(
+            "Unexpected error pushing alignment scores, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting {len(rows)} alignment scores for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+        )
 
 
 @router.post(
@@ -207,7 +260,13 @@ async def push_text_lengths(
     assessment: Assessment = Depends(_get_authorized_assessment),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert text length statistics."""
+    """Bulk insert text length statistics.
+
+    Maximum of 5,000 items per request. For larger datasets, split into
+    multiple requests of 5,000 items or fewer.
+
+    Returns the list of inserted row IDs in the same order as the input.
+    """
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
@@ -226,15 +285,34 @@ async def push_text_lengths(
         ids = await _batch_insert(db, TextLengthsTable, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
-    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate or constraint violation inserting {len(rows)} text lengths for assessment {assessment_id}: {exc}",
+        )
+    except SQLAlchemyError as exc:
         logger.exception(
-            "Bulk insert failed for text_lengths_table, assessment_id=%s", assessment_id
+            "Bulk insert failed for text_lengths_table, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
         )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Database error")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting {len(rows)} text lengths for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+        )
+    except Exception as exc:
+        logger.exception(
+            "Unexpected error pushing text lengths, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting {len(rows)} text lengths for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+        )
 
 
 @router.post(
@@ -247,7 +325,13 @@ async def push_tfidf_vectors(
     assessment: Assessment = Depends(_get_authorized_assessment),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert TF-IDF PCA vectors."""
+    """Bulk insert TF-IDF PCA vectors.
+
+    Maximum of 5,000 items per request. For larger datasets, split into
+    multiple requests of 5,000 items or fewer.
+
+    Returns the list of inserted row IDs in the same order as the input.
+    """
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
@@ -263,15 +347,34 @@ async def push_tfidf_vectors(
         ids = await _batch_insert(db, TfidfPcaVector, rows)
         await db.commit()
         return InsertResponse(ids=ids)
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
-    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate or constraint violation inserting {len(rows)} tfidf vectors for assessment {assessment_id}: {exc}",
+        )
+    except SQLAlchemyError as exc:
         logger.exception(
-            "Bulk insert failed for tfidf_pca_vector, assessment_id=%s", assessment_id
+            "Bulk insert failed for tfidf_pca_vector, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
         )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Database error")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting {len(rows)} tfidf vectors for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+        )
+    except Exception as exc:
+        logger.exception(
+            "Unexpected error pushing tfidf vectors, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting {len(rows)} tfidf vectors for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+        )
 
 
 @router.post(
@@ -284,7 +387,13 @@ async def push_ngrams(
     assessment: Assessment = Depends(_get_authorized_assessment),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert ngram results with their verse references."""
+    """Bulk insert ngram results with their verse references.
+
+    Maximum of 5,000 items per request. For larger datasets, split into
+    multiple requests of 5,000 items or fewer.
+
+    Returns the list of inserted ngram IDs in the same order as the input.
+    """
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
@@ -320,15 +429,34 @@ async def push_ngrams(
 
         await db.commit()
         return InsertResponse(ids=ngram_ids)
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
-    except SQLAlchemyError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate or constraint violation inserting {len(body)} ngrams for assessment {assessment_id}: {exc}",
+        )
+    except SQLAlchemyError as exc:
         logger.exception(
-            "Bulk insert failed for ngrams, assessment_id=%s", assessment_id
+            "Bulk insert failed for ngrams, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(body),
         )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Database error")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting {len(body)} ngrams for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+        )
+    except Exception as exc:
+        logger.exception(
+            "Unexpected error pushing ngrams, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(body),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting {len(body)} ngrams for assessment {assessment_id}: {type(exc).__name__}: {exc}",
+        )
 
 
 # ---------------------------------------------------------------------------
