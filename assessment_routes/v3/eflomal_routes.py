@@ -1,6 +1,6 @@
 __version__ = "v3"
 
-import datetime
+from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException
@@ -26,6 +26,7 @@ from models import (
     EflomalResultsPullResponse,
     EflomalResultsPushRequest,
     EflomalTargetWordCountItem,
+    InsertResponse,
 )
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
@@ -33,6 +34,43 @@ from security_routes.utilities import is_user_authorized_for_assessment
 router = fastapi.APIRouter()
 
 _BATCH_SIZE = 10_000
+_MAX_BODY_ITEMS = 50_000
+
+
+def _check_body_size(body):
+    if len(body) > _MAX_BODY_ITEMS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Request body too large: {len(body)} items (max {_MAX_BODY_ITEMS})",
+        )
+
+
+async def _get_eflomal_assessment(
+    assessment_id: int, db: AsyncSession
+) -> EflomalAssessmentModel:
+    """Look up eflomal_assessment by the parent assessment.id."""
+    result = await db.execute(
+        select(EflomalAssessmentModel).where(
+            EflomalAssessmentModel.assessment_id == assessment_id
+        )
+    )
+    eflomal = result.scalars().first()
+    if eflomal is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No eflomal metadata found — push metadata first",
+        )
+    return eflomal
+
+
+async def _batch_insert(db, model_cls, rows):
+    inserted_ids = []
+    for i in range(0, len(rows), _BATCH_SIZE):
+        batch = rows[i : i + _BATCH_SIZE]
+        stmt = insert(model_cls).values(batch).returning(model_cls.id)
+        result = await db.execute(stmt)
+        inserted_ids.extend(r[0] for r in result.fetchall())
+    return inserted_ids
 
 
 async def _fetch_eflomal_response(
@@ -94,15 +132,21 @@ async def _fetch_eflomal_response(
     )
 
 
+# ---------------------------------------------------------------------------
+# POST endpoints — metadata first, then one per data type
+# ---------------------------------------------------------------------------
+
+
 @router.post("/assessment/eflomal/results", response_model=EflomalAssessmentOut)
-async def push_eflomal_results(
+async def push_eflomal_metadata(
     body: EflomalResultsPushRequest,
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Push eflomal training results into the database.
+    """Create the eflomal_assessment metadata row.
 
-    Replaces Modal's save_artifacts() — called once after training completes.
+    Call this first, then push dictionary / cooccurrences / target-word-counts
+    via their own endpoints, then PATCH the assessment status to 'finished'.
 
     Idempotent: if results already exist for this assessment_id the existing
     row is returned with 200 (safe to retry after a timeout).
@@ -139,7 +183,6 @@ async def push_eflomal_results(
         return eflomal_row
 
     try:
-        # 4. Create EflomalAssessment row
         eflomal_assessment = EflomalAssessmentModel(
             assessment_id=body.assessment_id,
             source_language=body.source_language,
@@ -150,69 +193,11 @@ async def push_eflomal_results(
             num_missing_words=body.num_missing_words,
         )
         db.add(eflomal_assessment)
-        await db.flush()  # get PK without committing
-
-        ea_id = eflomal_assessment.id
-
-        # 5. Batch-insert dictionary entries
-        dict_rows = [
-            {
-                "assessment_id": ea_id,
-                "source_word": item.source_word,
-                "target_word": item.target_word,
-                "count": item.count,
-                "probability": item.probability,
-            }
-            for item in body.dictionary
-        ]
-        for i in range(0, len(dict_rows), _BATCH_SIZE):
-            await db.execute(
-                insert(EflomalDictionary).values(dict_rows[i : i + _BATCH_SIZE])
-            )
-
-        # 6. Batch-insert cooccurrence entries
-        cooc_rows = [
-            {
-                "assessment_id": ea_id,
-                "source_word": item.source_word,
-                "target_word": item.target_word,
-                "co_occur_count": item.co_occur_count,
-                "aligned_count": item.aligned_count,
-            }
-            for item in body.cooccurrences
-        ]
-        for i in range(0, len(cooc_rows), _BATCH_SIZE):
-            await db.execute(
-                insert(EflomalCooccurrence).values(cooc_rows[i : i + _BATCH_SIZE])
-            )
-
-        # 7. Batch-insert target word counts
-        twc_rows = [
-            {
-                "assessment_id": ea_id,
-                "word": item.word,
-                "count": item.count,
-            }
-            for item in body.target_word_counts
-        ]
-        for i in range(0, len(twc_rows), _BATCH_SIZE):
-            await db.execute(
-                insert(EflomalTargetWordCount).values(twc_rows[i : i + _BATCH_SIZE])
-            )
-
-        # 8. Update assessment status
-        assessment.status = "finished"
-        assessment.end_time = datetime.datetime.utcnow()
-
-        # 9. Commit atomically
         await db.commit()
         await db.refresh(eflomal_assessment)
-
         return eflomal_assessment
-    except IntegrityError as exc:
+    except IntegrityError:
         await db.rollback()
-        # Race condition: another request inserted between our check and insert.
-        # Re-query and return the existing row (idempotent).
         existing = await db.execute(
             select(EflomalAssessmentModel).where(
                 EflomalAssessmentModel.assessment_id == body.assessment_id
@@ -221,20 +206,145 @@ async def push_eflomal_results(
         eflomal_row = existing.scalars().first()
         if eflomal_row is not None:
             return eflomal_row
-        # Not a race — likely duplicate entries in payload hitting a unique
-        # constraint on a child table (dictionary, cooccurrence, or word count).
-        constraint = getattr(exc.orig, "constraint_name", None) or ""
         raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Duplicate data in payload (constraint: {constraint})"
-                if constraint
-                else "Duplicate data in payload"
-            ),
+            status_code=500,
+            detail="Unexpected constraint violation while storing eflomal metadata",
         )
     except SQLAlchemyError:
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to store eflomal results")
+        raise HTTPException(status_code=500, detail="Failed to store eflomal metadata")
+
+
+@router.post(
+    "/assessment/{assessment_id}/eflomal-dictionary",
+    response_model=InsertResponse,
+)
+async def push_eflomal_dictionary(
+    assessment_id: int,
+    body: List[EflomalDictionaryItem],
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk insert dictionary entries for an eflomal assessment."""
+    eflomal = await _get_eflomal_assessment(assessment_id, db)
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    if not body:
+        return InsertResponse(ids=[])
+    _check_body_size(body)
+
+    rows = [
+        {
+            "assessment_id": eflomal.id,
+            "source_word": item.source_word,
+            "target_word": item.target_word,
+            "count": item.count,
+            "probability": item.probability,
+        }
+        for item in body
+    ]
+    try:
+        ids = await _batch_insert(db, EflomalDictionary, rows)
+        await db.commit()
+        return InsertResponse(ids=ids)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
+
+
+@router.post(
+    "/assessment/{assessment_id}/eflomal-cooccurrences",
+    response_model=InsertResponse,
+)
+async def push_eflomal_cooccurrences(
+    assessment_id: int,
+    body: List[EflomalCooccurrenceItem],
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk insert cooccurrence entries for an eflomal assessment."""
+    eflomal = await _get_eflomal_assessment(assessment_id, db)
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    if not body:
+        return InsertResponse(ids=[])
+    _check_body_size(body)
+
+    rows = [
+        {
+            "assessment_id": eflomal.id,
+            "source_word": item.source_word,
+            "target_word": item.target_word,
+            "co_occur_count": item.co_occur_count,
+            "aligned_count": item.aligned_count,
+        }
+        for item in body
+    ]
+    try:
+        ids = await _batch_insert(db, EflomalCooccurrence, rows)
+        await db.commit()
+        return InsertResponse(ids=ids)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
+
+
+@router.post(
+    "/assessment/{assessment_id}/eflomal-target-word-counts",
+    response_model=InsertResponse,
+)
+async def push_eflomal_target_word_counts(
+    assessment_id: int,
+    body: List[EflomalTargetWordCountItem],
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk insert target word count entries for an eflomal assessment."""
+    eflomal = await _get_eflomal_assessment(assessment_id, db)
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    if not body:
+        return InsertResponse(ids=[])
+    _check_body_size(body)
+
+    rows = [
+        {
+            "assessment_id": eflomal.id,
+            "word": item.word,
+            "count": item.count,
+        }
+        for item in body
+    ]
+    try:
+        ids = await _batch_insert(db, EflomalTargetWordCount, rows)
+        await db.commit()
+        return InsertResponse(ids=ids)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+    except SQLAlchemyError:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Database error")
+
+
+# ---------------------------------------------------------------------------
+# GET endpoint — pull all artifacts for inference
+# ---------------------------------------------------------------------------
 
 
 @router.get(

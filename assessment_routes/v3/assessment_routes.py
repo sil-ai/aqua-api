@@ -233,6 +233,10 @@ async def add_assessment(
         None,
         description="JSON-encoded dict of extra keyword arguments to pass to the assessment function",
     ),
+    use_eflomal: Optional[bool] = Query(
+        None,
+        description="Run eflomal-based word alignment. Requires source_language and target_language.",
+    ),
     force: bool = Query(
         False,
         description="Force rerun even if a completed assessment already exists",
@@ -247,7 +251,8 @@ async def add_assessment(
     Currently supported assessment types are:
     - semantic-similarity (requires reference)
     - sentence-length
-    - word-alignment (requires reference)
+    - word-alignment (requires reference; can optionally run eflomal-based alignment
+      when `use_eflomal=true` and `source_language` and `target_language` are provided)
     - ngrams
     - tfidf
     - text-lengths
@@ -288,6 +293,31 @@ async def add_assessment(
             raise HTTPException(status_code=400, detail=str(e)) from e
         a.kwargs = parsed_kwargs
 
+    # Fold the use_eflomal query param into kwargs so it reaches Modal and the dedup check
+    if use_eflomal:
+        combined_kwargs = dict(a.kwargs or {})
+        combined_kwargs["use_eflomal"] = True
+        try:
+            combined_kwargs = AssessmentIn.validate_kwargs(combined_kwargs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        a.kwargs = combined_kwargs
+        parsed_kwargs = combined_kwargs
+
+    # Eflomal word-alignment requires source and target languages
+    is_eflomal = a.kwargs and a.kwargs.get("use_eflomal")
+    if is_eflomal:
+        if a.type != "word-alignment":
+            raise HTTPException(
+                status_code=400,
+                detail="use_eflomal is only valid for word-alignment assessments.",
+            )
+        if not a.source_language or not a.target_language:
+            raise HTTPException(
+                status_code=400,
+                detail="Eflomal word-alignment requires source_language and target_language.",
+            )
+
     # Check for already-completed assessment (force=true bypasses this)
     if not force:
         completed_stmt = (
@@ -307,6 +337,18 @@ async def add_assessment(
             )
         else:
             completed_stmt = completed_stmt.where(Assessment.reference_id.is_(None))
+        # Distinguish eflomal from regular word-alignment
+        if is_eflomal:
+            completed_stmt = completed_stmt.where(
+                Assessment.kwargs.op("@>")({"use_eflomal": True})
+            )
+        elif a.type == "word-alignment":
+            completed_stmt = completed_stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.op("@>")({"use_eflomal": True}),
+                )
+            )
         result = await db.execute(completed_stmt)
         existing = result.scalars().first()
         if existing is not None:
@@ -342,6 +384,16 @@ async def add_assessment(
             stmt = stmt.where(Assessment.reference_id == a.reference_id)
         else:
             stmt = stmt.where(Assessment.reference_id.is_(None))
+        # Distinguish eflomal from regular word-alignment
+        if is_eflomal:
+            stmt = stmt.where(Assessment.kwargs.op("@>")({"use_eflomal": True}))
+        elif a.type == "word-alignment":
+            stmt = stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.op("@>")({"use_eflomal": True}),
+                )
+            )
         result = await db.execute(stmt)
         existing_id = result.scalars().first()
         if existing_id is not None:

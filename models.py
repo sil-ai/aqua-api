@@ -1059,7 +1059,12 @@ class EflomalTargetWordCountItem(BaseModel):
 
 
 class EflomalResultsPushRequest(BaseModel):
-    """Replaces Modal's save_artifacts(). Pushes all training data to DB."""
+    """Create the eflomal_assessment metadata row (no bulk data).
+
+    After this call succeeds, push dictionary, cooccurrences, and
+    target-word-counts via their own endpoints, then PATCH the
+    assessment status to 'finished'.
+    """
 
     assessment_id: int
     source_language: Optional[str] = None
@@ -1068,9 +1073,6 @@ class EflomalResultsPushRequest(BaseModel):
     num_alignment_links: int
     num_dictionary_entries: int
     num_missing_words: int
-    dictionary: list[EflomalDictionaryItem]
-    cooccurrences: list[EflomalCooccurrenceItem]
-    target_word_counts: list[EflomalTargetWordCountItem]
 
 
 class EflomalAssessmentOut(BaseModel):

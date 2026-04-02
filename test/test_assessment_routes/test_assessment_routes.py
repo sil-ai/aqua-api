@@ -1018,3 +1018,130 @@ def test_patch_assessment_status_admin_can_update(
     resp = _patch_status(client, admin_token, aid, {"status": "running"})
     assert resp.status_code == 200
     assert resp.json()["status"] == "running"
+
+
+# --- use_eflomal validation and dedup tests ---
+
+
+def test_use_eflomal_wrong_type(client, regular_token1, db_session, test_db_session):
+    """use_eflomal=true on a non-word-alignment type returns 400."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "use_eflomal": True,
+                "source_language": "eng",
+                "target_language": "swh",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert response.status_code == 400
+    assert "use_eflomal" in response.json()["detail"]
+
+
+def test_use_eflomal_missing_languages(
+    client, regular_token1, db_session, test_db_session
+):
+    """use_eflomal=true without source_language or target_language returns 400."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        # Missing both languages
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+                "use_eflomal": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 400
+        assert "language" in response.json()["detail"].lower()
+
+        # Missing only target_language
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+                "use_eflomal": True,
+                "source_language": "eng",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 400
+
+
+def test_use_eflomal_dedup_separate_from_regular(
+    client, regular_token1, db_session, test_db_session
+):
+    """Eflomal and regular word-alignment use separate in-progress dedup buckets."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    base_params = {
+        "revision_id": revision_id,
+        "reference_id": reference_id,
+        "type": "word-alignment",
+    }
+    eflomal_params = {
+        **base_params,
+        "use_eflomal": True,
+        "source_language": "eng",
+        "target_language": "swh",
+    }
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        # Submit eflomal assessment
+        eflomal_resp = client.post(
+            f"{prefix}/assessment",
+            params=eflomal_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert eflomal_resp.status_code == 200
+
+        # Regular word-alignment on the same revision pair must NOT be blocked by eflomal
+        regular_resp = client.post(
+            f"{prefix}/assessment",
+            params=base_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert regular_resp.status_code == 200
+
+        # Second eflomal submission on same params must be blocked
+        eflomal_dup = client.post(
+            f"{prefix}/assessment",
+            params=eflomal_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert eflomal_dup.status_code == 409
+
+        # Second regular submission on same params must also be blocked
+        regular_dup = client.post(
+            f"{prefix}/assessment",
+            params=base_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert regular_dup.status_code == 409
