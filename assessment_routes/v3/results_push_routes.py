@@ -4,8 +4,6 @@ import logging
 import re
 from typing import List
 
-logger = logging.getLogger(__name__)
-
 import fastapi
 from fastapi import Depends, HTTPException
 from sqlalchemy import delete, insert, select
@@ -35,6 +33,8 @@ from models import (
 )
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
+
+logger = logging.getLogger(__name__)
 
 router = fastapi.APIRouter()
 

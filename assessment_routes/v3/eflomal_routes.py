@@ -9,8 +9,6 @@ from sqlalchemy import desc, insert, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
-
 from database.dependencies import get_db
 from database.models import (
     Assessment,
@@ -33,6 +31,8 @@ from models import (
 )
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
+
+logger = logging.getLogger(__name__)
 
 router = fastapi.APIRouter()
 
