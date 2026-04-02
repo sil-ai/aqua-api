@@ -206,7 +206,10 @@ async def push_eflomal_metadata(
         eflomal_row = existing.scalars().first()
         if eflomal_row is not None:
             return eflomal_row
-        raise HTTPException(status_code=400, detail="Duplicate data in payload")
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected constraint violation while storing eflomal metadata",
+        )
     except SQLAlchemyError:
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to store eflomal metadata")
@@ -223,14 +226,14 @@ async def push_eflomal_dictionary(
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk insert dictionary entries for an eflomal assessment."""
-    if not body:
-        return InsertResponse(ids=[])
-    _check_body_size(body)
-
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=403, detail="Not authorized for this assessment"
         )
+
+    if not body:
+        return InsertResponse(ids=[])
+    _check_body_size(body)
 
     eflomal = await _get_eflomal_assessment(assessment_id, db)
     rows = [
@@ -266,14 +269,14 @@ async def push_eflomal_cooccurrences(
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk insert cooccurrence entries for an eflomal assessment."""
-    if not body:
-        return InsertResponse(ids=[])
-    _check_body_size(body)
-
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=403, detail="Not authorized for this assessment"
         )
+
+    if not body:
+        return InsertResponse(ids=[])
+    _check_body_size(body)
 
     eflomal = await _get_eflomal_assessment(assessment_id, db)
     rows = [
@@ -309,14 +312,14 @@ async def push_eflomal_target_word_counts(
     db: AsyncSession = Depends(get_db),
 ):
     """Bulk insert target word count entries for an eflomal assessment."""
-    if not body:
-        return InsertResponse(ids=[])
-    _check_body_size(body)
-
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=403, detail="Not authorized for this assessment"
         )
+
+    if not body:
+        return InsertResponse(ids=[])
+    _check_body_size(body)
 
     eflomal = await _get_eflomal_assessment(assessment_id, db)
     rows = [

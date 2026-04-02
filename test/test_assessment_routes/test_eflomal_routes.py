@@ -10,8 +10,6 @@ prefix = "v3"
 def _metadata_payload(
     assessment_id,
     n_dict=10,
-    n_cooc=20,
-    n_twc=5,
     source_language=None,
     target_language=None,
 ):
@@ -224,15 +222,16 @@ def test_push_eflomal_target_word_counts(
     assert len(response.json()["ids"]) == 3
 
 
-def test_push_eflomal_data_no_metadata(client, regular_token1):
+def test_push_eflomal_data_no_metadata(
+    client, regular_token1, test_eflomal_assessment_unpushed_id
+):
     """Pushing data before metadata should return 404."""
-    # Use a non-existent assessment_id
     response = client.post(
-        f"{prefix}/assessment/999999/eflomal-dictionary",
+        f"{prefix}/assessment/{test_eflomal_assessment_unpushed_id}/eflomal-dictionary",
         json=_dictionary_items(2),
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-    assert response.status_code in (403, 404)
+    assert response.status_code == 404
 
 
 def test_push_eflomal_data_empty_body(

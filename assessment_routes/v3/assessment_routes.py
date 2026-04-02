@@ -251,8 +251,8 @@ async def add_assessment(
     Currently supported assessment types are:
     - semantic-similarity (requires reference)
     - sentence-length
-    - word-alignment (requires reference; pass `{"use_eflomal": true}` in extra_kwargs
-      along with source_language and target_language to run eflomal-based alignment)
+    - word-alignment (requires reference; can optionally run eflomal-based alignment
+      when `use_eflomal=true` and `source_language` and `target_language` are provided)
     - ngrams
     - tfidf
     - text-lengths
