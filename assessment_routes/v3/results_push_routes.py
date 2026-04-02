@@ -1,5 +1,6 @@
 __version__ = "v3"
 
+import logging
 import re
 from typing import List
 
@@ -33,9 +34,11 @@ from models import (
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 
+logger = logging.getLogger(__name__)
+
 router = fastapi.APIRouter()
 
-_BATCH_SIZE = 10_000
+_BATCH_SIZE = 5_000
 _MAX_BODY_ITEMS = 50_000
 
 _VREF_RE = re.compile(r"^([A-Z0-9]+)\s+(\d+):(\d+)$")
@@ -140,6 +143,9 @@ async def push_results(
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
     except SQLAlchemyError:
+        logger.exception(
+            "Bulk insert failed for assessment_result, assessment_id=%s", assessment_id
+        )
         await db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
 
@@ -183,6 +189,10 @@ async def push_alignment_scores(
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
     except SQLAlchemyError:
+        logger.exception(
+            "Bulk insert failed for alignment_top_source_scores, assessment_id=%s",
+            assessment_id,
+        )
         await db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
 
@@ -220,6 +230,9 @@ async def push_text_lengths(
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
     except SQLAlchemyError:
+        logger.exception(
+            "Bulk insert failed for text_lengths_table, assessment_id=%s", assessment_id
+        )
         await db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
 
@@ -254,6 +267,9 @@ async def push_tfidf_vectors(
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
     except SQLAlchemyError:
+        logger.exception(
+            "Bulk insert failed for tfidf_pca_vector, assessment_id=%s", assessment_id
+        )
         await db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
 
@@ -308,6 +324,9 @@ async def push_ngrams(
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
     except SQLAlchemyError:
+        logger.exception(
+            "Bulk insert failed for ngrams, assessment_id=%s", assessment_id
+        )
         await db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
 

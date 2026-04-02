@@ -1,5 +1,6 @@
 __version__ = "v3"
 
+import logging
 from typing import List
 
 import fastapi
@@ -31,9 +32,11 @@ from models import (
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 
+logger = logging.getLogger(__name__)
+
 router = fastapi.APIRouter()
 
-_BATCH_SIZE = 10_000
+_BATCH_SIZE = 5_000
 _MAX_BODY_ITEMS = 50_000
 
 
@@ -211,6 +214,9 @@ async def push_eflomal_metadata(
             detail="Unexpected constraint violation while storing eflomal metadata",
         )
     except SQLAlchemyError:
+        logger.exception(
+            "Failed to store eflomal metadata for assessment_id=%s", body.assessment_id
+        )
         await db.rollback()
         raise HTTPException(status_code=500, detail="Failed to store eflomal metadata")
 
@@ -254,6 +260,9 @@ async def push_eflomal_dictionary(
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
     except SQLAlchemyError:
+        logger.exception(
+            "Bulk insert failed for eflomal_dictionary, assessment_id=%s", assessment_id
+        )
         await db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
 
@@ -297,6 +306,10 @@ async def push_eflomal_cooccurrences(
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
     except SQLAlchemyError:
+        logger.exception(
+            "Bulk insert failed for eflomal_cooccurrence, assessment_id=%s",
+            assessment_id,
+        )
         await db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
 
@@ -338,6 +351,10 @@ async def push_eflomal_target_word_counts(
         await db.rollback()
         raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
     except SQLAlchemyError:
+        logger.exception(
+            "Bulk insert failed for eflomal_target_word_count, assessment_id=%s",
+            assessment_id,
+        )
         await db.rollback()
         raise HTTPException(status_code=500, detail="Database error")
 
