@@ -373,8 +373,16 @@ async def get_text(
     result = await db.execute(stmt)
     all_verses = result.all()
 
-    # Map vref -> DB id for preserving ids after merge (first verse's id for ranges)
-    vref_to_id = {verse.verse_reference: verse.id for verse in all_verses}
+    # Map vref -> verse info for preserving DB values after merge
+    vref_to_info = {
+        verse.verse_reference: {
+            "id": verse.id,
+            "book": verse.book,
+            "chapter": verse.chapter,
+            "verse": verse.verse,
+        }
+        for verse in all_verses
+    }
 
     combined_records = [
         {"vrefs": [v.verse_reference], "text": v.text or ""} for v in all_verses
@@ -399,20 +407,19 @@ async def get_text(
             verse_ref = format_verse_range(vrefs[0], vrefs[-1])
 
         first_vref = vrefs[0]
-        book, cv = first_vref.split(" ", 1)
-        chapter_str, verse_str = cv.split(":")
+        info = vref_to_info.get(first_vref, {})
 
         verses.append(
             VerseText(
-                id=vref_to_id.get(first_vref),
+                id=info.get("id"),
                 text=record["text"],
                 verse_reference=verse_ref,
                 verse_references=vrefs,
                 first_verse_reference=first_vref,
                 revision_id=revision_id,
-                book=book,
-                chapter=int(chapter_str),
-                verse=int(verse_str),
+                book=info.get("book"),
+                chapter=info.get("chapter"),
+                verse=info.get("verse"),
             )
         )
 
