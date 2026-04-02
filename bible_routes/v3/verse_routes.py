@@ -29,6 +29,14 @@ _VREF_PATH = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "vref.tx
 _VREF_LIST = _VREF_PATH.read_text(encoding="utf-8").splitlines()
 
 
+def _is_range_marker(x):
+    return x == "<range>"
+
+
+def _combine_text(field, values):
+    return " ".join(v for v in values if v and v != "<range>")
+
+
 def extract_unique_words(text: str) -> List[str]:
     """
     Extract unique words from text using sophisticated Unicode-aware splitting logic.
@@ -377,10 +385,8 @@ async def get_text(
         verse_ref_field="vrefs",
         combine_fields=["text"],
         check_fields=["text"],
-        is_range_marker=lambda x: x == "<range>",
-        combine_function=lambda field, values: " ".join(
-            v for v in values if v and v != "<range>"
-        ),
+        is_range_marker=_is_range_marker,
+        combine_function=_combine_text,
     )
 
     # Convert merged records back to VerseText objects
@@ -818,14 +824,8 @@ async def get_texts(
         verse_ref_field="vrefs",
         combine_fields=text_fields,
         check_fields=text_fields,
-        is_range_marker=lambda x: x == "<range>",
-        # combine_function filters out empty strings and "<range>" markers:
-        # - empty strings represent "no verse text" for that revision
-        # - "<range>" is a structural marker, not actual text content
-        # Only actual text content is joined with spaces.
-        combine_function=lambda field, values: " ".join(
-            v for v in values if v and v != "<range>"
-        ),
+        is_range_marker=_is_range_marker,
+        combine_function=_combine_text,
     )
 
     # Apply include_verses filtering

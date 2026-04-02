@@ -506,6 +506,17 @@ def test_text_endpoint_with_range_markers(client, regular_token1, db_session):
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
+    # Get the DB ids before modifying
+    gen_1_1 = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id,
+            VerseTextModel.verse_reference == "GEN 1:1",
+        )
+        .first()
+    )
+    gen_1_1_id = gen_1_1.id
+
     # Set GEN 1:2 to <range>
     verse = (
         db_session.query(VerseTextModel)
@@ -533,8 +544,8 @@ def test_text_endpoint_with_range_markers(client, regular_token1, db_session):
     assert "beginning" in first["text"].lower()  # GEN 1:1
     assert "<range>" not in first["text"]
 
-    # id should be the id of the first verse (GEN 1:1)
-    assert first["id"] is not None
+    # id should be the id of the first verse (GEN 1:1), not GEN 1:2
+    assert first["id"] == gen_1_1_id
     assert first["book"] == "GEN"
     assert first["chapter"] == 1
     assert first["verse"] == 1
@@ -639,6 +650,8 @@ def test_text_endpoint_range_on_first_verse(client, regular_token1, db_session):
     # First verse should be standalone with cleared text
     first = data[0]
     assert first["verse_reference"] == "GEN 1:1"
+    assert first["verse_references"] == ["GEN 1:1"]
+    assert first["first_verse_reference"] == "GEN 1:1"
     assert first["text"] == ""
 
     # No <range> should appear in any output
@@ -673,16 +686,12 @@ def test_text_endpoint_empty_verse_not_treated_as_range(
     data = response.json()
 
     # GEN 1:2 should exist as separate entry (not merged)
-    gen_1_2 = next(
-        (v for v in data if v["verse_reference"] == "GEN 1:2"), None
-    )
+    gen_1_2 = next((v for v in data if v["verse_reference"] == "GEN 1:2"), None)
     assert gen_1_2 is not None
     assert gen_1_2["text"] == ""
 
     # GEN 1:1 should still be standalone
-    gen_1_1 = next(
-        (v for v in data if v["verse_reference"] == "GEN 1:1"), None
-    )
+    gen_1_1 = next((v for v in data if v["verse_reference"] == "GEN 1:1"), None)
     assert gen_1_1 is not None
     assert "beginning" in gen_1_1["text"].lower()
 
@@ -713,11 +722,14 @@ def test_texts_endpoint_basic(client, regular_token1, db_session):
     # Both should have the same number of verses
     assert len(data[str(revision_id1)]) == len(data[str(revision_id2)])
 
-    # Check that verses are properly formatted
+    # Check that verses are properly formatted with new fields
     for verse in data[str(revision_id1)]:
         assert "verse_reference" in verse
         assert "text" in verse
         assert verse["revision_id"] == revision_id1
+        assert verse["verse_references"] is not None
+        assert verse["first_verse_reference"] is not None
+        assert verse["first_verse_reference"] == verse["verse_references"][0]
 
 
 def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
@@ -775,6 +787,10 @@ def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
 
     # Revision 2's merged text should NOT contain <range>
     assert "<range>" not in first_verse_rev2["text"]
+
+    # Rev2 should also have the new fields populated correctly
+    assert first_verse_rev2["verse_references"] == ["GEN 1:1", "GEN 1:2"]
+    assert first_verse_rev2["first_verse_reference"] == "GEN 1:1"
 
 
 def test_texts_endpoint_unauthorized(
