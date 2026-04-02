@@ -696,6 +696,64 @@ def test_text_endpoint_empty_verse_not_treated_as_range(
     assert "beginning" in gen_1_1["text"].lower()
 
 
+def test_text_endpoint_include_verses_all(client, regular_token1, db_session):
+    """Test /text endpoint with include_verses=all returns all 41,899 canonical verses."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Default (union) should return only verses with text
+    response_default = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    assert response_default.status_code == 200
+    default_count = len(response_default.json())
+
+    # include_verses=all should return all 41,899 canonical verses
+    response_all = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "all"},
+        headers=headers,
+    )
+    assert response_all.status_code == 200
+    all_data = response_all.json()
+    assert len(all_data) == 41899
+    assert len(all_data) > default_count
+
+    # GEN 1:1 should have text
+    gen_1_1 = next(v for v in all_data if v["verse_reference"] == "GEN 1:1")
+    assert gen_1_1["text"] != ""
+
+    # A verse not in the revision should have empty text
+    # (the KJV fixture has many verses, so pick one from a book not in it)
+    empty_verses = [v for v in all_data if v["text"] == ""]
+    assert len(empty_verses) > 0
+
+
+def test_text_endpoint_include_verses_union_is_default(
+    client, regular_token1, db_session
+):
+    """Test that include_verses=union matches default behavior."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response_default = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    response_union = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "union"},
+        headers=headers,
+    )
+
+    assert response_default.status_code == 200
+    assert response_union.status_code == 200
+    assert len(response_default.json()) == len(response_union.json())
+
+
 def test_texts_endpoint_basic(client, regular_token1, db_session):
     """Test /texts endpoint with two revisions without ranges."""
     version_id = create_bible_version(client, regular_token1, db_session)
