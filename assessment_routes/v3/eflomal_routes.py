@@ -37,7 +37,8 @@ logger = logging.getLogger(__name__)
 router = fastapi.APIRouter()
 
 # _BATCH_SIZE controls DB insert chunking; _MAX_BODY_ITEMS caps HTTP request
-# size.  They are intentionally equal — one HTTP request = one DB batch.
+# size.  They are intentionally equal to keep request sizing aligned with DB
+# batching where possible.
 _BATCH_SIZE = 5_000
 _MAX_BODY_ITEMS = 5_000
 
@@ -224,7 +225,10 @@ async def push_eflomal_metadata(
             "Failed to store eflomal metadata for assessment_id=%s", body.assessment_id
         )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to store eflomal metadata")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to store eflomal metadata for assessment {body.assessment_id}",
+        )
     except HTTPException:
         raise
     except Exception:
@@ -235,7 +239,7 @@ async def push_eflomal_metadata(
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail="Unexpected error storing eflomal metadata",
+            detail=f"Unexpected error storing eflomal metadata for assessment {body.assessment_id}",
         )
 
 

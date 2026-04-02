@@ -39,7 +39,9 @@ logger = logging.getLogger(__name__)
 router = fastapi.APIRouter()
 
 # _BATCH_SIZE controls DB insert chunking; _MAX_BODY_ITEMS caps HTTP request
-# size.  They are intentionally equal — one HTTP request = one DB batch.
+# size.  They are intentionally equal to keep request sizing aligned with DB
+# batching where possible, but some endpoints (e.g. ngrams) may still produce
+# multiple DB batches from a single request.
 _BATCH_SIZE = 5_000
 _MAX_BODY_ITEMS = 5_000
 
