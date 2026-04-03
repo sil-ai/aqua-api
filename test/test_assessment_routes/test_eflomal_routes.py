@@ -34,7 +34,7 @@ def _dictionary_items(n=10):
             "source_word": f"src_{i}",
             "target_word": f"tgt_{i}",
             "count": i + 1,
-            "probability": 0.5 + i * 0.01,
+            "probability": 0.5 + (i % 50) * 0.01,
         }
         for i in range(n)
     ]
@@ -207,6 +207,24 @@ def test_push_eflomal_dictionary(
     )
     assert response.status_code == 200
     assert len(response.json()["ids"]) == 5
+
+
+def test_push_eflomal_dictionary_body_too_large(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Exceeding the body size limit should return 400 with a helpful message."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    body = _dictionary_items(5001)
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-dictionary",
+        json=body,
+        headers=headers,
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "5001" in detail
+    assert "5000" in detail
+    assert "split into batches" in detail
 
 
 def test_push_eflomal_cooccurrences(

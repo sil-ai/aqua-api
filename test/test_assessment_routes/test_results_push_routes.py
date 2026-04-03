@@ -95,6 +95,20 @@ def test_push_results_invalid_vref(client, regular_token1, push_assessment_id):
     assert response.status_code == 400
 
 
+def test_push_results_body_too_large(client, regular_token1, push_assessment_id):
+    body = [{"vref": "GEN 1:1", "score": 0.5}] * 5001
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "5001" in detail
+    assert "5000" in detail
+    assert "split into batches" in detail
+
+
 # ---------------------------------------------------------------------------
 # POST /assessment/{id}/alignment-scores
 # ---------------------------------------------------------------------------

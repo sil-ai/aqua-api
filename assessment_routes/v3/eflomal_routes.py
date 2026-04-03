@@ -36,15 +36,22 @@ logger = logging.getLogger(__name__)
 
 router = fastapi.APIRouter()
 
+# _BATCH_SIZE controls DB insert chunking; _MAX_BODY_ITEMS caps HTTP request
+# size.  They are intentionally equal to keep request sizing aligned with DB
+# batching where possible.
 _BATCH_SIZE = 5_000
-_MAX_BODY_ITEMS = 50_000
+_MAX_BODY_ITEMS = 5_000
 
 
 def _check_body_size(body):
     if len(body) > _MAX_BODY_ITEMS:
         raise HTTPException(
             status_code=400,
-            detail=f"Request body too large: {len(body)} items (max {_MAX_BODY_ITEMS})",
+            detail=(
+                f"Request body too large: {len(body)} items "
+                f"(max {_MAX_BODY_ITEMS}). "
+                f"Please split into batches of {_MAX_BODY_ITEMS} or fewer."
+            ),
         )
 
 
@@ -218,7 +225,22 @@ async def push_eflomal_metadata(
             "Failed to store eflomal metadata for assessment_id=%s", body.assessment_id
         )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to store eflomal metadata")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to store eflomal metadata for assessment {body.assessment_id}",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error storing eflomal metadata for assessment_id=%s",
+            body.assessment_id,
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error storing eflomal metadata for assessment {body.assessment_id}",
+        )
 
 
 @router.post(
@@ -231,7 +253,13 @@ async def push_eflomal_dictionary(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert dictionary entries for an eflomal assessment."""
+    """Bulk insert dictionary entries for an eflomal assessment.
+
+    Maximum of 5,000 items per request. For larger datasets, split into
+    multiple requests of 5,000 items or fewer.
+
+    Returns the list of inserted row IDs in the same order as the input.
+    """
     eflomal = await _get_eflomal_assessment(assessment_id, db)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -258,13 +286,34 @@ async def push_eflomal_dictionary(
         return InsertResponse(ids=ids)
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate or constraint violation inserting {len(rows)} dictionary entries for assessment {assessment_id}",
+        )
     except SQLAlchemyError:
         logger.exception(
-            "Bulk insert failed for eflomal_dictionary, assessment_id=%s", assessment_id
+            "Bulk insert failed for eflomal_dictionary, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
         )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Database error")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting {len(rows)} dictionary entries for assessment {assessment_id}",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error pushing eflomal dictionary, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting {len(rows)} dictionary entries for assessment {assessment_id}",
+        )
 
 
 @router.post(
@@ -277,7 +326,13 @@ async def push_eflomal_cooccurrences(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert cooccurrence entries for an eflomal assessment."""
+    """Bulk insert cooccurrence entries for an eflomal assessment.
+
+    Maximum of 5,000 items per request. For larger datasets, split into
+    multiple requests of 5,000 items or fewer.
+
+    Returns the list of inserted row IDs in the same order as the input.
+    """
     eflomal = await _get_eflomal_assessment(assessment_id, db)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -304,14 +359,34 @@ async def push_eflomal_cooccurrences(
         return InsertResponse(ids=ids)
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate or constraint violation inserting {len(rows)} cooccurrences for assessment {assessment_id}",
+        )
     except SQLAlchemyError:
         logger.exception(
-            "Bulk insert failed for eflomal_cooccurrence, assessment_id=%s",
+            "Bulk insert failed for eflomal_cooccurrence, assessment_id=%s, item_count=%d",
             assessment_id,
+            len(rows),
         )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Database error")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting {len(rows)} cooccurrences for assessment {assessment_id}",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error pushing eflomal cooccurrences, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting {len(rows)} cooccurrences for assessment {assessment_id}",
+        )
 
 
 @router.post(
@@ -324,7 +399,13 @@ async def push_eflomal_target_word_counts(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert target word count entries for an eflomal assessment."""
+    """Bulk insert target word count entries for an eflomal assessment.
+
+    Maximum of 5,000 items per request. For larger datasets, split into
+    multiple requests of 5,000 items or fewer.
+
+    Returns the list of inserted row IDs in the same order as the input.
+    """
     eflomal = await _get_eflomal_assessment(assessment_id, db)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
@@ -349,14 +430,34 @@ async def push_eflomal_target_word_counts(
         return InsertResponse(ids=ids)
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=400, detail="Duplicate or constraint violation")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate or constraint violation inserting {len(rows)} target word counts for assessment {assessment_id}",
+        )
     except SQLAlchemyError:
         logger.exception(
-            "Bulk insert failed for eflomal_target_word_count, assessment_id=%s",
+            "Bulk insert failed for eflomal_target_word_count, assessment_id=%s, item_count=%d",
             assessment_id,
+            len(rows),
         )
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Database error")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting {len(rows)} target word counts for assessment {assessment_id}",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error pushing eflomal target word counts, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting {len(rows)} target word counts for assessment {assessment_id}",
+        )
 
 
 # ---------------------------------------------------------------------------
