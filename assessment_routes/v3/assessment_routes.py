@@ -276,6 +276,12 @@ async def add_assessment(
     Add an assessment entry. For regular users, an entry is added for each group they are part of.
     For admin users, the entry is not linked to any specific group.
     """
+    if modal_env is not None and not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin users can specify modal_env.",
+        )
+
     if (
         a.type in ["semantic-similarity", "word-alignment", "agent-critique"]
         and a.reference_id is None
