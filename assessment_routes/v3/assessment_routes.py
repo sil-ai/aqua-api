@@ -178,13 +178,18 @@ async def get_assessments(
 
 
 # Helper function to call assessment runner
-async def call_assessment_runner(assessment: AssessmentIn, return_all_results: bool):
-    if os.getenv("MODAL_ENV", "main") == "main":
+async def call_assessment_runner(
+    assessment: AssessmentIn,
+    return_all_results: bool,
+    modal_env: Optional[str] = None,
+):
+    if modal_env is None:
+        modal_env = os.getenv("MODAL_ENV", "main")
+
+    if modal_env == "main":
         runner_url = "https://sil-ai--runner-assessment-runner.modal.run"
     else:
         runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"
-
-    modal_env = os.getenv("MODAL_ENV", "main")
     logger.info(
         "Calling Modal runner",
         extra={
@@ -240,6 +245,10 @@ async def add_assessment(
     force: bool = Query(
         False,
         description="Force rerun even if a completed assessment already exists",
+    ),
+    modal_env: Optional[str] = Query(
+        None,
+        description="Modal environment to run the assessment in (e.g. 'main' or 'dev'). Defaults to server MODAL_ENV.",
     ),
     return_all_results: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -418,7 +427,7 @@ async def add_assessment(
     a.id = assessment.id
 
     # Call runner using helper function
-    response = await call_assessment_runner(a, return_all_results)
+    response = await call_assessment_runner(a, return_all_results, modal_env=modal_env)
 
     if not 200 <= response.status_code < 300:
         # Extract the detail message from the runner's JSON error response
