@@ -43,12 +43,12 @@ class LoggingMiddleware:
             return
 
         path = scope.get("path", "")
-        query_string = scope.get("query_string", b"").decode()
+        query_string = scope.get("query_string", b"").decode(errors="replace")
         url = f"{path}?{query_string}" if query_string else path
         method = scope.get("method", "")
 
         headers = dict(scope.get("headers", []))
-        authorization_header = headers.get(b"authorization", b"").decode()
+        authorization_header = headers.get(b"authorization", b"").decode(errors="replace")
         username = self.extract_username_from_token(authorization_header)
 
         sensitive_paths = ["/token", "/users", "/change-password"]
@@ -101,25 +101,28 @@ class LoggingMiddleware:
                 },
             )
 
-            # Send error response if headers haven't been sent yet
-            if status_code is None:
-                try:
-                    body = json.dumps(
-                        {"detail": "Internal server error"}
-                    ).encode()
-                    await send(
-                        {
-                            "type": "http.response.start",
-                            "status": 500,
-                            "headers": [
-                                [b"content-type", b"application/json"],
-                                [b"content-length", str(len(body)).encode()],
-                            ],
-                        }
-                    )
-                    await send({"type": "http.response.body", "body": body})
-                except Exception:
-                    pass
+            # If headers already sent, re-raise to let Starlette close the
+            # connection — we can't send a new response on a partial stream.
+            if status_code is not None:
+                raise
+
+            try:
+                body = json.dumps(
+                    {"detail": "Internal server error"}
+                ).encode()
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 500,
+                        "headers": [
+                            [b"content-type", b"application/json"],
+                            [b"content-length", str(len(body)).encode()],
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": body})
+            except Exception:
+                pass
             return
 
         if status_code is None:
