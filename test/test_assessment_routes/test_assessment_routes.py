@@ -1,6 +1,6 @@
 # test_assessment_routes.py
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import patch
 
 from database.models import Assessment, BibleVersionAccess
 from database.models import UserDB
@@ -109,7 +109,7 @@ def test_add_assessment_success(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         # Make the request
         response = client.post(
@@ -239,14 +239,7 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        # Ensure that accessing .text returns something serializable
-        mock_response.text = "Error message"
-        # If your code calls .json(), ensure it returns a serializable object
-        mock_response.json.return_value = {"error": "mock error"}
-
-        mock_runner.return_value = mock_response
+        mock_runner.side_effect = Exception("Modal runner dispatch failed")
         # Make the request
         response = client.post(
             f"{prefix}/assessment",
@@ -254,7 +247,7 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
-        assert response.status_code == 500
+        assert response.status_code == 503
 
 
 def test_assessment_filtering(
@@ -286,7 +279,7 @@ def test_assessment_filtering(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         # Create assessment 1
         response = client.post(
@@ -465,7 +458,7 @@ def test_duplicate_assessment_returns_409(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -495,7 +488,7 @@ def test_duplicate_assessment_different_type_allowed(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -530,7 +523,7 @@ def test_duplicate_assessment_different_kwargs_blocked(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -567,7 +560,7 @@ def test_duplicate_assessment_stale_allowed(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -602,7 +595,7 @@ def test_duplicate_assessment_running_returns_409(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -640,7 +633,7 @@ def test_duplicate_assessment_admin_bypass(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         # Regular user submits first
         first = client.post(
@@ -673,7 +666,7 @@ def test_completed_assessment_returns_409(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -715,7 +708,7 @@ def test_completed_assessment_force_rerun(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -757,7 +750,7 @@ def test_completed_assessment_different_type_allowed(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -804,7 +797,7 @@ def test_completed_assessment_different_kwargs_blocked(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -854,7 +847,7 @@ def test_completed_assessment_admin_also_blocked(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -900,7 +893,7 @@ def _create_assessment(client, token, db_session):
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
         resp = client.post(
             f"{prefix}/assessment",
             params={
@@ -1031,7 +1024,7 @@ def test_use_eflomal_wrong_type(client, regular_token1, db_session, test_db_sess
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
         response = client.post(
             f"{prefix}/assessment",
             params={
@@ -1058,7 +1051,7 @@ def test_use_eflomal_missing_languages(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         # Missing both languages
         response = client.post(
@@ -1112,7 +1105,7 @@ def test_use_eflomal_dedup_separate_from_regular(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         # Submit eflomal assessment
         eflomal_resp = client.post(

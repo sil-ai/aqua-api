@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 import fastapi
-import httpx
+import modal
 from dotenv import load_dotenv
 
 # Third party imports
@@ -178,18 +178,13 @@ async def get_assessments(
 
 
 # Helper function to call assessment runner
-async def call_assessment_runner(assessment: AssessmentIn, return_all_results: bool):
-    if os.getenv("MODAL_ENV", "main") == "main":
-        runner_url = "https://sil-ai--runner-assessment-runner.modal.run"
-    else:
-        runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"
-
-    modal_env = os.getenv("MODAL_ENV", "main")
+async def call_assessment_runner(
+    assessment: AssessmentIn, return_all_results: bool, modal_env: str
+):
     logger.info(
         "Calling Modal runner",
         extra={
             "modal_env": modal_env,
-            "runner_url": runner_url,
             "assessment_id": assessment.id,
             "revision_id": assessment.revision_id,
             "reference_id": assessment.reference_id,
@@ -197,33 +192,13 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
             "return_all_results": return_all_results,
         },
     )
-    params = {
-        "return_all_results": return_all_results,
-    }
-    headers = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
 
-    try:
-        # Asynchronously post the request to the runner
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                runner_url, params=params, headers=headers, json=assessment.model_dump()
-            )
-    except (httpx.RequestError, httpx.HTTPStatusError) as e:
-        logger.error(
-            "Modal runner request failed",
-            exc_info=True,
-            extra={
-                "assessment_id": assessment.id,
-                "runner_url": runner_url,
-                "error_type": type(e).__name__,
-            },
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Assessment runner service is unavailable or failed.",
-        ) from e
-
-    return response
+    f = modal.Function.from_name(
+        "runner", "run_assessment_runner", environment_name=modal_env
+    )
+    config = assessment.model_dump()
+    config["return_all_results"] = return_all_results
+    await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
 
 
 @router.post("/assessment", response_model=List[AssessmentOut])
@@ -240,6 +215,10 @@ async def add_assessment(
     force: bool = Query(
         False,
         description="Force rerun even if a completed assessment already exists",
+    ),
+    modal_env: Optional[str] = Query(
+        None,
+        description="Modal environment to run the assessment in (e.g. 'main' or 'dev'). Defaults to server MODAL_ENV.",
     ),
     return_all_results: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -267,6 +246,12 @@ async def add_assessment(
     Add an assessment entry. For regular users, an entry is added for each group they are part of.
     For admin users, the entry is not linked to any specific group.
     """
+    if modal_env is not None and not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin users can specify modal_env.",
+        )
+
     if (
         a.type in ["semantic-similarity", "word-alignment", "agent-critique"]
         and a.reference_id is None
@@ -417,24 +402,34 @@ async def add_assessment(
     await db.refresh(assessment)
     a.id = assessment.id
 
-    # Call runner using helper function
-    response = await call_assessment_runner(a, return_all_results)
+    # Resolve Modal environment once at the route level
+    resolved_modal_env = modal_env or os.getenv("MODAL_ENV", "main")
 
-    if not 200 <= response.status_code < 300:
-        # Extract the detail message from the runner's JSON error response
-        try:
-            error_detail = response.json().get("detail", response.text)
-        except Exception:
-            error_detail = response.text
+    # Dispatch to Modal runner (fire-and-forget via spawn)
+    try:
+        await call_assessment_runner(a, return_all_results, resolved_modal_env)
+    except Exception as e:
+        logger.error(
+            "Modal runner dispatch failed",
+            exc_info=True,
+            extra={
+                "assessment_id": assessment.id,
+                "modal_env": resolved_modal_env,
+                "error_type": type(e).__name__,
+            },
+        )
         try:
             await db.delete(assessment)
             await db.commit()
-        except SQLAlchemyError as e:
+        except SQLAlchemyError as cleanup_err:
             await db.rollback()
             logger.error(
-                f"Failed to delete assessment {assessment.id} after runner error: {e}"
+                f"Failed to delete assessment {assessment.id} after runner error: {cleanup_err}"
             )
-        raise HTTPException(status_code=response.status_code, detail=error_detail)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Assessment runner service is unavailable or failed.",
+        ) from e
 
     return [AssessmentOut.model_validate(assessment)]
 
