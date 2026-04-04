@@ -1,20 +1,25 @@
 import http
+import json
 import socket
 import time
 import traceback
 
-from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
-from starlette.middleware.base import BaseHTTPMiddleware
 
 from security_routes.utilities import ALGORITHM, SECRET_KEY
 from utils.logging_config import setup_logger
 
 
-class LoggingMiddleware(BaseHTTPMiddleware):
+class LoggingMiddleware:
+    """Raw ASGI middleware for request logging and unhandled exception capture.
+
+    Using a raw ASGI middleware (instead of BaseHTTPMiddleware) ensures that
+    unhandled exceptions from route handlers actually propagate here, rather
+    than being silently converted to 500 responses deeper in the stack.
+    """
+
     def __init__(self, app):
-        super().__init__(app)
-        # Use centralized logging setup
+        self.app = app
         container_id = socket.gethostname()
         self.logger = setup_logger(
             __name__, container_id=container_id, enable_json=True
@@ -32,50 +37,58 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         except JWTError:
             return "invalid_token"
 
-    async def dispatch(self, request, call_next):
-        logger = self.logger
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        url = (
-            f"{request.url.path}?{request.query_params}"
-            if request.query_params
-            else request.url.path
-        )
-        start_time = time.time()
+        path = scope.get("path", "")
+        query_string = scope.get("query_string", b"").decode()
+        url = f"{path}?{query_string}" if query_string else path
+        method = scope.get("method", "")
 
-        # Extract username from Authorization header if present
-        authorization_header = request.headers.get("Authorization", "")
+        headers = dict(scope.get("headers", []))
+        authorization_header = headers.get(b"authorization", b"").decode()
         username = self.extract_username_from_token(authorization_header)
 
-        sensitive_paths = [
-            "/token",
-            "/users",
-            "/change-password",
-        ]  # Add other sensitive paths here
-        is_sensitive_path = any(path in url for path in sensitive_paths)
-        post_revision = request.method == "POST" and "revision" in url
+        sensitive_paths = ["/token", "/users", "/change-password"]
+        is_sensitive_path = any(p in url for p in sensitive_paths)
+        post_revision = method == "POST" and "revision" in url
         if is_sensitive_path or post_revision:
             body_str = "Sensitive Data - Not Logged"
         else:
             body_str = "Non-sensitive Data - Body Logging Disabled"
 
-        host = getattr(getattr(request, "client", None), "host", None)
-        port = getattr(getattr(request, "client", None), "port", None)
+        client = scope.get("client") or (None, None)
+        host = client[0]
+        port = client[1]
+
+        start_time = time.time()
+        status_code = None
+
+        async def send_wrapper(message):
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message["status"]
+            await send(message)
 
         try:
-            response = await call_next(request)
+            await self.app(scope, receive, send_wrapper)
         except Exception as exc:
             process_time = (time.time() - start_time) * 1000
-            formatted_process_time = "{0:.2f}".format(process_time)
+            formatted_process_time = f"{process_time:.2f}"
             exc_type = type(exc).__name__
             exc_msg = str(exc)
             tb = traceback.format_exc()
 
-            logger.error(
-                f"{request.method} {url} 500 Internal Server Error {formatted_process_time}ms user={username} | {exc_type}: {exc_msg}",
+            self.logger.error(
+                f"{method} {url} 500 Internal Server Error "
+                f"{formatted_process_time}ms user={username} | "
+                f"{exc_type}: {exc_msg}",
                 extra={
                     "host": host,
                     "port": port,
-                    "method": request.method,
+                    "method": method,
                     "url": url,
                     "status_code": 500,
                     "status_phrase": "Internal Server Error",
@@ -88,34 +101,47 @@ class LoggingMiddleware(BaseHTTPMiddleware):
                 },
             )
 
-            return JSONResponse(
-                status_code=500,
-                content={
-                    "detail": f"{exc_type}: {exc_msg}",
-                },
-            )
+            # Send error response if headers haven't been sent yet
+            if status_code is None:
+                try:
+                    body = json.dumps(
+                        {"detail": "Internal server error"}
+                    ).encode()
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": 500,
+                            "headers": [
+                                [b"content-type", b"application/json"],
+                                [b"content-length", str(len(body)).encode()],
+                            ],
+                        }
+                    )
+                    await send({"type": "http.response.body", "body": body})
+                except Exception:
+                    pass
+            return
 
         process_time = (time.time() - start_time) * 1000
-        formatted_process_time = "{0:.2f}".format(process_time)
+        formatted_process_time = f"{process_time:.2f}"
         try:
-            status_phrase = http.HTTPStatus(response.status_code).phrase
+            status_phrase = http.HTTPStatus(status_code).phrase
         except ValueError:
             status_phrase = ""
 
-        log_level = logger.error if response.status_code >= 500 else logger.info
+        log_level = self.logger.error if status_code >= 500 else self.logger.info
         log_level(
-            f"{request.method} {url} {response.status_code} {status_phrase} {formatted_process_time}ms user={username}",
+            f"{method} {url} {status_code} {status_phrase} "
+            f"{formatted_process_time}ms user={username}",
             extra={
                 "host": host,
                 "port": port,
-                "method": request.method,
+                "method": method,
                 "url": url,
-                "status_code": response.status_code,
+                "status_code": status_code,
                 "status_phrase": status_phrase,
                 "formatted_process_time": formatted_process_time,
                 "body_str": body_str,
                 "username": username,
             },
         )
-
-        return response
