@@ -179,13 +179,8 @@ async def get_assessments(
 
 # Helper function to call assessment runner
 async def call_assessment_runner(
-    assessment: AssessmentIn,
-    return_all_results: bool,
-    modal_env: Optional[str] = None,
+    assessment: AssessmentIn, return_all_results: bool, modal_env: str
 ):
-    if modal_env is None:
-        modal_env = os.getenv("MODAL_ENV", "main")
-
     logger.info(
         "Calling Modal runner",
         extra={
@@ -198,27 +193,12 @@ async def call_assessment_runner(
         },
     )
 
-    try:
-        f = modal.Function.from_name(
-            "runner", "run_assessment_runner", environment_name=modal_env
-        )
-        config = assessment.model_dump()
-        config["return_all_results"] = return_all_results
-        await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
-    except Exception as e:
-        logger.error(
-            "Modal runner dispatch failed",
-            exc_info=True,
-            extra={
-                "assessment_id": assessment.id,
-                "modal_env": modal_env,
-                "error_type": type(e).__name__,
-            },
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Assessment runner service is unavailable or failed.",
-        ) from e
+    f = modal.Function.from_name(
+        "runner", "run_assessment_runner", environment_name=modal_env
+    )
+    config = assessment.model_dump()
+    config["return_all_results"] = return_all_results
+    await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
 
 
 @router.post("/assessment", response_model=List[AssessmentOut])
@@ -422,19 +402,34 @@ async def add_assessment(
     await db.refresh(assessment)
     a.id = assessment.id
 
+    # Resolve Modal environment once at the route level
+    resolved_modal_env = modal_env or os.getenv("MODAL_ENV", "main")
+
     # Dispatch to Modal runner (fire-and-forget via spawn)
     try:
-        await call_assessment_runner(a, return_all_results, modal_env=modal_env)
-    except HTTPException:
+        await call_assessment_runner(a, return_all_results, resolved_modal_env)
+    except Exception as e:
+        logger.error(
+            "Modal runner dispatch failed",
+            exc_info=True,
+            extra={
+                "assessment_id": assessment.id,
+                "modal_env": resolved_modal_env,
+                "error_type": type(e).__name__,
+            },
+        )
         try:
             await db.delete(assessment)
             await db.commit()
-        except SQLAlchemyError as e:
+        except SQLAlchemyError as cleanup_err:
             await db.rollback()
             logger.error(
-                f"Failed to delete assessment {assessment.id} after runner error: {e}"
+                f"Failed to delete assessment {assessment.id} after runner error: {cleanup_err}"
             )
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Assessment runner service is unavailable or failed.",
+        ) from e
 
     return [AssessmentOut.model_validate(assessment)]
 
