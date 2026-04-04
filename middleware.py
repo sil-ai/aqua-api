@@ -1,7 +1,9 @@
 import http
 import socket
 import time
+import traceback
 
+from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -56,17 +58,52 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         else:
             body_str = "Non-sensitive Data - Body Logging Disabled"
 
-        response = await call_next(request)
-        process_time = (time.time() - start_time) * 1000
-        formatted_process_time = "{0:.2f}".format(process_time)
         host = getattr(getattr(request, "client", None), "host", None)
         port = getattr(getattr(request, "client", None), "port", None)
+
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            process_time = (time.time() - start_time) * 1000
+            formatted_process_time = "{0:.2f}".format(process_time)
+            exc_type = type(exc).__name__
+            exc_msg = str(exc)
+            tb = traceback.format_exc()
+
+            logger.error(
+                f"{request.method} {url} 500 Internal Server Error {formatted_process_time}ms user={username} | {exc_type}: {exc_msg}",
+                extra={
+                    "host": host,
+                    "port": port,
+                    "method": request.method,
+                    "url": url,
+                    "status_code": 500,
+                    "status_phrase": "Internal Server Error",
+                    "formatted_process_time": formatted_process_time,
+                    "body_str": body_str,
+                    "username": username,
+                    "exception_type": exc_type,
+                    "exception_message": exc_msg,
+                    "traceback": tb,
+                },
+            )
+
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "detail": f"{exc_type}: {exc_msg}",
+                },
+            )
+
+        process_time = (time.time() - start_time) * 1000
+        formatted_process_time = "{0:.2f}".format(process_time)
         try:
             status_phrase = http.HTTPStatus(response.status_code).phrase
         except ValueError:
             status_phrase = ""
 
-        logger.info(
+        log_level = logger.error if response.status_code >= 500 else logger.info
+        log_level(
             f"{request.method} {url} {response.status_code} {status_phrase} {formatted_process_time}ms user={username}",
             extra={
                 "host": host,
