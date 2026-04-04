@@ -48,7 +48,9 @@ class LoggingMiddleware:
         method = scope.get("method", "")
 
         headers = dict(scope.get("headers", []))
-        authorization_header = headers.get(b"authorization", b"").decode(errors="replace")
+        authorization_header = headers.get(b"authorization", b"").decode(
+            errors="replace"
+        )
         username = self.extract_username_from_token(authorization_header)
 
         sensitive_paths = ["/token", "/users", "/change-password"]
@@ -107,9 +109,7 @@ class LoggingMiddleware:
                 raise
 
             try:
-                body = json.dumps(
-                    {"detail": "Internal server error"}
-                ).encode()
+                body = json.dumps({"detail": "Internal server error"}).encode()
                 await send(
                     {
                         "type": "http.response.start",
