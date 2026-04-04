@@ -1,7 +1,7 @@
 __version__ = "v3"
 
-import logging
 import re
+import socket
 from typing import List
 
 import fastapi
@@ -33,8 +33,10 @@ from models import (
 )
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
+from utils.logging_config import setup_logger
 
-logger = logging.getLogger(__name__)
+container_id = socket.gethostname()
+logger = setup_logger(__name__, container_id=container_id)
 
 router = fastapi.APIRouter()
 
