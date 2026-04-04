@@ -122,6 +122,9 @@ class LoggingMiddleware:
                     pass
             return
 
+        if status_code is None:
+            return
+
         process_time = (time.time() - start_time) * 1000
         formatted_process_time = f"{process_time:.2f}"
         try:
