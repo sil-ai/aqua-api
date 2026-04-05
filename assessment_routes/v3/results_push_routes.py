@@ -82,10 +82,15 @@ async def _batch_insert(db, model_cls, rows):
     """Batch-insert rows and return their auto-generated IDs.
 
     IDs are returned in the same positional order as the input rows.
+    PostgreSQL/asyncpg limits queries to 32,767 parameters, so the batch
+    size is computed from the number of columns per row.
     """
+    _PG_MAX_PARAMS = 32_767
+    cols_per_row = len(rows[0]) if rows else 1
+    batch_size = min(_BATCH_SIZE, _PG_MAX_PARAMS // cols_per_row)
     inserted_ids = []
-    for i in range(0, len(rows), _BATCH_SIZE):
-        batch = rows[i : i + _BATCH_SIZE]
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
         stmt = insert(model_cls).values(batch).returning(model_cls.id)
         result = await db.execute(stmt)
         inserted_ids.extend(r[0] for r in result.fetchall())
