@@ -184,7 +184,7 @@ async def add_word_alignments_bulk(
             # Use INSERT...ON CONFLICT DO UPDATE for atomic upsert.
             # Batch to stay under PostgreSQL's 32,767 parameter limit.
             _PG_MAX_PARAMS = 32_767
-            cols_per_row = len(records[0]) if records else 1
+            cols_per_row = len(AgentWordAlignment.__table__.columns)
             batch_size = _PG_MAX_PARAMS // cols_per_row
 
             affected_ids = []

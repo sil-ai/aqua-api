@@ -77,7 +77,7 @@ async def _get_eflomal_assessment(
 
 async def _batch_insert(db, model_cls, rows):
     _PG_MAX_PARAMS = 32_767
-    cols_per_row = len(rows[0]) if rows else 1
+    cols_per_row = len(model_cls.__table__.columns)
     batch_size = min(_BATCH_SIZE, _PG_MAX_PARAMS // cols_per_row)
     inserted_ids = []
     for i in range(0, len(rows), batch_size):
