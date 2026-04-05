@@ -181,28 +181,34 @@ async def add_word_alignments_bulk(
                 for item in request.alignments
             ]
 
-            # Use INSERT...ON CONFLICT DO UPDATE for atomic upsert
-            insert_stmt = insert(AgentWordAlignment).values(records)
+            # Use INSERT...ON CONFLICT DO UPDATE for atomic upsert.
+            # Batch to stay under PostgreSQL's 32,767 parameter limit.
+            _PG_MAX_PARAMS = 32_767
+            cols_per_row = len(records[0]) if records else 1
+            batch_size = _PG_MAX_PARAMS // cols_per_row
 
-            upsert_stmt = insert_stmt.on_conflict_do_update(
-                index_elements=[
-                    "source_language",
-                    "target_language",
-                    "source_word",
-                    "target_word",
-                ],
-                set_={
-                    "score": insert_stmt.excluded.score,
-                    "is_human_verified": insert_stmt.excluded.is_human_verified,
-                    "last_updated": func.now(),
-                },
-            ).returning(AgentWordAlignment.id)
+            affected_ids = []
+            for i in range(0, len(records), batch_size):
+                batch = records[i : i + batch_size]
+                insert_stmt = insert(AgentWordAlignment).values(batch)
 
-            result = await db.execute(upsert_stmt)
+                upsert_stmt = insert_stmt.on_conflict_do_update(
+                    index_elements=[
+                        "source_language",
+                        "target_language",
+                        "source_word",
+                        "target_word",
+                    ],
+                    set_={
+                        "score": insert_stmt.excluded.score,
+                        "is_human_verified": insert_stmt.excluded.is_human_verified,
+                        "last_updated": func.now(),
+                    },
+                ).returning(AgentWordAlignment.id)
+
+                result = await db.execute(upsert_stmt)
+                affected_ids.extend(row[0] for row in result.fetchall())
             await db.commit()
-
-            # Fetch complete records by IDs
-            affected_ids = [row[0] for row in result.fetchall()]
             if affected_ids:
                 fetch_result = await db.execute(
                     select(AgentWordAlignment).where(
