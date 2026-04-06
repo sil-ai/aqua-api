@@ -1990,6 +1990,13 @@ async def get_alignment_scores(
     result_data = await db.execute(base_query_paginated)
     result_data = result_data.scalars().all()
 
+    invalid_rows = [r.id for r in result_data if r.source is None or r.target is None]
+    if invalid_rows:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Alignment score rows missing source or target: {invalid_rows}",
+        )
+
     duration = round(time.perf_counter() - request_start, 2)
     logger.info(
         f"get_alignment_scores completed in {duration}s",
