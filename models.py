@@ -433,6 +433,8 @@ class TfidfResult(BaseModel):
 
 
 class WordAlignment(BaseModel):
+    model_config = {"from_attributes": True}
+
     id: Optional[int] = None
     assessment_id: int
     vref: Optional[str] = None
