@@ -197,6 +197,12 @@ async def call_assessment_runner(
         "runner", "run_assessment_runner", environment_name=modal_env
     )
     config = assessment.model_dump()
+    # Backward compat: copy vref range from kwargs to top-level so the
+    # runner (separate repo) can read them at either location.
+    if config.get("kwargs"):
+        for key in ("first_vref", "last_vref"):
+            if key in config["kwargs"]:
+                config[key] = config["kwargs"][key]
     config["return_all_results"] = return_all_results
     await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
 
@@ -334,6 +340,15 @@ async def add_assessment(
                     ~Assessment.kwargs.op("@>")({"use_eflomal": True}),
                 )
             )
+        # Distinguish by verse range
+        if parsed_kwargs and parsed_kwargs.get("first_vref"):
+            completed_stmt = completed_stmt.where(
+                Assessment.kwargs.op("@>")({"first_vref": parsed_kwargs["first_vref"]})
+            )
+        if parsed_kwargs and parsed_kwargs.get("last_vref"):
+            completed_stmt = completed_stmt.where(
+                Assessment.kwargs.op("@>")({"last_vref": parsed_kwargs["last_vref"]})
+            )
         result = await db.execute(completed_stmt)
         existing = result.scalars().first()
         if existing is not None:
@@ -378,6 +393,15 @@ async def add_assessment(
                     Assessment.kwargs.is_(None),
                     ~Assessment.kwargs.op("@>")({"use_eflomal": True}),
                 )
+            )
+        # Distinguish by verse range
+        if parsed_kwargs and parsed_kwargs.get("first_vref"):
+            stmt = stmt.where(
+                Assessment.kwargs.op("@>")({"first_vref": parsed_kwargs["first_vref"]})
+            )
+        if parsed_kwargs and parsed_kwargs.get("last_vref"):
+            stmt = stmt.where(
+                Assessment.kwargs.op("@>")({"last_vref": parsed_kwargs["last_vref"]})
             )
         result = await db.execute(stmt)
         existing_id = result.scalars().first()

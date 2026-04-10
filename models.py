@@ -238,11 +238,8 @@ class AssessmentIn(BaseModel):
     revision_id: int
     reference_id: Optional[int] = None
     type: AssessmentType
-    train: Optional[bool] = None
     source_language: Optional[str] = None
     target_language: Optional[str] = None
-    first_vref: Optional[str] = None
-    last_vref: Optional[str] = None
     kwargs: Optional[Dict[str, Any]] = None
 
     @field_validator("kwargs")
