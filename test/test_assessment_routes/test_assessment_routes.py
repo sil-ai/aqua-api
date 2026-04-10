@@ -513,10 +513,10 @@ def test_duplicate_assessment_different_type_allowed(
         assert second.status_code == 200
 
 
-def test_duplicate_assessment_different_kwargs_blocked(
+def test_duplicate_in_progress_different_kwargs_blocked(
     client, regular_token1, db_session, test_db_session
 ):
-    """Different kwargs on same assessment type should still trigger 409."""
+    """In-progress check ignores kwargs differences (only vref range matters)."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
@@ -831,6 +831,147 @@ def test_completed_assessment_different_kwargs_blocked(
         )
         assert second.status_code == 409
         assert str(first_id) in second.json()["detail"]
+
+
+def test_completed_assessment_different_vref_allowed(
+    client, regular_token1, db_session, test_db_session
+):
+    """Completed assessment with different verse range should not block."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 1:1", "last_vref": "GEN 5:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Different verse range should succeed
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 6:1", "last_vref": "GEN 10:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 200
+
+
+def test_completed_assessment_same_vref_blocked(
+    client, regular_token1, db_session, test_db_session
+):
+    """Completed assessment with same verse range should block (409)."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 1:1", "last_vref": "GEN 5:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Same verse range should be blocked
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 1:1", "last_vref": "GEN 5:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409
+        assert str(first_id) in second.json()["detail"]
+
+
+def test_completed_assessment_no_vref_not_blocked_by_vref(
+    client, regular_token1, db_session, test_db_session
+):
+    """Full-Bible run (no vref) should not be blocked by a partial-range assessment."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 1:1", "last_vref": "GEN 5:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Full-Bible run (no vref) should not be blocked
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 200
 
 
 def test_completed_assessment_admin_also_blocked(

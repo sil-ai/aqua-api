@@ -345,9 +345,23 @@ async def add_assessment(
             completed_stmt = completed_stmt.where(
                 Assessment.kwargs.op("@>")({"first_vref": parsed_kwargs["first_vref"]})
             )
+        else:
+            completed_stmt = completed_stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.has_key("first_vref"),
+                )
+            )
         if parsed_kwargs and parsed_kwargs.get("last_vref"):
             completed_stmt = completed_stmt.where(
                 Assessment.kwargs.op("@>")({"last_vref": parsed_kwargs["last_vref"]})
+            )
+        else:
+            completed_stmt = completed_stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.has_key("last_vref"),
+                )
             )
         result = await db.execute(completed_stmt)
         existing = result.scalars().first()
@@ -399,9 +413,23 @@ async def add_assessment(
             stmt = stmt.where(
                 Assessment.kwargs.op("@>")({"first_vref": parsed_kwargs["first_vref"]})
             )
+        else:
+            stmt = stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.has_key("first_vref"),
+                )
+            )
         if parsed_kwargs and parsed_kwargs.get("last_vref"):
             stmt = stmt.where(
                 Assessment.kwargs.op("@>")({"last_vref": parsed_kwargs["last_vref"]})
+            )
+        else:
+            stmt = stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.has_key("last_vref"),
+                )
             )
         result = await db.execute(stmt)
         existing_id = result.scalars().first()
