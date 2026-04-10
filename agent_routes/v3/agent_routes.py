@@ -584,16 +584,9 @@ async def add_lexeme_card(
                     ]
                     if example_records:
                         await db.execute(
-                            pg_insert(AgentLexemeCardExample)
-                            .values(example_records)
-                            .on_conflict_do_nothing(
-                                index_elements=[
-                                    "lexeme_card_id",
-                                    "revision_id",
-                                    "source_text",
-                                    "target_text",
-                                ],
-                            )
+                            pg_insert(AgentLexemeCardExample).values(example_records)
+                            # Relies on ix_agent_lexeme_card_examples_unique
+                            .on_conflict_do_nothing()
                         )
                 else:
                     # If examples is None and replace_existing=True, remove this revision's examples
@@ -638,19 +631,11 @@ async def add_lexeme_card(
                         }
                         for example in card.examples
                     ]
-                    if example_records:
-                        await db.execute(
-                            pg_insert(AgentLexemeCardExample)
-                            .values(example_records)
-                            .on_conflict_do_nothing(
-                                index_elements=[
-                                    "lexeme_card_id",
-                                    "revision_id",
-                                    "source_text",
-                                    "target_text",
-                                ],
-                            )
-                        )
+                    await db.execute(
+                        pg_insert(AgentLexemeCardExample).values(example_records)
+                        # Relies on ix_agent_lexeme_card_examples_unique
+                        .on_conflict_do_nothing()
+                    )
 
             await db.commit()
             await db.refresh(existing_card)
@@ -735,19 +720,11 @@ async def add_lexeme_card(
                     }
                     for example in card.examples
                 ]
-                if example_records:
-                    await db.execute(
-                        pg_insert(AgentLexemeCardExample)
-                        .values(example_records)
-                        .on_conflict_do_nothing(
-                            index_elements=[
-                                "lexeme_card_id",
-                                "revision_id",
-                                "source_text",
-                                "target_text",
-                            ],
-                        )
-                    )
+                await db.execute(
+                    pg_insert(AgentLexemeCardExample).values(example_records)
+                    # Relies on ix_agent_lexeme_card_examples_unique
+                    .on_conflict_do_nothing()
+                )
 
             await db.commit()
             await db.refresh(lexeme_card)
@@ -984,19 +961,11 @@ async def _apply_lexeme_card_patch(
                 }
                 for example in examples
             ]
-            if example_records:
-                await db.execute(
-                    pg_insert(AgentLexemeCardExample)
-                    .values(example_records)
-                    .on_conflict_do_nothing(
-                        index_elements=[
-                            "lexeme_card_id",
-                            "revision_id",
-                            "source_text",
-                            "target_text",
-                        ],
-                    )
-                )
+            await db.execute(
+                pg_insert(AgentLexemeCardExample).values(example_records)
+                # Relies on ix_agent_lexeme_card_examples_unique
+                .on_conflict_do_nothing()
+            )
 
     # Update last_updated timestamp
     card.last_updated = func.now()
