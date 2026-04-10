@@ -516,7 +516,7 @@ def test_duplicate_assessment_different_type_allowed(
 def test_duplicate_in_progress_different_kwargs_blocked(
     client, regular_token1, db_session, test_db_session
 ):
-    """In-progress check ignores kwargs differences (only vref range matters)."""
+    """In-progress check blocks same type+revision regardless of non-dedup kwargs like top_k."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
@@ -619,6 +619,42 @@ def test_duplicate_assessment_running_returns_409(
         )
         assert second.status_code == 409
         assert str(first_id) in second.json()["detail"]
+
+
+def test_in_progress_different_vref_allowed(
+    client, regular_token1, db_session, test_db_session
+):
+    """In-progress assessment with different verse range should not block."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 1:1", "last_vref": "GEN 5:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+
+        # Different verse range should succeed even while first is in-progress
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 6:1", "last_vref": "GEN 10:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 200
 
 
 def test_duplicate_assessment_admin_bypass(
