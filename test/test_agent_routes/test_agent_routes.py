@@ -1566,6 +1566,72 @@ def test_add_lexeme_card_upsert_append_default(
     assert data2["confidence"] == 0.90
 
 
+def test_add_lexeme_card_upsert_append_duplicate_examples_no_500(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Regression for #517: appending examples that already exist for the same
+    (lexeme_card_id, revision_id, source_text, target_text) must not 500 on the
+    unique constraint — duplicates should be silently skipped."""
+    payload = {
+        "source_lemma": "run",
+        "target_lemma": "kimbia",
+        "source_language": "eng",
+        "target_language": "swh",
+        "pos": "verb",
+        "surface_forms": ["kimbia"],
+        "examples": [
+            {"source": "I run", "target": "Nakimbia"},
+            {"source": "We run", "target": "Tunakimbia"},
+        ],
+    }
+
+    # First POST creates the card and inserts the two examples.
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response1.status_code == 200
+    assert len(response1.json()["examples"]) == 2
+
+    # Second POST with the same examples plus a new one should NOT 500.
+    # The existing (source, target) pairs must be silently skipped.
+    payload["examples"] = [
+        {"source": "I run", "target": "Nakimbia"},  # duplicate
+        {"source": "We run", "target": "Tunakimbia"},  # duplicate
+        {"source": "They run", "target": "Wanakimbia"},  # new
+    ]
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response2.status_code == 200
+    data2 = response2.json()
+    assert len(data2["examples"]) == 3
+    example_pairs = {(e["source"], e["target"]) for e in data2["examples"]}
+    assert example_pairs == {
+        ("I run", "Nakimbia"),
+        ("We run", "Tunakimbia"),
+        ("They run", "Wanakimbia"),
+    }
+
+    # A payload containing internal duplicates must also be tolerated.
+    payload["examples"] = [
+        {"source": "She runs", "target": "Anakimbia"},
+        {"source": "She runs", "target": "Anakimbia"},
+    ]
+    response3 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response3.status_code == 200
+    data3 = response3.json()
+    example_pairs = {(e["source"], e["target"]) for e in data3["examples"]}
+    assert ("She runs", "Anakimbia") in example_pairs
+
+
 def test_add_lexeme_card_upsert_append_explicit(
     client, regular_token1, db_session, test_revision_id
 ):

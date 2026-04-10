@@ -512,6 +512,7 @@ async def add_lexeme_card(
     request_start = time.perf_counter()
     try:
         from sqlalchemy import delete, select
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
         from sqlalchemy.sql import func
 
         # Sort alignment_scores by value in descending order (highest scores first)
@@ -570,15 +571,30 @@ async def add_lexeme_card(
                     )
                     await db.execute(delete_query)
 
-                    # Add new examples
-                    for example in card.examples:
-                        example_obj = AgentLexemeCardExample(
-                            lexeme_card_id=existing_card.id,
-                            revision_id=revision_id,
-                            source_text=example.get("source", ""),
-                            target_text=example.get("target", ""),
+                    # Add new examples; ON CONFLICT DO NOTHING silently skips any
+                    # duplicate (source_text, target_text) pairs within the payload.
+                    example_records = [
+                        {
+                            "lexeme_card_id": existing_card.id,
+                            "revision_id": revision_id,
+                            "source_text": example.get("source", ""),
+                            "target_text": example.get("target", ""),
+                        }
+                        for example in card.examples
+                    ]
+                    if example_records:
+                        await db.execute(
+                            pg_insert(AgentLexemeCardExample)
+                            .values(example_records)
+                            .on_conflict_do_nothing(
+                                index_elements=[
+                                    "lexeme_card_id",
+                                    "revision_id",
+                                    "source_text",
+                                    "target_text",
+                                ],
+                            )
                         )
-                        db.add(example_obj)
                 else:
                     # If examples is None and replace_existing=True, remove this revision's examples
                     delete_query = delete(AgentLexemeCardExample).where(
@@ -608,17 +624,33 @@ async def add_lexeme_card(
                     existing_senses = existing_card.senses or []
                     existing_card.senses = existing_senses + card.senses
 
-                # For examples: append to this revision_id's examples
-                # The unique index will prevent duplicate examples automatically
+                # For examples: append to this revision_id's examples.
+                # Use ON CONFLICT DO NOTHING so duplicates (already inserted for
+                # the same lexeme_card / revision / source / target) are silently
+                # skipped instead of raising IntegrityError.
                 if card.examples:
-                    for example in card.examples:
-                        example_obj = AgentLexemeCardExample(
-                            lexeme_card_id=existing_card.id,
-                            revision_id=revision_id,
-                            source_text=example.get("source", ""),
-                            target_text=example.get("target", ""),
+                    example_records = [
+                        {
+                            "lexeme_card_id": existing_card.id,
+                            "revision_id": revision_id,
+                            "source_text": example.get("source", ""),
+                            "target_text": example.get("target", ""),
+                        }
+                        for example in card.examples
+                    ]
+                    if example_records:
+                        await db.execute(
+                            pg_insert(AgentLexemeCardExample)
+                            .values(example_records)
+                            .on_conflict_do_nothing(
+                                index_elements=[
+                                    "lexeme_card_id",
+                                    "revision_id",
+                                    "source_text",
+                                    "target_text",
+                                ],
+                            )
                         )
-                        db.add(example_obj)
 
             await db.commit()
             await db.refresh(existing_card)
@@ -691,16 +723,31 @@ async def add_lexeme_card(
             db.add(lexeme_card)
             await db.flush()  # Flush to get the ID before adding examples
 
-            # Add examples to the separate table
+            # Add examples to the separate table. Use ON CONFLICT DO NOTHING to
+            # tolerate duplicate (source_text, target_text) entries in the payload.
             if card.examples:
-                for example in card.examples:
-                    example_obj = AgentLexemeCardExample(
-                        lexeme_card_id=lexeme_card.id,
-                        revision_id=revision_id,
-                        source_text=example.get("source", ""),
-                        target_text=example.get("target", ""),
+                example_records = [
+                    {
+                        "lexeme_card_id": lexeme_card.id,
+                        "revision_id": revision_id,
+                        "source_text": example.get("source", ""),
+                        "target_text": example.get("target", ""),
+                    }
+                    for example in card.examples
+                ]
+                if example_records:
+                    await db.execute(
+                        pg_insert(AgentLexemeCardExample)
+                        .values(example_records)
+                        .on_conflict_do_nothing(
+                            index_elements=[
+                                "lexeme_card_id",
+                                "revision_id",
+                                "source_text",
+                                "target_text",
+                            ],
+                        )
                     )
-                    db.add(example_obj)
 
             await db.commit()
             await db.refresh(lexeme_card)
@@ -804,6 +851,7 @@ async def _apply_lexeme_card_patch(
 ) -> LexemeCardOut:
     """Apply patch data to a lexeme card and return the updated card."""
     from sqlalchemy import delete, select
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.sql import func
 
     provided_fields = patch_data.model_fields_set
@@ -924,15 +972,31 @@ async def _apply_lexeme_card_patch(
                 )
                 await db.execute(delete_query)
 
-            # Add new examples
-            for example in examples:
-                example_obj = AgentLexemeCardExample(
-                    lexeme_card_id=card.id,
-                    revision_id=revision_id,
-                    source_text=example.get("source", ""),
-                    target_text=example.get("target", ""),
+            # Add new examples. Use ON CONFLICT DO NOTHING so duplicates (either
+            # within the payload, or colliding with pre-existing rows in the
+            # append/merge case) are silently skipped instead of raising 500.
+            example_records = [
+                {
+                    "lexeme_card_id": card.id,
+                    "revision_id": revision_id,
+                    "source_text": example.get("source", ""),
+                    "target_text": example.get("target", ""),
+                }
+                for example in examples
+            ]
+            if example_records:
+                await db.execute(
+                    pg_insert(AgentLexemeCardExample)
+                    .values(example_records)
+                    .on_conflict_do_nothing(
+                        index_elements=[
+                            "lexeme_card_id",
+                            "revision_id",
+                            "source_text",
+                            "target_text",
+                        ],
+                    )
                 )
-                db.add(example_obj)
 
     # Update last_updated timestamp
     card.last_updated = func.now()
