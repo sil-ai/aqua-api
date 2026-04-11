@@ -41,6 +41,7 @@ jobs:
         REGISTRY: ${{ secrets.AWS_REGISTRY }}
 
     - name: Test API
+      timeout-minutes: 30
       env:
         OMIT_PREVIOUS_VERSIONS: true
         MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
