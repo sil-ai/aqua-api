@@ -64,9 +64,12 @@ def upgrade() -> None:
             ["iso_639_3"], ["language_profiles.iso_639_3"], ondelete="CASCADE"
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint(
-            "iso_639_3", "morpheme", name="uq_language_morphemes_iso_morpheme"
-        ),
+    )
+    op.create_index(
+        "ux_language_morphemes_iso_morpheme",
+        "language_morphemes",
+        ["iso_639_3", "morpheme"],
+        unique=True,
     )
     op.create_index(
         "ix_language_morphemes_iso", "language_morphemes", ["iso_639_3"], unique=False
@@ -114,6 +117,7 @@ def downgrade() -> None:
     op.drop_table("tokenizer_runs")
     op.drop_index("ix_language_morphemes_iso_class", table_name="language_morphemes")
     op.drop_index("ix_language_morphemes_iso", table_name="language_morphemes")
+    op.drop_index("ux_language_morphemes_iso_morpheme", table_name="language_morphemes")
     op.drop_table("language_morphemes")
     op.drop_table("language_profiles")
     # ### end Alembic commands ###

@@ -12,7 +12,6 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
-    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
@@ -879,8 +878,11 @@ class LanguageMorpheme(Base):
     first_seen_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
-        UniqueConstraint(
-            "iso_639_3", "morpheme", name="uq_language_morphemes_iso_morpheme"
+        Index(
+            "ux_language_morphemes_iso_morpheme",
+            "iso_639_3",
+            "morpheme",
+            unique=True,
         ),
         Index("ix_language_morphemes_iso", "iso_639_3"),
         Index("ix_language_morphemes_iso_class", "iso_639_3", "morpheme_class"),

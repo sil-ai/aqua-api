@@ -219,6 +219,30 @@ def test_tokenizer_run_invalid_revision(client, regular_token1, db_session):
     _cleanup(db_session)
 
 
+def test_tokenizer_duplicate_morphemes_rejected(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Duplicate morphemes in a single payload should be rejected with 422."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [
+                {"morpheme": "dup", "morpheme_class": "LEXICAL"},
+                {"morpheme": "dup", "morpheme_class": "GRAMMATICAL"},
+            ],
+            profile={"name": "Swahili"},
+        ),
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert "dup" in resp.json()["detail"]
+    _cleanup(db_session)
+
+
 def test_tokenizer_empty_morphemes_allowed(
     client, regular_token1, test_revision_id, db_session
 ):
