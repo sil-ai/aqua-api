@@ -77,9 +77,7 @@ async def upsert_language_profile(
     current_user: UserModel = Depends(get_current_user),
 ):
     request_start = time.perf_counter()
-    iso_exists = await db.execute(
-        select(IsoLanguage).where(IsoLanguage.iso639 == iso)
-    )
+    iso_exists = await db.execute(select(IsoLanguage).where(IsoLanguage.iso639 == iso))
     if iso_exists.scalar_one_or_none() is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -219,9 +217,7 @@ async def list_tokenizer_runs(
             "duration_s": duration,
         },
     )
-    return TokenizerRunListOut(
-        runs=[TokenizerRunOut.model_validate(r) for r in runs]
-    )
+    return TokenizerRunListOut(runs=[TokenizerRunOut.model_validate(r) for r in runs])
 
 
 @router.post("/tokenizer/runs", response_model=TokenizerRunCommitResponse)
@@ -243,9 +239,7 @@ async def commit_tokenizer_run(
     request_start = time.perf_counter()
     iso = payload.iso_639_3
 
-    iso_exists = await db.execute(
-        select(IsoLanguage).where(IsoLanguage.iso639 == iso)
-    )
+    iso_exists = await db.execute(select(IsoLanguage).where(IsoLanguage.iso639 == iso))
     if iso_exists.scalar_one_or_none() is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

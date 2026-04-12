@@ -8,9 +8,7 @@ TEST_ISO = "swh"
 
 
 def _cleanup(db_session):
-    db_session.query(TokenizerRun).filter(
-        TokenizerRun.iso_639_3 == TEST_ISO
-    ).delete()
+    db_session.query(TokenizerRun).filter(TokenizerRun.iso_639_3 == TEST_ISO).delete()
     db_session.query(LanguageMorpheme).filter(
         LanguageMorpheme.iso_639_3 == TEST_ISO
     ).delete()
@@ -35,9 +33,7 @@ def _run_payload(revision_id, morphemes, profile=None):
     return body
 
 
-def test_tokenizer_run_round_trip(
-    client, regular_token1, test_revision_id, db_session
-):
+def test_tokenizer_run_round_trip(client, regular_token1, test_revision_id, db_session):
     _cleanup(db_session)
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -87,9 +83,7 @@ def test_tokenizer_run_round_trip(
     assert data["total"] == 1
     assert data["morphemes"][0]["morpheme"] == "manyizyi"
 
-    resp = client.get(
-        f"/{prefix}/tokenizer/runs?iso={TEST_ISO}", headers=headers
-    )
+    resp = client.get(f"/{prefix}/tokenizer/runs?iso={TEST_ISO}", headers=headers)
     assert resp.status_code == 200
     runs = resp.json()["runs"]
     assert any(r["id"] == run_id for r in runs)
@@ -133,17 +127,13 @@ def test_tokenizer_run_idempotency(
     assert total == 2
 
     runs = (
-        db_session.query(TokenizerRun)
-        .filter(TokenizerRun.iso_639_3 == TEST_ISO)
-        .all()
+        db_session.query(TokenizerRun).filter(TokenizerRun.iso_639_3 == TEST_ISO).all()
     )
     assert len(runs) == 2
     _cleanup(db_session)
 
 
-def test_tokenizer_class_conflict(
-    client, regular_token1, test_revision_id, db_session
-):
+def test_tokenizer_class_conflict(client, regular_token1, test_revision_id, db_session):
     _cleanup(db_session)
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -212,9 +202,7 @@ def test_tokenizer_run_requires_profile_on_first_call(
     assert resp.status_code == 422
 
 
-def test_tokenizer_run_invalid_revision(
-    client, regular_token1, db_session
-):
+def test_tokenizer_run_invalid_revision(client, regular_token1, db_session):
     _cleanup(db_session)
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -247,9 +235,7 @@ def test_tokenizer_empty_morphemes_allowed(
         "profile": {"name": "Swahili"},
         "stats": {},
     }
-    resp = client.post(
-        f"/{prefix}/tokenizer/runs", json=body, headers=headers
-    )
+    resp = client.post(f"/{prefix}/tokenizer/runs", json=body, headers=headers)
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["n_morphemes_new"] == 0
@@ -275,14 +261,12 @@ def test_tokenizer_runs_list_all_statuses(
     )
 
     # Manually mark the run as failed to exercise the status filter default.
-    db_session.query(TokenizerRun).filter(
-        TokenizerRun.iso_639_3 == TEST_ISO
-    ).update({"status": "failed"})
+    db_session.query(TokenizerRun).filter(TokenizerRun.iso_639_3 == TEST_ISO).update(
+        {"status": "failed"}
+    )
     db_session.commit()
 
-    resp = client.get(
-        f"/{prefix}/tokenizer/runs?iso={TEST_ISO}", headers=headers
-    )
+    resp = client.get(f"/{prefix}/tokenizer/runs?iso={TEST_ISO}", headers=headers)
     assert resp.status_code == 200
     assert len(resp.json()["runs"]) == 1
 
