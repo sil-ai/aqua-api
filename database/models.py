@@ -893,7 +893,7 @@ class TokenizerRun(Base):
     id = Column(Integer, primary_key=True)
     iso_639_3 = Column(
         String(3),
-        ForeignKey("language_profiles.iso_639_3"),
+        ForeignKey("language_profiles.iso_639_3", ondelete="CASCADE"),
         nullable=False,
     )
     revision_id = Column(
@@ -905,7 +905,7 @@ class TokenizerRun(Base):
     sample_method = Column(Text)
     source_model = Column(Text)
     stats_json = Column(JSONB)
-    status = Column(Text, default="completed")
+    status = Column(Text, nullable=False, server_default="completed")
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (

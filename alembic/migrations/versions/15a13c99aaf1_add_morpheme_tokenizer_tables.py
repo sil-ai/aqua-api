@@ -31,8 +31,8 @@ def upgrade() -> None:
     sa.Column('morphology_notes', sa.Text(), nullable=True),
     sa.Column('common_affixes', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.Column('sources', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('created_at', sa.TIMESTAMP(), server_default=sa.text('now()'), nullable=True),
-    sa.Column('updated_at', sa.TIMESTAMP(), server_default=sa.text('now()'), nullable=True),
+    sa.Column('created_at', sa.TIMESTAMP(), server_default=sa.func.now(), nullable=True),
+    sa.Column('updated_at', sa.TIMESTAMP(), server_default=sa.func.now(), nullable=True),
     sa.ForeignKeyConstraint(['iso_639_3'], ['iso_language.iso639'], ),
     sa.PrimaryKeyConstraint('iso_639_3')
     )
@@ -42,7 +42,7 @@ def upgrade() -> None:
     sa.Column('morpheme', sa.Text(), nullable=False),
     sa.Column('morpheme_class', sa.Text(), nullable=False),
     sa.Column('first_seen_revision_id', sa.Integer(), nullable=True),
-    sa.Column('first_seen_at', sa.TIMESTAMP(), server_default=sa.text('now()'), nullable=True),
+    sa.Column('first_seen_at', sa.TIMESTAMP(), server_default=sa.func.now(), nullable=True),
     sa.ForeignKeyConstraint(['first_seen_revision_id'], ['bible_revision.id'], ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['iso_639_3'], ['language_profiles.iso_639_3'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
@@ -58,9 +58,9 @@ def upgrade() -> None:
     sa.Column('sample_method', sa.Text(), nullable=True),
     sa.Column('source_model', sa.Text(), nullable=True),
     sa.Column('stats_json', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-    sa.Column('status', sa.Text(), nullable=True),
-    sa.Column('created_at', sa.TIMESTAMP(), server_default=sa.text('now()'), nullable=True),
-    sa.ForeignKeyConstraint(['iso_639_3'], ['language_profiles.iso_639_3'], ),
+    sa.Column('status', sa.Text(), server_default='completed', nullable=False),
+    sa.Column('created_at', sa.TIMESTAMP(), server_default=sa.func.now(), nullable=True),
+    sa.ForeignKeyConstraint(['iso_639_3'], ['language_profiles.iso_639_3'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['revision_id'], ['bible_revision.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id')
     )

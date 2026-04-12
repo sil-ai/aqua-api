@@ -2,7 +2,7 @@
 
 from database.models import LanguageMorpheme, LanguageProfile, TokenizerRun
 
-prefix = "latest"
+prefix = "v3"
 
 TEST_ISO = "swh"
 
@@ -228,4 +228,68 @@ def test_tokenizer_run_invalid_revision(
         headers=headers,
     )
     assert resp.status_code == 422
+    _cleanup(db_session)
+
+
+def test_tokenizer_empty_morphemes_allowed(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Posting a run with no morphemes creates a run row but no morpheme rows.
+
+    The `morphemes` field defaults to []; both explicit and omitted should work.
+    """
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    body = {
+        "iso_639_3": TEST_ISO,
+        "revision_id": test_revision_id,
+        "profile": {"name": "Swahili"},
+        "stats": {},
+    }
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs", json=body, headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["n_morphemes_new"] == 0
+    assert data["n_morphemes_existing"] == 0
+    _cleanup(db_session)
+
+
+def test_tokenizer_runs_list_all_statuses(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Omitting the status query param returns runs regardless of status."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [{"morpheme": "x", "morpheme_class": "LEXICAL"}],
+            profile={"name": "Swahili"},
+        ),
+        headers=headers,
+    )
+
+    # Manually mark the run as failed to exercise the status filter default.
+    db_session.query(TokenizerRun).filter(
+        TokenizerRun.iso_639_3 == TEST_ISO
+    ).update({"status": "failed"})
+    db_session.commit()
+
+    resp = client.get(
+        f"/{prefix}/tokenizer/runs?iso={TEST_ISO}", headers=headers
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["runs"]) == 1
+
+    resp = client.get(
+        f"/{prefix}/tokenizer/runs?iso={TEST_ISO}&status=completed",
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert len(resp.json()["runs"]) == 0
     _cleanup(db_session)
