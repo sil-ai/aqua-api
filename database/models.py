@@ -12,6 +12,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
@@ -839,4 +840,75 @@ class EflomalTargetWordCount(Base):
             "word",
             unique=True,
         ),
+    )
+
+
+class LanguageProfile(Base):
+    __tablename__ = "language_profiles"
+
+    iso_639_3 = Column(String(3), ForeignKey("iso_language.iso639"), primary_key=True)
+    name = Column(Text, nullable=False)
+    autonym = Column(Text, nullable=True)
+    family = Column(Text, nullable=True)
+    branch = Column(Text, nullable=True)
+    script = Column(Text, nullable=True)
+    typology_summary = Column(Text, nullable=True)
+    morphology_notes = Column(Text, nullable=True)
+    common_affixes = Column(JSONB, nullable=True)
+    sources = Column(JSONB, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+
+class LanguageMorpheme(Base):
+    __tablename__ = "language_morphemes"
+
+    id = Column(Integer, primary_key=True)
+    iso_639_3 = Column(
+        String(3),
+        ForeignKey("language_profiles.iso_639_3", ondelete="CASCADE"),
+        nullable=False,
+    )
+    morpheme = Column(Text, nullable=False)
+    morpheme_class = Column(Text, nullable=False)
+    first_seen_revision_id = Column(
+        Integer,
+        ForeignKey("bible_revision.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    first_seen_at = Column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        UniqueConstraint(
+            "iso_639_3", "morpheme", name="uq_language_morphemes_iso_morpheme"
+        ),
+        Index("ix_language_morphemes_iso", "iso_639_3"),
+        Index("ix_language_morphemes_iso_class", "iso_639_3", "morpheme_class"),
+    )
+
+
+class TokenizerRun(Base):
+    __tablename__ = "tokenizer_runs"
+
+    id = Column(Integer, primary_key=True)
+    iso_639_3 = Column(
+        String(3),
+        ForeignKey("language_profiles.iso_639_3"),
+        nullable=False,
+    )
+    revision_id = Column(
+        Integer,
+        ForeignKey("bible_revision.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    n_sample_verses = Column(Integer)
+    sample_method = Column(Text)
+    source_model = Column(Text)
+    stats_json = Column(JSONB)
+    status = Column(Text, default="completed")
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_tokenizer_runs_iso", "iso_639_3"),
+        Index("ix_tokenizer_runs_revision", "revision_id"),
     )
