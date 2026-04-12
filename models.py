@@ -1159,3 +1159,85 @@ class DeleteRequest(BaseModel):
 
 class DeleteResponse(BaseModel):
     deleted: int
+
+
+MorphemeClass = Literal["LEXICAL", "GRAMMATICAL", "BOUND_ROOT", "UNKNOWN"]
+
+
+class LanguageProfileIn(BaseModel):
+    name: str
+    autonym: Optional[str] = None
+    family: Optional[str] = None
+    branch: Optional[str] = None
+    script: Optional[str] = None
+    typology_summary: Optional[str] = None
+    morphology_notes: Optional[str] = None
+    common_affixes: Optional[List[Dict[str, Any]]] = None
+    sources: Optional[List[str]] = None
+
+
+class LanguageProfileOut(LanguageProfileIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    iso_639_3: str
+    created_at: Optional[datetime.datetime] = None
+    updated_at: Optional[datetime.datetime] = None
+
+
+class MorphemeIn(BaseModel):
+    morpheme: str
+    morpheme_class: MorphemeClass
+
+
+class MorphemeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    morpheme: str
+    morpheme_class: MorphemeClass
+    first_seen_revision_id: Optional[int] = None
+
+
+class MorphemeListOut(BaseModel):
+    iso_639_3: str
+    total: int
+    morphemes: List[MorphemeOut]
+
+
+class TokenizerRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    iso_639_3: str
+    revision_id: int
+    n_sample_verses: Optional[int] = None
+    sample_method: Optional[str] = None
+    source_model: Optional[str] = None
+    status: str
+    stats_json: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime.datetime] = None
+
+
+class TokenizerRunListOut(BaseModel):
+    runs: List[TokenizerRunOut]
+
+
+class TokenizerRunRequest(BaseModel):
+    iso_639_3: str
+    revision_id: int
+    n_sample_verses: Optional[int] = None
+    sample_method: Optional[str] = None
+    source_model: Optional[str] = None
+    profile: Optional[LanguageProfileIn] = None
+    morphemes: List[MorphemeIn] = Field(default_factory=list)
+    stats: Optional[Dict[str, Any]] = None
+
+
+class TokenizerRunCommitResponse(BaseModel):
+    run_id: int
+    # n_morphemes_new + n_morphemes_existing == len(payload.morphemes).
+    # n_class_conflicts is a subset of n_morphemes_existing: a conflict is
+    # an existing row whose stored class disagrees with the incoming class
+    # (the stored class wins; the incoming class is logged and discarded).
+    n_morphemes_new: int
+    n_morphemes_existing: int
+    n_class_conflicts: int
