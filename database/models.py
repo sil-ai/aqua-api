@@ -12,6 +12,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
@@ -913,4 +914,30 @@ class TokenizerRun(Base):
     __table_args__ = (
         Index("ix_tokenizer_runs_iso", "iso_639_3"),
         Index("ix_tokenizer_runs_revision", "revision_id"),
+    )
+
+
+class VerseMorphemeIndex(Base):
+    __tablename__ = "verse_morpheme_index"
+
+    id = Column(Integer, primary_key=True)
+    verse_text_id = Column(
+        Integer,
+        ForeignKey("verse_text.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    morpheme_id = Column(
+        Integer,
+        ForeignKey("language_morphemes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    count = Column(Integer, default=1)
+    surface_forms = Column(JSONB)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "verse_text_id", "morpheme_id", name="uq_verse_morpheme"
+        ),
+        Index("ix_verse_morpheme_index_morpheme", "morpheme_id"),
+        Index("ix_verse_morpheme_index_verse", "verse_text_id"),
     )

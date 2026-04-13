@@ -7,11 +7,10 @@ from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
-
 from database.dependencies import get_db
 from database.models import (
     BibleRevision,
@@ -19,13 +18,19 @@ from database.models import (
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
+    VerseMorphemeIndex,
+    VerseText,
 )
 from database.models import UserDB as UserModel
 from models import (
+    IndexRequest,
+    IndexResponse,
     LanguageProfileIn,
     LanguageProfileOut,
     MorphemeListOut,
     MorphemeOut,
+    MorphemeSearchResponse,
+    MorphemeSearchResult,
     TokenizerRunCommitResponse,
     TokenizerRunListOut,
     TokenizerRunOut,
@@ -33,6 +38,7 @@ from models import (
 )
 from security_routes.auth_routes import get_current_user
 from utils.logging_config import setup_logger
+from utils.morpheme_tokenizer import strip_punct, viterbi_segment
 
 container_id = socket.gethostname()
 logger = setup_logger(__name__, container_id=container_id)
@@ -386,4 +392,208 @@ async def commit_tokenizer_run(
         n_morphemes_new=n_new,
         n_morphemes_existing=n_existing,
         n_class_conflicts=n_conflicts,
+    )
+
+
+@router.post("/tokenizer/index", response_model=IndexResponse)
+async def index_morphemes(
+    payload: IndexRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    request_start = time.perf_counter()
+    iso = payload.iso_639_3
+    revision_id = payload.revision_id
+
+    # Load all morphemes for the language
+    result = await db.execute(
+        select(LanguageMorpheme.id, LanguageMorpheme.morpheme).where(
+            LanguageMorpheme.iso_639_3 == iso
+        )
+    )
+    morpheme_rows = result.all()
+    if not morpheme_rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No morphemes found for iso '{iso}'",
+        )
+
+    morpheme_by_text = {row.morpheme: row.id for row in morpheme_rows}
+    morpheme_set = set(morpheme_by_text.keys())
+    max_morph_len = max(len(m) for m in morpheme_set)
+
+    # Load all non-empty verses for the revision
+    result = await db.execute(
+        select(VerseText.id, VerseText.text).where(
+            VerseText.revision_id == revision_id,
+            VerseText.text.isnot(None),
+            VerseText.text != "",
+        )
+    )
+    verses = result.all()
+    if not verses:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No verses found for revision_id {revision_id}",
+        )
+
+    # Segment each verse and collect (verse_text_id, morpheme_id) -> {count, surface_forms}
+    index_rows = []
+    for verse in verses:
+        # morpheme_id -> {count, surface_forms set}
+        hits: dict[int, dict] = {}
+        for word in verse.text.split():
+            stripped = strip_punct(word)
+            if not stripped:
+                continue
+            lowered = stripped.lower()
+            segments = viterbi_segment(lowered, morpheme_set, max_morph_len)
+            for kind, seg in segments:
+                if kind == "morph" and seg in morpheme_by_text:
+                    mid = morpheme_by_text[seg]
+                    if mid not in hits:
+                        hits[mid] = {"count": 0, "surface_forms": set()}
+                    hits[mid]["count"] += 1
+                    hits[mid]["surface_forms"].add(stripped)
+
+        for mid, info in hits.items():
+            index_rows.append(
+                {
+                    "verse_text_id": verse.id,
+                    "morpheme_id": mid,
+                    "count": info["count"],
+                    "surface_forms": sorted(info["surface_forms"]),
+                }
+            )
+
+    try:
+        if index_rows:
+            # Bulk upsert in batches
+            BATCH_SIZE = 5000
+            for i in range(0, len(index_rows), BATCH_SIZE):
+                batch = index_rows[i : i + BATCH_SIZE]
+                stmt = pg_insert(VerseMorphemeIndex).values(batch)
+                stmt = stmt.on_conflict_do_update(
+                    constraint="uq_verse_morpheme",
+                    set_={
+                        "count": stmt.excluded.count,
+                        "surface_forms": stmt.excluded.surface_forms,
+                    },
+                )
+                await db.execute(stmt)
+        await db.commit()
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error("Failed to index morphemes", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {e}",
+        ) from e
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"index_morphemes completed in {duration}s",
+        extra={
+            "method": "POST",
+            "path": "/tokenizer/index",
+            "iso": iso,
+            "revision_id": revision_id,
+            "verses_indexed": len(verses),
+            "pairs": len(index_rows),
+            "duration_s": duration,
+        },
+    )
+    return IndexResponse(
+        verses_indexed=len(verses),
+        unique_morpheme_verse_pairs=len(index_rows),
+    )
+
+
+@router.get("/tokenizer/search", response_model=MorphemeSearchResponse)
+async def search_morpheme(
+    iso: str,
+    morpheme: str,
+    revision_id: Optional[int] = None,
+    comparison_revision_id: Optional[int] = None,
+    limit: int = Query(default=20, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    request_start = time.perf_counter()
+
+    # Build query
+    query = (
+        select(
+            VerseText.text,
+            VerseText.verse_reference,
+            VerseText.revision_id,
+            VerseMorphemeIndex.count,
+            VerseMorphemeIndex.surface_forms,
+        )
+        .join(
+            VerseMorphemeIndex,
+            VerseMorphemeIndex.verse_text_id == VerseText.id,
+        )
+        .join(
+            LanguageMorpheme,
+            LanguageMorpheme.id == VerseMorphemeIndex.morpheme_id,
+        )
+        .where(
+            LanguageMorpheme.morpheme == morpheme,
+            LanguageMorpheme.iso_639_3 == iso,
+        )
+    )
+
+    if revision_id is not None:
+        query = query.where(VerseText.revision_id == revision_id)
+
+    query = query.order_by(VerseMorphemeIndex.count.desc()).limit(limit)
+
+    result = await db.execute(query)
+    rows = result.all()
+
+    # If comparison_revision_id, fetch parallel texts
+    comparison_texts = {}
+    if comparison_revision_id is not None and rows:
+        verse_refs = [row.verse_reference for row in rows]
+        comp_result = await db.execute(
+            select(VerseText.verse_reference, VerseText.text).where(
+                VerseText.revision_id == comparison_revision_id,
+                VerseText.verse_reference.in_(verse_refs),
+                VerseText.text.isnot(None),
+                VerseText.text != "",
+            )
+        )
+        comparison_texts = {r.verse_reference: r.text for r in comp_result.all()}
+
+    results = []
+    for row in rows:
+        results.append(
+            MorphemeSearchResult(
+                verse_reference=row.verse_reference,
+                text=row.text,
+                comparison_text=comparison_texts.get(row.verse_reference),
+                surface_forms=row.surface_forms or [],
+                count=row.count,
+            )
+        )
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"search_morpheme completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/tokenizer/search",
+            "iso": iso,
+            "morpheme": morpheme,
+            "revision_id": revision_id,
+            "results": len(results),
+            "duration_s": duration,
+        },
+    )
+    return MorphemeSearchResponse(
+        morpheme=morpheme,
+        iso_639_3=iso,
+        total_matches=len(results),
+        results=results,
     )
