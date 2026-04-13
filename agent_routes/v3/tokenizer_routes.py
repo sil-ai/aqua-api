@@ -408,7 +408,13 @@ async def index_morphemes(
     iso = payload.iso_639_3
     revision_id = payload.revision_id
 
-    # Validate revision exists
+    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this revision",
+        )
+
+    # Validate revision exists (after auth to avoid leaking valid IDs)
     rev_exists = await db.execute(
         select(BibleRevision.id).where(BibleRevision.id == revision_id)
     )
@@ -416,12 +422,6 @@ async def index_morphemes(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unknown revision_id {revision_id}",
-        )
-
-    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to access this revision",
         )
 
     # Load all morphemes for the language

@@ -473,8 +473,18 @@ def test_index_idempotency(client, regular_token1, test_revision_id, db_session)
 
     assert pairs1 == pairs2
 
-    # Verify no duplicate rows in the DB
-    count = db_session.query(VerseMorphemeIndex).count()
+    # Verify no duplicate rows in the DB (scoped to test morphemes)
+    morpheme_ids = [
+        row.id
+        for row in db_session.query(LanguageMorpheme.id)
+        .filter(LanguageMorpheme.iso_639_3 == TEST_ISO)
+        .all()
+    ]
+    count = (
+        db_session.query(VerseMorphemeIndex)
+        .filter(VerseMorphemeIndex.morpheme_id.in_(morpheme_ids))
+        .count()
+    )
     assert count == pairs1
 
     _cleanup_verses(db_session, vt_objs)
