@@ -1264,5 +1264,5 @@ class MorphemeSearchResult(BaseModel):
 class MorphemeSearchResponse(BaseModel):
     morpheme: str
     iso_639_3: str
-    total_matches: int
+    result_count: int
     results: List[MorphemeSearchResult]

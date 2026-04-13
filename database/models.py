@@ -931,7 +931,7 @@ class VerseMorphemeIndex(Base):
         ForeignKey("language_morphemes.id", ondelete="CASCADE"),
         nullable=False,
     )
-    count = Column(Integer, default=1)
+    count = Column(Integer, nullable=False, server_default="1")
     surface_forms = Column(JSONB)
 
     __table_args__ = (

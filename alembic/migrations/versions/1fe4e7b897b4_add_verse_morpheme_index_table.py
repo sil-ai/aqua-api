@@ -24,7 +24,7 @@ def upgrade() -> None:
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('verse_text_id', sa.Integer(), nullable=False),
     sa.Column('morpheme_id', sa.Integer(), nullable=False),
-    sa.Column('count', sa.Integer(), nullable=True),
+    sa.Column('count', sa.Integer(), nullable=False, server_default='1'),
     sa.Column('surface_forms', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
     sa.ForeignKeyConstraint(['morpheme_id'], ['language_morphemes.id'], ondelete='CASCADE'),
     sa.ForeignKeyConstraint(['verse_text_id'], ['verse_text.id'], ondelete='CASCADE'),

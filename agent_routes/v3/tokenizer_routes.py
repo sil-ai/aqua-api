@@ -37,11 +37,14 @@ from models import (
     TokenizerRunRequest,
 )
 from security_routes.auth_routes import get_current_user
+from security_routes.utilities import is_user_authorized_for_revision
 from utils.logging_config import setup_logger
 from utils.morpheme_tokenizer import strip_punct, viterbi_segment
 
 container_id = socket.gethostname()
 logger = setup_logger(__name__, container_id=container_id)
+
+INDEX_BATCH_SIZE = 5000
 
 router = fastapi.APIRouter()
 
@@ -405,6 +408,22 @@ async def index_morphemes(
     iso = payload.iso_639_3
     revision_id = payload.revision_id
 
+    # Validate revision exists
+    rev_exists = await db.execute(
+        select(BibleRevision.id).where(BibleRevision.id == revision_id)
+    )
+    if rev_exists.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown revision_id {revision_id}",
+        )
+
+    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this revision",
+        )
+
     # Load all morphemes for the language
     result = await db.execute(
         select(LanguageMorpheme.id, LanguageMorpheme.morpheme).where(
@@ -468,10 +487,8 @@ async def index_morphemes(
 
     try:
         if index_rows:
-            # Bulk upsert in batches
-            BATCH_SIZE = 5000
-            for i in range(0, len(index_rows), BATCH_SIZE):
-                batch = index_rows[i : i + BATCH_SIZE]
+            for i in range(0, len(index_rows), INDEX_BATCH_SIZE):
+                batch = index_rows[i : i + INDEX_BATCH_SIZE]
                 stmt = pg_insert(VerseMorphemeIndex).values(batch)
                 stmt = stmt.on_conflict_do_update(
                     constraint="uq_verse_morpheme",
@@ -520,6 +537,24 @@ async def search_morpheme(
     current_user: UserModel = Depends(get_current_user),
 ):
     request_start = time.perf_counter()
+
+    if revision_id is not None:
+        if not await is_user_authorized_for_revision(
+            current_user.id, revision_id, db
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized to access this revision",
+            )
+
+    if comparison_revision_id is not None:
+        if not await is_user_authorized_for_revision(
+            current_user.id, comparison_revision_id, db
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User not authorized to access the comparison revision",
+            )
 
     # Build query
     query = (
@@ -594,6 +629,6 @@ async def search_morpheme(
     return MorphemeSearchResponse(
         morpheme=morpheme,
         iso_639_3=iso,
-        total_matches=len(results),
+        result_count=len(results),
         results=results,
     )

@@ -66,7 +66,9 @@ def viterbi_segment(
     while i > 0:
         entry = back[i]
         if entry is None:
-            break
+            raise ValueError(
+                f"Viterbi backtrack broken at position {i} in word '{word}'"
+            )
         j, kind = entry
         segments.append((kind, word[j:i]))
         i = j
