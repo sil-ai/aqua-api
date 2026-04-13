@@ -20,10 +20,12 @@ from database.models import (
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
+)
+from database.models import UserDB as UserModel
+from database.models import (
     VerseMorphemeIndex,
     VerseText,
 )
-from database.models import UserDB as UserModel
 from models import (
     IndexRequest,
     IndexResponse,
