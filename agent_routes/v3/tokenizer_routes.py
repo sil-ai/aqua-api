@@ -15,16 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.dependencies import get_db
 from database.models import (
     BibleRevision,
+    BibleVersion,
     IsoLanguage,
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
-)
-from database.models import UserDB as UserModel
-from database.models import (
     VerseMorphemeIndex,
     VerseText,
 )
+from database.models import UserDB as UserModel
 from models import (
     IndexRequest,
     IndexResponse,
@@ -417,14 +416,25 @@ async def index_morphemes(
             detail="User not authorized to access this revision",
         )
 
-    # Validate revision exists (after auth to avoid leaking valid IDs)
-    rev_exists = await db.execute(
-        select(BibleRevision.id).where(BibleRevision.id == revision_id)
+    # Validate revision exists and belongs to the given language
+    rev_result = await db.execute(
+        select(BibleVersion.iso_language)
+        .join(BibleRevision, BibleRevision.bible_version_id == BibleVersion.id)
+        .where(BibleRevision.id == revision_id)
     )
-    if rev_exists.scalar_one_or_none() is None:
+    rev_iso = rev_result.scalar_one_or_none()
+    if rev_iso is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unknown revision_id {revision_id}",
+        )
+    if rev_iso != iso:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Revision {revision_id} belongs to language '{rev_iso}', "
+                f"not '{iso}'"
+            ),
         )
 
     # Load all morphemes for the language
@@ -533,7 +543,7 @@ async def index_morphemes(
 async def search_morpheme(
     iso: str,
     morpheme: str,
-    revision_id: Optional[int] = None,
+    revision_id: int = Query(..., description="Revision to search in"),
     comparison_revision_id: Optional[int] = None,
     limit: int = Query(default=20, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
@@ -541,12 +551,11 @@ async def search_morpheme(
 ):
     request_start = time.perf_counter()
 
-    if revision_id is not None:
-        if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User not authorized to access this revision",
-            )
+    if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this revision",
+        )
 
     if comparison_revision_id is not None:
         if not await is_user_authorized_for_revision(
@@ -577,11 +586,9 @@ async def search_morpheme(
         .where(
             LanguageMorpheme.morpheme == morpheme,
             LanguageMorpheme.iso_639_3 == iso,
+            VerseText.revision_id == revision_id,
         )
     )
-
-    if revision_id is not None:
-        query = query.where(VerseText.revision_id == revision_id)
 
     query = query.order_by(VerseMorphemeIndex.count.desc()).limit(limit)
 
