@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from database.dependencies import get_db
 from database.models import (
     BibleRevision,
@@ -18,10 +19,12 @@ from database.models import (
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
+)
+from database.models import UserDB as UserModel
+from database.models import (
     VerseMorphemeIndex,
     VerseText,
 )
-from database.models import UserDB as UserModel
 from models import (
     IndexRequest,
     IndexResponse,
@@ -539,9 +542,7 @@ async def search_morpheme(
     request_start = time.perf_counter()
 
     if revision_id is not None:
-        if not await is_user_authorized_for_revision(
-            current_user.id, revision_id, db
-        ):
+        if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="User not authorized to access this revision",

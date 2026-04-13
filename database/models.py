@@ -935,9 +935,7 @@ class VerseMorphemeIndex(Base):
     surface_forms = Column(JSONB)
 
     __table_args__ = (
-        UniqueConstraint(
-            "verse_text_id", "morpheme_id", name="uq_verse_morpheme"
-        ),
+        UniqueConstraint("verse_text_id", "morpheme_id", name="uq_verse_morpheme"),
         Index("ix_verse_morpheme_index_morpheme", "morpheme_id"),
         Index("ix_verse_morpheme_index_verse", "verse_text_id"),
     )
