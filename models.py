@@ -1241,3 +1241,28 @@ class TokenizerRunCommitResponse(BaseModel):
     n_morphemes_new: int
     n_morphemes_existing: int
     n_class_conflicts: int
+
+
+class IndexRequest(BaseModel):
+    iso_639_3: str
+    revision_id: int
+
+
+class IndexResponse(BaseModel):
+    verses_indexed: int
+    unique_morpheme_verse_pairs: int
+
+
+class MorphemeSearchResult(BaseModel):
+    verse_reference: str
+    text: str
+    comparison_text: Optional[str] = None
+    surface_forms: List[str]
+    count: int
+
+
+class MorphemeSearchResponse(BaseModel):
+    morpheme: str
+    iso_639_3: str
+    result_count: int
+    results: List[MorphemeSearchResult]

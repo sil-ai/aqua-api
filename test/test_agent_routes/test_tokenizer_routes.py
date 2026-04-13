@@ -1,20 +1,40 @@
 """Tests for morpheme tokenizer storage API endpoints."""
 
-from database.models import LanguageMorpheme, LanguageProfile, TokenizerRun
+from database.models import (
+    LanguageMorpheme,
+    LanguageProfile,
+    TokenizerRun,
+    VerseMorphemeIndex,
+    VerseText,
+)
 
 prefix = "v3"
 
 TEST_ISO = "swh"
+# Test revisions belong to a BibleVersion with iso_language="eng",
+# so index/search tests must use "eng" for iso-revision consistency.
+INDEX_ISO = "eng"
 
 
 def _cleanup(db_session):
-    db_session.query(TokenizerRun).filter(TokenizerRun.iso_639_3 == TEST_ISO).delete()
-    db_session.query(LanguageMorpheme).filter(
-        LanguageMorpheme.iso_639_3 == TEST_ISO
-    ).delete()
-    db_session.query(LanguageProfile).filter(
-        LanguageProfile.iso_639_3 == TEST_ISO
-    ).delete()
+    for iso in (TEST_ISO, INDEX_ISO):
+        morpheme_ids = (
+            db_session.query(LanguageMorpheme.id)
+            .filter(LanguageMorpheme.iso_639_3 == iso)
+            .all()
+        )
+        mid_list = [row.id for row in morpheme_ids]
+        if mid_list:
+            db_session.query(VerseMorphemeIndex).filter(
+                VerseMorphemeIndex.morpheme_id.in_(mid_list)
+            ).delete(synchronize_session="fetch")
+        db_session.query(TokenizerRun).filter(TokenizerRun.iso_639_3 == iso).delete()
+        db_session.query(LanguageMorpheme).filter(
+            LanguageMorpheme.iso_639_3 == iso
+        ).delete()
+        db_session.query(LanguageProfile).filter(
+            LanguageProfile.iso_639_3 == iso
+        ).delete()
     db_session.commit()
 
 
@@ -300,4 +320,383 @@ def test_tokenizer_runs_list_all_statuses(
     )
     assert resp.status_code == 200
     assert len(resp.json()["runs"]) == 0
+    _cleanup(db_session)
+
+
+# ---------------------------------------------------------------------------
+# Verse morpheme index tests
+# ---------------------------------------------------------------------------
+
+
+def _index_run_payload(revision_id, morphemes, profile=None):
+    """Payload for tokenizer runs using INDEX_ISO (matches test revision language)."""
+    body = {
+        "iso_639_3": INDEX_ISO,
+        "revision_id": revision_id,
+        "n_sample_verses": 10,
+        "sample_method": "set_cover",
+        "source_model": "gpt-5-mini",
+        "morphemes": morphemes,
+        "stats": {"char_coverage_held_out": 0.95},
+    }
+    if profile is not None:
+        body["profile"] = profile
+    return body
+
+
+def _setup_morphemes_and_verses(db_session, client, headers, revision_id, verses):
+    """Helper: commit a tokenizer run with morphemes and insert verse_text rows.
+
+    Uses INDEX_ISO ("eng") which matches the test revision's BibleVersion language.
+    `verses` is a list of (verse_ref, book, chapter, verse_num, text) tuples.
+    Returns the list of created VerseText objects.
+    """
+    profile = {"name": "English", "family": "Indo-European"}
+    morphemes = [
+        {"morpheme": "manyizyi", "morpheme_class": "LEXICAL"},
+        {"morpheme": "umu", "morpheme_class": "GRAMMATICAL"},
+        {"morpheme": "bha", "morpheme_class": "GRAMMATICAL"},
+        {"morpheme": "bhomba", "morpheme_class": "LEXICAL"},
+    ]
+
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_index_run_payload(revision_id, morphemes, profile=profile),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    vt_objs = []
+    for vref, book, chapter, verse_num, text in verses:
+        vt = VerseText(
+            text=text,
+            revision_id=revision_id,
+            verse_reference=vref,
+            book=book,
+            chapter=chapter,
+            verse=verse_num,
+        )
+        db_session.add(vt)
+        vt_objs.append(vt)
+    db_session.commit()
+    return vt_objs
+
+
+def _cleanup_verses(db_session, vt_objs):
+    """Remove VerseText rows created during a test.
+
+    Uses query-based delete to avoid triggering SQLAlchemy cascade on the
+    VerseText -> BibleRevision relationship which would delete the shared
+    test revision.
+    """
+    vt_ids = [vt.id for vt in vt_objs]
+    if vt_ids:
+        db_session.query(VerseText).filter(VerseText.id.in_(vt_ids)).delete(
+            synchronize_session="fetch"
+        )
+        db_session.commit()
+
+
+def test_index_and_search_round_trip(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Commit morphemes, insert verses, index, then search — verify results."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    verses = [
+        ("GEN 1:1", "GEN", 1, 1, "Umumanyizyi bhabhomba"),
+        ("GEN 1:2", "GEN", 1, 2, "Bhabhomba umumanyizyi bhabhomba"),
+    ]
+    vt_objs = _setup_morphemes_and_verses(
+        db_session, client, headers, test_revision_id, verses
+    )
+
+    # Index
+    resp = client.post(
+        f"/{prefix}/tokenizer/index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["verses_indexed"] == 2
+    assert data["unique_morpheme_verse_pairs"] > 0
+
+    # Search for a stem morpheme
+    resp = client.get(
+        f"/{prefix}/tokenizer/search?iso={INDEX_ISO}&morpheme=manyizyi&revision_id={test_revision_id}",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["morpheme"] == "manyizyi"
+    assert data["result_count"] == 2
+    # Both verses contain "umumanyizyi" which includes the stem "manyizyi"
+    refs = {r["verse_reference"] for r in data["results"]}
+    assert refs == {"GEN 1:1", "GEN 1:2"}
+
+    _cleanup_verses(db_session, vt_objs)
+    _cleanup(db_session)
+
+
+def test_index_surface_forms(client, regular_token1, test_revision_id, db_session):
+    """Verify surface_forms captures the original inflected words."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    verses = [
+        ("GEN 2:1", "GEN", 2, 1, "Umumanyizyi akabhabhomba"),
+    ]
+    vt_objs = _setup_morphemes_and_verses(
+        db_session, client, headers, test_revision_id, verses
+    )
+
+    client.post(
+        f"/{prefix}/tokenizer/index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+
+    resp = client.get(
+        f"/{prefix}/tokenizer/search?iso={INDEX_ISO}&morpheme=manyizyi&revision_id={test_revision_id}",
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    result = resp.json()["results"][0]
+    # surface_forms stores the original-case stripped word containing the morpheme
+    assert "Umumanyizyi" in result["surface_forms"]
+
+    _cleanup_verses(db_session, vt_objs)
+    _cleanup(db_session)
+
+
+def test_index_idempotency(client, regular_token1, test_revision_id, db_session):
+    """Re-indexing the same revision produces the same rows, no duplicates."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    verses = [
+        ("GEN 3:1", "GEN", 3, 1, "Umumanyizyi bhabhomba"),
+    ]
+    vt_objs = _setup_morphemes_and_verses(
+        db_session, client, headers, test_revision_id, verses
+    )
+
+    body = {"iso_639_3": INDEX_ISO, "revision_id": test_revision_id}
+    resp1 = client.post(f"/{prefix}/tokenizer/index", json=body, headers=headers)
+    assert resp1.status_code == 200
+    pairs1 = resp1.json()["unique_morpheme_verse_pairs"]
+
+    resp2 = client.post(f"/{prefix}/tokenizer/index", json=body, headers=headers)
+    assert resp2.status_code == 200
+    pairs2 = resp2.json()["unique_morpheme_verse_pairs"]
+
+    assert pairs1 == pairs2
+
+    # Verify no duplicate rows in the DB (scoped to test morphemes)
+    morpheme_ids = [
+        row.id
+        for row in db_session.query(LanguageMorpheme.id)
+        .filter(LanguageMorpheme.iso_639_3 == INDEX_ISO)
+        .all()
+    ]
+    count = (
+        db_session.query(VerseMorphemeIndex)
+        .filter(VerseMorphemeIndex.morpheme_id.in_(morpheme_ids))
+        .count()
+    )
+    assert count == pairs1
+
+    _cleanup_verses(db_session, vt_objs)
+    _cleanup(db_session)
+
+
+def test_cross_revision_search(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Index two revisions, search each separately, verify results."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    verses_rev1 = [
+        ("GEN 4:1", "GEN", 4, 1, "Umumanyizyi"),
+    ]
+    vt1 = _setup_morphemes_and_verses(
+        db_session, client, headers, test_revision_id, verses_rev1
+    )
+
+    verses_rev2 = [
+        ("GEN 4:1", "GEN", 4, 1, "Bhabhomba umumanyizyi"),
+    ]
+    # Add verse_text for second revision (profile+morphemes already exist)
+    vt2 = []
+    for vref, book, chapter, verse_num, text in verses_rev2:
+        vt = VerseText(
+            text=text,
+            revision_id=test_revision_id_2,
+            verse_reference=vref,
+            book=book,
+            chapter=chapter,
+            verse=verse_num,
+        )
+        db_session.add(vt)
+        vt2.append(vt)
+    db_session.commit()
+
+    # Index both revisions
+    client.post(
+        f"/{prefix}/tokenizer/index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+    client.post(
+        f"/{prefix}/tokenizer/index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id_2},
+        headers=headers,
+    )
+
+    # Search each revision separately — both should have results
+    resp1 = client.get(
+        f"/{prefix}/tokenizer/search?iso={INDEX_ISO}&morpheme=manyizyi"
+        f"&revision_id={test_revision_id}",
+        headers=headers,
+    )
+    assert resp1.status_code == 200
+    assert resp1.json()["result_count"] == 1
+
+    resp2 = client.get(
+        f"/{prefix}/tokenizer/search?iso={INDEX_ISO}&morpheme=manyizyi"
+        f"&revision_id={test_revision_id_2}",
+        headers=headers,
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["result_count"] == 1
+
+    _cleanup_verses(db_session, vt1 + vt2)
+    _cleanup(db_session)
+
+
+def test_search_with_comparison_text(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Search with comparison_revision_id includes parallel text."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    verses_main = [
+        ("GEN 5:1", "GEN", 5, 1, "Umumanyizyi akabhabhomba"),
+    ]
+    vt_main = _setup_morphemes_and_verses(
+        db_session, client, headers, test_revision_id, verses_main
+    )
+
+    # Add a comparison verse for the same reference on a different revision
+    vt_comp = VerseText(
+        text="The teacher was working",
+        revision_id=test_revision_id_2,
+        verse_reference="GEN 5:1",
+        book="GEN",
+        chapter=5,
+        verse=1,
+    )
+    db_session.add(vt_comp)
+    db_session.commit()
+
+    client.post(
+        f"/{prefix}/tokenizer/index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+
+    resp = client.get(
+        f"/{prefix}/tokenizer/search?iso={INDEX_ISO}&morpheme=manyizyi"
+        f"&revision_id={test_revision_id}"
+        f"&comparison_revision_id={test_revision_id_2}",
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["result_count"] == 1
+    assert data["results"][0]["comparison_text"] == "The teacher was working"
+
+    _cleanup_verses(db_session, vt_main + [vt_comp])
+    _cleanup(db_session)
+
+
+def test_search_unknown_morpheme_returns_empty(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Searching for a morpheme that doesn't exist returns 200 with empty results."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    verses = [
+        ("GEN 6:1", "GEN", 6, 1, "Umumanyizyi bhabhomba"),
+    ]
+    vt_objs = _setup_morphemes_and_verses(
+        db_session, client, headers, test_revision_id, verses
+    )
+
+    client.post(
+        f"/{prefix}/tokenizer/index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+
+    resp = client.get(
+        f"/{prefix}/tokenizer/search?iso={INDEX_ISO}&morpheme=nonexistent&revision_id={test_revision_id}",
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["result_count"] == 0
+    assert data["results"] == []
+
+    _cleanup_verses(db_session, vt_objs)
+    _cleanup(db_session)
+
+
+def test_index_no_morpheme_matches(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Verses exist and morphemes exist, but no verse text contains any morpheme."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Commit morphemes that won't match the verse text
+    profile = {"name": "English", "family": "Indo-European"}
+    morphemes = [
+        {"morpheme": "zzz", "morpheme_class": "LEXICAL"},
+        {"morpheme": "yyy", "morpheme_class": "GRAMMATICAL"},
+    ]
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_index_run_payload(test_revision_id, morphemes, profile=profile),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    vt = VerseText(
+        text="hello world",
+        revision_id=test_revision_id,
+        verse_reference="GEN 7:1",
+        book="GEN",
+        chapter=7,
+        verse=1,
+    )
+    db_session.add(vt)
+    db_session.commit()
+
+    resp = client.post(
+        f"/{prefix}/tokenizer/index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["verses_indexed"] == 1
+    assert data["unique_morpheme_verse_pairs"] == 0
+
+    _cleanup_verses(db_session, [vt])
     _cleanup(db_session)
