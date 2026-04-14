@@ -7,7 +7,7 @@ from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -452,7 +452,7 @@ async def index_morphemes(
             detail=f"No morphemes found for iso '{iso}'",
         )
 
-    morpheme_by_text = {row.morpheme: row.id for row in morpheme_rows}
+    morpheme_by_text = {row.morpheme.casefold(): row.id for row in morpheme_rows}
     morpheme_set = set(morpheme_by_text.keys())
     max_morph_len = max(len(m) for m in morpheme_set)
 
@@ -480,7 +480,7 @@ async def index_morphemes(
             stripped = strip_punct(word)
             if not stripped:
                 continue
-            lowered = stripped.lower()
+            lowered = stripped.casefold()
             segments = viterbi_segment(lowered, morpheme_set, max_morph_len)
             for kind, seg in segments:
                 if kind == "morph" and seg in morpheme_by_text:
@@ -501,6 +501,17 @@ async def index_morphemes(
             )
 
     try:
+        # Delete stale index rows for this revision before re-indexing,
+        # so morphemes no longer present in verses are cleaned up.
+        verse_ids = [v.id for v in verses]
+        for i in range(0, len(verse_ids), INDEX_BATCH_SIZE):
+            batch_ids = verse_ids[i : i + INDEX_BATCH_SIZE]
+            await db.execute(
+                delete(VerseMorphemeIndex).where(
+                    VerseMorphemeIndex.verse_text_id.in_(batch_ids)
+                )
+            )
+
         if index_rows:
             for i in range(0, len(index_rows), INDEX_BATCH_SIZE):
                 batch = index_rows[i : i + INDEX_BATCH_SIZE]
