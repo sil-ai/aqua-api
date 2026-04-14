@@ -1656,7 +1656,13 @@ def test_add_lexeme_card_upsert_append_duplicate_examples_no_500(
     assert response3.status_code == 200
     data3 = response3.json()
     example_pairs = {(e["source"], e["target"]) for e in data3["examples"]}
-    assert ("She runs", "Anakimbia") in example_pairs
+    assert len(data3["examples"]) == 4
+    assert example_pairs == {
+        ("I run", "Nakimbia"),
+        ("We run", "Tunakimbia"),
+        ("They run", "Wanakimbia"),
+        ("She runs", "Anakimbia"),
+    }
 
 
 def test_add_lexeme_card_upsert_append_explicit(
