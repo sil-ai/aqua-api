@@ -291,22 +291,12 @@ async def commit_tokenizer_run(
         n_conflicts = 0
 
         if payload.morphemes:
-            seen = set()
-            duplicates = set()
+            # Normalize to lowercase and deduplicate (keep first-seen class)
+            incoming: dict[str, str] = {}
             for m in payload.morphemes:
-                if m.morpheme in seen:
-                    duplicates.add(m.morpheme)
-                seen.add(m.morpheme)
-            if duplicates:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        "Duplicate morphemes in payload: "
-                        + ", ".join(sorted(duplicates))
-                    ),
-                )
-
-            incoming = {m.morpheme: m.morpheme_class for m in payload.morphemes}
+                key = m.morpheme.casefold()
+                if key not in incoming:
+                    incoming[key] = m.morpheme_class
 
             existing_result = await db.execute(
                 select(
@@ -597,7 +587,7 @@ async def search_morpheme(
             LanguageMorpheme.id == VerseMorphemeIndex.morpheme_id,
         )
         .where(
-            LanguageMorpheme.morpheme == morpheme,
+            LanguageMorpheme.morpheme == morpheme.casefold(),
             LanguageMorpheme.iso_639_3 == iso,
             VerseText.revision_id == revision_id,
         )
@@ -648,7 +638,7 @@ async def search_morpheme(
         },
     )
     return MorphemeSearchResponse(
-        morpheme=morpheme,
+        morpheme=morpheme.casefold(),
         iso_639_3=iso,
         result_count=len(results),
         results=results,
