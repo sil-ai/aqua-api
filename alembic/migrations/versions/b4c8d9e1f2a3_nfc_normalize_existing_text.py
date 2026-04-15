@@ -83,19 +83,39 @@ def upgrade() -> None:
     # NFC normalization may create duplicates against the unique index
     # on (LOWER(target_lemma), source_language, target_language).
 
-    # 2a. Delete duplicate lexeme card examples pointing to loser cards.
+    # 2a. Re-point examples from loser cards to the keeper (smallest id per
+    #     normalized lemma + language pair), preserving data instead of deleting.
+    op.execute(
+        """
+        UPDATE agent_lexeme_card_examples alce
+        SET lexeme_card_id = keeper.id
+        FROM agent_lexeme_cards lc
+        JOIN (
+            SELECT LOWER(normalize(target_lemma, NFC)) AS nfc_lemma,
+                   source_language,
+                   target_language,
+                   MIN(id) AS id
+            FROM agent_lexeme_cards
+            GROUP BY LOWER(normalize(target_lemma, NFC)),
+                     source_language, target_language
+        ) keeper
+          ON keeper.nfc_lemma = LOWER(normalize(lc.target_lemma, NFC))
+         AND keeper.source_language = lc.source_language
+         AND keeper.target_language = lc.target_language
+        WHERE alce.lexeme_card_id = lc.id
+          AND lc.id != keeper.id
+        """
+    )
+
+    # 2a-ii. Remove duplicate examples that now share the same
+    #        (lexeme_card_id, revision_id, source_text, target_text).
     op.execute(
         """
         DELETE FROM agent_lexeme_card_examples
-        WHERE lexeme_card_id IN (
-            SELECT lc.id
-            FROM agent_lexeme_cards lc
-            WHERE lc.id NOT IN (
-                SELECT MIN(id)
-                FROM agent_lexeme_cards
-                GROUP BY LOWER(normalize(target_lemma, NFC)),
-                         source_language, target_language
-            )
+        WHERE id NOT IN (
+            SELECT DISTINCT ON (lexeme_card_id, revision_id, source_text, target_text) id
+            FROM agent_lexeme_card_examples
+            ORDER BY lexeme_card_id, revision_id, source_text, target_text, id
         )
         """
     )
