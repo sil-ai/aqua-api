@@ -1,7 +1,12 @@
 # test_agent_routes.py
 import unicodedata
 
-from database.models import AgentCritiqueIssue, AgentWordAlignment
+from database.models import (
+    AgentCritiqueIssue,
+    AgentLexemeCard,
+    AgentLexemeCardExample,
+    AgentWordAlignment,
+)
 
 prefix = "v3"
 
@@ -5325,3 +5330,70 @@ def test_post_lexeme_card_nfd_nfc_treated_as_same_lemma(
     data = response.json()
     # Should have updated the existing card, not created a new one
     assert data["confidence"] == 0.99
+
+
+def test_delete_lexeme_card_success(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test DELETE removes a lexeme card and its examples via cascade."""
+    # Create a card with examples
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "remove",
+            "target_lemma": "delete_test_target",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source_text": "remove this", "target_text": "ondoa hii"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # Verify examples exist in DB before delete
+    examples_before = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .all()
+    )
+    assert len(examples_before) > 0
+
+    # Delete the card
+    delete_response = client.delete(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert delete_response.status_code == 204
+
+    # Verify card is gone from DB
+    db_session.expire_all()
+    card = (
+        db_session.query(AgentLexemeCard).filter(AgentLexemeCard.id == card_id).first()
+    )
+    assert card is None
+
+    # Verify examples were cascade-deleted
+    examples_after = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .all()
+    )
+    assert len(examples_after) == 0
+
+
+def test_delete_lexeme_card_not_found(client, regular_token1):
+    """Test DELETE returns 404 for non-existent card."""
+    response = client.delete(
+        "/v3/agent/lexeme-card/999999",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_delete_lexeme_card_unauthorized(client):
+    """Test DELETE requires authentication."""
+    response = client.delete("/v3/agent/lexeme-card/1")
+    assert response.status_code == 401
