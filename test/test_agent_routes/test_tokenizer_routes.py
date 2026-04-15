@@ -925,3 +925,52 @@ def test_nfc_normalization_on_index_and_search(
 
     _cleanup_verses(db_session, [vt])
     _cleanup(db_session)
+
+
+def test_grammar_sketch_round_trip(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Grammar sketch is stored and returned via profile endpoints."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    sketch = (
+        "## Noun Morphology\n\n"
+        "The language has a noun class system.\n"
+        "- **Class ʉ-**: ʉMlengi, ʉmsenya\n"
+    )
+    profile = {
+        "name": "Swahili",
+        "family": "Atlantic-Congo",
+        "grammar_sketch": sketch,
+    }
+    morphemes = [{"morpheme": "ki", "morpheme_class": "GRAMMATICAL"}]
+
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(test_revision_id, morphemes, profile=profile),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = client.get(f"/{prefix}/tokenizer/profile/{TEST_ISO}", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["grammar_sketch"] == sketch
+
+    # Update the sketch via PUT
+    updated_sketch = sketch + "\n## Verb Morphology\n\nSubject-verb agreement.\n"
+    resp = client.put(
+        f"/{prefix}/tokenizer/profile/{TEST_ISO}",
+        json={"name": "Swahili", "grammar_sketch": updated_sketch},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["grammar_sketch"] == updated_sketch
+
+    # Confirm GET reflects the update
+    resp = client.get(f"/{prefix}/tokenizer/profile/{TEST_ISO}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["grammar_sketch"] == updated_sketch
+
+    _cleanup(db_session)
