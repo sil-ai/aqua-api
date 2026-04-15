@@ -854,6 +854,7 @@ class LanguageProfile(Base):
     script = Column(Text, nullable=True)
     typology_summary = Column(Text, nullable=True)
     morphology_notes = Column(Text, nullable=True)
+    grammar_sketch = Column(Text, nullable=True)
     common_affixes = Column(JSONB, nullable=True)
     sources = Column(JSONB, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now())
