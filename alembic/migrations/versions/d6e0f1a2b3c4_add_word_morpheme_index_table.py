@@ -34,7 +34,7 @@ def upgrade() -> None:
         ),
         sa.Column("position", sa.Integer(), nullable=False),
         sa.Column("total_morphemes", sa.Integer(), nullable=False),
-        sa.Column("word_count", sa.Integer(), server_default="1"),
+        sa.Column("word_count", sa.Integer(), nullable=False, server_default="1"),
     )
     op.create_unique_constraint(
         "uq_word_morpheme_pos",
@@ -48,5 +48,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_word_morpheme_morpheme", table_name="word_morpheme_index")
     op.drop_index("ix_word_morpheme_iso", table_name="word_morpheme_index")
-    op.drop_constraint("uq_word_morpheme_pos", table_name="word_morpheme_index")
+    op.drop_constraint(
+        "uq_word_morpheme_pos", table_name="word_morpheme_index", type_="unique"
+    )
     op.drop_table("word_morpheme_index")

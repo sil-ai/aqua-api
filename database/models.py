@@ -959,7 +959,7 @@ class WordMorphemeIndex(Base):
     )
     position = Column(Integer, nullable=False)
     total_morphemes = Column(Integer, nullable=False)
-    word_count = Column(Integer, server_default="1")
+    word_count = Column(Integer, nullable=False, server_default="1")
 
     __table_args__ = (
         UniqueConstraint(

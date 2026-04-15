@@ -893,6 +893,7 @@ async def get_cooccurrences(
 
     result = await db.execute(target_query)
     target_rows = result.all()
+    is_truncated = len(target_rows) == COOCCURRENCE_MAX_WORDS
 
     if not target_rows:
         return CooccurrenceResponse(
@@ -927,11 +928,18 @@ async def get_cooccurrences(
     )
     cooc_rows = cooc_result.all()
 
-    # Aggregate co-occurrence stats
+    # Aggregate co-occurrence stats, deduplicating by (morpheme_id, word)
+    # so a morpheme appearing at multiple positions in the same word is
+    # counted once per word token.
     # morpheme_id -> {count, example_words set, before_count, after_count}
     cooc_stats: dict[int, dict] = {}
+    seen_pairs: set[tuple[int, str]] = set()
     for row in cooc_rows:
         mid = row.morpheme_id
+        pair = (mid, row.word)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
         if mid not in cooc_stats:
             cooc_stats[mid] = {
                 "count": 0,
@@ -1008,5 +1016,6 @@ async def get_cooccurrences(
     return CooccurrenceResponse(
         morpheme=normalized,
         total_words_containing=total_words_containing,
+        is_truncated=is_truncated,
         cooccurrences=cooccurrences,
     )

@@ -31,9 +31,6 @@ def _cleanup(db_session):
             db_session.query(VerseMorphemeIndex).filter(
                 VerseMorphemeIndex.morpheme_id.in_(mid_list)
             ).delete(synchronize_session="fetch")
-            db_session.query(WordMorphemeIndex).filter(
-                WordMorphemeIndex.morpheme_id.in_(mid_list)
-            ).delete(synchronize_session="fetch")
         db_session.query(WordMorphemeIndex).filter(
             WordMorphemeIndex.iso_639_3 == iso
         ).delete()

@@ -1315,6 +1315,7 @@ class CooccurrenceItem(BaseModel):
 class CooccurrenceResponse(BaseModel):
     morpheme: str
     total_words_containing: int
+    is_truncated: bool = False
     cooccurrences: List[CooccurrenceItem]
 
 
