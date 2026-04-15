@@ -4,12 +4,11 @@ import datetime
 import socket
 import time
 import unicodedata
+from collections import defaultdict
 from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
-from collections import defaultdict
-
 from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -23,12 +22,12 @@ from database.models import (
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
-    WordMorphemeIndex,
 )
 from database.models import UserDB as UserModel
 from database.models import (
     VerseMorphemeIndex,
     VerseText,
+    WordMorphemeIndex,
 )
 from models import (
     CooccurrenceItem,
@@ -938,12 +937,16 @@ async def get_cooccurrences(
                 LanguageMorpheme.morpheme_class,
             ).where(LanguageMorpheme.id.in_(list(cooc_stats.keys())))
         )
-        morph_info = {row.id: (row.morpheme, row.morpheme_class) for row in morph_result.all()}
+        morph_info = {
+            row.id: (row.morpheme, row.morpheme_class) for row in morph_result.all()
+        }
     else:
         morph_info = {}
 
     # Build response, sorted by co-occurrence count descending
-    sorted_ids = sorted(cooc_stats, key=lambda mid: cooc_stats[mid]["count"], reverse=True)
+    sorted_ids = sorted(
+        cooc_stats, key=lambda mid: cooc_stats[mid]["count"], reverse=True
+    )
     cooccurrences = []
     for mid in sorted_ids[:limit]:
         stats = cooc_stats[mid]

@@ -1115,9 +1115,7 @@ def test_cooccurrence_unknown_morpheme(
     _cleanup(db_session)
 
 
-def test_word_index_idempotency(
-    client, regular_token1, test_revision_id, db_session
-):
+def test_word_index_idempotency(client, regular_token1, test_revision_id, db_session):
     """Building word index twice yields the same result."""
     _cleanup(db_session)
     headers = {"Authorization": f"Bearer {regular_token1}"}

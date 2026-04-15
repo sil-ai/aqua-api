@@ -963,7 +963,10 @@ class WordMorphemeIndex(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "iso_639_3", "word", "morpheme_id", "position",
+            "iso_639_3",
+            "word",
+            "morpheme_id",
+            "position",
             name="uq_word_morpheme_pos",
         ),
         Index("ix_word_morpheme_iso", "iso_639_3"),
