@@ -291,29 +291,29 @@ async def commit_tokenizer_run(
         n_conflicts = 0
 
         if payload.morphemes:
-            seen = set()
-            duplicates = set()
+            # Normalize to lowercase and deduplicate (keep first-seen class)
+            incoming: dict[str, str] = {}
             for m in payload.morphemes:
-                if m.morpheme in seen:
-                    duplicates.add(m.morpheme)
-                seen.add(m.morpheme)
-            if duplicates:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        "Duplicate morphemes in payload: "
-                        + ", ".join(sorted(duplicates))
-                    ),
-                )
-
-            incoming = {m.morpheme: m.morpheme_class for m in payload.morphemes}
+                key = m.morpheme.casefold()
+                if key not in incoming:
+                    incoming[key] = m.morpheme_class
+                elif incoming[key] != m.morpheme_class:
+                    logger.warning(
+                        "Intra-payload morpheme class conflict (kept first-seen)",
+                        extra={
+                            "iso": iso,
+                            "morpheme": key,
+                            "kept_class": incoming[key],
+                            "discarded_class": m.morpheme_class,
+                        },
+                    )
 
             existing_result = await db.execute(
                 select(
                     LanguageMorpheme.morpheme, LanguageMorpheme.morpheme_class
                 ).where(
                     LanguageMorpheme.iso_639_3 == iso,
-                    LanguageMorpheme.morpheme.in_(list(incoming.keys())),
+                    LanguageMorpheme.morpheme.in_(incoming.keys()),
                 )
             )
             existing_map = {row[0]: row[1] for row in existing_result.all()}
@@ -597,7 +597,7 @@ async def search_morpheme(
             LanguageMorpheme.id == VerseMorphemeIndex.morpheme_id,
         )
         .where(
-            LanguageMorpheme.morpheme == morpheme,
+            LanguageMorpheme.morpheme == morpheme.casefold(),
             LanguageMorpheme.iso_639_3 == iso,
             VerseText.revision_id == revision_id,
         )
@@ -641,14 +641,14 @@ async def search_morpheme(
             "method": "GET",
             "path": "/tokenizer/search",
             "iso": iso,
-            "morpheme": morpheme,
+            "morpheme": morpheme.casefold(),
             "revision_id": revision_id,
             "results": len(results),
             "duration_s": duration,
         },
     )
     return MorphemeSearchResponse(
-        morpheme=morpheme,
+        morpheme=morpheme.casefold(),
         iso_639_3=iso,
         result_count=len(results),
         results=results,
