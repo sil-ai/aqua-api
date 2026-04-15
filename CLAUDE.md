@@ -111,6 +111,18 @@ The application uses async SQLAlchemy with asyncpg. The database URL must use th
 
 Tests use `eng` (English) and `swh` (Swahili) as language codes since these are set up in the test fixtures' `iso_language` table. Other language codes (like `fra`, `deu`) will cause foreign key constraint errors.
 
+## GitHub CLI
+
+`gh issue view` and `gh pr view` fail with a "Projects (classic) is being deprecated" error. Use `--json` to work around it:
+
+```bash
+# View an issue
+gh issue view 123 --json title,body,labels,state
+
+# View a PR
+gh pr view 123 --json title,body,state,mergeStateStatus
+```
+
 ## Pre-commit Hooks
 
 The project uses pre-commit hooks for:

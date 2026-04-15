@@ -1181,6 +1181,48 @@ async def patch_lexeme_card_by_lemma(
         ) from e
 
 
+@router.delete(
+    "/agent/lexeme-card/{card_id}", status_code=status.HTTP_204_NO_CONTENT
+)
+async def delete_lexeme_card(
+    card_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Delete a lexeme card by ID.
+
+    Associated examples are deleted automatically via cascade.
+
+    Returns 204 No Content on success, 404 if card not found.
+    """
+    try:
+        from sqlalchemy import select
+
+        query = select(AgentLexemeCard).where(AgentLexemeCard.id == card_id)
+        result = await db.execute(query)
+        card = result.scalar_one_or_none()
+
+        if not card:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Lexeme card with id {card_id} not found",
+            )
+
+        await db.delete(card)
+        await db.commit()
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error deleting lexeme card: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
 @router.post("/agent/lexeme-card/deduplicate")
 async def deduplicate_lexeme_cards(
     source_language: str,
