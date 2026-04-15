@@ -1075,11 +1075,12 @@ def test_cooccurrence_position_filter(
         db_session, client, headers, test_revision_id, verses
     )
 
-    client.post(
+    resp = client.post(
         f"/{prefix}/tokenizer/word-index",
         json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
         headers=headers,
     )
+    assert resp.status_code == 200, resp.text
 
     # "umu" is at position 0 in both words -> it's a prefix
     resp = client.get(
