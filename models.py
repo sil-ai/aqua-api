@@ -1294,6 +1294,31 @@ class IndexResponse(BaseModel):
     unique_morpheme_verse_pairs: int
 
 
+class WordIndexRequest(BaseModel):
+    iso_639_3: str = Field(..., min_length=3, max_length=3)
+    revision_id: int
+
+
+class WordIndexResponse(BaseModel):
+    unique_words_indexed: int
+    word_morpheme_pairs: int
+
+
+class CooccurrenceItem(BaseModel):
+    morpheme: str
+    morpheme_class: str
+    co_occurrence_count: int
+    example_words: List[str]
+    typical_position: str
+
+
+class CooccurrenceResponse(BaseModel):
+    morpheme: str
+    total_words_containing: int
+    is_truncated: bool = False
+    cooccurrences: List[CooccurrenceItem]
+
+
 class MorphemeSearchResult(BaseModel):
     verse_reference: str
     text: str

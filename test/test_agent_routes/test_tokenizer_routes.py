@@ -8,6 +8,7 @@ from database.models import (
     TokenizerRun,
     VerseMorphemeIndex,
     VerseText,
+    WordMorphemeIndex,
 )
 
 prefix = "v3"
@@ -30,6 +31,9 @@ def _cleanup(db_session):
             db_session.query(VerseMorphemeIndex).filter(
                 VerseMorphemeIndex.morpheme_id.in_(mid_list)
             ).delete(synchronize_session="fetch")
+        db_session.query(WordMorphemeIndex).filter(
+            WordMorphemeIndex.iso_639_3 == iso
+        ).delete()
         db_session.query(TokenizerRun).filter(TokenizerRun.iso_639_3 == iso).delete()
         db_session.query(LanguageMorpheme).filter(
             LanguageMorpheme.iso_639_3 == iso
@@ -995,4 +999,164 @@ def test_grammar_sketch_round_trip(
     assert resp.status_code == 200
     assert resp.json()["grammar_sketch"] is None
 
+    _cleanup(db_session)
+
+
+def test_word_index_and_cooccurrence_round_trip(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Build word index, then query co-occurrences for a morpheme."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # "umumanyizyi" segments as: umu + manyizyi (2 morphemes)
+    # "bhabhomba" segments as: bha + bhomba (2 morphemes)
+    verses = [
+        ("GEN 1:1", "GEN", 1, 1, "Umumanyizyi bhabhomba"),
+        ("GEN 1:2", "GEN", 1, 2, "Bhabhomba umumanyizyi bhabhomba"),
+    ]
+    vt_objs = _setup_morphemes_and_verses(
+        db_session, client, headers, test_revision_id, verses
+    )
+
+    # Build word index
+    resp = client.post(
+        f"/{prefix}/tokenizer/word-index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    # 2 unique words with morphemes: "umumanyizyi" and "bhabhomba"
+    assert data["unique_words_indexed"] == 2
+    # 4 pairs: umu+manyizyi in word 1, bha+bhomba in word 2
+    assert data["word_morpheme_pairs"] == 4
+
+    # Query co-occurrences for "umu" — should find "manyizyi" co-occurs
+    resp = client.get(
+        f"/{prefix}/tokenizer/cooccurrences?iso={INDEX_ISO}&morpheme=umu",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["morpheme"] == "umu"
+    # "umumanyizyi" appears in 2 verses = word_count 2
+    assert data["total_words_containing"] == 2
+    cooc_morphemes = {c["morpheme"] for c in data["cooccurrences"]}
+    assert cooc_morphemes == {"manyizyi"}
+
+    # Check that "manyizyi" appears after "umu" in words
+    manyizyi_cooc = data["cooccurrences"][0]
+    assert manyizyi_cooc["morpheme"] == "manyizyi"
+    assert manyizyi_cooc["typical_position"] == "after"
+    assert manyizyi_cooc["co_occurrence_count"] == 2
+    assert "umumanyizyi" in manyizyi_cooc["example_words"]
+
+    _cleanup_verses(db_session, vt_objs)
+    _cleanup(db_session)
+
+
+def test_cooccurrence_position_filter(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Position filter restricts results to prefix/suffix/infix positions."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # "umubhabhomba" segments as: umu + bha + bhomba (3 morphemes)
+    # This gives us an infix ("bha" at position 1 of 3)
+    verses = [
+        ("GEN 1:1", "GEN", 1, 1, "Umumanyizyi umubhabhomba"),
+    ]
+    vt_objs = _setup_morphemes_and_verses(
+        db_session, client, headers, test_revision_id, verses
+    )
+
+    resp = client.post(
+        f"/{prefix}/tokenizer/word-index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # "umu" is at position 0 in both words -> it's a prefix
+    resp = client.get(
+        f"/{prefix}/tokenizer/cooccurrences?iso={INDEX_ISO}&morpheme=umu&position_filter=prefix",
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_words_containing"] == 2  # umumanyizyi + umubhabhomba
+
+    # "umu" as suffix should yield 0 words (it's always a prefix)
+    resp = client.get(
+        f"/{prefix}/tokenizer/cooccurrences?iso={INDEX_ISO}&morpheme=umu&position_filter=suffix",
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["total_words_containing"] == 0
+
+    # "bha" is at position 1 of 3 in "umubhabhomba" -> it's an infix
+    resp = client.get(
+        f"/{prefix}/tokenizer/cooccurrences?iso={INDEX_ISO}&morpheme=bha&position_filter=infix",
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["total_words_containing"] == 1
+    cooc_morphemes = {c["morpheme"] for c in data["cooccurrences"]}
+    assert "umu" in cooc_morphemes
+    assert "bhomba" in cooc_morphemes
+
+    _cleanup_verses(db_session, vt_objs)
+    _cleanup(db_session)
+
+
+def test_cooccurrence_unknown_morpheme(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Querying co-occurrences for a non-existent morpheme returns 404."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    resp = client.get(
+        f"/{prefix}/tokenizer/cooccurrences?iso={INDEX_ISO}&morpheme=nonexistent",
+        headers=headers,
+    )
+    assert resp.status_code == 404
+
+    _cleanup(db_session)
+
+
+def test_word_index_idempotency(client, regular_token1, test_revision_id, db_session):
+    """Building word index twice yields the same result."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    verses = [
+        ("GEN 1:1", "GEN", 1, 1, "Umumanyizyi bhabhomba"),
+    ]
+    vt_objs = _setup_morphemes_and_verses(
+        db_session, client, headers, test_revision_id, verses
+    )
+
+    resp1 = client.post(
+        f"/{prefix}/tokenizer/word-index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+    assert resp1.status_code == 200
+    data1 = resp1.json()
+    assert data1["unique_words_indexed"] == 2
+    assert data1["word_morpheme_pairs"] == 4
+
+    resp2 = client.post(
+        f"/{prefix}/tokenizer/word-index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+    assert resp2.status_code == 200
+    assert resp2.json() == data1
+
+    _cleanup_verses(db_session, vt_objs)
     _cleanup(db_session)
