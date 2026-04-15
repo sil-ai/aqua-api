@@ -1211,7 +1211,7 @@ class LanguageProfileIn(BaseModel):
     script: Optional[str] = None
     typology_summary: Optional[str] = None
     morphology_notes: Optional[str] = None
-    grammar_sketch: Optional[str] = None
+    grammar_sketch: Optional[str] = Field(None, max_length=65536)
     common_affixes: Optional[List[Dict[str, Any]]] = None
     sources: Optional[List[str]] = None
 

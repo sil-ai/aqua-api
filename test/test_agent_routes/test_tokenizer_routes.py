@@ -973,4 +973,13 @@ def test_grammar_sketch_round_trip(
     assert resp.status_code == 200
     assert resp.json()["grammar_sketch"] == updated_sketch
 
+    # PUT without grammar_sketch should preserve existing value
+    resp = client.put(
+        f"/{prefix}/tokenizer/profile/{TEST_ISO}",
+        json={"name": "Swahili"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["grammar_sketch"] == updated_sketch
+
     _cleanup(db_session)

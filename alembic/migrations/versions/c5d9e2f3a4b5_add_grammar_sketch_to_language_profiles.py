@@ -2,7 +2,7 @@
 
 Revision ID: c5d9e2f3a4b5
 Revises: b4c8d9e1f2a3
-Create Date: 2026-04-15
+Create Date: 2026-04-15 00:00:00.000000
 """
 
 from alembic import op

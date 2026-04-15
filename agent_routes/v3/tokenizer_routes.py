@@ -134,7 +134,7 @@ async def _upsert_profile(
         profile = LanguageProfile(iso_639_3=iso, **payload.model_dump())
         db.add(profile)
     else:
-        for key, value in payload.model_dump().items():
+        for key, value in payload.model_dump(exclude_unset=True).items():
             setattr(profile, key, value)
         # Force the onupdate trigger to fire even when no fields changed,
         # so repeat PUTs always refresh updated_at.
