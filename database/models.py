@@ -940,3 +940,32 @@ class VerseMorphemeIndex(Base):
         Index("ix_verse_morpheme_index_morpheme", "morpheme_id"),
         Index("ix_verse_morpheme_index_verse", "verse_text_id"),
     )
+
+
+class WordMorphemeIndex(Base):
+    __tablename__ = "word_morpheme_index"
+
+    id = Column(Integer, primary_key=True)
+    iso_639_3 = Column(
+        String(3),
+        ForeignKey("language_profiles.iso_639_3", ondelete="CASCADE"),
+        nullable=False,
+    )
+    word = Column(Text, nullable=False)
+    morpheme_id = Column(
+        Integer,
+        ForeignKey("language_morphemes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position = Column(Integer, nullable=False)
+    total_morphemes = Column(Integer, nullable=False)
+    word_count = Column(Integer, server_default="1")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "iso_639_3", "word", "morpheme_id", "position",
+            name="uq_word_morpheme_pos",
+        ),
+        Index("ix_word_morpheme_iso", "iso_639_3"),
+        Index("ix_word_morpheme_morpheme", "morpheme_id"),
+    )
