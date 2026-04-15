@@ -3,6 +3,7 @@ __version__ = "v3"
 import datetime
 import socket
 import time
+import unicodedata
 from typing import Optional
 
 import fastapi
@@ -294,7 +295,7 @@ async def commit_tokenizer_run(
             # Normalize to lowercase and deduplicate (keep first-seen class)
             incoming: dict[str, str] = {}
             for m in payload.morphemes:
-                key = m.morpheme.casefold()
+                key = unicodedata.normalize("NFC", m.morpheme).casefold()
                 if key not in incoming:
                     incoming[key] = m.morpheme_class
                 elif incoming[key] != m.morpheme_class:
@@ -452,7 +453,10 @@ async def index_morphemes(
             detail=f"No morphemes found for iso '{iso}'",
         )
 
-    morpheme_by_text = {row.morpheme.casefold(): row.id for row in morpheme_rows}
+    morpheme_by_text = {
+        unicodedata.normalize("NFC", row.morpheme).casefold(): row.id
+        for row in morpheme_rows
+    }
     morpheme_set = set(morpheme_by_text.keys())
     max_morph_len = max(len(m) for m in morpheme_set)
 
@@ -480,7 +484,7 @@ async def index_morphemes(
             stripped = strip_punct(word)
             if not stripped:
                 continue
-            lowered = stripped.casefold()
+            lowered = unicodedata.normalize("NFC", stripped).casefold()
             segments = viterbi_segment(lowered, morpheme_set, max_morph_len)
             for kind, seg in segments:
                 if kind == "morph" and seg in morpheme_by_text:
@@ -563,6 +567,7 @@ async def search_morpheme(
     current_user: UserModel = Depends(get_current_user),
 ):
     request_start = time.perf_counter()
+    normalized_morpheme = unicodedata.normalize("NFC", morpheme).casefold()
 
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
@@ -597,7 +602,7 @@ async def search_morpheme(
             LanguageMorpheme.id == VerseMorphemeIndex.morpheme_id,
         )
         .where(
-            LanguageMorpheme.morpheme == morpheme.casefold(),
+            LanguageMorpheme.morpheme == normalized_morpheme,
             LanguageMorpheme.iso_639_3 == iso,
             VerseText.revision_id == revision_id,
         )
@@ -641,14 +646,14 @@ async def search_morpheme(
             "method": "GET",
             "path": "/tokenizer/search",
             "iso": iso,
-            "morpheme": morpheme.casefold(),
+            "morpheme": normalized_morpheme,
             "revision_id": revision_id,
             "results": len(results),
             "duration_s": duration,
         },
     )
     return MorphemeSearchResponse(
-        morpheme=morpheme.casefold(),
+        morpheme=normalized_morpheme,
         iso_639_3=iso,
         result_count=len(results),
         results=results,
