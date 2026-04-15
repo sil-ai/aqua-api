@@ -262,6 +262,65 @@ def test_tokenizer_duplicate_morphemes_deduplicated(
     assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["n_morphemes_new"] == 1
+    assert data["n_morphemes_existing"] == 0
+    assert data["n_class_conflicts"] == 0
+
+    # Verify exactly one row stored, casefolded, with first-seen class
+    row = (
+        db_session.query(LanguageMorpheme)
+        .filter(
+            LanguageMorpheme.iso_639_3 == TEST_ISO,
+            LanguageMorpheme.morpheme == "dup",
+        )
+        .one_or_none()
+    )
+    assert row is not None, "Expected one casefolded morpheme row"
+    assert row.morpheme_class == "LEXICAL"
+
+    total = (
+        db_session.query(LanguageMorpheme)
+        .filter(LanguageMorpheme.iso_639_3 == TEST_ISO)
+        .count()
+    )
+    assert total == 1
+
+    _cleanup(db_session)
+
+
+def test_tokenizer_cross_run_case_variant(
+    client, regular_token1, test_revision_id, db_session
+):
+    """A case variant submitted in a later run is counted as existing."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Run 1: store "hello" (lowercase)
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [{"morpheme": "hello", "morpheme_class": "LEXICAL"}],
+            profile={"name": "Swahili"},
+        ),
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["n_morphemes_new"] == 1
+
+    # Run 2: submit "HELLO" — should be recognized as existing
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [{"morpheme": "HELLO", "morpheme_class": "LEXICAL"}],
+        ),
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["n_morphemes_new"] == 0
+    assert data["n_morphemes_existing"] == 1
+
     _cleanup(db_session)
 
 
@@ -465,9 +524,46 @@ def test_index_surface_forms(client, regular_token1, test_revision_id, db_sessio
         headers=headers,
     )
     assert resp.status_code == 200
-    result = resp.json()["results"][0]
+    data = resp.json()
+    assert data["morpheme"] == "manyizyi"
+    result = data["results"][0]
     # surface_forms stores the original-case stripped word containing the morpheme
     assert "Umumanyizyi" in result["surface_forms"]
+
+    _cleanup_verses(db_session, vt_objs)
+    _cleanup(db_session)
+
+
+def test_search_case_insensitive(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Searching with mixed-case query finds lowercase-stored morphemes."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    verses = [
+        ("GEN 2:2", "GEN", 2, 2, "Umumanyizyi bhabhomba"),
+    ]
+    vt_objs = _setup_morphemes_and_verses(
+        db_session, client, headers, test_revision_id, verses
+    )
+
+    client.post(
+        f"/{prefix}/tokenizer/index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+
+    # Search with uppercase — should still find results
+    resp = client.get(
+        f"/{prefix}/tokenizer/search?iso={INDEX_ISO}&morpheme=MANYIZYI&revision_id={test_revision_id}",
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["morpheme"] == "manyizyi"
+    assert data["result_count"] == 1
+    assert data["results"][0]["verse_reference"] == "GEN 2:2"
 
     _cleanup_verses(db_session, vt_objs)
     _cleanup(db_session)

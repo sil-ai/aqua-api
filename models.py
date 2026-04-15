@@ -1234,7 +1234,8 @@ class TokenizerRunRequest(BaseModel):
 
 class TokenizerRunCommitResponse(BaseModel):
     run_id: int
-    # n_morphemes_new + n_morphemes_existing == len(payload.morphemes).
+    # n_morphemes_new + n_morphemes_existing == unique morphemes after
+    # casefolding (may be < len(payload.morphemes) due to case dedup).
     # n_class_conflicts is a subset of n_morphemes_existing: a conflict is
     # an existing row whose stored class disagrees with the incoming class
     # (the stored class wins; the incoming class is logged and discarded).

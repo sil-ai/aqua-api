@@ -297,13 +297,23 @@ async def commit_tokenizer_run(
                 key = m.morpheme.casefold()
                 if key not in incoming:
                     incoming[key] = m.morpheme_class
+                elif incoming[key] != m.morpheme_class:
+                    logger.warning(
+                        "Intra-payload morpheme class conflict (kept first-seen)",
+                        extra={
+                            "iso": iso,
+                            "morpheme": key,
+                            "kept_class": incoming[key],
+                            "discarded_class": m.morpheme_class,
+                        },
+                    )
 
             existing_result = await db.execute(
                 select(
                     LanguageMorpheme.morpheme, LanguageMorpheme.morpheme_class
                 ).where(
                     LanguageMorpheme.iso_639_3 == iso,
-                    LanguageMorpheme.morpheme.in_(list(incoming.keys())),
+                    LanguageMorpheme.morpheme.in_(incoming.keys()),
                 )
             )
             existing_map = {row[0]: row[1] for row in existing_result.all()}
@@ -631,7 +641,7 @@ async def search_morpheme(
             "method": "GET",
             "path": "/tokenizer/search",
             "iso": iso,
-            "morpheme": morpheme,
+            "morpheme": morpheme.casefold(),
             "revision_id": revision_id,
             "results": len(results),
             "duration_s": duration,
