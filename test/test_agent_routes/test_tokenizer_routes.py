@@ -1,5 +1,7 @@
 """Tests for morpheme tokenizer storage API endpoints."""
 
+import unicodedata
+
 from database.models import (
     LanguageMorpheme,
     LanguageProfile,
@@ -802,7 +804,6 @@ def test_nfc_normalization_on_morpheme_commit(
     client, regular_token1, test_revision_id, db_session
 ):
     """NFD-encoded morphemes are stored as NFC so lookups match consistently."""
-    import unicodedata
 
     _cleanup(db_session)
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -838,7 +839,6 @@ def test_nfc_normalization_deduplicates_nfd_nfc(
     client, regular_token1, test_revision_id, db_session
 ):
     """Submitting both NFD and NFC forms of the same morpheme results in one entry."""
-    import unicodedata
 
     _cleanup(db_session)
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -875,7 +875,6 @@ def test_nfc_normalization_on_index_and_search(
     client, regular_token1, test_revision_id, db_session
 ):
     """Verse text with NFD characters matches NFC-stored morphemes during indexing."""
-    import unicodedata
 
     _cleanup(db_session)
     headers = {"Authorization": f"Bearer {regular_token1}"}

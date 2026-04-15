@@ -567,6 +567,7 @@ async def search_morpheme(
     current_user: UserModel = Depends(get_current_user),
 ):
     request_start = time.perf_counter()
+    normalized_morpheme = unicodedata.normalize("NFC", morpheme).casefold()
 
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
@@ -601,8 +602,7 @@ async def search_morpheme(
             LanguageMorpheme.id == VerseMorphemeIndex.morpheme_id,
         )
         .where(
-            LanguageMorpheme.morpheme
-            == unicodedata.normalize("NFC", morpheme).casefold(),
+            LanguageMorpheme.morpheme == normalized_morpheme,
             LanguageMorpheme.iso_639_3 == iso,
             VerseText.revision_id == revision_id,
         )
@@ -646,14 +646,14 @@ async def search_morpheme(
             "method": "GET",
             "path": "/tokenizer/search",
             "iso": iso,
-            "morpheme": unicodedata.normalize("NFC", morpheme).casefold(),
+            "morpheme": normalized_morpheme,
             "revision_id": revision_id,
             "results": len(results),
             "duration_s": duration,
         },
     )
     return MorphemeSearchResponse(
-        morpheme=unicodedata.normalize("NFC", morpheme).casefold(),
+        morpheme=normalized_morpheme,
         iso_639_3=iso,
         result_count=len(results),
         results=results,

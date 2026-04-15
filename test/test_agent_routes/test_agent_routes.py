@@ -1,4 +1,6 @@
 # test_agent_routes.py
+import unicodedata
+
 from database.models import AgentCritiqueIssue, AgentWordAlignment
 
 prefix = "v3"
@@ -5217,7 +5219,6 @@ def test_post_lexeme_card_nfc_normalizes_text_fields(
     client, regular_token1, db_session, test_revision_id
 ):
     """NFD-encoded text fields are stored as NFC in lexeme cards."""
-    import unicodedata
 
     # NFD form: 'a' + combining acute accent
     nfd_lemma = "a\u0301pelile"
@@ -5256,7 +5257,6 @@ def test_patch_lexeme_card_nfc_normalizes_text_fields(
     client, regular_token1, db_session, test_revision_id
 ):
     """PATCH endpoint NFC-normalizes text fields in updates."""
-    import unicodedata
 
     # First create a card with NFC text
     response = client.post(
@@ -5292,7 +5292,6 @@ def test_post_lexeme_card_nfd_nfc_treated_as_same_lemma(
     client, regular_token1, db_session, test_revision_id
 ):
     """NFD and NFC forms of the same target_lemma should be treated as duplicates."""
-    import unicodedata
 
     nfd_lemma = "a\u0301pelile_dedup"
     nfc_lemma = unicodedata.normalize("NFC", nfd_lemma)
