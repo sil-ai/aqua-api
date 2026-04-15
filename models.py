@@ -1,5 +1,6 @@
 import datetime
 import re
+import unicodedata
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
@@ -578,7 +579,12 @@ class LexemeCardIn(BaseModel):
     @field_validator("target_lemma")
     @classmethod
     def normalize_target_lemma(cls, v):
-        return v.lower() if v else v
+        return unicodedata.normalize("NFC", v).lower() if v else v
+
+    @field_validator("source_lemma")
+    @classmethod
+    def normalize_source_lemma(cls, v):
+        return unicodedata.normalize("NFC", v) if v else v
 
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
@@ -588,6 +594,20 @@ class LexemeCardIn(BaseModel):
     confidence: Optional[float] = None
     english_lemma: Optional[str] = None
     alignment_scores: Optional[Dict[str, float]] = None
+
+    @field_validator("surface_forms")
+    @classmethod
+    def normalize_surface_forms(cls, v):
+        if v is None:
+            return v
+        return [unicodedata.normalize("NFC", s) if isinstance(s, str) else s for s in v]
+
+    @field_validator("source_surface_forms")
+    @classmethod
+    def normalize_source_surface_forms(cls, v):
+        if v is None:
+            return v
+        return [unicodedata.normalize("NFC", s) if isinstance(s, str) else s for s in v]
 
     model_config = {
         "json_schema_extra": {
@@ -666,7 +686,12 @@ class LexemeCardPatch(BaseModel):
     @field_validator("target_lemma")
     @classmethod
     def normalize_target_lemma(cls, v):
-        return v.lower() if v else v
+        return unicodedata.normalize("NFC", v).lower() if v else v
+
+    @field_validator("source_lemma")
+    @classmethod
+    def normalize_source_lemma(cls, v):
+        return unicodedata.normalize("NFC", v) if v else v
 
     pos: Optional[str] = None
     confidence: Optional[float] = None
@@ -677,6 +702,20 @@ class LexemeCardPatch(BaseModel):
     examples: Optional[List[dict]] = None  # Each dict has: source, target, revision_id
     # Dict values can be float or None (None means remove that key)
     alignment_scores: Optional[Dict[str, Optional[float]]] = None
+
+    @field_validator("surface_forms")
+    @classmethod
+    def normalize_surface_forms(cls, v):
+        if v is None:
+            return v
+        return [unicodedata.normalize("NFC", s) for s in v]
+
+    @field_validator("source_surface_forms")
+    @classmethod
+    def normalize_source_surface_forms(cls, v):
+        if v is None:
+            return v
+        return [unicodedata.normalize("NFC", s) for s in v]
 
     model_config = {
         "json_schema_extra": {

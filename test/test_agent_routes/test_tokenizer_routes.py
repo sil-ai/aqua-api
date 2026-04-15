@@ -796,3 +796,133 @@ def test_index_no_morpheme_matches(
 
     _cleanup_verses(db_session, [vt])
     _cleanup(db_session)
+
+
+def test_nfc_normalization_on_morpheme_commit(
+    client, regular_token1, test_revision_id, db_session
+):
+    """NFD-encoded morphemes are stored as NFC so lookups match consistently."""
+    import unicodedata
+
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # U+0061 U+0301 = 'a' + combining acute (NFD for 'á')
+    nfd_morpheme = "a\u0301pelile"
+    assert nfd_morpheme != unicodedata.normalize("NFC", nfd_morpheme)
+
+    profile = {"name": "Swahili", "family": "Atlantic-Congo"}
+    morphemes = [{"morpheme": nfd_morpheme, "morpheme_class": "LEXICAL"}]
+
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(test_revision_id, morphemes, profile=profile),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["n_morphemes_new"] == 1
+
+    # The stored morpheme should be NFC-normalized (and casefolded)
+    row = (
+        db_session.query(LanguageMorpheme)
+        .filter(LanguageMorpheme.iso_639_3 == TEST_ISO)
+        .first()
+    )
+    expected = unicodedata.normalize("NFC", nfd_morpheme).casefold()
+    assert row.morpheme == expected
+
+    _cleanup(db_session)
+
+
+def test_nfc_normalization_deduplicates_nfd_nfc(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Submitting both NFD and NFC forms of the same morpheme results in one entry."""
+    import unicodedata
+
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    nfd = "a\u0301pelile"
+    nfc = unicodedata.normalize("NFC", nfd)
+
+    profile = {"name": "Swahili", "family": "Atlantic-Congo"}
+    morphemes = [
+        {"morpheme": nfd, "morpheme_class": "LEXICAL"},
+        {"morpheme": nfc, "morpheme_class": "LEXICAL"},
+    ]
+
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(test_revision_id, morphemes, profile=profile),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    # Both should collapse to one morpheme
+    assert resp.json()["n_morphemes_new"] == 1
+
+    count = (
+        db_session.query(LanguageMorpheme)
+        .filter(LanguageMorpheme.iso_639_3 == TEST_ISO)
+        .count()
+    )
+    assert count == 1
+
+    _cleanup(db_session)
+
+
+def test_nfc_normalization_on_index_and_search(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Verse text with NFD characters matches NFC-stored morphemes during indexing."""
+    import unicodedata
+
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    nfc_morpheme = unicodedata.normalize("NFC", "a\u0301pelile")
+
+    # Commit NFC morpheme
+    profile = {"name": "English", "family": "Indo-European"}
+    morphemes = [{"morpheme": nfc_morpheme, "morpheme_class": "LEXICAL"}]
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_index_run_payload(test_revision_id, morphemes, profile=profile),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Insert verse with NFD text (different byte representation of same characters)
+    nfd_text = "Umu" + "a\u0301pelile" + " bhomba"
+    vt = VerseText(
+        text=nfd_text,
+        revision_id=test_revision_id,
+        verse_reference="GEN 8:1",
+        book="GEN",
+        chapter=8,
+        verse=1,
+    )
+    db_session.add(vt)
+    db_session.commit()
+
+    # Index
+    resp = client.post(
+        f"/{prefix}/tokenizer/index",
+        json={"iso_639_3": INDEX_ISO, "revision_id": test_revision_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["unique_morpheme_verse_pairs"] >= 1
+
+    # Search with NFD query should also match
+    nfd_query = "a\u0301pelile"
+    resp = client.get(
+        f"/{prefix}/tokenizer/search?iso={INDEX_ISO}&morpheme={nfd_query}&revision_id={test_revision_id}",
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["result_count"] == 1
+
+    _cleanup_verses(db_session, [vt])
+    _cleanup(db_session)

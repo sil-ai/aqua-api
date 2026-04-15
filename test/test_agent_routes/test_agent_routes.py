@@ -5211,3 +5211,118 @@ def test_deduplicate_no_duplicates(client, regular_token1, db_session):
     assert resp.status_code == 200
     data = resp.json()
     assert data["duplicates_found"] == 0
+
+
+def test_post_lexeme_card_nfc_normalizes_text_fields(
+    client, regular_token1, db_session, test_revision_id
+):
+    """NFD-encoded text fields are stored as NFC in lexeme cards."""
+    import unicodedata
+
+    # NFD form: 'a' + combining acute accent
+    nfd_lemma = "a\u0301pelile"
+    nfc_lemma = unicodedata.normalize("NFC", nfd_lemma)
+    assert nfd_lemma != nfc_lemma  # Different byte sequences
+
+    nfd_surface = "wa\u0301pelile"
+    nfc_surface = unicodedata.normalize("NFC", nfd_surface)
+
+    nfd_source_lemma = "cre\u0301er"
+    nfc_source_lemma = unicodedata.normalize("NFC", nfd_source_lemma)
+
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": nfd_source_lemma,
+            "target_lemma": nfd_lemma,
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": [nfd_surface],
+            "source_surface_forms": [nfd_source_lemma],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    # target_lemma is also lowercased
+    assert data["target_lemma"] == nfc_lemma.lower()
+    assert data["source_lemma"] == nfc_source_lemma
+    assert data["surface_forms"] == [nfc_surface]
+    assert data["source_surface_forms"] == [nfc_source_lemma]
+
+
+def test_patch_lexeme_card_nfc_normalizes_text_fields(
+    client, regular_token1, db_session, test_revision_id
+):
+    """PATCH endpoint NFC-normalizes text fields in updates."""
+    import unicodedata
+
+    # First create a card with NFC text
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "build",
+            "target_lemma": "nfc_patch_test",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # Patch with NFD-encoded values
+    nfd_surface = "a\u0301pelile"
+    nfc_surface = unicodedata.normalize("NFC", nfd_surface)
+
+    response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "surface_forms": [nfd_surface],
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["surface_forms"] == [nfc_surface]
+
+
+def test_post_lexeme_card_nfd_nfc_treated_as_same_lemma(
+    client, regular_token1, db_session, test_revision_id
+):
+    """NFD and NFC forms of the same target_lemma should be treated as duplicates."""
+    import unicodedata
+
+    nfd_lemma = "a\u0301pelile_dedup"
+    nfc_lemma = unicodedata.normalize("NFC", nfd_lemma)
+
+    # Create card with NFD lemma
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "create",
+            "target_lemma": nfd_lemma,
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response.status_code == 200
+
+    # Create card with NFC lemma — should upsert, not create a new one
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "create",
+            "target_lemma": nfc_lemma,
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.99,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should have updated the existing card, not created a new one
+    assert data["confidence"] == 0.99
