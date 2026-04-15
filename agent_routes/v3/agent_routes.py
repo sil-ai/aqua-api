@@ -1181,9 +1181,7 @@ async def patch_lexeme_card_by_lemma(
         ) from e
 
 
-@router.delete(
-    "/agent/lexeme-card/{card_id}", status_code=status.HTTP_204_NO_CONTENT
-)
+@router.delete("/agent/lexeme-card/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_lexeme_card(
     card_id: int,
     db: AsyncSession = Depends(get_db),
@@ -1192,7 +1190,11 @@ async def delete_lexeme_card(
     """
     Delete a lexeme card by ID.
 
-    Associated examples are deleted automatically via cascade.
+    Associated examples are deleted automatically via cascade
+    (both ORM-level cascade="all, delete-orphan" and DB-level ondelete="CASCADE").
+
+    This endpoint is used by aqua-assessments during card consolidation.
+    Any authenticated user can delete any card (consistent with other card endpoints).
 
     Returns 204 No Content on success, 404 if card not found.
     """
