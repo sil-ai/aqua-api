@@ -982,4 +982,17 @@ def test_grammar_sketch_round_trip(
     assert resp.status_code == 200
     assert resp.json()["grammar_sketch"] == updated_sketch
 
+    # PUT with grammar_sketch explicitly null should clear the stored value
+    resp = client.put(
+        f"/{prefix}/tokenizer/profile/{TEST_ISO}",
+        json={"name": "Swahili", "grammar_sketch": None},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["grammar_sketch"] is None
+
+    resp = client.get(f"/{prefix}/tokenizer/profile/{TEST_ISO}", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["grammar_sketch"] is None
+
     _cleanup(db_session)

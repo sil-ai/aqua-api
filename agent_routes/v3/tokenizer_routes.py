@@ -90,6 +90,12 @@ async def upsert_language_profile(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
+    """Create or update a language profile.
+
+    On update, only fields present in the request body are modified; omitted
+    fields retain their current values.  To clear a field, send it explicitly
+    as ``null``.
+    """
     request_start = time.perf_counter()
     iso_exists = await db.execute(select(IsoLanguage).where(IsoLanguage.iso639 == iso))
     if iso_exists.scalar_one_or_none() is None:
