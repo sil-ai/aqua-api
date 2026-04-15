@@ -9,7 +9,7 @@ from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -755,6 +755,7 @@ async def build_word_index(
 
     # Segment each unique word and build index rows
     index_rows = []
+    words_with_morphemes = 0
     for word, count in word_counts.items():
         segments = viterbi_segment(word, morpheme_set, max_morph_len)
         morphs = [
@@ -764,6 +765,7 @@ async def build_word_index(
         ]
         if not morphs:
             continue
+        words_with_morphemes += 1
         total = len(morphs)
         for pos, (seg, mid) in enumerate(morphs):
             index_rows.append(
@@ -778,7 +780,10 @@ async def build_word_index(
             )
 
     try:
-        # Delete existing word index for this language before re-indexing
+        # The word index is language-scoped (no revision_id column) — each
+        # rebuild replaces the entire language's index with data from the
+        # requested revision.  This is intentional: the index reflects the
+        # single most-recently-indexed revision for a language.
         await db.execute(
             delete(WordMorphemeIndex).where(WordMorphemeIndex.iso_639_3 == iso)
         )
@@ -801,10 +806,9 @@ async def build_word_index(
         logger.error("Failed to build word morpheme index", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Database error: {e}",
+            detail="Failed to build word morpheme index",
         ) from e
 
-    unique_words = len(word_counts)
     duration = round(time.perf_counter() - request_start, 2)
     logger.info(
         f"build_word_index completed in {duration}s",
@@ -813,21 +817,24 @@ async def build_word_index(
             "path": "/tokenizer/word-index",
             "iso": iso,
             "revision_id": revision_id,
-            "unique_words": unique_words,
+            "unique_words": words_with_morphemes,
             "pairs": len(index_rows),
             "duration_s": duration,
         },
     )
     return WordIndexResponse(
-        unique_words_indexed=unique_words,
+        unique_words_indexed=words_with_morphemes,
         word_morpheme_pairs=len(index_rows),
     )
 
 
+COOCCURRENCE_MAX_WORDS = 5000
+
+
 @router.get("/tokenizer/cooccurrences", response_model=CooccurrenceResponse)
 async def get_cooccurrences(
-    iso: str,
-    morpheme: str,
+    iso: str = Query(..., min_length=3, max_length=3),
+    morpheme: str = Query(...),
     position_filter: Optional[str] = Query(
         default=None, pattern="^(prefix|suffix|infix)$"
     ),
@@ -835,6 +842,8 @@ async def get_cooccurrences(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
+    # The word index is language-scoped shared infrastructure, so this
+    # endpoint requires authentication but not revision-level authorization.
     request_start = time.perf_counter()
     normalized = unicodedata.normalize("NFC", morpheme).casefold()
 
@@ -852,15 +861,21 @@ async def get_cooccurrences(
             detail=f"Morpheme '{morpheme}' not found for iso '{iso}'",
         )
 
-    # Find all words containing the target morpheme
-    target_query = select(
-        WordMorphemeIndex.word,
-        WordMorphemeIndex.position,
-        WordMorphemeIndex.total_morphemes,
-        WordMorphemeIndex.word_count,
-    ).where(
-        WordMorphemeIndex.iso_639_3 == iso,
-        WordMorphemeIndex.morpheme_id == target_id,
+    # Find all words containing the target morpheme, capped to bound
+    # the downstream IN() clause and in-memory aggregation.
+    target_query = (
+        select(
+            WordMorphemeIndex.word,
+            WordMorphemeIndex.position,
+            WordMorphemeIndex.total_morphemes,
+            WordMorphemeIndex.word_count,
+        )
+        .where(
+            WordMorphemeIndex.iso_639_3 == iso,
+            WordMorphemeIndex.morpheme_id == target_id,
+        )
+        .order_by(WordMorphemeIndex.word_count.desc())
+        .limit(COOCCURRENCE_MAX_WORDS)
     )
 
     # Apply position filter
@@ -887,9 +902,15 @@ async def get_cooccurrences(
         )
 
     target_words = {row.word for row in target_rows}
-    # Map word -> (target_position, word_count)
-    word_info = {row.word: (row.position, row.word_count) for row in target_rows}
-    total_words_containing = len(target_words)
+    # Map word -> (list of target positions, word_count)
+    # A morpheme can appear multiple times in one word (reduplication),
+    # so we collect all positions per word.
+    word_info: dict[str, tuple[list[int], int]] = {}
+    for row in target_rows:
+        if row.word not in word_info:
+            word_info[row.word] = ([], row.word_count)
+        word_info[row.word][0].append(row.position)
+    total_words_containing = sum(info[1] for info in word_info.values())
 
     # Find all morphemes in those same words (excluding the target)
     cooc_result = await db.execute(
@@ -922,8 +943,11 @@ async def get_cooccurrences(
         entry["count"] += row.word_count
         if len(entry["example_words"]) < 3:
             entry["example_words"].add(row.word)
-        target_pos = word_info[row.word][0]
-        if row.position < target_pos:
+        # Use the minimum target position for before/after classification.
+        # For reduplicated morphemes, the first occurrence is most relevant.
+        target_positions = word_info[row.word][0]
+        min_target_pos = min(target_positions)
+        if row.position < min_target_pos:
             entry["before"] += row.word_count
         else:
             entry["after"] += row.word_count
@@ -950,7 +974,14 @@ async def get_cooccurrences(
     cooccurrences = []
     for mid in sorted_ids[:limit]:
         stats = cooc_stats[mid]
-        text, cls = morph_info.get(mid, ("?", "UNKNOWN"))
+        morph_entry = morph_info.get(mid)
+        if morph_entry is None:
+            logger.warning(
+                f"Morpheme id {mid} in word_morpheme_index has no "
+                f"language_morphemes row — possible data integrity issue"
+            )
+            continue
+        text, cls = morph_entry
         typical = "before" if stats["before"] >= stats["after"] else "after"
         cooccurrences.append(
             CooccurrenceItem(

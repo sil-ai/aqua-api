@@ -5,8 +5,9 @@ Revises: c5d9e2f3a4b5
 Create Date: 2026-04-15 00:00:00.000000
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 revision = "d6e0f1a2b3c4"
 down_revision = "c5d9e2f3a4b5"
@@ -40,13 +41,12 @@ def upgrade() -> None:
         "word_morpheme_index",
         ["iso_639_3", "word", "morpheme_id", "position"],
     )
-    op.create_index(
-        "ix_word_morpheme_iso", "word_morpheme_index", ["iso_639_3"]
-    )
-    op.create_index(
-        "ix_word_morpheme_morpheme", "word_morpheme_index", ["morpheme_id"]
-    )
+    op.create_index("ix_word_morpheme_iso", "word_morpheme_index", ["iso_639_3"])
+    op.create_index("ix_word_morpheme_morpheme", "word_morpheme_index", ["morpheme_id"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_word_morpheme_morpheme", table_name="word_morpheme_index")
+    op.drop_index("ix_word_morpheme_iso", table_name="word_morpheme_index")
+    op.drop_constraint("uq_word_morpheme_pos", table_name="word_morpheme_index")
     op.drop_table("word_morpheme_index")
