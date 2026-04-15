@@ -534,9 +534,7 @@ def test_index_surface_forms(client, regular_token1, test_revision_id, db_sessio
     _cleanup(db_session)
 
 
-def test_search_case_insensitive(
-    client, regular_token1, test_revision_id, db_session
-):
+def test_search_case_insensitive(client, regular_token1, test_revision_id, db_session):
     """Searching with mixed-case query finds lowercase-stored morphemes."""
     _cleanup(db_session)
     headers = {"Authorization": f"Bearer {regular_token1}"}
