@@ -1668,7 +1668,29 @@ async def get_lexeme_cards(
         result = await db.execute(query)
         cards = result.scalars().all()
 
-        # Build response cards with examples from the separate table
+        # Batch-load all examples for the returned cards in a single query
+        card_ids = [card.id for card in cards]
+        examples_by_card: dict[int, list[dict]] = {cid: [] for cid in card_ids}
+
+        if card_ids and authorized_revision_ids:
+            examples_query = (
+                select(AgentLexemeCardExample)
+                .where(
+                    AgentLexemeCardExample.lexeme_card_id.in_(card_ids),
+                    AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
+                )
+                .order_by(
+                    AgentLexemeCardExample.lexeme_card_id,
+                    AgentLexemeCardExample.id,
+                )
+            )
+            examples_result = await db.execute(examples_query)
+            for ex in examples_result.scalars().all():
+                examples_by_card[ex.lexeme_card_id].append(
+                    {"source": ex.source_text, "target": ex.target_text}
+                )
+
+        # Build response cards
         response_cards = []
         for card in cards:
             card_dict = {
@@ -1687,29 +1709,8 @@ async def get_lexeme_cards(
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
                 "last_user_edit": card.last_user_edit,
+                "examples": examples_by_card.get(card.id, []),
             }
-
-            # Query examples for this lexeme card from all authorized revisions, ordered by ID (insertion order)
-            if authorized_revision_ids:
-                examples_query = (
-                    select(AgentLexemeCardExample)
-                    .where(
-                        AgentLexemeCardExample.lexeme_card_id == card.id,
-                        AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
-                    )
-                    .order_by(AgentLexemeCardExample.id)
-                )
-                examples_result = await db.execute(examples_query)
-                examples_objs = examples_result.scalars().all()
-
-                # Convert to list of dicts
-                card_dict["examples"] = [
-                    {"source": ex.source_text, "target": ex.target_text}
-                    for ex in examples_objs
-                ]
-            else:
-                card_dict["examples"] = []
-
             response_cards.append(LexemeCardOut.model_validate(card_dict))
 
         duration = round(time.perf_counter() - request_start, 2)
