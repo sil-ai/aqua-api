@@ -1683,11 +1683,13 @@ async def get_lexeme_cards(
                 AgentLexemeCardExample.lexeme_card_id.in_(card_ids),
             ]
             # For non-admins, filter examples to authorized revisions in
-            # the source or target language — much smaller than all authorized
-            # revisions across every language.
+            # the source or target language.  This is safe because examples
+            # are always created from revisions in the card's language pair
+            # (the POST endpoint requires a revision_id for the language).
             if not is_admin:
-                authorized_lang_revisions_subq = (
+                authorized_lang_revisions = (
                     select(BibleRevision.id)
+                    .distinct()
                     .join(
                         BibleVersion,
                         BibleVersion.id == BibleRevision.bible_version_id,
@@ -1706,11 +1708,9 @@ async def get_lexeme_cards(
                             [source_language, target_language]
                         ),
                     )
-                ).subquery()
+                )
                 examples_conditions.append(
-                    AgentLexemeCardExample.revision_id.in_(
-                        select(authorized_lang_revisions_subq.c.id)
-                    ),
+                    AgentLexemeCardExample.revision_id.in_(authorized_lang_revisions),
                 )
             examples_query = (
                 select(
