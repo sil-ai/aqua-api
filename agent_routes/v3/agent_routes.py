@@ -1616,8 +1616,7 @@ async def get_lexeme_cards(
     try:
         from sqlalchemy import desc, select, text
 
-        # Get revision IDs the user has access to
-        authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
+        is_admin = current_user.is_admin
 
         # Base conditions: language pair filter
         conditions = [
@@ -1668,7 +1667,70 @@ async def get_lexeme_cards(
         result = await db.execute(query)
         cards = result.scalars().all()
 
-        # Build response cards with examples from the separate table
+        # Batch-load all examples for the returned cards in a single query
+        card_ids = [card.id for card in cards]
+        examples_by_card: dict[int, list[dict]] = {cid: [] for cid in card_ids}
+
+        if card_ids:
+            from database.models import (
+                BibleRevision,
+                BibleVersion,
+                BibleVersionAccess,
+                UserGroup,
+            )
+
+            examples_conditions = [
+                AgentLexemeCardExample.lexeme_card_id.in_(card_ids),
+            ]
+            # For non-admins, filter examples to authorized revisions in
+            # the source or target language.  This is safe because examples
+            # are always created from revisions in the card's language pair
+            # (the POST endpoint requires a revision_id for the language).
+            if not is_admin:
+                authorized_lang_revisions = (
+                    select(BibleRevision.id)
+                    .distinct()
+                    .join(
+                        BibleVersion,
+                        BibleVersion.id == BibleRevision.bible_version_id,
+                    )
+                    .join(
+                        BibleVersionAccess,
+                        BibleVersionAccess.bible_version_id == BibleVersion.id,
+                    )
+                    .join(
+                        UserGroup,
+                        UserGroup.group_id == BibleVersionAccess.group_id,
+                    )
+                    .where(
+                        UserGroup.user_id == current_user.id,
+                        BibleVersion.iso_language.in_(
+                            [source_language, target_language]
+                        ),
+                    )
+                )
+                examples_conditions.append(
+                    AgentLexemeCardExample.revision_id.in_(authorized_lang_revisions),
+                )
+            examples_query = (
+                select(
+                    AgentLexemeCardExample.lexeme_card_id,
+                    AgentLexemeCardExample.source_text,
+                    AgentLexemeCardExample.target_text,
+                )
+                .where(*examples_conditions)
+                .order_by(
+                    AgentLexemeCardExample.lexeme_card_id,
+                    AgentLexemeCardExample.id,
+                )
+            )
+            examples_result = await db.execute(examples_query)
+            for row in examples_result.all():
+                examples_by_card[row.lexeme_card_id].append(
+                    {"source": row.source_text, "target": row.target_text}
+                )
+
+        # Build response cards
         response_cards = []
         for card in cards:
             card_dict = {
@@ -1687,29 +1749,8 @@ async def get_lexeme_cards(
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
                 "last_user_edit": card.last_user_edit,
+                "examples": examples_by_card[card.id],
             }
-
-            # Query examples for this lexeme card from all authorized revisions, ordered by ID (insertion order)
-            if authorized_revision_ids:
-                examples_query = (
-                    select(AgentLexemeCardExample)
-                    .where(
-                        AgentLexemeCardExample.lexeme_card_id == card.id,
-                        AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
-                    )
-                    .order_by(AgentLexemeCardExample.id)
-                )
-                examples_result = await db.execute(examples_query)
-                examples_objs = examples_result.scalars().all()
-
-                # Convert to list of dicts
-                card_dict["examples"] = [
-                    {"source": ex.source_text, "target": ex.target_text}
-                    for ex in examples_objs
-                ]
-            else:
-                card_dict["examples"] = []
-
             response_cards.append(LexemeCardOut.model_validate(card_dict))
 
         duration = round(time.perf_counter() - request_start, 2)

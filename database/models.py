@@ -534,6 +534,13 @@ class AgentLexemeCardExample(Base):
             "ix_agent_lexeme_card_examples_revision",
             "revision_id",
         ),
+        # Lightweight index for batch-loading examples by card + revision
+        # (the unique index includes text columns, making it 20x larger)
+        Index(
+            "ix_agent_lexeme_card_examples_card_revision",
+            "lexeme_card_id",
+            "revision_id",
+        ),
     )
 
     # Relationships
