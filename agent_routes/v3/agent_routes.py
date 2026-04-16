@@ -1616,11 +1616,7 @@ async def get_lexeme_cards(
     try:
         from sqlalchemy import desc, select, text
 
-        # Get revision IDs the user has access to (skip for admins — they can see everything)
         is_admin = current_user.is_admin
-        authorized_revision_ids = (
-            set() if is_admin else await get_authorized_revision_ids(current_user.id, db)
-        )
 
         # Base conditions: language pair filter
         conditions = [
@@ -1675,14 +1671,46 @@ async def get_lexeme_cards(
         card_ids = [card.id for card in cards]
         examples_by_card: dict[int, list[dict]] = {cid: [] for cid in card_ids}
 
-        if card_ids and (authorized_revision_ids or is_admin):
+        if card_ids:
+            from database.models import (
+                BibleRevision,
+                BibleVersion,
+                BibleVersionAccess,
+                UserGroup,
+            )
+
             examples_conditions = [
                 AgentLexemeCardExample.lexeme_card_id.in_(card_ids),
             ]
-            # Admins can see all revisions — skip the IN() filter entirely.
+            # For non-admins, filter examples to authorized revisions in
+            # the source or target language — much smaller than all authorized
+            # revisions across every language.
             if not is_admin:
+                authorized_lang_revisions_subq = (
+                    select(BibleRevision.id)
+                    .join(
+                        BibleVersion,
+                        BibleVersion.id == BibleRevision.bible_version_id,
+                    )
+                    .join(
+                        BibleVersionAccess,
+                        BibleVersionAccess.bible_version_id == BibleVersion.id,
+                    )
+                    .join(
+                        UserGroup,
+                        UserGroup.group_id == BibleVersionAccess.group_id,
+                    )
+                    .where(
+                        UserGroup.user_id == current_user.id,
+                        BibleVersion.iso_language.in_(
+                            [source_language, target_language]
+                        ),
+                    )
+                ).subquery()
                 examples_conditions.append(
-                    AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
+                    AgentLexemeCardExample.revision_id.in_(
+                        select(authorized_lang_revisions_subq.c.id)
+                    ),
                 )
             examples_query = (
                 select(
