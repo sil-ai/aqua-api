@@ -3,6 +3,7 @@ __version__ = "v3"
 import datetime
 import socket
 import time
+import unicodedata
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
@@ -1589,6 +1590,7 @@ async def get_lexeme_cards(
     target_language: str,
     source_word: str = None,
     target_word: str = None,
+    target_words: str = None,
     pos: str = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -1606,6 +1608,9 @@ async def get_lexeme_cards(
       (case-insensitive exact match)
     - target_word: str (optional) - Filter by target_lemma or surface_forms
       (case-insensitive exact match)
+    - target_words: str (optional) - Comma-separated list of target words. Returns
+      cards where target_lemma or any surface_form matches any of the given words
+      (case-insensitive, NFC-normalized). Cannot be used with target_word.
     - pos: str (optional) - Filter by part of speech
 
     Returns:
@@ -1615,6 +1620,12 @@ async def get_lexeme_cards(
     request_start = time.perf_counter()
     try:
         from sqlalchemy import desc, select, text
+
+        if target_word and target_words:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot use both 'target_word' and 'target_words' parameters.",
+            )
 
         is_admin = current_user.is_admin
 
@@ -1656,6 +1667,30 @@ async def get_lexeme_cards(
                     "WHERE LOWER(elem) = :target_word_lower)))"
                 ).bindparams(target_word_lower=target_word_lower)
             )
+
+        if target_words:
+            # Parse comma-separated list, NFC-normalize and lowercase each word
+            words_list = [
+                unicodedata.normalize("NFC", w.strip()).lower()
+                for w in target_words.split(",")
+                if w.strip()
+            ]
+            if words_list:
+                from sqlalchemy import bindparam
+                from sqlalchemy.dialects.postgresql import ARRAY
+                from sqlalchemy.types import Text
+
+                tw_param = bindparam(
+                    "target_words_arr", value=words_list, type_=ARRAY(Text)
+                )
+                word_conditions.append(
+                    text(
+                        "(LOWER(agent_lexeme_cards.target_lemma) = ANY(:target_words_arr) OR "
+                        "(jsonb_typeof(agent_lexeme_cards.surface_forms) = 'array' AND "
+                        "EXISTS (SELECT 1 FROM jsonb_array_elements_text(agent_lexeme_cards.surface_forms) AS elem "
+                        "WHERE LOWER(elem) = ANY(:target_words_arr))))"
+                    ).bindparams(tw_param)
+                )
 
         query = (
             select(AgentLexemeCard)
@@ -1763,6 +1798,7 @@ async def get_lexeme_cards(
                 "target_language": target_language,
                 "source_word": source_word,
                 "target_word": target_word,
+                "target_words": target_words,
                 "pos": pos,
                 "duration_s": duration,
             },
