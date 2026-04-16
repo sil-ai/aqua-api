@@ -1616,8 +1616,11 @@ async def get_lexeme_cards(
     try:
         from sqlalchemy import desc, select, text
 
-        # Get revision IDs the user has access to
-        authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
+        # Get revision IDs the user has access to (skip for admins — they can see everything)
+        is_admin = current_user.is_admin
+        authorized_revision_ids = (
+            set() if is_admin else await get_authorized_revision_ids(current_user.id, db)
+        )
 
         # Base conditions: language pair filter
         conditions = [
@@ -1672,18 +1675,21 @@ async def get_lexeme_cards(
         card_ids = [card.id for card in cards]
         examples_by_card: dict[int, list[dict]] = {cid: [] for cid in card_ids}
 
-        if card_ids and (authorized_revision_ids or current_user.is_admin):
+        if card_ids and (authorized_revision_ids or is_admin):
             examples_conditions = [
                 AgentLexemeCardExample.lexeme_card_id.in_(card_ids),
             ]
-            # Admins can see all revisions — skip the IN() filter to avoid
-            # sending thousands of bind parameters to the query planner.
-            if not current_user.is_admin:
+            # Admins can see all revisions — skip the IN() filter entirely.
+            if not is_admin:
                 examples_conditions.append(
                     AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
                 )
             examples_query = (
-                select(AgentLexemeCardExample)
+                select(
+                    AgentLexemeCardExample.lexeme_card_id,
+                    AgentLexemeCardExample.source_text,
+                    AgentLexemeCardExample.target_text,
+                )
                 .where(*examples_conditions)
                 .order_by(
                     AgentLexemeCardExample.lexeme_card_id,
@@ -1691,9 +1697,9 @@ async def get_lexeme_cards(
                 )
             )
             examples_result = await db.execute(examples_query)
-            for ex in examples_result.scalars().all():
-                examples_by_card[ex.lexeme_card_id].append(
-                    {"source": ex.source_text, "target": ex.target_text}
+            for row in examples_result.all():
+                examples_by_card[row.lexeme_card_id].append(
+                    {"source": row.source_text, "target": row.target_text}
                 )
 
         # Build response cards
