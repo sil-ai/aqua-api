@@ -1672,13 +1672,19 @@ async def get_lexeme_cards(
         card_ids = [card.id for card in cards]
         examples_by_card: dict[int, list[dict]] = {cid: [] for cid in card_ids}
 
-        if card_ids and authorized_revision_ids:
-            examples_query = (
-                select(AgentLexemeCardExample)
-                .where(
-                    AgentLexemeCardExample.lexeme_card_id.in_(card_ids),
+        if card_ids and (authorized_revision_ids or current_user.is_admin):
+            examples_conditions = [
+                AgentLexemeCardExample.lexeme_card_id.in_(card_ids),
+            ]
+            # Admins can see all revisions — skip the IN() filter to avoid
+            # sending thousands of bind parameters to the query planner.
+            if not current_user.is_admin:
+                examples_conditions.append(
                     AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
                 )
+            examples_query = (
+                select(AgentLexemeCardExample)
+                .where(*examples_conditions)
                 .order_by(
                     AgentLexemeCardExample.lexeme_card_id,
                     AgentLexemeCardExample.id,
@@ -1709,7 +1715,7 @@ async def get_lexeme_cards(
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
                 "last_user_edit": card.last_user_edit,
-                "examples": examples_by_card.get(card.id, []),
+                "examples": examples_by_card[card.id],
             }
             response_cards.append(LexemeCardOut.model_validate(card_dict))
 
