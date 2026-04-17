@@ -1372,6 +1372,16 @@ def test_search_wildcard_short_core_allowed(client, regular_token1, test_db_sess
     data = response.json()
     assert len(data["results"]) > 0
 
+    one_char_response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "*a*"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert one_char_response.status_code == 200
+    one_char_data = one_char_response.json()
+    assert len(one_char_data["results"]) > 0
+
 
 def test_search_wildcard_no_wildcard_allows_short_term(
     client, regular_token1, test_db_session

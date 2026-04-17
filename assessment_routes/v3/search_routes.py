@@ -110,8 +110,8 @@ async def search_revision_text(
     - ``*foo*``  — ``foo`` anywhere inside a word
 
     Wildcards are only accepted at the start/end of the term; a ``*`` in
-    the middle returns 400. Wildcard queries require at least 3 visible
-    (non-whitespace, non-format) characters around the ``*`` anchors.
+    the middle returns 400. The term must contain at least one visible
+    (non-whitespace, non-format) character.
 
     Provide either ``revision_id`` or ``iso`` (not both).  When ``iso`` is
     given, all accessible revisions for that language are searched and results
