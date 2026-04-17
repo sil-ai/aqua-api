@@ -110,8 +110,8 @@ async def search_revision_text(
     - ``*foo*``  — ``foo`` anywhere inside a word
 
     Wildcards are only accepted at the start/end of the term; a ``*`` in
-    the middle returns 400. Wildcard queries require at least 3 non-``*``
-    characters.
+    the middle returns 400. Wildcard queries require at least 3 visible
+    (non-whitespace, non-format) characters around the ``*`` anchors.
 
     Provide either ``revision_id`` or ``iso`` (not both).  When ``iso`` is
     given, all accessible revisions for that language are searched and results
@@ -162,7 +162,7 @@ async def search_revision_text(
     if visible_len == 0:
         raise HTTPException(
             status_code=400,
-            detail="Term must contain at least one non-`*` character",
+            detail="Term must contain at least one visible character",
         )
     has_wildcard = prefix_wildcard or suffix_wildcard
     # Wildcard queries can explode result sets for very short cores
@@ -170,7 +170,7 @@ async def search_revision_text(
     if has_wildcard and visible_len < 3:
         raise HTTPException(
             status_code=400,
-            detail="Wildcard queries require at least 3 non-`*` characters",
+            detail="Wildcard queries require at least 3 visible characters",
         )
 
     # Build authorization subqueries (executed inline with the search query

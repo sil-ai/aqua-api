@@ -1424,7 +1424,7 @@ def test_search_wildcard_single_star_rejected(client, regular_token1, test_db_se
     )
 
     assert response.status_code == 400
-    assert "non-`*`" in response.json()["detail"]
+    assert "visible character" in response.json()["detail"]
 
 
 def test_search_wildcard_invisible_chars_rejected(
