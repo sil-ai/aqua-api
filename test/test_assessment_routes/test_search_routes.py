@@ -406,6 +406,26 @@ def test_search_unauthorized_comparison_with_zero_main_matches(
     assert "comparison" in response.json()["detail"].lower()
 
 
+def test_search_admin_nonexistent_revision_returns_200_empty(
+    client, admin_token, test_db_session
+):
+    """Admin querying a non-existent revision_id must get 200 with empty results.
+
+    Preserves pre-refactor behavior: is_user_authorized_for_revision returned
+    True for admins without checking revision existence, so admins got 200
+    empty rather than 403 for bad IDs.
+    """
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": 999_999_999, "term": "anything", "limit": 5},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 0
+    assert data["results"] == []
+
+
 def test_search_limit_validation(client, regular_token1, test_db_session):
     """Test that limit parameter is properly validated."""
     main_revision_id, _ = setup_search_test_data(test_db_session)

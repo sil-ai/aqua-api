@@ -45,9 +45,8 @@ def _authorized_revisions_select(
     standalone to distinguish "no access" (empty) from "no text matches"
     (non-empty) when the main search returns zero rows.
     """
-    assert (
-        iso is not None or revision_id is not None
-    ), "at least one of iso or revision_id must be provided"
+    if iso is None and revision_id is None:
+        raise ValueError("at least one of iso or revision_id must be provided")
     q = (
         select(BibleRevision.id)
         .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
@@ -69,6 +68,9 @@ def _authorized_revisions_select(
             BibleVersionAccess,
             BibleVersionAccess.bible_version_id == BibleVersion.id,
         ).where(BibleVersionAccess.group_id.in_(select(user_groups_subq)))
+        # An access row per group membership can duplicate the same revision;
+        # dedup so the subquery size tracks unique revisions.
+        q = q.distinct()
 
     return q
 
@@ -246,32 +248,39 @@ async def search_revision_text(
         if not rows:
             auth_row = (await db.execute(main_auth_select.limit(1))).scalars().first()
             if auth_row is None:
-                if revision_id is not None:
+                if iso is not None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"No accessible revisions found for iso '{iso}'",
+                    )
+                # revision_id path: non-admins get 403 (unauthorized or
+                # non-existent — indistinguishable by design). Admins are
+                # always authorized, so preserve pre-refactor behavior of
+                # returning 200 with empty results when the revision id
+                # simply doesn't exist.
+                if not current_user.is_admin:
                     raise HTTPException(
                         status_code=403,
                         detail="User not authorized to access this revision",
                     )
-                raise HTTPException(
-                    status_code=404,
-                    detail=f"No accessible revisions found for iso '{iso}'",
-                )
             if comp_auth_select is not None:
                 comp_auth_row = (
                     (await db.execute(comp_auth_select.limit(1))).scalars().first()
                 )
                 if comp_auth_row is None:
-                    if comparison_revision_id is not None:
+                    if comparison_iso is not None:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=(
+                                f"No accessible revisions found for comparison iso "
+                                f"'{comparison_iso}'"
+                            ),
+                        )
+                    if not current_user.is_admin:
                         raise HTTPException(
                             status_code=403,
                             detail="User not authorized to access the comparison revision",
                         )
-                    raise HTTPException(
-                        status_code=404,
-                        detail=(
-                            f"No accessible revisions found for comparison iso "
-                            f"'{comparison_iso}'"
-                        ),
-                    )
 
         # Filter results to only include whole word matches, stopping at limit.
         # Normalize both the query and the stored text to NFC so the word
