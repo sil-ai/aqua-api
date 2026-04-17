@@ -45,6 +45,9 @@ def _authorized_revisions_select(
     standalone to distinguish "no access" (empty) from "no text matches"
     (non-empty) when the main search returns zero rows.
     """
+    assert (
+        iso is not None or revision_id is not None
+    ), "at least one of iso or revision_id must be provided"
     q = (
         select(BibleRevision.id)
         .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
