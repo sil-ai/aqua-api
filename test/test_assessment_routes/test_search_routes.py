@@ -1193,3 +1193,344 @@ def test_search_by_iso_random(client, regular_token1, test_db_session):
     # Dedup still applies — no duplicate verse locations
     refs = [(r["book"], r["chapter"], r["verse"]) for r in data["results"]]
     assert len(refs) == len(set(refs))
+
+
+def _setup_morpheme_search_data(db_session):
+    """Seed a revision with morphologically related word forms for wildcard tests."""
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+
+    version = BibleVersion(
+        name="Morpheme Test Version",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="MTV",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    db_session.add(version)
+    db_session.commit()
+    db_session.refresh(version)
+
+    revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    db_session.add(revision)
+    db_session.commit()
+    db_session.refresh(revision)
+
+    verses = [
+        ("GEN", 1, 4, "akhagabhʉlanya amatʉndʉ"),
+        ("GEN", 1, 6, "pagabhʉlanye amaazi"),
+        ("GEN", 1, 14, "zɨgabhʉlanye ɨmɨsi"),
+        ("GEN", 1, 20, "pagabhʉlanyiinye zyoonti"),
+        ("GEN", 2, 1, "bhʉlany is a standalone token here"),
+        ("GEN", 2, 2, "unrelated verse about ʉmundʉ"),
+    ]
+    for book, chapter, verse, text in verses:
+        db_session.add(
+            VerseText(
+                text=text,
+                revision_id=revision.id,
+                verse_reference=f"{book} {chapter}:{verse}",
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+
+    db_session.add(BibleVersionAccess(bible_version_id=version.id, group_id=group1.id))
+    db_session.commit()
+    return revision.id
+
+
+def test_search_wildcard_no_wildcard_is_whole_word(
+    client, regular_token1, test_db_session
+):
+    """No `*` — behavior stays whole-word exact."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "bhʉlany", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    # Only the standalone-token verse contains "bhʉlany" as a whole word.
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {("GEN", 2, 1)}
+
+
+def test_search_wildcard_contains(client, regular_token1, test_db_session):
+    """`*term*` finds the morpheme inside inflected forms."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": revision_id,
+            "term": "*bhʉlany*",
+            "limit": 20,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {
+        ("GEN", 1, 4),
+        ("GEN", 1, 6),
+        ("GEN", 1, 14),
+        ("GEN", 1, 20),
+        ("GEN", 2, 1),
+    }
+
+
+def test_search_wildcard_prefix(client, regular_token1, test_db_session):
+    """`term*` matches words STARTING with the term."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": revision_id,
+            "term": "pagabh*",
+            "limit": 20,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    # pagabhʉlanye (GEN 1:6) and pagabhʉlanyiinye (GEN 1:20) both start with pagabh
+    assert refs == {("GEN", 1, 6), ("GEN", 1, 20)}
+
+
+def test_search_wildcard_prefix_no_midword_match(
+    client, regular_token1, test_db_session
+):
+    """`term*` does NOT match when the term sits mid-word."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": revision_id,
+            "term": "bhʉlany*",
+            "limit": 20,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    # Only the standalone token "bhʉlany" (at start-of-word) matches
+    assert refs == {("GEN", 2, 1)}
+
+
+def test_search_wildcard_suffix(client, regular_token1, test_db_session):
+    """`*term` matches words ENDING with the term."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": revision_id,
+            "term": "*lanye",
+            "limit": 20,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    # pagabhʉlanye (1:6) and zɨgabhʉlanye (1:14) end with "lanye".
+    # pagabhʉlanyiinye (1:20) does NOT end with "lanye".
+    assert refs == {("GEN", 1, 6), ("GEN", 1, 14)}
+
+
+def test_search_wildcard_minimum_length(client, regular_token1, test_db_session):
+    """Wildcard queries reject cores shorter than 3 characters."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "*bh*"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_search_wildcard_no_wildcard_allows_short_term(
+    client, regular_token1, test_db_session
+):
+    """Without `*`, short terms are still allowed (min-length rule doesn't apply)."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # "is" is a whole word in GEN 2:1
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "is"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+
+
+def test_search_wildcard_midterm_star_rejected(client, regular_token1, test_db_session):
+    """A `*` in the middle of the term is rejected (400)."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "bh*lany"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_search_wildcard_only_stars_rejected(client, regular_token1, test_db_session):
+    """A term consisting only of `*` characters is rejected (400)."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "**"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_search_wildcard_single_star_rejected(client, regular_token1, test_db_session):
+    """`term="*"` alone (core is empty) is rejected with a specific message."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "*"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "visible character" in response.json()["detail"]
+
+
+def test_search_wildcard_invisible_chars_rejected(
+    client, regular_token1, test_db_session
+):
+    """Zero-width chars in the core don't count toward the 3-char floor."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # Three zero-width spaces — strip() leaves them alone, so a naive
+    # len-based check would pass. The visible-char check must reject.
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "*\u200b\u200b\u200b*"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_search_wildcard_via_iso(client, regular_token1, test_db_session):
+    """Wildcard parsing works on the iso= path (exercises DISTINCT ON)."""
+    _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"iso": "eng", "term": "*bhʉlany*", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {
+        ("GEN", 1, 4),
+        ("GEN", 1, 6),
+        ("GEN", 1, 14),
+        ("GEN", 1, 20),
+        ("GEN", 2, 1),
+    }
+
+
+def test_search_wildcard_with_comparison(client, regular_token1, test_db_session):
+    """Wildcard term works with a comparison revision (JOIN path)."""
+    main_revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # Add a comparison revision covering the same verses so the JOIN has rows.
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+    comp_version = BibleVersion(
+        name="Morpheme Comparison Version",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="MCV",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add(comp_version)
+    test_db_session.commit()
+    test_db_session.refresh(comp_version)
+
+    comp_revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=comp_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add(comp_revision)
+    test_db_session.commit()
+    test_db_session.refresh(comp_revision)
+
+    for book, chapter, verse, text in [
+        ("GEN", 1, 4, "and he divided the waters"),
+        ("GEN", 1, 6, "let the waters be divided"),
+        ("GEN", 1, 14, "let them divide the day"),
+    ]:
+        test_db_session.add(
+            VerseText(
+                text=text,
+                revision_id=comp_revision.id,
+                verse_reference=f"{book} {chapter}:{verse}",
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+    test_db_session.add(
+        BibleVersionAccess(bible_version_id=comp_version.id, group_id=group1.id)
+    )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision.id,
+            "term": "*bhʉlany*",
+            "limit": 20,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    # Only verses present in both revisions come back via the inner JOIN.
+    assert refs == {("GEN", 1, 4), ("GEN", 1, 6), ("GEN", 1, 14)}
+    for r in data["results"]:
+        assert "comparison_text" in r
+        assert r["comparison_text"]  # non-empty
