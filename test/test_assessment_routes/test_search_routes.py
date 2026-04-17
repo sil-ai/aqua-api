@@ -772,6 +772,7 @@ def test_search_accented_via_iso_multi_revision(
         )
         rev_ids.append(revision.id)
     test_db_session.commit()
+    assert len(rev_ids) == 2, f"Expected 2 revisions to be created, got {rev_ids}"
 
     nfc_query = unicodedata.normalize("NFC", "ásaatile")
     response = client.get(
