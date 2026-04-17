@@ -5,6 +5,7 @@ from database.models import (
     BibleVersion,
     BibleVersionAccess,
     Group,
+    IsoLanguage,
     UserDB,
     VerseText,
 )
@@ -574,3 +575,291 @@ def test_search_no_subword_matches(client, regular_token1, test_db_session):
         assert re.search(
             pattern, text_lower
         ), f"'love' not found as whole word in: {result['main_text']}"
+
+
+# --- ISO-based search tests ---
+
+
+def setup_iso_search_test_data(db_session):
+    """Setup test data for ISO-based search with multiple revisions per language."""
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+
+    # Ensure swh language exists
+    if (
+        db_session.query(IsoLanguage).filter(IsoLanguage.iso639 == "swh").first()
+        is None
+    ):
+        db_session.add(IsoLanguage(iso639="swh", name="Swahili"))
+        db_session.commit()
+
+    # --- Two English versions (same language) with overlapping verses ---
+    eng_version_a = BibleVersion(
+        name="ISO Test Eng A",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="IEA",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    eng_version_b = BibleVersion(
+        name="ISO Test Eng B",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="IEB",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    db_session.add_all([eng_version_a, eng_version_b])
+    db_session.commit()
+    db_session.refresh(eng_version_a)
+    db_session.refresh(eng_version_b)
+
+    eng_rev_a = BibleRevision(
+        date=date.today(),
+        bible_version_id=eng_version_a.id,
+        published=True,
+        machine_translation=False,
+    )
+    eng_rev_b = BibleRevision(
+        date=date.today(),
+        bible_version_id=eng_version_b.id,
+        published=True,
+        machine_translation=False,
+    )
+    db_session.add_all([eng_rev_a, eng_rev_b])
+    db_session.commit()
+    db_session.refresh(eng_rev_a)
+    db_session.refresh(eng_rev_b)
+
+    # Revision A has GEN 1:1 and GEN 1:3
+    for book, chapter, verse, text in [
+        ("GEN", 1, 1, "In the beginning God created the heaven and the earth."),
+        ("GEN", 1, 3, "And God said, Let there be light: and there was light."),
+    ]:
+        db_session.add(
+            VerseText(
+                text=text,
+                revision_id=eng_rev_a.id,
+                verse_reference=f"{book} {chapter}:{verse}",
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+
+    # Revision B has the same verses (different wording) — dedup should collapse
+    for book, chapter, verse, text in [
+        ("GEN", 1, 1, "In the beginning God made the heavens and the earth."),
+        ("GEN", 1, 3, "Then God said, Let there be light, and there was light."),
+    ]:
+        db_session.add(
+            VerseText(
+                text=text,
+                revision_id=eng_rev_b.id,
+                verse_reference=f"{book} {chapter}:{verse}",
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+
+    # --- Swahili version for comparison_iso ---
+    swh_version = BibleVersion(
+        name="ISO Test Swahili",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="ISW",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    db_session.add(swh_version)
+    db_session.commit()
+    db_session.refresh(swh_version)
+
+    swh_rev = BibleRevision(
+        date=date.today(),
+        bible_version_id=swh_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    db_session.add(swh_rev)
+    db_session.commit()
+    db_session.refresh(swh_rev)
+
+    for book, chapter, verse, text in [
+        ("GEN", 1, 1, "Hapo mwanzo Mungu aliumba mbingu na dunia."),
+        ("GEN", 1, 3, "Mungu akasema, Iwe nuru, ikawa nuru."),
+    ]:
+        db_session.add(
+            VerseText(
+                text=text,
+                revision_id=swh_rev.id,
+                verse_reference=f"{book} {chapter}:{verse}",
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+
+    # Grant access to all versions
+    for version in [eng_version_a, eng_version_b, swh_version]:
+        db_session.add(
+            BibleVersionAccess(
+                bible_version_id=version.id,
+                group_id=group1.id,
+            )
+        )
+
+    db_session.commit()
+
+    return {
+        "eng_rev_a": eng_rev_a.id,
+        "eng_rev_b": eng_rev_b.id,
+        "swh_rev": swh_rev.id,
+    }
+
+
+def test_search_by_iso(client, regular_token1, test_db_session):
+    """Test searching by ISO code across all revisions for a language."""
+    setup_iso_search_test_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"iso": "eng", "term": "God", "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] > 0
+
+    # Both revisions have GEN 1:1 and GEN 1:3 with "God" — dedup should
+    # return at most one result per (book, chapter, verse)
+    refs = [(r["book"], r["chapter"], r["verse"]) for r in data["results"]]
+    assert len(refs) == len(set(refs)), "Expected deduplicated results"
+
+
+def test_search_by_iso_with_comparison_iso(client, regular_token1, test_db_session):
+    """Test iso + comparison_iso returns parallel text."""
+    setup_iso_search_test_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"iso": "eng", "comparison_iso": "swh", "term": "God", "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] > 0
+
+    for result in data["results"]:
+        assert "comparison_text" in result
+        assert result["comparison_text"], "Expected non-empty comparison text"
+
+
+def test_search_by_iso_with_comparison_revision_id(
+    client, regular_token1, test_db_session
+):
+    """Test iso for main + comparison_revision_id for comparison."""
+    ids = setup_iso_search_test_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "iso": "eng",
+            "comparison_revision_id": ids["swh_rev"],
+            "term": "God",
+            "limit": 10,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] > 0
+    assert "comparison_text" in data["results"][0]
+
+
+def test_search_iso_and_revision_id_mutually_exclusive(
+    client, regular_token1, test_db_session
+):
+    """Providing both revision_id and iso should return 400."""
+    ids = setup_iso_search_test_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": ids["eng_rev_a"],
+            "iso": "eng",
+            "term": "God",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_search_comparison_iso_and_revision_id_mutually_exclusive(
+    client, regular_token1, test_db_session
+):
+    """Providing both comparison_revision_id and comparison_iso should return 400."""
+    ids = setup_iso_search_test_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": ids["eng_rev_a"],
+            "comparison_revision_id": ids["swh_rev"],
+            "comparison_iso": "swh",
+            "term": "God",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_search_neither_revision_id_nor_iso(client, regular_token1, test_db_session):
+    """Omitting both revision_id and iso should return 400."""
+    response = client.get(
+        "/v3/textsearch",
+        params={"term": "God"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_search_iso_no_accessible_revisions(client, regular_token2, test_db_session):
+    """Searching an ISO the user has no access to should return 404."""
+    setup_iso_search_test_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"iso": "eng", "term": "God"},
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+
+    # regular_token2 has no access to these versions
+    assert response.status_code == 404
+
+
+def test_search_by_iso_random(client, regular_token1, test_db_session):
+    """Test ISO search with random=True does not crash (DISTINCT ON + random fix)."""
+    setup_iso_search_test_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"iso": "eng", "term": "God", "limit": 10, "random": True},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] > 0
+
+    # Dedup still applies — no duplicate verse locations
+    refs = [(r["book"], r["chapter"], r["verse"]) for r in data["results"]]
+    assert len(refs) == len(set(refs))
