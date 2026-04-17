@@ -1192,6 +1192,19 @@ def test_get_lexeme_cards_target_words_conflicts_with_target_word(
     assert "Cannot use both" in response.json()["detail"]
 
 
+def test_get_lexeme_cards_target_words_all_blank_returns_400(
+    client, regular_token1, db_session
+):
+    """Test that target_words with only blanks/commas returns 400."""
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=%20,%20,",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "no valid words" in response.json()["detail"]
+
+
 def test_get_lexeme_cards_by_pos(client, regular_token1, db_session, test_revision_id):
     """Test getting lexeme cards filtered by part of speech."""
     # Add test data

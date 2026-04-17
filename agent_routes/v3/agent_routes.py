@@ -7,8 +7,11 @@ import unicodedata
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
+from sqlalchemy import bindparam
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.types import Text as TextType
 
 from database.dependencies import get_db
 from database.models import (
@@ -1621,6 +1624,10 @@ async def get_lexeme_cards(
     try:
         from sqlalchemy import desc, select, text
 
+        # Normalize inputs before validation
+        source_word = source_word.strip() if source_word else None
+        target_word = target_word.strip() if target_word else None
+
         if target_word and target_words:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -1640,14 +1647,11 @@ async def get_lexeme_cards(
             conditions.append(AgentLexemeCard.pos == pos)
 
         # Word filtering: both source_word and target_word search
-        # lemma OR surface_forms (case-insensitive exact match)
+        # lemma OR surface_forms (case-insensitive exact match, NFC-normalized)
         word_conditions = []
 
-        source_word = source_word.strip() if source_word else None
-        target_word = target_word.strip() if target_word else None
-
         if source_word:
-            source_word_lower = source_word.lower()
+            source_word_lower = unicodedata.normalize("NFC", source_word).lower()
             word_conditions.append(
                 text(
                     "((LOWER(agent_lexeme_cards.source_lemma) = :source_word_lower) OR "
@@ -1658,7 +1662,7 @@ async def get_lexeme_cards(
             )
 
         if target_word:
-            target_word_lower = target_word.lower()
+            target_word_lower = unicodedata.normalize("NFC", target_word).lower()
             word_conditions.append(
                 text(
                     "((LOWER(agent_lexeme_cards.target_lemma) = :target_word_lower) OR "
@@ -1675,22 +1679,22 @@ async def get_lexeme_cards(
                 for w in target_words.split(",")
                 if w.strip()
             ]
-            if words_list:
-                from sqlalchemy import bindparam
-                from sqlalchemy.dialects.postgresql import ARRAY
-                from sqlalchemy.types import Text
-
-                tw_param = bindparam(
-                    "target_words_arr", value=words_list, type_=ARRAY(Text)
+            if not words_list:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="'target_words' parameter contains no valid words.",
                 )
-                word_conditions.append(
-                    text(
-                        "(LOWER(agent_lexeme_cards.target_lemma) = ANY(:target_words_arr) OR "
-                        "(jsonb_typeof(agent_lexeme_cards.surface_forms) = 'array' AND "
-                        "EXISTS (SELECT 1 FROM jsonb_array_elements_text(agent_lexeme_cards.surface_forms) AS elem "
-                        "WHERE LOWER(elem) = ANY(:target_words_arr))))"
-                    ).bindparams(tw_param)
-                )
+            tw_param = bindparam(
+                "target_words_arr", value=words_list, type_=ARRAY(TextType)
+            )
+            word_conditions.append(
+                text(
+                    "(LOWER(agent_lexeme_cards.target_lemma) = ANY(:target_words_arr) OR "
+                    "(jsonb_typeof(agent_lexeme_cards.surface_forms) = 'array' AND "
+                    "EXISTS (SELECT 1 FROM jsonb_array_elements_text(agent_lexeme_cards.surface_forms) AS elem "
+                    "WHERE LOWER(elem) = ANY(:target_words_arr))))"
+                ).bindparams(tw_param)
+            )
 
         query = (
             select(AgentLexemeCard)
