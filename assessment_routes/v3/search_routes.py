@@ -51,8 +51,8 @@ def _authorized_revisions_select(
         select(BibleRevision.id)
         .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
         .where(
-            BibleRevision.deleted.is_not(True),
-            BibleVersion.deleted.is_not(True),
+            BibleRevision.deleted.is_(False),
+            BibleVersion.deleted.is_(False),
         )
     )
     if revision_id is not None:
