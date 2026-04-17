@@ -25,30 +25,6 @@ logger = setup_logger(__name__, container_id=container_id)
 router = APIRouter()
 
 
-def _is_whole_word_match(text: str, search_term: str) -> bool:
-    """
-    Check if the search term appears as a whole word in the text (case-insensitive).
-
-    Parameters
-    ----------
-    text : str
-        The text to search in
-    search_term : str
-        The term to search for
-
-    Returns
-    -------
-    bool
-        True if the search term appears as a whole word in the text
-    """
-    if not text or not search_term:
-        return False
-
-    # Create a regex pattern for whole word matching (case-insensitive)
-    pattern = r"\b" + re.escape(search_term.lower()) + r"\b"
-    return bool(re.search(pattern, text.lower()))
-
-
 async def _resolve_authorized_revision_ids_for_iso(
     iso: str, user: UserModel, db: AsyncSession
 ) -> list[int]:
@@ -59,8 +35,8 @@ async def _resolve_authorized_revision_ids_for_iso(
         .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
         .where(
             BibleVersion.iso_language == iso,
-            BibleRevision.deleted == False,  # noqa: E712
-            BibleVersion.deleted == False,  # noqa: E712
+            BibleRevision.deleted.is_not(True),
+            BibleVersion.deleted.is_not(True),
         )
     )
 
@@ -235,6 +211,12 @@ async def search_revision_text(
                 vt1_alias.chapter,
                 vt1_alias.verse,
             )
+
+    # Cap the DB result set.  The Python-side whole-word filter may discard
+    # ilike matches that aren't whole words, so we overfetch by 10x to give
+    # enough headroom while still bounding the transfer from the DB.
+    sql_limit = limit * 10
+    search_query = search_query.limit(sql_limit)
 
     # Apply ordering.  DISTINCT ON requires the leading ORDER BY columns to
     # match, so when dedup is active we always order by (book, chapter, verse)
