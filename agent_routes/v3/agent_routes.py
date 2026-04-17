@@ -1628,7 +1628,7 @@ async def get_lexeme_cards(
         source_word = source_word.strip() if source_word else None
         target_word = target_word.strip() if target_word else None
 
-        if target_word and target_words:
+        if target_word and target_words is not None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot use both 'target_word' and 'target_words' parameters.",
@@ -1672,7 +1672,7 @@ async def get_lexeme_cards(
                 ).bindparams(target_word_lower=target_word_lower)
             )
 
-        if target_words:
+        if target_words is not None:
             # Parse comma-separated list, NFC-normalize and lowercase each word
             words_list = [
                 unicodedata.normalize("NFC", w.strip()).lower()
