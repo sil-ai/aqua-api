@@ -213,9 +213,12 @@ async def search_revision_text(
             )
 
     # Cap the DB result set.  The Python-side whole-word filter may discard
-    # ilike matches that aren't whole words, so we overfetch by 10x to give
-    # enough headroom while still bounding the transfer from the DB.
-    sql_limit = limit * 10
+    # ilike matches that aren't whole words, so we overfetch to give headroom
+    # while still bounding the transfer from the DB.  3x is enough in practice:
+    # the common false-positive case (substring inside another word) is
+    # bounded per language, and pulling 10x rows back over the wire dominated
+    # latency for common terms (13s on mʉlʉngʉ with 100 verse texts).
+    sql_limit = limit * 3
     search_query = search_query.limit(sql_limit)
 
     # Apply ordering.  DISTINCT ON requires the leading ORDER BY columns to
