@@ -860,3 +860,47 @@ def test_put_affixes_duplicate_in_payload_rejected(client, regular_token1, db_se
     assert resp.status_code == 422
     assert "duplicate" in resp.json()["detail"].lower()
     _cleanup(db_session)
+
+
+def test_put_affixes_scoped_delete_handles_conflict_with_other_revision(
+    client, regular_token1, test_revision_id, db_session
+):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "akha-", "position": "prefix", "gloss": "past"},
+            ],
+        },
+        headers=headers,
+    )
+
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "revision_id": test_revision_id,
+            "affixes": [
+                {
+                    "form": "akha-",
+                    "position": "prefix",
+                    "gloss": "past",
+                    "examples": ["akhatenda"],
+                },
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    resp = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers)
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["affixes"][0]["examples"] == ["akhatenda"]
+    assert data["affixes"][0]["first_seen_revision_id"] == test_revision_id
+    _cleanup(db_session)

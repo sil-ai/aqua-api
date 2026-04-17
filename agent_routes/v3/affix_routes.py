@@ -358,7 +358,18 @@ async def replace_affixes(
                 }
                 for (form, position, gloss), fields in incoming.items()
             ]
-            await db.execute(pg_insert(LanguageAffix).values(rows))
+            stmt = pg_insert(LanguageAffix).values(rows)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["iso_639_3", "form", "position", "gloss"],
+                set_={
+                    "examples": stmt.excluded.examples,
+                    "n_runs": stmt.excluded.n_runs,
+                    "source_model": stmt.excluded.source_model,
+                    "first_seen_revision_id": stmt.excluded.first_seen_revision_id,
+                    "updated_at": func.now(),
+                },
+            )
+            await db.execute(stmt)
             n_inserted = len(rows)
 
         await db.commit()
