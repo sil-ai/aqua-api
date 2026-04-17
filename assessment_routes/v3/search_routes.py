@@ -18,7 +18,6 @@ from database.models import BibleRevision, BibleVersion, BibleVersionAccess
 from database.models import UserDB as UserModel
 from database.models import UserGroup, VerseText
 from security_routes.auth_routes import get_current_user
-from security_routes.utilities import is_user_authorized_for_revision
 from utils.logging_config import setup_logger
 
 container_id = socket.gethostname()
@@ -34,32 +33,46 @@ def _nfc_sql(col):
     return func.normalize(col, literal_column("NFC"))
 
 
-async def _resolve_authorized_revision_ids_for_iso(
-    iso: str, user: UserModel, db: AsyncSession
-) -> list[int]:
-    """Return revision IDs the user may access for a given ISO 639-3 code."""
-    base_query = (
+def _authorized_revisions_select(
+    user: UserModel,
+    iso: Optional[str] = None,
+    revision_id: Optional[int] = None,
+):
+    """Return a SELECT of revision IDs the user may access, optionally scoped.
+
+    Used as an inline subquery in the search WHERE clause so authorization
+    and search run as a single DB round-trip. Callers can also execute it
+    standalone to distinguish "no access" (empty) from "no text matches"
+    (non-empty) when the main search returns zero rows.
+    """
+    if iso is None and revision_id is None:
+        raise ValueError("at least one of iso or revision_id must be provided")
+    q = (
         select(BibleRevision.id)
-        .distinct()
         .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
         .where(
-            BibleVersion.iso_language == iso,
             BibleRevision.deleted.is_not(True),
             BibleVersion.deleted.is_not(True),
         )
     )
+    if revision_id is not None:
+        q = q.where(BibleRevision.id == revision_id)
+    elif iso is not None:
+        q = q.where(BibleVersion.iso_language == iso)
 
     if not user.is_admin:
         user_groups_subq = (
             select(UserGroup.group_id).where(UserGroup.user_id == user.id)
         ).subquery()
-        base_query = base_query.join(
+        q = q.join(
             BibleVersionAccess,
             BibleVersionAccess.bible_version_id == BibleVersion.id,
-        ).where(BibleVersionAccess.group_id.in_(user_groups_subq))
+        ).where(BibleVersionAccess.group_id.in_(select(user_groups_subq)))
+        # An access row per group membership can duplicate the same revision;
+        # dedup so the subquery size tracks unique revisions.
+        q = q.distinct()
 
-    result = await db.execute(base_query)
-    return list(result.scalars().all())
+    return q
 
 
 @router.get("/textsearch")
@@ -116,47 +129,21 @@ async def search_revision_text(
             detail="Provide either comparison_revision_id or comparison_iso, not both",
         )
 
-    # --- resolve main revision IDs ---------------------------------------
-    if revision_id is not None:
-        if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
-            raise HTTPException(
-                status_code=403,
-                detail="User not authorized to access this revision",
-            )
-        main_revision_ids = [revision_id]
-    else:
-        main_revision_ids = await _resolve_authorized_revision_ids_for_iso(
-            iso, current_user, db
+    # Build authorization subqueries (executed inline with the search query
+    # so auth + search are a single DB round-trip in the success case).
+    main_auth_select = _authorized_revisions_select(
+        current_user, iso=iso, revision_id=revision_id
+    )
+    comp_auth_select = None
+    if comparison_revision_id is not None or comparison_iso is not None:
+        comp_auth_select = _authorized_revisions_select(
+            current_user,
+            iso=comparison_iso,
+            revision_id=comparison_revision_id,
         )
-        if not main_revision_ids:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No accessible revisions found for iso '{iso}'",
-            )
-
-    # --- resolve comparison revision IDs ---------------------------------
-    comp_revision_ids: list[int] | None = None
-    if comparison_revision_id is not None:
-        if not await is_user_authorized_for_revision(
-            current_user.id, comparison_revision_id, db
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail="User not authorized to access the comparison revision",
-            )
-        comp_revision_ids = [comparison_revision_id]
-    elif comparison_iso is not None:
-        comp_revision_ids = await _resolve_authorized_revision_ids_for_iso(
-            comparison_iso, current_user, db
-        )
-        if not comp_revision_ids:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No accessible revisions found for comparison iso '{comparison_iso}'",
-            )
 
     use_dedup = iso is not None
-    use_comparison = comp_revision_ids is not None
+    use_comparison = comp_auth_select is not None
     comp_dedup = comparison_iso is not None
 
     # Normalize to NFC so accented characters match regardless of whether the
@@ -189,10 +176,10 @@ async def search_revision_text(
                 (vt2_alias.book == vt1_alias.book)
                 & (vt2_alias.chapter == vt1_alias.chapter)
                 & (vt2_alias.verse == vt1_alias.verse)
-                & (vt2_alias.revision_id.in_(comp_revision_ids)),
+                & (vt2_alias.revision_id.in_(comp_auth_select)),
             )
             .where(
-                vt1_alias.revision_id.in_(main_revision_ids),
+                vt1_alias.revision_id.in_(main_auth_select),
                 _nfc_sql(vt1_alias.text).ilike(like_pattern),
                 vt1_alias.text != "",
                 vt2_alias.text != "",
@@ -213,7 +200,7 @@ async def search_revision_text(
             vt1_alias.verse.label("verse"),
             vt1_alias.text.label("main_text"),
         ).where(
-            vt1_alias.revision_id.in_(main_revision_ids),
+            vt1_alias.revision_id.in_(main_auth_select),
             _nfc_sql(vt1_alias.text).ilike(like_pattern),
             vt1_alias.text != "",
         )
@@ -255,6 +242,45 @@ async def search_revision_text(
         # Execute the query
         result = await db.execute(search_query)
         rows = result.all()
+
+        # If empty, distinguish "no authorization" (403/404) from "no matches"
+        # (200 with empty results) with a single follow-up query.
+        if not rows:
+            auth_row = (await db.execute(main_auth_select.limit(1))).scalars().first()
+            if auth_row is None:
+                if iso is not None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"No accessible revisions found for iso '{iso}'",
+                    )
+                # revision_id path: non-admins get 403 (unauthorized or
+                # non-existent — indistinguishable by design). Admins are
+                # always authorized, so preserve pre-refactor behavior of
+                # returning 200 with empty results when the revision id
+                # simply doesn't exist.
+                if not current_user.is_admin:
+                    raise HTTPException(
+                        status_code=403,
+                        detail="User not authorized to access this revision",
+                    )
+            if comp_auth_select is not None:
+                comp_auth_row = (
+                    (await db.execute(comp_auth_select.limit(1))).scalars().first()
+                )
+                if comp_auth_row is None:
+                    if comparison_iso is not None:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=(
+                                f"No accessible revisions found for comparison iso "
+                                f"'{comparison_iso}'"
+                            ),
+                        )
+                    if not current_user.is_admin:
+                        raise HTTPException(
+                            status_code=403,
+                            detail="User not authorized to access the comparison revision",
+                        )
 
         # Filter results to only include whole word matches, stopping at limit.
         # Normalize both the query and the stored text to NFC so the word
@@ -305,6 +331,8 @@ async def search_revision_text(
 
         return {"results": filtered_results, "total_count": len(filtered_results)}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(
             f"Error in text search: {str(e)}",

@@ -312,6 +312,120 @@ def test_search_unauthorized_comparison(client, regular_token2, test_db_session)
     assert response.status_code == 403
 
 
+def test_search_unauthorized_comparison_with_zero_main_matches(
+    client, regular_token1, test_db_session
+):
+    """User authorized for main + unauthorized comparison + no main matches -> 403.
+
+    Exercises the zero-rows fallback: the combined query returns no rows
+    because the comparison JOIN rejects all verses (user lacks comp access),
+    so the fallback must detect comp-unauthorized and raise 403 rather than
+    silently returning 200 with empty results.
+    """
+    user2 = test_db_session.query(UserDB).filter(UserDB.username == "testuser2").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+    group2 = test_db_session.query(Group).filter(Group.name == "Group2").first()
+
+    # Ensure swh exists as an iso — used so this test's data doesn't interfere
+    # with other tests that assume testuser2 has no eng access.
+    if (
+        test_db_session.query(IsoLanguage).filter(IsoLanguage.iso639 == "swh").first()
+        is None
+    ):
+        test_db_session.add(IsoLanguage(iso639="swh", name="Swahili"))
+        test_db_session.commit()
+
+    main_version = BibleVersion(
+        name="Split-Auth Main",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="SAM",
+        owner_id=user2.id,
+        is_reference=False,
+    )
+    comp_version = BibleVersion(
+        name="Split-Auth Comp",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="SAC",
+        owner_id=user2.id,
+        is_reference=False,
+    )
+    test_db_session.add_all([main_version, comp_version])
+    test_db_session.commit()
+    test_db_session.refresh(main_version)
+    test_db_session.refresh(comp_version)
+
+    main_revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=main_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    comp_revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=comp_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add_all([main_revision, comp_revision])
+    test_db_session.commit()
+    test_db_session.refresh(main_revision)
+    test_db_session.refresh(comp_revision)
+
+    test_db_session.add(
+        VerseText(
+            text="Nothing in here matches the search term.",
+            revision_id=main_revision.id,
+            verse_reference="GEN 1:1",
+            book="GEN",
+            chapter=1,
+            verse=1,
+        )
+    )
+    # testuser1 (via Group1) has main access; only Group2 can see comp
+    test_db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=main_version.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=comp_version.id, group_id=group2.id),
+        ]
+    )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision.id,
+            "comparison_revision_id": comp_revision.id,
+            "term": "zyxwvu-no-match",
+            "limit": 5,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 403
+    assert "comparison" in response.json()["detail"].lower()
+
+
+def test_search_admin_nonexistent_revision_returns_200_empty(
+    client, admin_token, test_db_session
+):
+    """Admin querying a non-existent revision_id must get 200 with empty results.
+
+    Preserves pre-refactor behavior: is_user_authorized_for_revision returned
+    True for admins without checking revision existence, so admins got 200
+    empty rather than 403 for bad IDs.
+    """
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": 999_999_999, "term": "anything", "limit": 5},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 0
+    assert data["results"] == []
+
+
 def test_search_limit_validation(client, regular_token1, test_db_session):
     """Test that limit parameter is properly validated."""
     main_revision_id, _ = setup_search_test_data(test_db_session)
