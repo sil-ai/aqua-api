@@ -7,7 +7,7 @@ from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,12 +35,10 @@ logger = setup_logger(__name__, container_id=container_id)
 router = fastapi.APIRouter()
 
 
-def _normalize_form(form: str) -> str:
-    return unicodedata.normalize("NFC", form).strip()
-
-
-def _normalize_gloss(gloss: str) -> str:
-    return unicodedata.normalize("NFC", gloss).strip()
+def _normalize(value: str) -> str:
+    # NFC + strip only — no casefold. Affix forms and glosses are
+    # case-sensitive linguistic annotations, unlike morphemes.
+    return unicodedata.normalize("NFC", value).strip()
 
 
 @router.get("/affixes", response_model=AffixListOut)
@@ -94,13 +92,6 @@ async def commit_affixes(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Additive upsert of an affix inventory for a language.
-
-    Uniqueness is (iso, form, position, gloss) so polysemous affixes —
-    e.g. Bantu ``-ile`` as perfective/applicative/locative — live as
-    separate rows. On conflict, ``examples``, ``n_runs``, and
-    ``source_model`` are refreshed from the incoming payload.
-    """
     request_start = time.perf_counter()
     iso = payload.iso_639_3
 
@@ -141,19 +132,26 @@ async def commit_affixes(
         if payload.affixes:
             incoming: dict[tuple[str, str, str], dict] = {}
             for a in payload.affixes:
-                form = _normalize_form(a.form)
-                if not form:
+                form = _normalize(a.form)
+                gloss = _normalize(a.gloss)
+                # Pydantic enforces min_length=1, but normalization may
+                # leave only whitespace — reject post-normalization too.
+                if not form or not gloss:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail="Affix form must not be empty",
+                        detail="Affix form and gloss must not be empty",
                     )
-                gloss = _normalize_gloss(a.gloss)
-                if not gloss:
+                key = (form, a.position, gloss)
+                if key in incoming:
                     raise HTTPException(
                         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail="Affix gloss must not be empty",
+                        detail=(
+                            f"Duplicate affix in payload: "
+                            f"form={form!r}, position={a.position!r}, "
+                            f"gloss={gloss!r}"
+                        ),
                     )
-                incoming[(form, a.position, gloss)] = {
+                incoming[key] = {
                     "examples": a.examples,
                     "n_runs": a.n_runs,
                 }
@@ -222,12 +220,15 @@ async def commit_affixes(
 
             if rows_to_write:
                 stmt = pg_insert(LanguageAffix).values(rows_to_write)
+                # updated_at is refreshed explicitly: raw pg_insert
+                # bypasses SQLAlchemy's ORM-level onupdate hook.
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["iso_639_3", "form", "position", "gloss"],
                     set_={
                         "examples": stmt.excluded.examples,
                         "n_runs": stmt.excluded.n_runs,
                         "source_model": stmt.excluded.source_model,
+                        "updated_at": func.now(),
                     },
                 )
                 await db.execute(stmt)

@@ -79,8 +79,6 @@ def test_affixes_round_trip(client, regular_token1, db_session):
 def test_affixes_polysemy_same_form_position_different_gloss(
     client, regular_token1, db_session
 ):
-    """Bantu `-ile`-style polysemy: one surface form, multiple senses — must
-    be stored as distinct rows."""
     _cleanup(db_session)
     _seed_profile(db_session)
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -380,4 +378,229 @@ def test_affixes_empty_post(client, regular_token1, db_session):
         "n_affixes_updated": 0,
         "n_affixes_unchanged": 0,
     }
+    _cleanup(db_session)
+
+
+def test_affixes_get_without_token(client, db_session):
+    resp = client.get(f"/{prefix}/affixes?iso={TEST_ISO}")
+    assert resp.status_code == 401
+
+
+def test_affixes_post_without_token(client, db_session):
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [{"form": "akha-", "position": "prefix", "gloss": "past"}],
+        },
+    )
+    assert resp.status_code == 401
+
+
+def test_affixes_duplicate_in_payload_rejected(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "akha-", "position": "prefix", "gloss": "past"},
+                {"form": "akha-", "position": "prefix", "gloss": "past"},
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert "duplicate" in resp.json()["detail"].lower()
+    _cleanup(db_session)
+
+
+def test_affixes_empty_form_rejected_at_pydantic(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [{"form": "", "position": "prefix", "gloss": "past"}],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    _cleanup(db_session)
+
+
+def test_affixes_whitespace_only_form_rejected(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [{"form": "   ", "position": "prefix", "gloss": "past"}],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    _cleanup(db_session)
+
+
+def test_affixes_nfc_normalization_dedupes(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # NFC-composed "é" and decomposed "e\u0301" should collapse to one row.
+    composed = "\u00e9-"
+    decomposed = "e\u0301-"
+    assert composed != decomposed  # distinct as raw strings
+
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [{"form": composed, "position": "prefix", "gloss": "x"}],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["n_affixes_new"] == 1
+
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "  " + decomposed + "  ", "position": "prefix", "gloss": "x"}
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["n_affixes_new"] == 0
+    assert body["n_affixes_unchanged"] == 1
+    _cleanup(db_session)
+
+
+def test_affixes_first_seen_revision_preserved_on_upsert(
+    client, regular_token1, test_revision_id, db_session
+):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "revision_id": test_revision_id,
+            "affixes": [{"form": "akha-", "position": "prefix", "gloss": "past"}],
+        },
+        headers=headers,
+    )
+
+    # Second commit with a different revision_id — should not clobber
+    # first_seen_revision_id.
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {
+                    "form": "akha-",
+                    "position": "prefix",
+                    "gloss": "past",
+                    "examples": ["new"],
+                }
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    row = (
+        db_session.query(LanguageAffix)
+        .filter(LanguageAffix.iso_639_3 == TEST_ISO)
+        .one()
+    )
+    assert row.first_seen_revision_id == test_revision_id
+    _cleanup(db_session)
+
+
+def test_affixes_source_model_change_counts_as_updated(
+    client, regular_token1, db_session
+):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    body = {
+        "iso_639_3": TEST_ISO,
+        "source_model": "model-a",
+        "affixes": [{"form": "akha-", "position": "prefix", "gloss": "past"}],
+    }
+    client.post(f"/{prefix}/affixes", json=body, headers=headers)
+
+    body["source_model"] = "model-b"
+    resp = client.post(f"/{prefix}/affixes", json=body, headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["n_affixes_updated"] == 1
+    assert data["n_affixes_unchanged"] == 0
+
+    resp = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers)
+    assert resp.json()["affixes"][0]["source_model"] == "model-b"
+    _cleanup(db_session)
+
+
+def test_affixes_updated_at_refreshed_on_upsert(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [{"form": "akha-", "position": "prefix", "gloss": "past"}],
+        },
+        headers=headers,
+    )
+    db_session.expire_all()
+    before = (
+        db_session.query(LanguageAffix)
+        .filter(LanguageAffix.iso_639_3 == TEST_ISO)
+        .one()
+        .updated_at
+    )
+
+    # Trigger an upsert that actually changes stored state.
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {
+                    "form": "akha-",
+                    "position": "prefix",
+                    "gloss": "past",
+                    "examples": ["akhatenda"],
+                }
+            ],
+        },
+        headers=headers,
+    )
+    db_session.expire_all()
+    after = (
+        db_session.query(LanguageAffix)
+        .filter(LanguageAffix.iso_639_3 == TEST_ISO)
+        .one()
+        .updated_at
+    )
+    assert after > before
     _cleanup(db_session)
