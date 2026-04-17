@@ -78,6 +78,10 @@ async def is_user_authorized_for_revision(user_id, revision_id, db):
     stmt = (
         select(BibleVersion)
         .join(BibleRevision, BibleVersion.id == BibleRevision.bible_version_id)
+        .join(
+            BibleVersionAccess,
+            BibleVersionAccess.bible_version_id == BibleVersion.id,
+        )
         .where(
             BibleRevision.id == revision_id,
             BibleVersionAccess.group_id.in_(user_groups),
