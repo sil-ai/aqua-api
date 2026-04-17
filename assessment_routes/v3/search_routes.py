@@ -99,7 +99,19 @@ async def search_revision_text(
 ):
     """
     Search for verses containing a specific term in a revision text.
-    Returns verses that contain the search term (case-insensitive, whole word match).
+    Returns verses that contain the search term (case-insensitive).
+
+    By default matches whole words only. A leading/trailing ``*`` in the
+    term acts as a wildcard:
+
+    - ``foo``    — whole-word match (default)
+    - ``foo*``   — words starting with ``foo``
+    - ``*foo``   — words ending with ``foo``
+    - ``*foo*``  — ``foo`` anywhere inside a word
+
+    Wildcards are only accepted at the start/end of the term; a ``*`` in
+    the middle returns 400. Wildcard queries require at least 3 non-``*``
+    characters.
 
     Provide either ``revision_id`` or ``iso`` (not both).  When ``iso`` is
     given, all accessible revisions for that language are searched and results
@@ -129,6 +141,30 @@ async def search_revision_text(
             detail="Provide either comparison_revision_id or comparison_iso, not both",
         )
 
+    # Parse leading/trailing `*` wildcards. A `*` in the middle of the
+    # term is rejected; wildcards are only anchors for the word boundary.
+    prefix_wildcard = term.startswith("*")
+    suffix_wildcard = term.endswith("*")
+    core_term = term[int(prefix_wildcard) : len(term) - int(suffix_wildcard)]
+    if "*" in core_term:
+        raise HTTPException(
+            status_code=400,
+            detail="`*` is only allowed at the start and/or end of the term",
+        )
+    has_wildcard = prefix_wildcard or suffix_wildcard
+    # Wildcard queries can explode result sets for very short cores
+    # (e.g. `*a*` matches nearly every verse). Require a reasonable floor.
+    if has_wildcard and len(core_term.strip()) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Wildcard queries require at least 3 non-`*` characters",
+        )
+    if not core_term:
+        raise HTTPException(
+            status_code=400,
+            detail="Term must contain at least one non-`*` character",
+        )
+
     # Build authorization subqueries (executed inline with the search query
     # so auth + search are a single DB round-trip in the success case).
     main_auth_select = _authorized_revisions_select(
@@ -148,7 +184,7 @@ async def search_revision_text(
 
     # Normalize to NFC so accented characters match regardless of whether the
     # query or stored text uses composed vs decomposed forms.
-    normalized_term = unicodedata.normalize("NFC", term)
+    normalized_term = unicodedata.normalize("NFC", core_term)
 
     # Escape SQL LIKE/ILIKE wildcards so % and _ in the term are literal
     escaped_term = normalized_term.replace("%", r"\%").replace("_", r"\_")
@@ -282,11 +318,16 @@ async def search_revision_text(
                             detail="User not authorized to access the comparison revision",
                         )
 
-        # Filter results to only include whole word matches, stopping at limit.
+        # Filter results based on the wildcard anchors, stopping at limit.
         # Normalize both the query and the stored text to NFC so the word
         # boundary check behaves consistently regardless of input encoding.
+        # A leading `*` drops the left word boundary; a trailing `*` drops
+        # the right one; no `*` means a whole-word match.
+        escaped = re.escape(normalized_term.lower())
+        left = "" if prefix_wildcard else r"\b"
+        right = "" if suffix_wildcard else r"\b"
+        word_pattern = re.compile(left + escaped + right)
         filtered_results = []
-        word_pattern = re.compile(r"\b" + re.escape(normalized_term.lower()) + r"\b")
         for row in rows:
             if not row.main_text:
                 continue
