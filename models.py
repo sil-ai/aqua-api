@@ -1336,6 +1336,11 @@ class AffixCommitResponse(BaseModel):
     n_affixes_unchanged: int
 
 
+class AffixReplaceResponse(BaseModel):
+    n_deleted: int
+    n_inserted: int
+
+
 class WordIndexRequest(BaseModel):
     iso_639_3: str = Field(..., min_length=3, max_length=3)
     revision_id: int

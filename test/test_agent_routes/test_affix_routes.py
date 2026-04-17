@@ -637,3 +637,228 @@ def test_affixes_updated_at_not_bumped_on_unchanged_upsert(
     )
     assert after == before
     _cleanup(db_session)
+
+
+# ── PUT /affixes (replace-all) ──────────────────────────────────────
+
+
+def test_put_affixes_replaces_existing(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "akha-", "position": "prefix", "gloss": "past"},
+                {"form": "-ile", "position": "suffix", "gloss": "perfect"},
+                {"form": "ku-", "position": "prefix", "gloss": "infinitive"},
+            ],
+        },
+        headers=headers,
+    )
+
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "wa-", "position": "prefix", "gloss": "plural"},
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["n_deleted"] == 3
+    assert body["n_inserted"] == 1
+
+    resp = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers)
+    data = resp.json()
+    assert data["total"] == 1
+    assert data["affixes"][0]["form"] == "wa-"
+    _cleanup(db_session)
+
+
+def test_put_affixes_empty_list_clears_all(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "akha-", "position": "prefix", "gloss": "past"},
+                {"form": "-ile", "position": "suffix", "gloss": "perfect"},
+            ],
+        },
+        headers=headers,
+    )
+
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={"iso_639_3": TEST_ISO, "affixes": []},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["n_deleted"] == 2
+    assert body["n_inserted"] == 0
+
+    resp = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers)
+    assert resp.json()["total"] == 0
+    _cleanup(db_session)
+
+
+def test_put_affixes_no_prior_rows(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "wa-", "position": "prefix", "gloss": "plural"},
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["n_deleted"] == 0
+    assert body["n_inserted"] == 1
+    _cleanup(db_session)
+
+
+def test_put_affixes_scoped_by_revision(
+    client, regular_token1, test_revision_id, db_session
+):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "revision_id": test_revision_id,
+            "affixes": [
+                {"form": "akha-", "position": "prefix", "gloss": "past"},
+            ],
+        },
+        headers=headers,
+    )
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "-ile", "position": "suffix", "gloss": "perfect"},
+            ],
+        },
+        headers=headers,
+    )
+
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "revision_id": test_revision_id,
+            "affixes": [
+                {"form": "wa-", "position": "prefix", "gloss": "plural"},
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["n_deleted"] == 1
+    assert body["n_inserted"] == 1
+
+    resp = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers)
+    forms = {a["form"] for a in resp.json()["affixes"]}
+    assert forms == {"-ile", "wa-"}
+    _cleanup(db_session)
+
+
+def test_put_affixes_missing_profile(client, regular_token1, db_session):
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [{"form": "x-", "position": "prefix", "gloss": "x"}],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 404
+
+
+def test_put_affixes_unknown_iso(client, regular_token1, db_session):
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": "zzz",
+            "affixes": [{"form": "x-", "position": "prefix", "gloss": "x"}],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+def test_put_affixes_invalid_revision(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "revision_id": 999_999_999,
+            "affixes": [{"form": "x-", "position": "prefix", "gloss": "x"}],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    _cleanup(db_session)
+
+
+def test_put_affixes_without_token(client, db_session):
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [{"form": "x-", "position": "prefix", "gloss": "x"}],
+        },
+    )
+    assert resp.status_code == 401
+
+
+def test_put_affixes_duplicate_in_payload_rejected(
+    client, regular_token1, db_session
+):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "akha-", "position": "prefix", "gloss": "past"},
+                {"form": "akha-", "position": "prefix", "gloss": "past"},
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert "duplicate" in resp.json()["detail"].lower()
+    _cleanup(db_session)
