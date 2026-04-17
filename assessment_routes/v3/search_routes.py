@@ -27,6 +27,13 @@ logger = setup_logger(__name__, container_id=container_id)
 router = APIRouter()
 
 
+def _nfc_sql(col):
+    # NFC (canonical) only; NFKC is intentionally avoided so ligatures and
+    # fullwidth/compatibility forms are never silently conflated with their
+    # canonical counterparts.
+    return func.normalize(col, literal_column("NFC"))
+
+
 async def _resolve_authorized_revision_ids_for_iso(
     iso: str, user: UserModel, db: AsyncSession
 ) -> list[int]:
@@ -160,9 +167,6 @@ async def search_revision_text(
     escaped_term = normalized_term.replace("%", r"\%").replace("_", r"\_")
     like_pattern = f"%{escaped_term}%"
 
-    def _nfc(col):
-        return func.normalize(col, literal_column("NFC"))
-
     # Build the base query
     vt1_alias = aliased(VerseText, name="vt1")
 
@@ -189,7 +193,7 @@ async def search_revision_text(
             )
             .where(
                 vt1_alias.revision_id.in_(main_revision_ids),
-                _nfc(vt1_alias.text).ilike(like_pattern),
+                _nfc_sql(vt1_alias.text).ilike(like_pattern),
                 vt1_alias.text != "",
                 vt2_alias.text != "",
             )
@@ -210,7 +214,7 @@ async def search_revision_text(
             vt1_alias.text.label("main_text"),
         ).where(
             vt1_alias.revision_id.in_(main_revision_ids),
-            _nfc(vt1_alias.text).ilike(like_pattern),
+            _nfc_sql(vt1_alias.text).ilike(like_pattern),
             vt1_alias.text != "",
         )
 
@@ -258,17 +262,22 @@ async def search_revision_text(
         filtered_results = []
         word_pattern = re.compile(r"\b" + re.escape(normalized_term.lower()) + r"\b")
         for row in rows:
-            if row.main_text and word_pattern.search(
-                unicodedata.normalize("NFC", row.main_text).lower()
-            ):
+            if not row.main_text:
+                continue
+            main_text_nfc = unicodedata.normalize("NFC", row.main_text)
+            if word_pattern.search(main_text_nfc.lower()):
                 result_dict = {
                     "book": row.book,
                     "chapter": row.chapter,
                     "verse": row.verse,
-                    "main_text": row.main_text,
+                    "main_text": main_text_nfc,
                 }
                 if use_comparison:
-                    result_dict["comparison_text"] = row.comparison_text
+                    result_dict["comparison_text"] = (
+                        unicodedata.normalize("NFC", row.comparison_text)
+                        if row.comparison_text
+                        else row.comparison_text
+                    )
 
                 filtered_results.append(result_dict)
 
