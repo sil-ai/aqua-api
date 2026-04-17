@@ -164,7 +164,6 @@ async def search_revision_text(
             status_code=400,
             detail="Term must contain at least one visible character",
         )
-    has_wildcard = prefix_wildcard or suffix_wildcard
 
     # Build authorization subqueries (executed inline with the search query
     # so auth + search are a single DB round-trip in the success case).
