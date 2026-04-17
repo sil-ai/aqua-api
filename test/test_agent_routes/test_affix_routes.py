@@ -842,9 +842,7 @@ def test_put_affixes_without_token(client, db_session):
     assert resp.status_code == 401
 
 
-def test_put_affixes_duplicate_in_payload_rejected(
-    client, regular_token1, db_session
-):
+def test_put_affixes_duplicate_in_payload_rejected(client, regular_token1, db_session):
     _cleanup(db_session)
     _seed_profile(db_session)
     headers = {"Authorization": f"Bearer {regular_token1}"}
