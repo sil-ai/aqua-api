@@ -1,11 +1,17 @@
 # tests/utilities/test_verify_password.py
 
+from datetime import date
+
 import bcrypt
 import pytest
 from sqlalchemy import select
 
-from database.models import BibleRevision, UserDB
-from security_routes.utilities import get_authorized_revision_ids, verify_password
+from database.models import BibleRevision, BibleVersion, UserDB
+from security_routes.utilities import (
+    get_authorized_revision_ids,
+    is_user_authorized_for_revision,
+    verify_password,
+)
 
 
 def test_verify_password():
@@ -23,22 +29,86 @@ async def test_get_revisions(async_test_db_session_2):
         result = await db.execute(select(UserDB).where(UserDB.username == "admin"))
         admin_user = result.scalars().first()
 
-        revisio_ids = await get_authorized_revision_ids(admin_user.id, db)
+        admin_revision_ids = await get_authorized_revision_ids(admin_user.id, db)
 
-        all_revisions = await db.execute(select(BibleRevision))
-        all_revisions_count = len(all_revisions.scalars().all())
+        all_revisions_result = await db.execute(select(BibleRevision.id))
+        all_revision_ids = list(all_revisions_result.scalars().all())
 
-        assert len(revisio_ids) == all_revisions_count
-        assert all(rev in revisio_ids for rev in all_revisions.scalars().all())
+        assert len(admin_revision_ids) == len(all_revision_ids)
+        assert all(rev in admin_revision_ids for rev in all_revision_ids)
 
         # As User
         result = await db.execute(select(UserDB).where(UserDB.username == "testuser1"))
         user = result.scalars().first()
 
-        revisio_ids = await get_authorized_revision_ids(user.id, db)
+        user_revision_ids = await get_authorized_revision_ids(user.id, db)
 
-        all_revisions = await db.execute(select(BibleRevision))
-        all_revisions_count = len(all_revisions.scalars().all())
+        assert len(user_revision_ids) == len(all_revision_ids)
+        assert all(rev in user_revision_ids for rev in all_revision_ids)
 
-        assert len(revisio_ids) == all_revisions_count
-        assert all(rev in revisio_ids for rev in all_revisions.scalars().all())
+
+@pytest.mark.asyncio
+async def test_is_user_authorized_for_revision_denies_unauthorized_version(
+    async_test_db_session_2,
+):
+    """Regression test for cartesian-product authorization bypass.
+
+    Before the JOIN fix, the query referenced BibleVersionAccess in WHERE
+    without joining it, so any user in any group with access to any version
+    would pass the check for any revision.  Verify that a user in a group
+    with access to one version is denied access to a revision under a
+    different version their group does not have access to.
+    """
+    async for db in async_test_db_session_2:
+        result = await db.execute(select(UserDB).where(UserDB.username == "testuser1"))
+        user = result.scalars().first()
+
+        result = await db.execute(select(UserDB).where(UserDB.username == "admin"))
+        admin = result.scalars().first()
+
+        # Create a new version with no BibleVersionAccess for testuser1's group
+        unauthorized_version = BibleVersion(
+            name="auth_regression_no_access",
+            iso_language="eng",
+            iso_script="Latn",
+            abbreviation="ARN",
+            owner_id=admin.id,
+            is_reference=False,
+        )
+        db.add(unauthorized_version)
+        await db.commit()
+        await db.refresh(unauthorized_version)
+
+        unauthorized_revision = BibleRevision(
+            date=date.today(),
+            bible_version_id=unauthorized_version.id,
+            published=False,
+            machine_translation=False,
+        )
+        db.add(unauthorized_revision)
+        await db.commit()
+        await db.refresh(unauthorized_revision)
+
+        # testuser1 has access to loading_test but not to this new version
+        assert (
+            await is_user_authorized_for_revision(user.id, unauthorized_revision.id, db)
+            is False
+        )
+
+        # Admin can still access it
+        assert (
+            await is_user_authorized_for_revision(
+                admin.id, unauthorized_revision.id, db
+            )
+            is True
+        )
+
+        # Sanity check: testuser1 still has access to revisions they should
+        authorized_ids = await get_authorized_revision_ids(user.id, db)
+        assert authorized_ids, "testuser1 should have access to at least one revision"
+        assert (
+            await is_user_authorized_for_revision(
+                user.id, next(iter(authorized_ids)), db
+            )
+            is True
+        )
