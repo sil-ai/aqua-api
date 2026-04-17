@@ -165,13 +165,6 @@ async def search_revision_text(
             detail="Term must contain at least one visible character",
         )
     has_wildcard = prefix_wildcard or suffix_wildcard
-    # Wildcard queries can explode result sets for very short cores
-    # (e.g. `*a*` matches nearly every verse). Require a reasonable floor.
-    if has_wildcard and visible_len < 3:
-        raise HTTPException(
-            status_code=400,
-            detail="Wildcard queries require at least 3 visible characters",
-        )
 
     # Build authorization subqueries (executed inline with the search query
     # so auth + search are a single DB round-trip in the success case).

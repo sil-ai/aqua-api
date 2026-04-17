@@ -1358,8 +1358,8 @@ def test_search_wildcard_suffix(client, regular_token1, test_db_session):
     assert refs == {("GEN", 1, 6), ("GEN", 1, 14)}
 
 
-def test_search_wildcard_minimum_length(client, regular_token1, test_db_session):
-    """Wildcard queries reject cores shorter than 3 characters."""
+def test_search_wildcard_short_core_allowed(client, regular_token1, test_db_session):
+    """Wildcard queries with short cores (< 3 chars) are allowed."""
     revision_id = _setup_morpheme_search_data(test_db_session)
 
     response = client.get(
@@ -1368,7 +1368,9 @@ def test_search_wildcard_minimum_length(client, regular_token1, test_db_session)
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["results"]) > 0
 
 
 def test_search_wildcard_no_wildcard_allows_short_term(
@@ -1430,7 +1432,7 @@ def test_search_wildcard_single_star_rejected(client, regular_token1, test_db_se
 def test_search_wildcard_invisible_chars_rejected(
     client, regular_token1, test_db_session
 ):
-    """Zero-width chars in the core don't count toward the 3-char floor."""
+    """Zero-width chars in the core don't count as visible characters."""
     revision_id = _setup_morpheme_search_data(test_db_session)
 
     # Three zero-width spaces — strip() leaves them alone, so a naive
