@@ -426,6 +426,99 @@ def test_search_admin_nonexistent_revision_returns_200_empty(
     assert data["results"] == []
 
 
+def test_search_term_too_short(client, regular_token1, test_db_session):
+    """Terms shorter than 3 chars are rejected (can't use the trigram index)."""
+    main_revision_id, _ = setup_search_test_data(test_db_session)
+
+    for short in ["a", "an"]:
+        response = client.get(
+            "/v3/textsearch",
+            params={"revision_id": main_revision_id, "term": short, "limit": 5},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 422, f"expected 422 for term={short!r}"
+
+
+def test_search_truncated_flag_when_overfetch_insufficient(
+    client, regular_token1, test_db_session
+):
+    """When the DB cap is hit but whole-word matches are sparse, signal truncation.
+
+    sql_limit = limit * 3. Insert more than that many rows that ILIKE-match but
+    fail the whole-word filter, plus zero actual whole-word matches.  The
+    endpoint should return an empty result set with truncated=true so the
+    caller knows there may be more ILIKE hits beyond what was examined.
+    """
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+
+    version = BibleVersion(
+        name="Trunc Test",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="TRC",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add(version)
+    test_db_session.commit()
+    test_db_session.refresh(version)
+
+    revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add(revision)
+    test_db_session.commit()
+    test_db_session.refresh(revision)
+
+    # With limit=5 the endpoint fetches up to sql_limit=15 rows from the DB.
+    # Insert 20 verses where the term appears only as a substring of a longer
+    # word, so ILIKE matches but the whole-word regex rejects every row.
+    for i in range(20):
+        test_db_session.add(
+            VerseText(
+                text="Sentence containing mudfoo_marker which is not a word.",
+                revision_id=revision.id,
+                verse_reference=f"GEN {i + 1}:1",
+                book="GEN",
+                chapter=i + 1,
+                verse=1,
+            )
+        )
+    test_db_session.add(
+        BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+    )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision.id, "term": "mudfoo", "limit": 5},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 0
+    assert data["truncated"] is True, f"expected truncated=true, got {data}"
+
+
+def test_search_not_truncated_on_full_page(client, regular_token1, test_db_session):
+    """A normal full page of results must NOT be flagged as truncated."""
+    main_revision_id, _ = setup_search_test_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": main_revision_id, "term": "God", "limit": 3},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] >= 1
+    assert data["truncated"] is False
+
+
 def test_search_limit_validation(client, regular_token1, test_db_session):
     """Test that limit parameter is properly validated."""
     main_revision_id, _ = setup_search_test_data(test_db_session)
@@ -464,9 +557,10 @@ def test_search_whole_word_match(client, regular_token1, test_db_session):
     main_revision_id, _ = setup_search_test_data(test_db_session)
 
     # Search for a short word that might be part of other words
+    # ("was" also appears as a substring of e.g. "whereas", but not in our fixtures)
     params = {
         "revision_id": main_revision_id,
-        "term": "in",
+        "term": "was",
         "limit": 10,
     }
 
@@ -479,16 +573,14 @@ def test_search_whole_word_match(client, regular_token1, test_db_session):
     assert response.status_code == 200
     response_data = response.json()
 
-    # Verify that results contain "in" as a whole word
-    assert response_data["total_count"] > 0, "Expected to find verses containing 'in'"
+    assert response_data["total_count"] > 0, "Expected to find verses containing 'was'"
 
     for result in response_data["results"]:
         text_lower = result["main_text"].lower()
-        # Check that "in" appears as a whole word
-        pattern = r"\bin\b"
+        pattern = r"\bwas\b"
         assert re.search(
             pattern, text_lower
-        ), f"'in' not found as whole word in: {result['main_text']}"
+        ), f"'was' not found as whole word in: {result['main_text']}"
 
 
 def test_search_no_results(client, regular_token1, test_db_session):
