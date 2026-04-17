@@ -844,3 +844,22 @@ def test_search_iso_no_accessible_revisions(client, regular_token2, test_db_sess
 
     # regular_token2 has no access to these versions
     assert response.status_code == 404
+
+
+def test_search_by_iso_random(client, regular_token1, test_db_session):
+    """Test ISO search with random=True does not crash (DISTINCT ON + random fix)."""
+    setup_iso_search_test_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"iso": "eng", "term": "God", "limit": 10, "random": True},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] > 0
+
+    # Dedup still applies — no duplicate verse locations
+    refs = [(r["book"], r["chapter"], r["verse"]) for r in data["results"]]
+    assert len(refs) == len(set(refs))

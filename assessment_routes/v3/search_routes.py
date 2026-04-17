@@ -55,6 +55,7 @@ async def _resolve_authorized_revision_ids_for_iso(
     """Return revision IDs the user may access for a given ISO 639-3 code."""
     base_query = (
         select(BibleRevision.id)
+        .distinct()
         .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
         .where(
             BibleVersion.iso_language == iso,
@@ -78,7 +79,7 @@ async def _resolve_authorized_revision_ids_for_iso(
 
 @router.get("/textsearch")
 async def search_revision_text(
-    term: str,
+    term: str = Query(..., min_length=1, max_length=200),
     revision_id: Optional[int] = None,
     iso: Optional[str] = Query(
         default=None,
@@ -104,10 +105,12 @@ async def search_revision_text(
 
     Provide either ``revision_id`` or ``iso`` (not both).  When ``iso`` is
     given, all accessible revisions for that language are searched and results
-    are deduplicated by verse text.
+    are deduplicated by verse location (book, chapter, verse).  When multiple
+    revisions cover the same verse, one is chosen arbitrarily.
 
     Similarly, provide either ``comparison_revision_id`` or ``comparison_iso``
-    for parallel text.
+    for parallel text.  When ``comparison_iso`` resolves to multiple revisions,
+    one comparison text per verse is returned (non-deterministic choice).
     """
     request_start = time.perf_counter()
 
@@ -171,8 +174,9 @@ async def search_revision_text(
     use_comparison = comp_revision_ids is not None
     comp_dedup = comparison_iso is not None
 
-    # Validate limit
-    limit = max(1, min(limit, 1000))
+    # Escape SQL LIKE/ILIKE wildcards so % and _ in the term are literal
+    escaped_term = term.replace("%", r"\%").replace("_", r"\_")
+    like_pattern = f"%{escaped_term}%"
 
     # Build the base query
     vt1_alias = aliased(VerseText, name="vt1")
@@ -200,7 +204,7 @@ async def search_revision_text(
             )
             .where(
                 vt1_alias.revision_id.in_(main_revision_ids),
-                vt1_alias.text.ilike(f"%{term}%"),
+                vt1_alias.text.ilike(like_pattern),
                 vt1_alias.text != "",
                 vt2_alias.text != "",
             )
@@ -221,7 +225,7 @@ async def search_revision_text(
             vt1_alias.text.label("main_text"),
         ).where(
             vt1_alias.revision_id.in_(main_revision_ids),
-            vt1_alias.text.ilike(f"%{term}%"),
+            vt1_alias.text.ilike(like_pattern),
             vt1_alias.text != "",
         )
 
@@ -232,13 +236,25 @@ async def search_revision_text(
                 vt1_alias.verse,
             )
 
-    # Apply ordering based on random parameter
-    if random:
-        search_query = search_query.order_by(func.random())
-    else:
+    # Apply ordering.  DISTINCT ON requires the leading ORDER BY columns to
+    # match, so when dedup is active we always order by (book, chapter, verse)
+    # first.  For random mode with dedup, we wrap the deduped result as a
+    # subquery and randomise the outer query.
+    needs_dedup = use_dedup or comp_dedup
+    if needs_dedup:
         search_query = search_query.order_by(
             vt1_alias.book, vt1_alias.chapter, vt1_alias.verse
         )
+        if random:
+            sub = search_query.subquery()
+            search_query = select(sub).order_by(func.random())
+    else:
+        if random:
+            search_query = search_query.order_by(func.random())
+        else:
+            search_query = search_query.order_by(
+                vt1_alias.book, vt1_alias.chapter, vt1_alias.verse
+            )
 
     try:
         # Execute the query
@@ -247,8 +263,9 @@ async def search_revision_text(
 
         # Filter results to only include whole word matches, stopping at limit
         filtered_results = []
+        word_pattern = re.compile(r"\b" + re.escape(term.lower()) + r"\b")
         for row in rows:
-            if _is_whole_word_match(row.main_text, term):
+            if row.main_text and word_pattern.search(row.main_text.lower()):
                 result_dict = {
                     "book": row.book,
                     "chapter": row.chapter,
@@ -297,5 +314,5 @@ async def search_revision_text(
         )
         raise HTTPException(
             status_code=500,
-            detail=f"Error searching text: {str(e)}",
+            detail="Error searching text",
         )
