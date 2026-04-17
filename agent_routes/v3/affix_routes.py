@@ -7,7 +7,7 @@ from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,7 @@ from models import (
     AffixCommitResponse,
     AffixListOut,
     AffixOut,
+    AffixReplaceResponse,
 )
 from security_routes.auth_routes import get_current_user
 from utils.logging_config import setup_logger
@@ -268,3 +269,134 @@ async def commit_affixes(
         n_affixes_updated=n_updated,
         n_affixes_unchanged=n_unchanged,
     )
+
+
+@router.put("/affixes", response_model=AffixReplaceResponse)
+async def replace_affixes(
+    payload: AffixCommitRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    request_start = time.perf_counter()
+    iso = payload.iso_639_3
+
+    iso_exists = await db.execute(select(IsoLanguage).where(IsoLanguage.iso639 == iso))
+    if iso_exists.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown ISO 639-3 code '{iso}'",
+        )
+
+    profile_result = await db.execute(
+        select(LanguageProfile.iso_639_3).where(LanguageProfile.iso_639_3 == iso)
+    )
+    if profile_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"No language profile exists for iso '{iso}'. "
+                "Create one via the tokenizer profile endpoint first."
+            ),
+        )
+
+    if payload.revision_id is not None:
+        revision_exists = await db.execute(
+            select(BibleRevision.id).where(BibleRevision.id == payload.revision_id)
+        )
+        if revision_exists.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown revision_id {payload.revision_id}",
+            )
+
+    try:
+        del_filter = LanguageAffix.iso_639_3 == iso
+        if payload.revision_id is not None:
+            del_filter = and_(
+                del_filter,
+                LanguageAffix.first_seen_revision_id == payload.revision_id,
+            )
+        result = await db.execute(delete(LanguageAffix).where(del_filter))
+        n_deleted = result.rowcount
+
+        n_inserted = 0
+        if payload.affixes:
+            incoming: dict[tuple[str, str, str], dict] = {}
+            for a in payload.affixes:
+                form = _normalize(a.form)
+                gloss = _normalize(a.gloss)
+                if not form or not gloss:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Affix form and gloss must not be empty",
+                    )
+                key = (form, a.position, gloss)
+                if key in incoming:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=(
+                            f"Duplicate affix in payload: "
+                            f"form={form!r}, position={a.position!r}, "
+                            f"gloss={gloss!r}"
+                        ),
+                    )
+                incoming[key] = {
+                    "examples": a.examples,
+                    "n_runs": a.n_runs,
+                }
+
+            rows = [
+                {
+                    "iso_639_3": iso,
+                    "form": form,
+                    "position": position,
+                    "gloss": gloss,
+                    "examples": fields["examples"],
+                    "n_runs": fields["n_runs"],
+                    "source_model": payload.source_model,
+                    "first_seen_revision_id": payload.revision_id,
+                }
+                for (form, position, gloss), fields in incoming.items()
+            ]
+            stmt = pg_insert(LanguageAffix).values(rows)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["iso_639_3", "form", "position", "gloss"],
+                set_={
+                    "examples": stmt.excluded.examples,
+                    "n_runs": stmt.excluded.n_runs,
+                    "source_model": stmt.excluded.source_model,
+                    "first_seen_revision_id": stmt.excluded.first_seen_revision_id,
+                    "updated_at": func.now(),
+                },
+            )
+            await db.execute(stmt)
+            n_inserted = len(rows)
+
+        await db.commit()
+
+    except HTTPException:
+        await db.rollback()
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error("Failed to replace affixes", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {e}",
+        ) from e
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"replace_affixes completed in {duration}s",
+        extra={
+            "method": "PUT",
+            "path": "/affixes",
+            "iso": iso,
+            "source_model": payload.source_model,
+            "revision_id": payload.revision_id,
+            "n_deleted": n_deleted,
+            "n_inserted": n_inserted,
+            "duration_s": duration,
+        },
+    )
+    return AffixReplaceResponse(n_deleted=n_deleted, n_inserted=n_inserted)
