@@ -1095,6 +1095,129 @@ def test_get_lexeme_cards_by_target_lemma(
     assert all(card["target_lemma"] == "upendo" for card in data)
 
 
+def test_get_lexeme_cards_by_target_words(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test filtering lexeme cards by comma-separated target_words."""
+    # Add test data with unique lemmas for this test
+    for lemma in ["tw_maji", "tw_moto", "tw_ardhi"]:
+        client.post(
+            f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+            json={
+                "source_lemma": f"src_{lemma}",
+                "target_lemma": lemma,
+                "source_language": "eng",
+                "target_language": "swh",
+            },
+        )
+
+    # Filter by two of three target words
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=tw_maji,tw_moto",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    lemmas = {card["target_lemma"] for card in data}
+    assert "tw_maji" in lemmas
+    assert "tw_moto" in lemmas
+    assert "tw_ardhi" not in lemmas
+
+
+def test_get_lexeme_cards_target_words_surface_forms(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that target_words also matches surface_forms."""
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "run_tw_sf",
+            "target_lemma": "kimbia_tw_sf",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["anakimbia_tw_sf", "walikimbia_tw_sf"],
+        },
+    )
+
+    # Search by a surface form, not the lemma
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=anakimbia_tw_sf",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    assert any(card["target_lemma"] == "kimbia_tw_sf" for card in data)
+
+
+def test_get_lexeme_cards_target_words_case_insensitive(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that target_words matching is case-insensitive."""
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "god_tw_ci",
+            "target_lemma": "tw_mungu",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=TW_MUNGU",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert any(card["target_lemma"] == "tw_mungu" for card in data)
+
+
+def test_get_lexeme_cards_target_words_conflicts_with_target_word(
+    client, regular_token1, db_session
+):
+    """Test that using both target_word and target_words returns 400."""
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=foo&target_words=bar",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Cannot use both" in response.json()["detail"]
+
+
+def test_get_lexeme_cards_target_words_all_blank_returns_400(
+    client, regular_token1, db_session
+):
+    """Test that target_words with only blanks/commas returns 400."""
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=%20,%20,",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "no valid words" in response.json()["detail"]
+
+
+def test_get_lexeme_cards_target_words_empty_string_returns_400(
+    client, regular_token1, db_session
+):
+    """Test that target_words with an explicit empty value returns 400."""
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "no valid words" in response.json()["detail"]
+
+
 def test_get_lexeme_cards_by_pos(client, regular_token1, db_session, test_revision_id):
     """Test getting lexeme cards filtered by part of speech."""
     # Add test data
