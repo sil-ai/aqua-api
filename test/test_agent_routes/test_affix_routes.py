@@ -604,3 +604,36 @@ def test_affixes_updated_at_refreshed_on_upsert(client, regular_token1, db_sessi
     )
     assert after > before
     _cleanup(db_session)
+
+
+def test_affixes_updated_at_not_bumped_on_unchanged_upsert(
+    client, regular_token1, db_session
+):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    payload = {
+        "iso_639_3": TEST_ISO,
+        "affixes": [{"form": "akha-", "position": "prefix", "gloss": "past"}],
+    }
+    client.post(f"/{prefix}/affixes", json=payload, headers=headers)
+    db_session.expire_all()
+    before = (
+        db_session.query(LanguageAffix)
+        .filter(LanguageAffix.iso_639_3 == TEST_ISO)
+        .one()
+        .updated_at
+    )
+
+    resp = client.post(f"/{prefix}/affixes", json=payload, headers=headers)
+    assert resp.json()["n_affixes_unchanged"] == 1
+    db_session.expire_all()
+    after = (
+        db_session.query(LanguageAffix)
+        .filter(LanguageAffix.iso_639_3 == TEST_ISO)
+        .one()
+        .updated_at
+    )
+    assert after == before
+    _cleanup(db_session)

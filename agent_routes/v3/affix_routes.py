@@ -199,9 +199,11 @@ async def commit_affixes(
                         and stored["n_runs"] == fields["n_runs"]
                         and stored["source_model"] == payload.source_model
                     ):
+                        # Unchanged rows are excluded from the write batch
+                        # so updated_at isn't bumped for no-op upserts.
                         n_unchanged += 1
-                    else:
-                        n_updated += 1
+                        continue
+                    n_updated += 1
                 else:
                     n_new += 1
 
