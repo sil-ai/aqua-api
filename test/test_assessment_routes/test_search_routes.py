@@ -722,7 +722,7 @@ def setup_iso_search_test_data(db_session):
 
 def test_search_by_iso(client, regular_token1, test_db_session):
     """Test searching by ISO code across all revisions for a language."""
-    ids = setup_iso_search_test_data(test_db_session)
+    setup_iso_search_test_data(test_db_session)
 
     response = client.get(
         "/v3/textsearch",
@@ -742,7 +742,7 @@ def test_search_by_iso(client, regular_token1, test_db_session):
 
 def test_search_by_iso_with_comparison_iso(client, regular_token1, test_db_session):
     """Test iso + comparison_iso returns parallel text."""
-    ids = setup_iso_search_test_data(test_db_session)
+    setup_iso_search_test_data(test_db_session)
 
     response = client.get(
         "/v3/textsearch",
