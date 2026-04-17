@@ -927,6 +927,7 @@ class LanguageAffix(Base):
             "position IN ('prefix', 'suffix', 'infix')",
             name="ck_language_affixes_position",
         ),
+        CheckConstraint("n_runs >= 1", name="ck_language_affixes_n_runs_min_1"),
         Index(
             "ux_language_affixes_iso_form_position_gloss",
             "iso_639_3",

@@ -1302,7 +1302,7 @@ class AffixIn(BaseModel):
     position: AffixPosition
     gloss: str = Field(..., min_length=1)
     examples: Optional[List[str]] = None
-    n_runs: int = Field(default=1, ge=1)
+    n_runs: int = Field(default=1, ge=1, le=32767)
 
 
 class AffixOut(BaseModel):
@@ -1312,7 +1312,7 @@ class AffixOut(BaseModel):
     position: AffixPosition
     gloss: str
     examples: Optional[List[str]] = None
-    n_runs: int = Field(default=1, ge=1)
+    n_runs: int = Field(default=1, ge=1, le=32767)
     source_model: Optional[str] = None
     first_seen_revision_id: Optional[int] = None
 
