@@ -151,18 +151,26 @@ async def search_revision_text(
             status_code=400,
             detail="`*` is only allowed at the start and/or end of the term",
         )
-    has_wildcard = prefix_wildcard or suffix_wildcard
-    # Wildcard queries can explode result sets for very short cores
-    # (e.g. `*a*` matches nearly every verse). Require a reasonable floor.
-    if has_wildcard and len(core_term.strip()) < 3:
-        raise HTTPException(
-            status_code=400,
-            detail="Wildcard queries require at least 3 non-`*` characters",
-        )
-    if not core_term:
+    # Count only visible characters — format/control chars (zero-width
+    # space, BOM, soft hyphen, ...) shouldn't satisfy the length floor.
+    visible_len = sum(
+        1
+        for c in core_term
+        if unicodedata.category(c) not in ("Cf", "Cc", "Cs", "Zl", "Zp")
+        and not c.isspace()
+    )
+    if visible_len == 0:
         raise HTTPException(
             status_code=400,
             detail="Term must contain at least one non-`*` character",
+        )
+    has_wildcard = prefix_wildcard or suffix_wildcard
+    # Wildcard queries can explode result sets for very short cores
+    # (e.g. `*a*` matches nearly every verse). Require a reasonable floor.
+    if has_wildcard and visible_len < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Wildcard queries require at least 3 non-`*` characters",
         )
 
     # Build authorization subqueries (executed inline with the search query

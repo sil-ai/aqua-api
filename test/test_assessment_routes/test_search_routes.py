@@ -1411,3 +1411,126 @@ def test_search_wildcard_only_stars_rejected(client, regular_token1, test_db_ses
     )
 
     assert response.status_code == 400
+
+
+def test_search_wildcard_single_star_rejected(client, regular_token1, test_db_session):
+    """`term="*"` alone (core is empty) is rejected with a specific message."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "*"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "non-`*`" in response.json()["detail"]
+
+
+def test_search_wildcard_invisible_chars_rejected(
+    client, regular_token1, test_db_session
+):
+    """Zero-width chars in the core don't count toward the 3-char floor."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # Three zero-width spaces — strip() leaves them alone, so a naive
+    # len-based check would pass. The visible-char check must reject.
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "*\u200b\u200b\u200b*"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_search_wildcard_via_iso(client, regular_token1, test_db_session):
+    """Wildcard parsing works on the iso= path (exercises DISTINCT ON)."""
+    _setup_morpheme_search_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"iso": "eng", "term": "*bhʉlany*", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {
+        ("GEN", 1, 4),
+        ("GEN", 1, 6),
+        ("GEN", 1, 14),
+        ("GEN", 1, 20),
+        ("GEN", 2, 1),
+    }
+
+
+def test_search_wildcard_with_comparison(client, regular_token1, test_db_session):
+    """Wildcard term works with a comparison revision (JOIN path)."""
+    main_revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # Add a comparison revision covering the same verses so the JOIN has rows.
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+    comp_version = BibleVersion(
+        name="Morpheme Comparison Version",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="MCV",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add(comp_version)
+    test_db_session.commit()
+    test_db_session.refresh(comp_version)
+
+    comp_revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=comp_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add(comp_revision)
+    test_db_session.commit()
+    test_db_session.refresh(comp_revision)
+
+    for book, chapter, verse, text in [
+        ("GEN", 1, 4, "and he divided the waters"),
+        ("GEN", 1, 6, "let the waters be divided"),
+        ("GEN", 1, 14, "let them divide the day"),
+    ]:
+        test_db_session.add(
+            VerseText(
+                text=text,
+                revision_id=comp_revision.id,
+                verse_reference=f"{book} {chapter}:{verse}",
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+    test_db_session.add(
+        BibleVersionAccess(bible_version_id=comp_version.id, group_id=group1.id)
+    )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision.id,
+            "term": "*bhʉlany*",
+            "limit": 20,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    # Only verses present in both revisions come back via the inner JOIN.
+    assert refs == {("GEN", 1, 4), ("GEN", 1, 6), ("GEN", 1, 14)}
+    for r in data["results"]:
+        assert "comparison_text" in r
+        assert r["comparison_text"]  # non-empty
