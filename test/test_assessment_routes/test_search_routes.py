@@ -577,6 +577,106 @@ def test_search_no_subword_matches(client, regular_token1, test_db_session):
         ), f"'love' not found as whole word in: {result['main_text']}"
 
 
+# --- Unicode normalization tests ---
+
+
+def _setup_accented_verses(db_session, verses):
+    """Create a single-revision setup with arbitrary verse texts."""
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+
+    version = BibleVersion(
+        name="Accent Test Version",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="ATV",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    db_session.add(version)
+    db_session.commit()
+    db_session.refresh(version)
+
+    revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    db_session.add(revision)
+    db_session.commit()
+    db_session.refresh(revision)
+
+    for book, chapter, verse, text in verses:
+        db_session.add(
+            VerseText(
+                text=text,
+                revision_id=revision.id,
+                verse_reference=f"{book} {chapter}:{verse}",
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+    db_session.add(BibleVersionAccess(bible_version_id=version.id, group_id=group1.id))
+    db_session.commit()
+    return revision.id
+
+
+def test_search_accented_nfd_stored_nfc_query(client, regular_token1, test_db_session):
+    """Accented query in NFC must match text stored in NFD (issue #543)."""
+    import unicodedata
+
+    # Stored as NFD (decomposed: 'a' + U+0301)
+    nfd_word = unicodedata.normalize("NFD", "ásaatile")
+    assert nfd_word != "ásaatile" or any(
+        unicodedata.combining(c) for c in nfd_word
+    ), "Test setup sanity: expected NFD form to differ"
+
+    revision_id = _setup_accented_verses(
+        test_db_session,
+        [("GEN", 1, 2, f"Word {nfd_word} appears here.")],
+    )
+
+    # Query in NFC (composed)
+    nfc_query = unicodedata.normalize("NFC", "ásaatile")
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": nfc_query, "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert (
+        data["total_count"] == 1
+    ), f"Expected NFC query to match NFD-stored text; got {data}"
+
+
+def test_search_accented_nfc_stored_nfd_query(client, regular_token1, test_db_session):
+    """Accented query in NFD must match text stored in NFC."""
+    import unicodedata
+
+    nfc_word = unicodedata.normalize("NFC", "ásaatile")
+    revision_id = _setup_accented_verses(
+        test_db_session,
+        [("GEN", 1, 2, f"Word {nfc_word} appears here.")],
+    )
+
+    nfd_query = unicodedata.normalize("NFD", "ásaatile")
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": nfd_query, "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 1
+
+
 # --- ISO-based search tests ---
 
 

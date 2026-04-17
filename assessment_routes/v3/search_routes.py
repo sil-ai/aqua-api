@@ -3,6 +3,7 @@ __version__ = "v3"
 import re
 import socket
 import time
+import unicodedata
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -10,6 +11,7 @@ from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
+from sqlalchemy.sql.expression import literal_column
 
 from database.dependencies import get_db
 from database.models import BibleRevision, BibleVersion, BibleVersionAccess
@@ -150,9 +152,16 @@ async def search_revision_text(
     use_comparison = comp_revision_ids is not None
     comp_dedup = comparison_iso is not None
 
+    # Normalize to NFC so accented characters match regardless of whether the
+    # query or stored text uses composed vs decomposed forms.
+    normalized_term = unicodedata.normalize("NFC", term)
+
     # Escape SQL LIKE/ILIKE wildcards so % and _ in the term are literal
-    escaped_term = term.replace("%", r"\%").replace("_", r"\_")
+    escaped_term = normalized_term.replace("%", r"\%").replace("_", r"\_")
     like_pattern = f"%{escaped_term}%"
+
+    def _nfc(col):
+        return func.normalize(col, literal_column("NFC"))
 
     # Build the base query
     vt1_alias = aliased(VerseText, name="vt1")
@@ -180,7 +189,7 @@ async def search_revision_text(
             )
             .where(
                 vt1_alias.revision_id.in_(main_revision_ids),
-                vt1_alias.text.ilike(like_pattern),
+                _nfc(vt1_alias.text).ilike(like_pattern),
                 vt1_alias.text != "",
                 vt2_alias.text != "",
             )
@@ -201,7 +210,7 @@ async def search_revision_text(
             vt1_alias.text.label("main_text"),
         ).where(
             vt1_alias.revision_id.in_(main_revision_ids),
-            vt1_alias.text.ilike(like_pattern),
+            _nfc(vt1_alias.text).ilike(like_pattern),
             vt1_alias.text != "",
         )
 
@@ -243,11 +252,15 @@ async def search_revision_text(
         result = await db.execute(search_query)
         rows = result.all()
 
-        # Filter results to only include whole word matches, stopping at limit
+        # Filter results to only include whole word matches, stopping at limit.
+        # Normalize both the query and the stored text to NFC so the word
+        # boundary check behaves consistently regardless of input encoding.
         filtered_results = []
-        word_pattern = re.compile(r"\b" + re.escape(term.lower()) + r"\b")
+        word_pattern = re.compile(r"\b" + re.escape(normalized_term.lower()) + r"\b")
         for row in rows:
-            if row.main_text and word_pattern.search(row.main_text.lower()):
+            if row.main_text and word_pattern.search(
+                unicodedata.normalize("NFC", row.main_text).lower()
+            ):
                 result_dict = {
                     "book": row.book,
                     "chapter": row.chapter,
