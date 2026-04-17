@@ -77,7 +77,15 @@ def _authorized_revisions_select(
 
 @router.get("/textsearch")
 async def search_revision_text(
-    term: str = Query(..., min_length=1, max_length=200),
+    term: str = Query(
+        ...,
+        min_length=3,
+        max_length=200,
+        description=(
+            "Search term (minimum 3 characters). Shorter terms cannot use "
+            "the trigram index and would trigger a full table scan."
+        ),
+    ),
     revision_id: Optional[int] = None,
     iso: Optional[str] = Query(
         default=None,
@@ -213,9 +221,12 @@ async def search_revision_text(
             )
 
     # Cap the DB result set.  The Python-side whole-word filter may discard
-    # ilike matches that aren't whole words, so we overfetch by 10x to give
-    # enough headroom while still bounding the transfer from the DB.
-    sql_limit = limit * 10
+    # ilike matches that aren't whole words, so we overfetch to give headroom
+    # while still bounding the transfer from the DB.  3x is enough in practice:
+    # the common false-positive case (substring inside another word) is
+    # bounded per language, and pulling 10x rows back over the wire dominated
+    # latency for common terms (13s on mʉlʉngʉ with 100 verse texts).
+    sql_limit = limit * 3
     search_query = search_query.limit(sql_limit)
 
     # Apply ordering.  DISTINCT ON requires the leading ORDER BY columns to
@@ -311,6 +322,12 @@ async def search_revision_text(
                 if len(filtered_results) >= limit:
                     break
 
+        # If we hit the DB cap AND still produced fewer than the requested
+        # limit after whole-word filtering, there may be more matching verses
+        # we didn't see. Signal this so callers can widen the search or
+        # request a larger limit.
+        truncated = len(rows) >= sql_limit and len(filtered_results) < limit
+
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
             f"search_revision_text completed in {duration}s",
@@ -325,11 +342,16 @@ async def search_revision_text(
                 "limit": limit,
                 "random": random,
                 "results_returned": len(filtered_results),
+                "truncated": truncated,
                 "duration_s": duration,
             },
         )
 
-        return {"results": filtered_results, "total_count": len(filtered_results)}
+        return {
+            "results": filtered_results,
+            "total_count": len(filtered_results),
+            "truncated": truncated,
+        }
 
     except HTTPException:
         raise
