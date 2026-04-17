@@ -1294,6 +1294,48 @@ class IndexResponse(BaseModel):
     unique_morpheme_verse_pairs: int
 
 
+AffixPosition = Literal["prefix", "suffix", "infix"]
+
+
+class AffixIn(BaseModel):
+    form: str
+    position: AffixPosition
+    gloss: str
+    examples: Optional[List[str]] = None
+    n_runs: int = Field(default=1, ge=1)
+
+
+class AffixOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    form: str
+    position: AffixPosition
+    gloss: str
+    examples: Optional[List[str]] = None
+    n_runs: int = 1
+    source_model: Optional[str] = None
+    first_seen_revision_id: Optional[int] = None
+
+
+class AffixListOut(BaseModel):
+    iso_639_3: str
+    total: int
+    affixes: List[AffixOut]
+
+
+class AffixCommitRequest(BaseModel):
+    iso_639_3: str
+    revision_id: Optional[int] = None
+    source_model: Optional[str] = None
+    affixes: List[AffixIn] = Field(default_factory=list)
+
+
+class AffixCommitResponse(BaseModel):
+    n_affixes_new: int
+    n_affixes_updated: int
+    n_affixes_unchanged: int
+
+
 class WordIndexRequest(BaseModel):
     iso_639_3: str = Field(..., min_length=3, max_length=3)
     revision_id: int

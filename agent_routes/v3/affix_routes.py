@@ -1,0 +1,267 @@
+__version__ = "v3"
+
+import socket
+import time
+import unicodedata
+from typing import Optional
+
+import fastapi
+from fastapi import Depends, HTTPException, Query, status
+from sqlalchemy import and_, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from database.dependencies import get_db
+from database.models import (
+    BibleRevision,
+    IsoLanguage,
+    LanguageAffix,
+    LanguageProfile,
+)
+from database.models import UserDB as UserModel
+from models import (
+    AffixCommitRequest,
+    AffixCommitResponse,
+    AffixListOut,
+    AffixOut,
+)
+from security_routes.auth_routes import get_current_user
+from utils.logging_config import setup_logger
+
+container_id = socket.gethostname()
+logger = setup_logger(__name__, container_id=container_id)
+
+router = fastapi.APIRouter()
+
+
+def _normalize_form(form: str) -> str:
+    return unicodedata.normalize("NFC", form).strip()
+
+
+def _normalize_gloss(gloss: str) -> str:
+    return unicodedata.normalize("NFC", gloss).strip()
+
+
+@router.get("/affixes", response_model=AffixListOut)
+async def get_affixes(
+    iso: str = Query(..., min_length=3, max_length=3),
+    position: Optional[str] = Query(None, pattern="^(prefix|suffix|infix)$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    request_start = time.perf_counter()
+
+    profile_result = await db.execute(
+        select(LanguageProfile.iso_639_3).where(LanguageProfile.iso_639_3 == iso)
+    )
+    if profile_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No language profile for iso '{iso}'",
+        )
+
+    query = select(LanguageAffix).where(LanguageAffix.iso_639_3 == iso)
+    if position is not None:
+        query = query.where(LanguageAffix.position == position)
+    query = query.order_by(LanguageAffix.id)
+
+    result = await db.execute(query)
+    rows = result.scalars().all()
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_affixes completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/affixes",
+            "iso": iso,
+            "position": position,
+            "count": len(rows),
+            "duration_s": duration,
+        },
+    )
+    return AffixListOut(
+        iso_639_3=iso,
+        total=len(rows),
+        affixes=[AffixOut.model_validate(a) for a in rows],
+    )
+
+
+@router.post("/affixes", response_model=AffixCommitResponse)
+async def commit_affixes(
+    payload: AffixCommitRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Additive upsert of an affix inventory for a language.
+
+    Uniqueness is (iso, form, position, gloss) so polysemous affixes —
+    e.g. Bantu ``-ile`` as perfective/applicative/locative — live as
+    separate rows. On conflict, ``examples``, ``n_runs``, and
+    ``source_model`` are refreshed from the incoming payload.
+    """
+    request_start = time.perf_counter()
+    iso = payload.iso_639_3
+
+    iso_exists = await db.execute(select(IsoLanguage).where(IsoLanguage.iso639 == iso))
+    if iso_exists.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown ISO 639-3 code '{iso}'",
+        )
+
+    profile_result = await db.execute(
+        select(LanguageProfile.iso_639_3).where(LanguageProfile.iso_639_3 == iso)
+    )
+    if profile_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"No language profile exists for iso '{iso}'. "
+                "Create one via the tokenizer profile endpoint first."
+            ),
+        )
+
+    if payload.revision_id is not None:
+        revision_exists = await db.execute(
+            select(BibleRevision.id).where(BibleRevision.id == payload.revision_id)
+        )
+        if revision_exists.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown revision_id {payload.revision_id}",
+            )
+
+    n_new = 0
+    n_updated = 0
+    n_unchanged = 0
+
+    try:
+        if payload.affixes:
+            incoming: dict[tuple[str, str, str], dict] = {}
+            for a in payload.affixes:
+                form = _normalize_form(a.form)
+                if not form:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Affix form must not be empty",
+                    )
+                gloss = _normalize_gloss(a.gloss)
+                if not gloss:
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Affix gloss must not be empty",
+                    )
+                incoming[(form, a.position, gloss)] = {
+                    "examples": a.examples,
+                    "n_runs": a.n_runs,
+                }
+
+            # Look up existing rows for the exact (form, position, gloss)
+            # tuples in the payload. One OR-of-ANDs clause per tuple is
+            # fine at the ~10-30 affix scale the comment specifies.
+            existing_map: dict[tuple[str, str, str], dict] = {}
+            if incoming:
+                clauses = [
+                    and_(
+                        LanguageAffix.form == f,
+                        LanguageAffix.position == p,
+                        LanguageAffix.gloss == g,
+                    )
+                    for (f, p, g) in incoming.keys()
+                ]
+                existing_result = await db.execute(
+                    select(
+                        LanguageAffix.form,
+                        LanguageAffix.position,
+                        LanguageAffix.gloss,
+                        LanguageAffix.examples,
+                        LanguageAffix.n_runs,
+                        LanguageAffix.source_model,
+                    ).where(
+                        LanguageAffix.iso_639_3 == iso,
+                        or_(*clauses),
+                    )
+                )
+                for row in existing_result.all():
+                    existing_map[(row.form, row.position, row.gloss)] = {
+                        "examples": row.examples,
+                        "n_runs": row.n_runs,
+                        "source_model": row.source_model,
+                    }
+
+            rows_to_write = []
+            for (form, position, gloss), fields in incoming.items():
+                key = (form, position, gloss)
+                if key in existing_map:
+                    stored = existing_map[key]
+                    if (
+                        stored["examples"] == fields["examples"]
+                        and stored["n_runs"] == fields["n_runs"]
+                        and stored["source_model"] == payload.source_model
+                    ):
+                        n_unchanged += 1
+                    else:
+                        n_updated += 1
+                else:
+                    n_new += 1
+
+                rows_to_write.append(
+                    {
+                        "iso_639_3": iso,
+                        "form": form,
+                        "position": position,
+                        "gloss": gloss,
+                        "examples": fields["examples"],
+                        "n_runs": fields["n_runs"],
+                        "source_model": payload.source_model,
+                        "first_seen_revision_id": payload.revision_id,
+                    }
+                )
+
+            if rows_to_write:
+                stmt = pg_insert(LanguageAffix).values(rows_to_write)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["iso_639_3", "form", "position", "gloss"],
+                    set_={
+                        "examples": stmt.excluded.examples,
+                        "n_runs": stmt.excluded.n_runs,
+                        "source_model": stmt.excluded.source_model,
+                    },
+                )
+                await db.execute(stmt)
+
+        await db.commit()
+
+    except HTTPException:
+        await db.rollback()
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error("Failed to commit affixes", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {e}",
+        ) from e
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"commit_affixes completed in {duration}s",
+        extra={
+            "method": "POST",
+            "path": "/affixes",
+            "iso": iso,
+            "source_model": payload.source_model,
+            "revision_id": payload.revision_id,
+            "n_affixes_new": n_new,
+            "n_affixes_updated": n_updated,
+            "n_affixes_unchanged": n_unchanged,
+            "duration_s": duration,
+        },
+    )
+    return AffixCommitResponse(
+        n_affixes_new=n_new,
+        n_affixes_updated=n_updated,
+        n_affixes_unchanged=n_unchanged,
+    )

@@ -10,6 +10,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -895,6 +896,47 @@ class LanguageMorpheme(Base):
         ),
         Index("ix_language_morphemes_iso", "iso_639_3"),
         Index("ix_language_morphemes_iso_class", "iso_639_3", "morpheme_class"),
+    )
+
+
+class LanguageAffix(Base):
+    __tablename__ = "language_affixes"
+
+    id = Column(Integer, primary_key=True)
+    iso_639_3 = Column(
+        String(3),
+        ForeignKey("language_profiles.iso_639_3", ondelete="CASCADE"),
+        nullable=False,
+    )
+    form = Column(Text, nullable=False)
+    position = Column(Text, nullable=False)
+    gloss = Column(Text, nullable=False)
+    examples = Column(JSONB, nullable=True)
+    n_runs = Column(SmallInteger, nullable=False, server_default="1")
+    source_model = Column(Text, nullable=True)
+    first_seen_revision_id = Column(
+        Integer,
+        ForeignKey("bible_revision.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    first_seen_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "position IN ('prefix', 'suffix', 'infix')",
+            name="ck_language_affixes_position",
+        ),
+        Index(
+            "ux_language_affixes_iso_form_position_gloss",
+            "iso_639_3",
+            "form",
+            "position",
+            "gloss",
+            unique=True,
+        ),
+        Index("ix_language_affixes_iso", "iso_639_3"),
+        Index("ix_language_affixes_iso_position", "iso_639_3", "position"),
     )
 
 
