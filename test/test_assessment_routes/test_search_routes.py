@@ -1,3 +1,5 @@
+import re
+import unicodedata
 from datetime import date
 
 from database.models import (
@@ -366,8 +368,6 @@ def test_search_whole_word_match(client, regular_token1, test_db_session):
     # Verify that results contain "in" as a whole word
     assert response_data["total_count"] > 0, "Expected to find verses containing 'in'"
 
-    import re
-
     for result in response_data["results"]:
         text_lower = result["main_text"].lower()
         # Check that "in" appears as a whole word
@@ -567,14 +567,230 @@ def test_search_no_subword_matches(client, regular_token1, test_db_session):
     assert response_data["total_count"] > 0, "Expected to find verses containing 'love'"
 
     # Verify that all results contain "love" as a whole word
-    import re
-
     for result in response_data["results"]:
         text_lower = result["main_text"].lower()
         pattern = r"\blove\b"
         assert re.search(
             pattern, text_lower
         ), f"'love' not found as whole word in: {result['main_text']}"
+
+
+# --- Unicode normalization tests ---
+
+
+def _setup_accented_verses(db_session, verses):
+    """Create a single-revision setup with arbitrary verse texts."""
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+
+    version = BibleVersion(
+        name="Accent Test Version",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="ATV",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    db_session.add(version)
+    db_session.commit()
+    db_session.refresh(version)
+
+    revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    db_session.add(revision)
+    db_session.commit()
+    db_session.refresh(revision)
+
+    for book, chapter, verse, text in verses:
+        db_session.add(
+            VerseText(
+                text=text,
+                revision_id=revision.id,
+                verse_reference=f"{book} {chapter}:{verse}",
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+    db_session.add(BibleVersionAccess(bible_version_id=version.id, group_id=group1.id))
+    db_session.commit()
+    return revision.id
+
+
+def test_search_accented_nfd_stored_nfc_query(client, regular_token1, test_db_session):
+    """Accented query in NFC must match text stored in NFD (issue #543)."""
+    nfd_word = unicodedata.normalize("NFD", "ásaatile")
+    assert any(
+        unicodedata.combining(c) for c in nfd_word
+    ), "Test setup sanity: expected NFD form to contain a combining mark"
+
+    revision_id = _setup_accented_verses(
+        test_db_session,
+        [("GEN", 1, 2, f"Word {nfd_word} appears here.")],
+    )
+
+    nfc_query = unicodedata.normalize("NFC", "ásaatile")
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": nfc_query, "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert (
+        data["total_count"] == 1
+    ), f"Expected NFC query to match NFD-stored text; got {data}"
+    # Response text should be NFC-normalized regardless of storage form
+    assert unicodedata.is_normalized("NFC", data["results"][0]["main_text"])
+
+
+def test_search_accented_nfc_stored_nfd_query(client, regular_token1, test_db_session):
+    """Accented query in NFD must match text stored in NFC."""
+    nfc_word = unicodedata.normalize("NFC", "ásaatile")
+    revision_id = _setup_accented_verses(
+        test_db_session,
+        [("GEN", 1, 2, f"Word {nfc_word} appears here.")],
+    )
+
+    nfd_query = unicodedata.normalize("NFD", "ásaatile")
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": nfd_query, "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 1
+
+
+def test_search_accented_does_not_match_inflected_substring(
+    client, regular_token1, test_db_session
+):
+    """Whole-word search for a stem must NOT match accented-prefix inflections.
+
+    This pins the intentional behavior change from NFC normalization: before
+    the fix, `saatile` matched `gásaatile` because NFD-stored text put a
+    combining mark (non-word char) before `s`, creating a spurious word
+    boundary. After NFC, `á` is a single letter-class char and the match is
+    correctly rejected.
+    """
+    nfd_inflected = unicodedata.normalize("NFD", "gásaatile")
+    revision_id = _setup_accented_verses(
+        test_db_session,
+        [("GEN", 1, 2, f"Sentence with {nfd_inflected} inside.")],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "saatile", "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 0, (
+        "saatile should not match inside gásaatile after NFC normalization; "
+        f"got {data}"
+    )
+
+
+def test_search_accented_uppercase_query(client, regular_token1, test_db_session):
+    """Uppercase accented query must match NFD-stored lowercase text."""
+    nfd_word = unicodedata.normalize("NFD", "ásaatile")
+    revision_id = _setup_accented_verses(
+        test_db_session,
+        [("GEN", 1, 2, f"Word {nfd_word} here.")],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "ÁSAATILE", "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert (
+        data["total_count"] == 1
+    ), f"Expected uppercase accented query to match; got {data}"
+
+
+def test_search_accented_via_iso_multi_revision(
+    client, regular_token1, test_db_session
+):
+    """Accented search via iso= must match across NFD-stored revisions and dedup."""
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+
+    nfd_word = unicodedata.normalize("NFD", "ásaatile")
+
+    # Two eng versions, both with the same accented word on the same verse
+    rev_ids = []
+    for i, abbrev in enumerate(("IsoAccA", "IsoAccB")):
+        version = BibleVersion(
+            name=f"Iso Accent {i}",
+            iso_language="eng",
+            iso_script="Latn",
+            abbreviation=abbrev,
+            owner_id=user1.id,
+            is_reference=False,
+        )
+        test_db_session.add(version)
+        test_db_session.commit()
+        test_db_session.refresh(version)
+
+        revision = BibleRevision(
+            date=date.today(),
+            bible_version_id=version.id,
+            published=True,
+            machine_translation=False,
+        )
+        test_db_session.add(revision)
+        test_db_session.commit()
+        test_db_session.refresh(revision)
+
+        test_db_session.add(
+            VerseText(
+                text=f"The word {nfd_word} appears in verse {i}.",
+                revision_id=revision.id,
+                verse_reference="GEN 1:2",
+                book="GEN",
+                chapter=1,
+                verse=2,
+            )
+        )
+        test_db_session.add(
+            BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+        )
+        rev_ids.append(revision.id)
+    test_db_session.commit()
+    assert len(rev_ids) == 2, f"Expected 2 revisions to be created, got {rev_ids}"
+
+    nfc_query = unicodedata.normalize("NFC", "ásaatile")
+    response = client.get(
+        "/v3/textsearch",
+        params={"iso": "eng", "term": nfc_query, "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    # Both revisions have the same (book, chapter, verse); dedup collapses to 1
+    refs = [(r["book"], r["chapter"], r["verse"]) for r in data["results"]]
+    assert (
+        "GEN",
+        1,
+        2,
+    ) in refs, f"Expected GEN 1:2 to match NFC query across NFD revisions; got {data}"
+    assert len(refs) == len(set(refs)), "Expected deduplicated results"
 
 
 # --- ISO-based search tests ---
