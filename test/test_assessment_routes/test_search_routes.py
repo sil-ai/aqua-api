@@ -1399,17 +1399,239 @@ def test_search_wildcard_no_wildcard_allows_short_term(
     assert response.status_code == 200
 
 
-def test_search_wildcard_midterm_star_rejected(client, regular_token1, test_db_session):
-    """A `*` in the middle of the term is rejected (400)."""
+def test_search_wildcard_midterm_star_matches_same_word(
+    client, regular_token1, test_db_session
+):
+    """A `*` in the middle of the term matches any run of word chars within one word."""
     revision_id = _setup_morpheme_search_data(test_db_session)
 
+    # "akha*lanya" should match "akhagabhʉlanya" (GEN 1:4) — starts with
+    # akha, ends with lanya in the same word. Should NOT match
+    # "pagabhʉlanye" (ends with "lanye", not "lanya").
     response = client.get(
         "/v3/textsearch",
-        params={"revision_id": revision_id, "term": "bh*lany"},
+        params={"revision_id": revision_id, "term": "akha*lanya", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {("GEN", 1, 4)}
+
+
+def test_search_wildcard_midterm_star_does_not_cross_word_boundary(
+    client, regular_token1, test_db_session
+):
+    """Internal `*` must stay inside a single word — it cannot span whitespace."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # "bhʉlany" appears in GEN 2:1 as a standalone token; "standalone"
+    # appears later in the same verse. A mid-word wildcard between them
+    # must NOT match because `*` doesn't cross word boundaries.
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": revision_id,
+            "term": "bhʉlany*standalone",
+            "limit": 20,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"] == []
+
+
+def test_search_wildcard_midterm_with_prefix_and_suffix_wildcards(
+    client, regular_token1, test_db_session
+):
+    """`*a*b*` — leading, internal, and trailing wildcards combine correctly."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # `*gabh*nye*` — word contains "gabh" somewhere, followed later in the
+    # same word by "nye". Matches pagabhʉlanye, zɨgabhʉlanye, pagabhʉlanyiinye.
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "*gabh*nye*", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {("GEN", 1, 6), ("GEN", 1, 14), ("GEN", 1, 20)}
+
+
+def test_search_wildcard_multiple_internal_stars(
+    client, regular_token1, test_db_session
+):
+    """Multiple internal `*`s split the term into ordered pieces."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # "pa*bhʉ*nye" — word starts with "pa", contains "bhʉ", ends with "nye".
+    # Matches pagabhʉlanye (GEN 1:6) and pagabhʉlanyiinye (GEN 1:20).
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "pa*bhʉ*nye", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {("GEN", 1, 6), ("GEN", 1, 20)}
+
+
+def test_search_wildcard_consecutive_internal_stars(
+    client, regular_token1, test_db_session
+):
+    """Consecutive internal `*`s collapse to a single wildcard gap."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # `pa**nye` yields pieces ["pa", "", "nye"]; the empty piece contributes
+    # an extra `\w*` in the regex (harmless) and an extra `%` in the LIKE
+    # (also harmless). Should behave the same as `pa*nye`.
+    response_double = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "pa**nye", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    response_single = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "pa*nye", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response_double.status_code == 200
+    assert response_single.status_code == 200
+    refs_double = {
+        (r["book"], r["chapter"], r["verse"]) for r in response_double.json()["results"]
+    }
+    refs_single = {
+        (r["book"], r["chapter"], r["verse"]) for r in response_single.json()["results"]
+    }
+    assert refs_double == refs_single
+
+
+def test_search_wildcard_too_many_pieces_rejected(
+    client, regular_token1, test_db_session
+):
+    """Caps internal `*`s to guard against catastrophic regex backtracking."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # Five internal stars → six pieces, one over the cap.
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "a*b*c*d*e*f", "limit": 20},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
     assert response.status_code == 400
+    assert "internal" in response.json()["detail"].lower()
+
+    # At the cap (four internal stars → five pieces) should succeed.
+    ok_response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "a*b*c*d*e", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert ok_response.status_code == 200
+
+
+def test_search_wildcard_cap_counts_effective_not_raw_stars(
+    client, regular_token1, test_db_session
+):
+    """Consecutive `*`s collapse before cap check, so they don't count twice."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # 10 raw `*`s but only one effective internal wildcard after collapse.
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "pa**********nye", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    # Same result as `pa*nye`.
+    assert refs == {("GEN", 1, 6), ("GEN", 1, 20)}
+
+
+def test_search_backslash_in_term_treated_literally(
+    client, regular_token1, test_db_session
+):
+    """Backslash in the term is escaped so Postgres LIKE doesn't consume it."""
+    # Seed a verse with a literal backslash and one without; the two should
+    # differ under a backslash-containing query.
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+    version = BibleVersion(
+        name="Backslash Test",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="BST",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add(version)
+    test_db_session.commit()
+    test_db_session.refresh(version)
+
+    revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add(revision)
+    test_db_session.commit()
+    test_db_session.refresh(revision)
+
+    test_db_session.add_all(
+        [
+            VerseText(
+                text="contains foo\\bar literal token",
+                revision_id=revision.id,
+                verse_reference="GEN 1:1",
+                book="GEN",
+                chapter=1,
+                verse=1,
+            ),
+            VerseText(
+                text="contains foobar without slash",
+                revision_id=revision.id,
+                verse_reference="GEN 1:2",
+                book="GEN",
+                chapter=1,
+                verse=2,
+            ),
+        ]
+    )
+    test_db_session.add(
+        BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+    )
+    test_db_session.commit()
+
+    # Searching the backslash literal should match GEN 1:1 only. If
+    # backslash were treated as a LIKE escape char, the pattern would
+    # collapse to `foobar` and incorrectly match GEN 1:2.
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": revision.id,
+            "term": "*foo\\bar*",
+            "limit": 20,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {("GEN", 1, 1)}
 
 
 def test_search_wildcard_only_stars_rejected(client, regular_token1, test_db_session):

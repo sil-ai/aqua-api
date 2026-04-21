@@ -101,16 +101,20 @@ async def search_revision_text(
     Search for verses containing a specific term in a revision text.
     Returns verses that contain the search term (case-insensitive).
 
-    By default matches whole words only. A leading/trailing ``*`` in the
-    term acts as a wildcard:
+    By default matches whole words only. ``*`` acts as a wildcard for any
+    run of word characters, and may appear at the start, end, and/or
+    inside the term:
 
-    - ``foo``    — whole-word match (default)
-    - ``foo*``   — words starting with ``foo``
-    - ``*foo``   — words ending with ``foo``
-    - ``*foo*``  — ``foo`` anywhere inside a word
+    - ``foo``      — whole-word match (default)
+    - ``foo*``     — words starting with ``foo``
+    - ``*foo``     — words ending with ``foo``
+    - ``*foo*``    — ``foo`` anywhere inside a word
+    - ``fo*ar``    — word starting with ``fo`` and ending with ``ar``
+    - ``*fo*ar*``  — ``fo`` followed (somewhere later) by ``ar`` in the
+      same word
 
-    Wildcards are only accepted at the start/end of the term; a ``*`` in
-    the middle returns 400. The term must contain at least one visible
+    Every ``*`` matches within a single word — internal wildcards will
+    not cross a word boundary. The term must contain at least one visible
     (non-whitespace, non-format) character.
 
     Provide either ``revision_id`` or ``iso`` (not both).  When ``iso`` is
@@ -141,21 +145,34 @@ async def search_revision_text(
             detail="Provide either comparison_revision_id or comparison_iso, not both",
         )
 
-    # Parse leading/trailing `*` wildcards. A `*` in the middle of the
-    # term is rejected; wildcards are only anchors for the word boundary.
-    prefix_wildcard = term.startswith("*")
-    suffix_wildcard = term.endswith("*")
-    core_term = term[int(prefix_wildcard) : len(term) - int(suffix_wildcard)]
-    if "*" in core_term:
+    # Parse `*` wildcards. A leading/trailing `*` drops the word boundary
+    # on that side; `*` inside the term matches any run of word characters
+    # between the literal pieces it separates (stays within a single word).
+    # Collapse runs of `*` first so `foo**bar` and `foo*bar` are equivalent
+    # and the wildcard cap below reflects effective internal wildcards.
+    collapsed_term = re.sub(r"\*+", "*", term)
+    prefix_wildcard = collapsed_term.startswith("*")
+    suffix_wildcard = collapsed_term.endswith("*")
+    core_term = collapsed_term[
+        int(prefix_wildcard) : len(collapsed_term) - int(suffix_wildcard)
+    ]
+    pieces = core_term.split("*")
+    # Cap the number of literal pieces to avoid catastrophic regex
+    # backtracking: `*a*a*a*...` in a 200-char term could otherwise produce
+    # a pattern that takes seconds per row against adversarial input.
+    # Four internal `*`s (five pieces) is far more than any real query needs.
+    MAX_PIECES = 5
+    if len(pieces) > MAX_PIECES:
         raise HTTPException(
             status_code=400,
-            detail="`*` is only allowed at the start and/or end of the term",
+            detail=f"Term may contain at most {MAX_PIECES - 1} internal `*` wildcards",
         )
-    # Count only visible characters — format/control chars (zero-width
-    # space, BOM, soft hyphen, ...) shouldn't satisfy the length floor.
+    # Count only visible characters across all pieces — format/control chars
+    # (zero-width space, BOM, soft hyphen, ...) shouldn't satisfy the floor.
     visible_len = sum(
         1
-        for c in core_term
+        for piece in pieces
+        for c in piece
         if unicodedata.category(c) not in ("Cf", "Cc", "Cs", "Zl", "Zp")
         and not c.isspace()
     )
@@ -182,13 +199,20 @@ async def search_revision_text(
     use_comparison = comp_auth_select is not None
     comp_dedup = comparison_iso is not None
 
-    # Normalize to NFC so accented characters match regardless of whether the
-    # query or stored text uses composed vs decomposed forms.
-    normalized_term = unicodedata.normalize("NFC", core_term)
+    # Normalize each piece to NFC so accented characters match regardless
+    # of whether the query or stored text uses composed vs decomposed forms.
+    normalized_pieces = [unicodedata.normalize("NFC", p) for p in pieces]
 
-    # Escape SQL LIKE/ILIKE wildcards so % and _ in the term are literal
-    escaped_term = normalized_term.replace("%", r"\%").replace("_", r"\_")
-    like_pattern = f"%{escaped_term}%"
+    # SQL LIKE pattern: escape the escape character (\) first, then the
+    # wildcards % and _, so every byte of each piece is treated literally.
+    # Join pieces with % so each `*` in the original term becomes a coarse
+    # any-chars gap. The Python regex below tightens this to a single-word
+    # match.
+    escaped_pieces = [
+        p.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+        for p in normalized_pieces
+    ]
+    like_pattern = "%" + "%".join(escaped_pieces) + "%"
 
     # Build the base query
     vt1_alias = aliased(VerseText, name="vt1")
@@ -248,10 +272,17 @@ async def search_revision_text(
                 vt1_alias.verse,
             )
 
-    # Cap the DB result set.  The Python-side whole-word filter may discard
-    # ilike matches that aren't whole words, so we overfetch by 10x to give
-    # enough headroom while still bounding the transfer from the DB.
-    sql_limit = limit * 10
+    # Cap the DB result set. The Python-side whole-word filter may discard
+    # ilike matches that aren't whole words, so we overfetch to give enough
+    # headroom while still bounding the transfer from the DB.
+    #
+    # Multi-piece LIKE patterns (`%a%b%`) match many more rows than a single
+    # `%foo%` because the pieces can straddle multiple words in the text.
+    # Scale the overfetch with piece count so the regex filter sees enough
+    # candidates even when the LIKE prefilter is loose. Cap the absolute
+    # value so pathological `limit=1000` queries can't pull 50k rows.
+    SQL_LIMIT_ABS_CAP = 10_000
+    sql_limit = min(limit * 10 * len(pieces), SQL_LIMIT_ABS_CAP)
     search_query = search_query.limit(sql_limit)
 
     # Apply ordering.  DISTINCT ON requires the leading ORDER BY columns to
@@ -322,11 +353,12 @@ async def search_revision_text(
         # Normalize both the query and the stored text to NFC so the word
         # boundary check behaves consistently regardless of input encoding.
         # A leading `*` drops the left word boundary; a trailing `*` drops
-        # the right one; no `*` means a whole-word match.
-        escaped = re.escape(normalized_term.lower())
+        # the right one; internal `*`s become `\w*` so the gap stays inside
+        # a single word. No `*` means a whole-word match.
+        regex_middle = r"\w*".join(re.escape(p.lower()) for p in normalized_pieces)
         left = "" if prefix_wildcard else r"\b"
         right = "" if suffix_wildcard else r"\b"
-        word_pattern = re.compile(left + escaped + right)
+        word_pattern = re.compile(left + regex_middle + right)
         filtered_results = []
         for row in rows:
             if not row.main_text:
