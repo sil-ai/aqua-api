@@ -300,6 +300,70 @@ def test_tfidf_artifact_push_invalid_base64(
     assert resp.status_code == 422
 
 
+def test_tfidf_artifact_push_n_components_mismatch(
+    client, regular_token1, tfidf_assessment_id
+):
+    body = _make_artifact_body()
+    body["n_components"] = 42  # svd.n_components is still 5
+    resp = client.post(
+        f"{prefix}/assessment/{tfidf_assessment_id}/tfidf-artifacts",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+    assert "n_components" in resp.json()["detail"]
+
+
+def test_tfidf_artifact_push_n_features_mismatch(
+    client, regular_token1, tfidf_assessment_id
+):
+    body = _make_artifact_body()
+    body["svd"]["n_features"] = 999  # doesn't match n_word + n_char
+    resp = client.post(
+        f"{prefix}/assessment/{tfidf_assessment_id}/tfidf-artifacts",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+    assert "n_features" in resp.json()["detail"]
+
+
+def test_tfidf_artifact_push_components_shape_mismatch(
+    client, regular_token1, tfidf_assessment_id
+):
+    """Bytes encode a (3, 7) matrix but n_components=5 is declared."""
+    body = _make_artifact_body()
+    body["svd"]["components_b64"] = _components_b64(3, 7)
+    body["svd"]["n_components"] = 3  # keep the declared-shape field consistent
+    body["n_components"] = 3
+    body["svd"]["n_features"] = 999  # also triggers n_features check
+    resp = client.post(
+        f"{prefix}/assessment/{tfidf_assessment_id}/tfidf-artifacts",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    # The n_features vs vocab-size check fires first and returns 422.
+    assert resp.status_code == 422
+
+
+def test_tfidf_artifact_push_components_oversize(
+    client, regular_token1, tfidf_assessment_id
+):
+    """Declared shape fits, but the decoded bytes blob exceeds the expected payload."""
+    body = _make_artifact_body()
+    # Declare a small matrix but attach bytes for a much larger one.
+    body["svd"]["components_b64"] = _components_b64(300, 60000)
+    resp = client.post(
+        f"{prefix}/assessment/{tfidf_assessment_id}/tfidf-artifacts",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    # Payload is ~72 MB, under the 200 MB hard cap — the shape-vs-bytes check
+    # is what catches it.
+    assert resp.status_code == 422
+    assert "bytes" in resp.json()["detail"]
+
+
 def test_tfidf_artifact_pull_not_found(client, regular_token1):
     resp = client.get(
         f"{prefix}/assessment/tfidf/artifacts",
@@ -467,13 +531,28 @@ def test_by_vector_request_rejects_non_finite():
     from models import TfidfByVectorRequest
 
     with pytest.raises(ValidationError, match="inf or nan"):
-        TfidfByVectorRequest(
-            assessment_id=1, vector=[float("inf")] + [0.0] * 299
-        )
+        TfidfByVectorRequest(assessment_id=1, vector=[float("inf")] + [0.0] * 299)
     with pytest.raises(ValidationError, match="inf or nan"):
-        TfidfByVectorRequest(
-            assessment_id=1, vector=[float("nan")] + [0.0] * 299
-        )
+        TfidfByVectorRequest(assessment_id=1, vector=[float("nan")] + [0.0] * 299)
+
+
+def test_by_vector_rejects_inconsistent_run(
+    client, regular_token1, tfidf_assessment_id_2
+):
+    """If an artifact run has n_components != 300 it can't be used against the corpus."""
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vector",
+        json={
+            "assessment_id": tfidf_assessment_id_2,
+            "vector": [0.0] * 300,
+            "limit": 3,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    # tfidf_assessment_id_2 had a run pushed with n_components=7 in the
+    # latest-by-language test.
+    assert resp.status_code == 422
+    assert "300" in resp.json()["detail"]
 
 
 def test_by_vector_rejects_over_max_limit(

@@ -12,6 +12,7 @@ from sqlalchemy import Float, cast, delete, desc, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from assessment_routes.v3.results_query_routes import build_vector_literal
 from database.dependencies import get_db
 from database.models import (
     Assessment,
@@ -42,9 +43,14 @@ logger = setup_logger(__name__, container_id=container_id)
 
 router = fastapi.APIRouter()
 
+# Hard cap for the base64-decoded SVD components blob. float32 * 300 * 60_000
+# is ~72MB; 200MB leaves headroom for larger feature spaces and .npy header
+# overhead without letting a single request dominate API memory.
+_MAX_COMPONENTS_BYTES = 200 * 1024 * 1024
 
-def _vector_literal(vec: List[float]) -> str:
-    return f"'[{','.join(f'{x:.6f}' for x in vec)}]'::vector"
+# TfidfPcaVector.vector is declared Vector(300); queries against the corpus
+# must always be 300-dim regardless of what artifact metadata claims.
+_CORPUS_VECTOR_DIM = 300
 
 
 async def _score_against_corpus(
@@ -60,7 +66,7 @@ async def _score_against_corpus(
     """
     similarity_expr = cast(
         text(
-            f"inner_product(tfidf_pca_vector.vector, {_vector_literal(query_vector)})"
+            f"inner_product(tfidf_pca_vector.vector, {build_vector_literal(query_vector)})"
         ),
         Float,
     ).label("cosine_similarity")
@@ -154,6 +160,14 @@ async def push_tfidf_artifacts(
             status_code=422,
             detail=f"Invalid base64 in svd.components_b64: {e}",
         )
+    if len(components_bytes) > _MAX_COMPONENTS_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"svd.components_b64 decoded to {len(components_bytes)} bytes, "
+                f"over the {_MAX_COMPONENTS_BYTES}-byte limit"
+            ),
+        )
 
     n_word_features = len(body.word_vectorizer.vocabulary)
     n_char_features = len(body.char_vectorizer.vocabulary)
@@ -166,6 +180,38 @@ async def push_tfidf_artifacts(
         raise HTTPException(
             status_code=422,
             detail="char_vectorizer.vocabulary and idf must have the same length",
+        )
+    if body.n_components != body.svd.n_components:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"body.n_components ({body.n_components}) must equal "
+                f"svd.n_components ({body.svd.n_components})"
+            ),
+        )
+    if body.svd.n_features != n_word_features + n_char_features:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"svd.n_features ({body.svd.n_features}) must equal "
+                f"n_word_features + n_char_features ({n_word_features + n_char_features})"
+            ),
+        )
+    # Sanity-check the components bytes against the declared shape/dtype. np.save
+    # adds a small header (~128 bytes); allow 1KB of slack.
+    dtype_bytes = {"float32": 4, "float64": 8}[body.svd.dtype]
+    expected_payload = body.svd.n_components * body.svd.n_features * dtype_bytes
+    if (
+        len(components_bytes) < expected_payload
+        or len(components_bytes) > expected_payload + 1024
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"svd.components_b64 decoded to {len(components_bytes)} bytes, "
+                f"expected ~{expected_payload} for "
+                f"{body.svd.n_components} x {body.svd.n_features} {body.svd.dtype}"
+            ),
         )
 
     try:
@@ -379,16 +425,24 @@ async def get_tfidf_result_by_vector(
             TfidfArtifactRun.assessment_id == body.assessment_id
         )
     )
-    # TfidfPcaVector.vector is declared Vector(300); prefer the artifact run's
-    # n_components (which equals that 300 today) when available so the error
-    # message matches the caller's mental model.
-    expected_dim = run.n_components if run is not None else 300
-    if len(body.vector) != expected_dim:
+    # The corpus vectors are stored as Vector(300), so queries must always be
+    # 300-dim. If an artifact run claims otherwise, fail fast with 422 rather
+    # than letting pgvector raise a dimension-mismatch error at query time.
+    if run is not None and run.n_components != _CORPUS_VECTOR_DIM:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"Vector length {len(body.vector)} does not match "
-                f"n_components {expected_dim} for assessment {body.assessment_id}"
+                f"Assessment {body.assessment_id} has artifact run "
+                f"n_components={run.n_components}, but stored TF-IDF vectors "
+                f"require dimension {_CORPUS_VECTOR_DIM}"
+            ),
+        )
+    if len(body.vector) != _CORPUS_VECTOR_DIM:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Vector length {len(body.vector)} does not match required "
+                f"dimension {_CORPUS_VECTOR_DIM} for assessment {body.assessment_id}"
             ),
         )
 

@@ -477,8 +477,11 @@ async def build_text_lengths_query(
     return base_query, final_count_query
 
 
-def build_vector_literal(query_vector: np.ndarray) -> str:
-    return f"'[{','.join(f'{x:.6f}' for x in query_vector.tolist())}]'::vector"
+def build_vector_literal(query_vector) -> str:
+    values = (
+        query_vector.tolist() if hasattr(query_vector, "tolist") else list(query_vector)
+    )
+    return f"'[{','.join(f'{x:.6f}' for x in values)}]'::vector"
 
 
 async def build_tfidf_similarity_query(
