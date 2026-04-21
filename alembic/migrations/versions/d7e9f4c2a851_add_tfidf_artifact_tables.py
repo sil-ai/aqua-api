@@ -29,7 +29,12 @@ def upgrade() -> None:
         sa.Column("n_char_features", sa.Integer(), nullable=False),
         sa.Column("n_corpus_vrefs", sa.Integer(), nullable=False),
         sa.Column("sklearn_version", sa.Text(), nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(),
+            nullable=True,
+            server_default=sa.func.now(),
+        ),
         sa.ForeignKeyConstraint(
             ["assessment_id"], ["assessment.id"], ondelete="CASCADE"
         ),

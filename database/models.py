@@ -1045,7 +1045,7 @@ class TfidfArtifactRun(Base):
     n_char_features = Column(Integer, nullable=False)
     n_corpus_vrefs = Column(Integer, nullable=False)
     sklearn_version = Column(Text, nullable=False)
-    created_at = Column(TIMESTAMP, default=func.now())
+    created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
         Index("ix_tfidf_artifact_runs_lang", "source_language"),

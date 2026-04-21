@@ -4,7 +4,7 @@ import base64
 import binascii
 import socket
 import time
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Union
 
 import fastapi
 from fastapi import Depends, HTTPException, status
@@ -52,13 +52,11 @@ async def _score_against_corpus(
     assessment: Assessment,
     query_vector: List[float],
     limit: int,
-    reference_id: Optional[int],
-    exclude_vref: Optional[str] = None,
+    reference_id: int | None,
 ) -> List[TfidfResult]:
     """Rank corpus verses by inner-product similarity to query_vector.
 
-    Shared by the vref-keyed and vector-keyed tfidf endpoints. The SVD output
-    is L2-normalized, so inner product equals cosine similarity.
+    The SVD output is L2-normalized, so inner product equals cosine similarity.
     """
     similarity_expr = cast(
         text(
@@ -73,8 +71,6 @@ async def _score_against_corpus(
         .order_by(similarity_expr.desc())
         .limit(limit)
     )
-    if exclude_vref is not None:
-        query = query.where(TfidfPcaVector.vref != exclude_vref)
 
     rows = (await db.execute(query)).all()
     vrefs = [row.vref for row in rows]
@@ -142,7 +138,7 @@ async def push_tfidf_artifacts(
         raise HTTPException(status_code=404, detail="Assessment not found")
     if assessment.type != "tfidf":
         raise HTTPException(
-            status_code=422,
+            status_code=400,
             detail=f"Assessment type must be 'tfidf', got '{assessment.type}'",
         )
 
@@ -260,8 +256,8 @@ async def push_tfidf_artifacts(
     response_model=TfidfArtifactsPullResponse,
 )
 async def pull_tfidf_artifacts(
-    assessment_id: Optional[int] = None,
-    source_language: Optional[str] = None,
+    assessment_id: int | None = None,
+    source_language: str | None = None,
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -306,20 +302,10 @@ async def pull_tfidf_artifacts(
         )
     ).all()
     by_kind = {v.kind: v for v in vectorizer_rows}
-    if "word" not in by_kind or "char" not in by_kind:
-        raise HTTPException(
-            status_code=500,
-            detail="TF-IDF artifact run is missing vectorizer rows",
-        )
 
     svd = await db.scalar(
         select(TfidfSvd).where(TfidfSvd.assessment_id == run.assessment_id)
     )
-    if svd is None:
-        raise HTTPException(
-            status_code=500,
-            detail="TF-IDF artifact run is missing its SVD row",
-        )
 
     return TfidfArtifactsPullResponse(
         assessment_id=run.assessment_id,
@@ -371,14 +357,6 @@ async def get_tfidf_result_by_vector(
     """
     request_start = time.perf_counter()
 
-    if not await is_user_authorized_for_assessment(
-        current_user.id, body.assessment_id, db
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to see this assessment",
-        )
-
     assessment = await db.scalar(
         select(Assessment).where(Assessment.id == body.assessment_id).limit(1)
     )
@@ -388,14 +366,22 @@ async def get_tfidf_result_by_vector(
             detail=f"Assessment {body.assessment_id} not found",
         )
 
+    if not await is_user_authorized_for_assessment(
+        current_user.id, body.assessment_id, db
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+
     run = await db.scalar(
         select(TfidfArtifactRun).where(
             TfidfArtifactRun.assessment_id == body.assessment_id
         )
     )
-    # n_components defines the vector space: prefer the artifact run's value;
-    # fall back to 300 (the tfidf_pca_vector column dimension) so callers can
-    # query corpora that pre-date the artifact store.
+    # TfidfPcaVector.vector is declared Vector(300); prefer the artifact run's
+    # n_components (which equals that 300 today) when available so the error
+    # message matches the caller's mental model.
     expected_dim = run.n_components if run is not None else 300
     if len(body.vector) != expected_dim:
         raise HTTPException(
@@ -405,8 +391,6 @@ async def get_tfidf_result_by_vector(
                 f"n_components {expected_dim} for assessment {body.assessment_id}"
             ),
         )
-    if body.limit <= 0:
-        raise HTTPException(status_code=422, detail="limit must be a positive integer")
 
     results = await _score_against_corpus(
         db,

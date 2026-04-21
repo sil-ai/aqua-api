@@ -1,4 +1,5 @@
 import datetime
+import math
 import re
 import unicodedata
 from enum import Enum
@@ -1152,37 +1153,20 @@ class EflomalResultsPullResponse(BaseModel):
 
 
 class TfidfVectorizerPayload(BaseModel):
-    """Serialized state of a fitted sklearn TfidfVectorizer.
-
-    - vocabulary: token -> column index
-    - idf: per-column IDF weights (length == vocab size)
-    - params: constructor kwargs needed to rehydrate (analyzer, ngram_range,
-      lowercase, max_df, min_df, ...)
-    """
-
     vocabulary: Dict[str, int]
     idf: List[float]
     params: Dict[str, Any]
 
 
 class TfidfSvdPayload(BaseModel):
-    """Serialized state of a fitted sklearn TruncatedSVD.
-
-    components_b64: base64-encoded bytes of np.save(components_, ...) — the
-    full (n_components, n_features) matrix. Storing via np.save preserves
-    dtype and shape, which is cheaper and more robust than JSON floats.
-    """
-
     n_components: int
     n_features: int
-    dtype: str = "float32"
+    dtype: Literal["float32", "float64"] = "float32"
     components_b64: str
 
 
 class TfidfArtifactsPushRequest(BaseModel):
-    """Push all encoder artifacts for a TF-IDF assessment in one transaction."""
-
-    source_language: Optional[str] = None
+    source_language: Optional[str] = Field(default=None, max_length=3)
     n_components: int
     n_corpus_vrefs: int
     sklearn_version: str
@@ -1199,8 +1183,6 @@ class TfidfArtifactsPushResponse(BaseModel):
 
 
 class TfidfArtifactsPullResponse(BaseModel):
-    """All artifacts needed to encode new text into the same 300-dim space."""
-
     assessment_id: int
     source_language: Optional[str] = None
     n_components: int
@@ -1215,12 +1197,17 @@ class TfidfArtifactsPullResponse(BaseModel):
 
 
 class TfidfByVectorRequest(BaseModel):
-    """Similarity search keyed by an arbitrary vector (not a corpus vref)."""
-
     assessment_id: int
     vector: List[float]
-    limit: int = 10
+    limit: int = Field(default=10, ge=1, le=500)
     reference_id: Optional[int] = None
+
+    @field_validator("vector")
+    @classmethod
+    def _reject_non_finite(cls, v: List[float]) -> List[float]:
+        if any(not math.isfinite(x) for x in v):
+            raise ValueError("vector must not contain inf or nan")
+        return v
 
 
 # --- Assessment Results Push/Delete models ---

@@ -243,7 +243,7 @@ def test_tfidf_artifact_wrong_assessment_type(
         json=_make_artifact_body(),
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-    assert resp.status_code == 422
+    assert resp.status_code == 400
     assert "tfidf" in resp.json()["detail"]
 
 
@@ -458,6 +458,37 @@ def test_by_vector_respects_limit(client, regular_token1, tfidf_vector_assessmen
     data = resp.json()
     assert data["total_count"] == 2
     assert data["results"][0]["vref"] == "GEN 1:3"
+
+
+def test_by_vector_request_rejects_non_finite():
+    """Pydantic validator rejects inf/nan before it reaches pgvector."""
+    from pydantic import ValidationError
+
+    from models import TfidfByVectorRequest
+
+    with pytest.raises(ValidationError, match="inf or nan"):
+        TfidfByVectorRequest(
+            assessment_id=1, vector=[float("inf")] + [0.0] * 299
+        )
+    with pytest.raises(ValidationError, match="inf or nan"):
+        TfidfByVectorRequest(
+            assessment_id=1, vector=[float("nan")] + [0.0] * 299
+        )
+
+
+def test_by_vector_rejects_over_max_limit(
+    client, regular_token1, tfidf_vector_assessment_id
+):
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vector",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vector": _unit_vector(0),
+            "limit": 100000,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
 
 
 # ---------------------------------------------------------------------------
