@@ -1399,17 +1399,89 @@ def test_search_wildcard_no_wildcard_allows_short_term(
     assert response.status_code == 200
 
 
-def test_search_wildcard_midterm_star_rejected(client, regular_token1, test_db_session):
-    """A `*` in the middle of the term is rejected (400)."""
+def test_search_wildcard_midterm_star_matches_same_word(
+    client, regular_token1, test_db_session
+):
+    """A `*` in the middle of the term matches any run of word chars within one word."""
     revision_id = _setup_morpheme_search_data(test_db_session)
 
+    # "akha*lanya" should match "akhagabhʉlanya" (GEN 1:4) — starts with
+    # akha, ends with lanya in the same word. Should NOT match
+    # "pagabhʉlanye" (ends with "lanye", not "lanya").
     response = client.get(
         "/v3/textsearch",
-        params={"revision_id": revision_id, "term": "bh*lany"},
+        params={"revision_id": revision_id, "term": "akha*lanya", "limit": 20},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {("GEN", 1, 4)}
+
+
+def test_search_wildcard_midterm_star_does_not_cross_word_boundary(
+    client, regular_token1, test_db_session
+):
+    """Internal `*` must stay inside a single word — it cannot span whitespace."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # "bhʉlany" appears in GEN 2:1 as a standalone token; "standalone"
+    # appears later in the same verse. A mid-word wildcard between them
+    # must NOT match because `*` doesn't cross word boundaries.
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": revision_id,
+            "term": "bhʉlany*standalone",
+            "limit": 20,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"] == []
+
+
+def test_search_wildcard_midterm_with_prefix_and_suffix_wildcards(
+    client, regular_token1, test_db_session
+):
+    """`*a*b*` — leading, internal, and trailing wildcards combine correctly."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # `*gabh*nye*` — word contains "gabh" somewhere, followed later in the
+    # same word by "nye". Matches pagabhʉlanye, zɨgabhʉlanye, pagabhʉlanyiinye.
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "*gabh*nye*", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {("GEN", 1, 6), ("GEN", 1, 14), ("GEN", 1, 20)}
+
+
+def test_search_wildcard_multiple_internal_stars(
+    client, regular_token1, test_db_session
+):
+    """Multiple internal `*`s split the term into ordered pieces."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # "pa*bhʉ*nye" — word starts with "pa", contains "bhʉ", ends with "nye".
+    # Matches pagabhʉlanye (GEN 1:6) and pagabhʉlanyiinye (GEN 1:20).
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "pa*bhʉ*nye", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {("GEN", 1, 6), ("GEN", 1, 20)}
 
 
 def test_search_wildcard_only_stars_rejected(client, regular_token1, test_db_session):
