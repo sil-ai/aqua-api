@@ -1,4 +1,5 @@
 import datetime
+import math
 import re
 import unicodedata
 from enum import Enum
@@ -1146,6 +1147,67 @@ class EflomalResultsPullResponse(BaseModel):
     dictionary: list[EflomalDictionaryItem]
     cooccurrences: list[EflomalCooccurrenceItem]
     target_word_counts: list[EflomalTargetWordCountItem]
+
+
+# --- TF-IDF artifact (encoder state) models ---
+
+
+class TfidfVectorizerPayload(BaseModel):
+    vocabulary: Dict[str, int]
+    idf: List[float]
+    params: Dict[str, Any]
+
+
+class TfidfSvdPayload(BaseModel):
+    n_components: int
+    n_features: int
+    dtype: Literal["float32", "float64"] = "float32"
+    components_b64: str
+
+
+class TfidfArtifactsPushRequest(BaseModel):
+    source_language: Optional[str] = Field(default=None, max_length=3)
+    n_components: int
+    n_corpus_vrefs: int
+    sklearn_version: str
+    word_vectorizer: TfidfVectorizerPayload
+    char_vectorizer: TfidfVectorizerPayload
+    svd: TfidfSvdPayload
+
+
+class TfidfArtifactsPushResponse(BaseModel):
+    assessment_id: int
+    n_word_features: int
+    n_char_features: int
+    components_bytes: int
+
+
+class TfidfArtifactsPullResponse(BaseModel):
+    assessment_id: int
+    source_language: Optional[str] = None
+    n_components: int
+    n_word_features: int
+    n_char_features: int
+    n_corpus_vrefs: int
+    sklearn_version: str
+    created_at: Optional[datetime.datetime] = None
+    word_vectorizer: TfidfVectorizerPayload
+    char_vectorizer: TfidfVectorizerPayload
+    svd: TfidfSvdPayload
+
+
+class TfidfByVectorRequest(BaseModel):
+    assessment_id: int
+    vector: List[float]
+    limit: int = Field(default=10, ge=1, le=500)
+    reference_id: Optional[int] = None
+
+    @field_validator("vector")
+    @classmethod
+    def _reject_non_finite(cls, v: List[float]) -> List[float]:
+        if any(not math.isfinite(x) for x in v):
+            raise ValueError("vector must not contain inf or nan")
+        return v
 
 
 # --- Assessment Results Push/Delete models ---
