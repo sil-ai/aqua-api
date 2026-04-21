@@ -9,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     SmallInteger,
     String,
@@ -1022,3 +1023,71 @@ class WordMorphemeIndex(Base):
         Index("ix_word_morpheme_iso", "iso_639_3"),
         Index("ix_word_morpheme_morpheme", "morpheme_id"),
     )
+
+
+class TfidfArtifactRun(Base):
+    """One row per TF-IDF assessment that produced encoder artifacts.
+
+    Header row for the TF-IDF artifact store. Artifacts (two vectorizers +
+    one SVD matrix) hang off this by assessment_id.
+    """
+
+    __tablename__ = "tfidf_artifact_runs"
+
+    assessment_id = Column(
+        Integer,
+        ForeignKey("assessment.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source_language = Column(String(3), nullable=True)
+    n_components = Column(Integer, nullable=False)
+    n_word_features = Column(Integer, nullable=False)
+    n_char_features = Column(Integer, nullable=False)
+    n_corpus_vrefs = Column(Integer, nullable=False)
+    sklearn_version = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        Index("ix_tfidf_artifact_runs_lang", "source_language"),
+        Index("ix_tfidf_artifact_runs_lang_created", "source_language", "created_at"),
+    )
+
+
+class TfidfVectorizerArtifact(Base):
+    """Fitted TfidfVectorizer state — one row for 'word', one for 'char'."""
+
+    __tablename__ = "tfidf_vectorizers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    assessment_id = Column(
+        Integer,
+        ForeignKey("tfidf_artifact_runs.assessment_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(Text, nullable=False)
+    vocabulary = Column(JSONB, nullable=False)
+    idf = Column(JSONB, nullable=False)
+    params = Column(JSONB, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "assessment_id", "kind", name="uq_tfidf_vectorizer_assessment_kind"
+        ),
+        CheckConstraint("kind IN ('word', 'char')", name="ck_tfidf_vectorizer_kind"),
+    )
+
+
+class TfidfSvd(Base):
+    """Fitted TruncatedSVD components matrix, stored as raw npy bytes."""
+
+    __tablename__ = "tfidf_svd"
+
+    assessment_id = Column(
+        Integer,
+        ForeignKey("tfidf_artifact_runs.assessment_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    n_components = Column(Integer, nullable=False)
+    n_features = Column(Integer, nullable=False)
+    components_npy = Column(LargeBinary, nullable=False)
+    dtype = Column(Text, nullable=False, server_default="float32")

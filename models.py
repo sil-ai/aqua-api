@@ -1148,6 +1148,81 @@ class EflomalResultsPullResponse(BaseModel):
     target_word_counts: list[EflomalTargetWordCountItem]
 
 
+# --- TF-IDF artifact (encoder state) models ---
+
+
+class TfidfVectorizerPayload(BaseModel):
+    """Serialized state of a fitted sklearn TfidfVectorizer.
+
+    - vocabulary: token -> column index
+    - idf: per-column IDF weights (length == vocab size)
+    - params: constructor kwargs needed to rehydrate (analyzer, ngram_range,
+      lowercase, max_df, min_df, ...)
+    """
+
+    vocabulary: Dict[str, int]
+    idf: List[float]
+    params: Dict[str, Any]
+
+
+class TfidfSvdPayload(BaseModel):
+    """Serialized state of a fitted sklearn TruncatedSVD.
+
+    components_b64: base64-encoded bytes of np.save(components_, ...) — the
+    full (n_components, n_features) matrix. Storing via np.save preserves
+    dtype and shape, which is cheaper and more robust than JSON floats.
+    """
+
+    n_components: int
+    n_features: int
+    dtype: str = "float32"
+    components_b64: str
+
+
+class TfidfArtifactsPushRequest(BaseModel):
+    """Push all encoder artifacts for a TF-IDF assessment in one transaction."""
+
+    source_language: Optional[str] = None
+    n_components: int
+    n_corpus_vrefs: int
+    sklearn_version: str
+    word_vectorizer: TfidfVectorizerPayload
+    char_vectorizer: TfidfVectorizerPayload
+    svd: TfidfSvdPayload
+
+
+class TfidfArtifactsPushResponse(BaseModel):
+    assessment_id: int
+    n_word_features: int
+    n_char_features: int
+    components_bytes: int
+
+
+class TfidfArtifactsPullResponse(BaseModel):
+    """All artifacts needed to encode new text into the same 300-dim space."""
+
+    assessment_id: int
+    source_language: Optional[str] = None
+    n_components: int
+    n_word_features: int
+    n_char_features: int
+    n_corpus_vrefs: int
+    sklearn_version: str
+    created_at: Optional[datetime.datetime] = None
+    word_vectorizer: TfidfVectorizerPayload
+    char_vectorizer: TfidfVectorizerPayload
+    svd: TfidfSvdPayload
+
+
+class TfidfByVectorRequest(BaseModel):
+    """Similarity search keyed by an arbitrary vector (not a corpus vref)."""
+
+    assessment_id: int
+    vector: List[float]
+    limit: int = 10
+    reference_id: Optional[int] = None
+
+
 # --- Assessment Results Push/Delete models ---
 
 
