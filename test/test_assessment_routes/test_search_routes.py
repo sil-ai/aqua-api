@@ -1540,6 +1540,100 @@ def test_search_wildcard_too_many_pieces_rejected(
     assert ok_response.status_code == 200
 
 
+def test_search_wildcard_cap_counts_effective_not_raw_stars(
+    client, regular_token1, test_db_session
+):
+    """Consecutive `*`s collapse before cap check, so they don't count twice."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # 10 raw `*`s but only one effective internal wildcard after collapse.
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "pa**********nye", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    # Same result as `pa*nye`.
+    assert refs == {("GEN", 1, 6), ("GEN", 1, 20)}
+
+
+def test_search_backslash_in_term_treated_literally(
+    client, regular_token1, test_db_session
+):
+    """Backslash in the term is escaped so Postgres LIKE doesn't consume it."""
+    # Seed a verse with a literal backslash and one without; the two should
+    # differ under a backslash-containing query.
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+    version = BibleVersion(
+        name="Backslash Test",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="BST",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add(version)
+    test_db_session.commit()
+    test_db_session.refresh(version)
+
+    revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add(revision)
+    test_db_session.commit()
+    test_db_session.refresh(revision)
+
+    test_db_session.add_all(
+        [
+            VerseText(
+                text="contains foo\\bar literal token",
+                revision_id=revision.id,
+                verse_reference="GEN 1:1",
+                book="GEN",
+                chapter=1,
+                verse=1,
+            ),
+            VerseText(
+                text="contains foobar without slash",
+                revision_id=revision.id,
+                verse_reference="GEN 1:2",
+                book="GEN",
+                chapter=1,
+                verse=2,
+            ),
+        ]
+    )
+    test_db_session.add(
+        BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+    )
+    test_db_session.commit()
+
+    # Searching the backslash literal should match GEN 1:1 only. If
+    # backslash were treated as a LIKE escape char, the pattern would
+    # collapse to `foobar` and incorrectly match GEN 1:2.
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": revision.id,
+            "term": "*foo\\bar*",
+            "limit": 20,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    assert refs == {("GEN", 1, 1)}
+
+
 def test_search_wildcard_only_stars_rejected(client, regular_token1, test_db_session):
     """A term consisting only of `*` characters is rejected (400)."""
     revision_id = _setup_morpheme_search_data(test_db_session)

@@ -148,9 +148,14 @@ async def search_revision_text(
     # Parse `*` wildcards. A leading/trailing `*` drops the word boundary
     # on that side; `*` inside the term matches any run of word characters
     # between the literal pieces it separates (stays within a single word).
-    prefix_wildcard = term.startswith("*")
-    suffix_wildcard = term.endswith("*")
-    core_term = term[int(prefix_wildcard) : len(term) - int(suffix_wildcard)]
+    # Collapse runs of `*` first so `foo**bar` and `foo*bar` are equivalent
+    # and the wildcard cap below reflects effective internal wildcards.
+    collapsed_term = re.sub(r"\*+", "*", term)
+    prefix_wildcard = collapsed_term.startswith("*")
+    suffix_wildcard = collapsed_term.endswith("*")
+    core_term = collapsed_term[
+        int(prefix_wildcard) : len(collapsed_term) - int(suffix_wildcard)
+    ]
     pieces = core_term.split("*")
     # Cap the number of literal pieces to avoid catastrophic regex
     # backtracking: `*a*a*a*...` in a 200-char term could otherwise produce
@@ -198,11 +203,14 @@ async def search_revision_text(
     # of whether the query or stored text uses composed vs decomposed forms.
     normalized_pieces = [unicodedata.normalize("NFC", p) for p in pieces]
 
-    # SQL LIKE pattern: escape % and _ in each piece, join with % so each
-    # `*` in the original term becomes a coarse any-chars gap. The Python
-    # regex below tightens this to a single-word match.
+    # SQL LIKE pattern: escape the escape character (\) first, then the
+    # wildcards % and _, so every byte of each piece is treated literally.
+    # Join pieces with % so each `*` in the original term becomes a coarse
+    # any-chars gap. The Python regex below tightens this to a single-word
+    # match.
     escaped_pieces = [
-        p.replace("%", r"\%").replace("_", r"\_") for p in normalized_pieces
+        p.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
+        for p in normalized_pieces
     ]
     like_pattern = "%" + "%".join(escaped_pieces) + "%"
 
@@ -271,8 +279,10 @@ async def search_revision_text(
     # Multi-piece LIKE patterns (`%a%b%`) match many more rows than a single
     # `%foo%` because the pieces can straddle multiple words in the text.
     # Scale the overfetch with piece count so the regex filter sees enough
-    # candidates even when the LIKE prefilter is loose.
-    sql_limit = limit * 10 * len(pieces)
+    # candidates even when the LIKE prefilter is loose. Cap the absolute
+    # value so pathological `limit=1000` queries can't pull 50k rows.
+    SQL_LIMIT_ABS_CAP = 10_000
+    sql_limit = min(limit * 10 * len(pieces), SQL_LIMIT_ABS_CAP)
     search_query = search_query.limit(sql_limit)
 
     # Apply ordering.  DISTINCT ON requires the leading ORDER BY columns to
