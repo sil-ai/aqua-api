@@ -152,6 +152,16 @@ async def search_revision_text(
     suffix_wildcard = term.endswith("*")
     core_term = term[int(prefix_wildcard) : len(term) - int(suffix_wildcard)]
     pieces = core_term.split("*")
+    # Cap the number of literal pieces to avoid catastrophic regex
+    # backtracking: `*a*a*a*...` in a 200-char term could otherwise produce
+    # a pattern that takes seconds per row against adversarial input.
+    # Four internal `*`s (five pieces) is far more than any real query needs.
+    MAX_PIECES = 5
+    if len(pieces) > MAX_PIECES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Term may contain at most {MAX_PIECES - 1} internal `*` wildcards",
+        )
     # Count only visible characters across all pieces — format/control chars
     # (zero-width space, BOM, soft hyphen, ...) shouldn't satisfy the floor.
     visible_len = sum(
@@ -254,10 +264,15 @@ async def search_revision_text(
                 vt1_alias.verse,
             )
 
-    # Cap the DB result set.  The Python-side whole-word filter may discard
-    # ilike matches that aren't whole words, so we overfetch by 10x to give
-    # enough headroom while still bounding the transfer from the DB.
-    sql_limit = limit * 10
+    # Cap the DB result set. The Python-side whole-word filter may discard
+    # ilike matches that aren't whole words, so we overfetch to give enough
+    # headroom while still bounding the transfer from the DB.
+    #
+    # Multi-piece LIKE patterns (`%a%b%`) match many more rows than a single
+    # `%foo%` because the pieces can straddle multiple words in the text.
+    # Scale the overfetch with piece count so the regex filter sees enough
+    # candidates even when the LIKE prefilter is loose.
+    sql_limit = limit * 10 * len(pieces)
     search_query = search_query.limit(sql_limit)
 
     # Apply ordering.  DISTINCT ON requires the leading ORDER BY columns to

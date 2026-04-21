@@ -1484,6 +1484,62 @@ def test_search_wildcard_multiple_internal_stars(
     assert refs == {("GEN", 1, 6), ("GEN", 1, 20)}
 
 
+def test_search_wildcard_consecutive_internal_stars(
+    client, regular_token1, test_db_session
+):
+    """Consecutive internal `*`s collapse to a single wildcard gap."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # `pa**nye` yields pieces ["pa", "", "nye"]; the empty piece contributes
+    # an extra `\w*` in the regex (harmless) and an extra `%` in the LIKE
+    # (also harmless). Should behave the same as `pa*nye`.
+    response_double = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "pa**nye", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    response_single = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "pa*nye", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response_double.status_code == 200
+    assert response_single.status_code == 200
+    refs_double = {
+        (r["book"], r["chapter"], r["verse"]) for r in response_double.json()["results"]
+    }
+    refs_single = {
+        (r["book"], r["chapter"], r["verse"]) for r in response_single.json()["results"]
+    }
+    assert refs_double == refs_single
+
+
+def test_search_wildcard_too_many_pieces_rejected(
+    client, regular_token1, test_db_session
+):
+    """Caps internal `*`s to guard against catastrophic regex backtracking."""
+    revision_id = _setup_morpheme_search_data(test_db_session)
+
+    # Five internal stars → six pieces, one over the cap.
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "a*b*c*d*e*f", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "internal" in response.json()["detail"].lower()
+
+    # At the cap (four internal stars → five pieces) should succeed.
+    ok_response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision_id, "term": "a*b*c*d*e", "limit": 20},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert ok_response.status_code == 200
+
+
 def test_search_wildcard_only_stars_rejected(client, regular_token1, test_db_session):
     """A term consisting only of `*` characters is rejected (400)."""
     revision_id = _setup_morpheme_search_data(test_db_session)
