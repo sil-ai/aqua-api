@@ -368,11 +368,12 @@ def test_predict_training_not_available_returns_not_trained_status(
     `status="not_trained"` — distinct from generic `"error"` — with the
     exception message preserved.
 
-    Using the real class from `predict_errors` (mirroring the one the Modal
-    workers raise) exercises the pickle-resolution path: if the module or
-    class name ever drifts from the assessments-side definition, unpickling
-    will fail and the exception will arrive as a generic `ExecutionError`,
-    failing this test.
+    Uses the real class from `predict_errors` so that a rename of the local
+    module or class fails the `import` here (surfacing drift from the
+    assessments-side definition at CI time). This does *not* exercise the
+    cross-boundary pickle round-trip — `AsyncMock(side_effect=exc)` raises
+    the exception in-process. A live Modal smoke against an untrained
+    language pair is the only thing that validates pickle resolution.
     """
     from predict_errors import TrainingNotAvailableError
 
