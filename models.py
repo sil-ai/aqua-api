@@ -338,6 +338,54 @@ class TextLengthsInferenceResponse(BaseModel):
     char_count_difference: int
 
 
+class TextPair(BaseModel):
+    vref: Optional[str] = None
+    source_text: Optional[str] = None
+    target_text: str
+
+
+class PredictInput(BaseModel):
+    pairs: List[TextPair]
+    assessment_id: Optional[int] = None
+    revision_id: Optional[int] = None
+    reference_id: Optional[int] = None
+    source_language: Optional[str] = None
+    target_language: Optional[str] = None
+    limit: Optional[int] = None
+    apps: Optional[List[str]] = None
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "pairs": [
+                    {
+                        "vref": "GEN 1:1",
+                        "source_text": "In the beginning God created the heavens and the earth.",
+                        "target_text": "Hapo mwanzo Mungu aliumba mbingu na dunia.",
+                    }
+                ],
+                "revision_id": 1,
+                "reference_id": 2,
+                "source_language": "eng",
+                "target_language": "swh",
+                "apps": ["ngrams", "tfidf"],
+            }
+        }
+    }
+
+
+class PredictAppResult(BaseModel):
+    status: Literal["ok", "error"]
+    data: Optional[Any] = None
+    error: Optional[str] = None
+    duration_ms: int
+
+
+class PredictFanoutResponse(BaseModel):
+    pairs: List[TextPair]
+    results: Dict[str, PredictAppResult]
+
+
 # Results model to record in the DB.
 
 

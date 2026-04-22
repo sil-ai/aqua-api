@@ -9,7 +9,7 @@ import pytest
 
 prefix = "v3"
 
-MOCK_MODULE = "inference_routes.v3.inference_routes.modal.Function"
+MOCK_MODULE = "predict_routes.v3.predict_routes.modal.Function"
 
 # -- Test data: Kinga (zga) <-> Swahili (swh) Psalms verse pairs --
 
@@ -50,7 +50,7 @@ def test_matched_pair_returns_score(client, regular_token1, pair):
         mock_function_cls.from_name.return_value = mock_fn
 
         response = client.post(
-            f"{prefix}/inference/semantic-similarity",
+            f"{prefix}/predict/semantic-similarity",
             json={
                 "text1": pair["text1"],
                 "text2": pair["text2"],
@@ -82,7 +82,7 @@ def test_mismatched_pair_forwarded_correctly(client, regular_token1):
 
         # PSA 1:1 zga text with PSA 1:2 swh text (mismatched)
         response = client.post(
-            f"{prefix}/inference/semantic-similarity",
+            f"{prefix}/predict/semantic-similarity",
             json={
                 "text1": GOOD_PAIRS[0]["text1"],
                 "text2": GOOD_PAIRS[1]["text2"],
@@ -106,7 +106,7 @@ def test_unknown_language_pair_returns_422(client, regular_token1):
         mock_function_cls.from_name.return_value = mock_fn
 
         response = client.post(
-            f"{prefix}/inference/semantic-similarity",
+            f"{prefix}/predict/semantic-similarity",
             json={
                 "text1": "hello",
                 "text2": "world",
@@ -130,7 +130,7 @@ def test_invalid_language_code_returns_422(client, regular_token1):
         mock_function_cls.from_name.return_value = mock_fn
 
         response = client.post(
-            f"{prefix}/inference/semantic-similarity",
+            f"{prefix}/predict/semantic-similarity",
             json={
                 "text1": "hello",
                 "text2": "world",
