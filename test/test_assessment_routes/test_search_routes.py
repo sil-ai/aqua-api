@@ -426,6 +426,122 @@ def test_search_admin_nonexistent_revision_returns_200_empty(
     assert data["results"] == []
 
 
+def test_search_short_term_allowed(client, regular_token1, test_db_session):
+    """1-2 char terms must still be accepted.
+
+    The trigram index doesn't help for 1-2 char ILIKE, but the query is
+    bounded per revision by ix_verse_text_revision_id and by the
+    Python-side overfetch cap, so short searches remain safe. The
+    aqua-assessments agent relies on short-term searches (morphemes,
+    affixes), so validation must not reject them.
+    """
+    main_revision_id, _ = setup_search_test_data(test_db_session)
+
+    # 2-char whole word "he" appears in JHN 3:16 ("he gave his only...").
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": main_revision_id, "term": "he", "limit": 5},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert any(
+        re.search(r"\bhe\b", r["main_text"].lower()) for r in data["results"]
+    ), f"expected at least one whole-word 'he' match, got {data}"
+
+    # 1-char term: must not 422. Whole-word filter may yield zero rows
+    # (no standalone "a" in the fixture), but the endpoint must still
+    # succeed — that's the aqua-assessments requirement.
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": main_revision_id, "term": "a", "limit": 5},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+
+
+def test_search_truncated_flag_when_overfetch_insufficient(
+    client, regular_token1, test_db_session
+):
+    """When the DB cap is hit but whole-word matches are sparse, signal truncation.
+
+    sql_limit is driven by limit and piece count. Insert more rows than
+    the DB cap that ILIKE-match but fail the whole-word filter, plus zero
+    actual whole-word matches. The endpoint should return an empty result
+    set with truncated=true so the caller knows there may be more ILIKE
+    hits beyond what was examined.
+    """
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+
+    version = BibleVersion(
+        name="Trunc Test",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="TRC",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add(version)
+    test_db_session.commit()
+    test_db_session.refresh(version)
+
+    revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add(revision)
+    test_db_session.commit()
+    test_db_session.refresh(revision)
+
+    # With limit=5 and one piece, sql_limit = 5 * 10 * 1 = 50. Insert 60
+    # verses where the term appears only as a substring of a longer word,
+    # so ILIKE matches but the whole-word regex rejects every row.
+    # PSA 119 has 176 verses, so 60 consecutive refs are canonically valid.
+    for i in range(60):
+        test_db_session.add(
+            VerseText(
+                text="Sentence containing mudfoo_marker which is not a word.",
+                revision_id=revision.id,
+                verse_reference=f"PSA 119:{i + 1}",
+                book="PSA",
+                chapter=119,
+                verse=i + 1,
+            )
+        )
+    test_db_session.add(
+        BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+    )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": revision.id, "term": "mudfoo", "limit": 5},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 0
+    assert data["truncated"] is True, f"expected truncated=true, got {data}"
+
+
+def test_search_not_truncated_on_full_page(client, regular_token1, test_db_session):
+    """A normal full page of results must NOT be flagged as truncated."""
+    main_revision_id, _ = setup_search_test_data(test_db_session)
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"revision_id": main_revision_id, "term": "God", "limit": 3},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] >= 1
+    assert data["truncated"] is False
+
+
 def test_search_limit_validation(client, regular_token1, test_db_session):
     """Test that limit parameter is properly validated."""
     main_revision_id, _ = setup_search_test_data(test_db_session)

@@ -384,6 +384,12 @@ async def search_revision_text(
                 if len(filtered_results) >= limit:
                     break
 
+        # If we hit the DB cap AND still produced fewer than the requested
+        # limit after whole-word filtering, there may be more matching verses
+        # we didn't see. Signal this so callers can widen the search or
+        # request a larger limit.
+        truncated = len(rows) >= sql_limit and len(filtered_results) < limit
+
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
             f"search_revision_text completed in {duration}s",
@@ -398,11 +404,16 @@ async def search_revision_text(
                 "limit": limit,
                 "random": random,
                 "results_returned": len(filtered_results),
+                "truncated": truncated,
                 "duration_s": duration,
             },
         )
 
-        return {"results": filtered_results, "total_count": len(filtered_results)}
+        return {
+            "results": filtered_results,
+            "total_count": len(filtered_results),
+            "truncated": truncated,
+        }
 
     except HTTPException:
         raise
