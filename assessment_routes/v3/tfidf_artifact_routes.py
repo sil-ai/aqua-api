@@ -26,6 +26,7 @@ from database.models import (
     VerseText,
 )
 from models import (
+    TFIDF_MAX_BATCH_RESULTS,
     TfidfArtifactsPullResponse,
     TfidfArtifactsPushRequest,
     TfidfArtifactsPushResponse,
@@ -500,6 +501,16 @@ async def get_tfidf_result_by_vectors(
     assessment = await _resolve_assessment_for_by_vector(
         body.assessment_id, current_user, db
     )
+
+    total_results = len(body.vectors) * body.limit
+    if total_results > TFIDF_MAX_BATCH_RESULTS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"len(vectors) * limit must not exceed {TFIDF_MAX_BATCH_RESULTS}; "
+                f"got {len(body.vectors)} * {body.limit} = {total_results}"
+            ),
+        )
 
     bad = [
         (i, len(vec))

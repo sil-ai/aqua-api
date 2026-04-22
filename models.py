@@ -1198,9 +1198,9 @@ class TfidfArtifactsPullResponse(BaseModel):
 
 class TfidfByVectorRequest(BaseModel):
     assessment_id: int
-    vector: List[float]
+    vector: List[float] = Field(..., max_length=10000)
     limit: int = Field(default=10, ge=1, le=500)
-    reference_id: Optional[int] = None
+    reference_id: Optional[int] = Field(default=None, ge=1)
 
     @field_validator("vector")
     @classmethod
@@ -1211,6 +1211,7 @@ class TfidfByVectorRequest(BaseModel):
 
 
 TFIDF_MAX_BATCH_VECTORS = 500
+TFIDF_MAX_BATCH_RESULTS = 25000
 
 
 class TfidfByVectorsRequest(BaseModel):
@@ -1219,12 +1220,14 @@ class TfidfByVectorsRequest(BaseModel):
         ..., min_length=1, max_length=TFIDF_MAX_BATCH_VECTORS
     )
     limit: int = Field(default=10, ge=1, le=500)
-    reference_id: Optional[int] = None
+    reference_id: Optional[int] = Field(default=None, ge=1)
 
     @field_validator("vectors")
     @classmethod
     def _reject_non_finite(cls, vs: List[List[float]]) -> List[List[float]]:
         for i, vec in enumerate(vs):
+            if len(vec) > 10000:
+                raise ValueError(f"vectors[{i}] length {len(vec)} exceeds 10000")
             if any(not math.isfinite(x) for x in vec):
                 raise ValueError(f"vectors[{i}] must not contain inf or nan")
         return vs

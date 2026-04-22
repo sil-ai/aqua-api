@@ -609,10 +609,7 @@ def test_by_vectors_matches_single_vector(
 
     assert len(batch) == len(queries)
     for i, (single, b) in enumerate(zip(singles, batch)):
-        assert [r["vref"] for r in b] == [
-            r["vref"] for r in single
-        ], f"vectors[{i}] neighbour order diverged"
-        assert [r["similarity"] for r in b] == [r["similarity"] for r in single]
+        assert b == single, f"vectors[{i}] neighbour set diverged"
 
 
 def test_by_vectors_preserves_input_order(
@@ -652,9 +649,8 @@ def test_by_vectors_wrong_length_rejects_whole_request(
     )
     assert resp.status_code == 422
     detail = resp.json()["detail"]
-    assert "300" in detail
-    # The offending index should be identifiable.
-    assert "1" in detail
+    # The offending tuple (index=1, length=10) should be quoted verbatim.
+    assert "(1, 10)" in detail
 
 
 def test_by_vectors_empty_rejected(client, regular_token1, tfidf_vector_assessment_id):
@@ -689,26 +685,80 @@ def test_by_vectors_over_cap_rejected(
     assert resp.status_code == 422
 
 
-def test_by_vectors_reference_filter_applied_per_result(
-    client, regular_token1, tfidf_vector_assessment_id, test_revision_id_2
+def test_by_vectors_reference_filter_populates_per_vector_text(
+    client,
+    regular_token1,
+    tfidf_vector_assessment_id,
+    test_revision_id_2,
+    test_db_session,
 ):
-    """reference_id applies uniformly to every vector's neighbour set."""
+    """reference_id populates each vector's top result with the right reference text."""
+    from database.models import VerseText
+
+    # Seed distinct reference texts for the three corpus vrefs. Use a unique
+    # marker per verse so we can assert the correct one lands in each result.
+    texts = {
+        "GEN 1:1": "REF-A unique marker",
+        "GEN 1:2": "REF-B unique marker",
+        "GEN 1:3": "REF-C unique marker",
+    }
+    for vref, text in texts.items():
+        existing = (
+            test_db_session.query(VerseText)
+            .filter(
+                VerseText.revision_id == test_revision_id_2,
+                VerseText.verse_reference == vref,
+            )
+            .first()
+        )
+        if existing is None:
+            test_db_session.add(
+                VerseText(
+                    text=text,
+                    revision_id=test_revision_id_2,
+                    verse_reference=vref,
+                )
+            )
+    test_db_session.commit()
+
+    # Query with vectors hitting distinct top neighbours (axis 0 → GEN 1:1, axis 2 → GEN 1:3).
     resp = client.post(
         f"{prefix}/tfidf_result/by_vectors",
         json={
             "assessment_id": tfidf_vector_assessment_id,
-            "vectors": [_unit_vector(0), _unit_vector(1)],
-            "limit": 3,
+            "vectors": [_unit_vector(0), _unit_vector(2)],
+            "limit": 1,
             "reference_id": test_revision_id_2,
         },
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 200, resp.text
-    # Each result row should expose the reference_text field (may be None if
-    # test_revision_id_2 has no text for that vref — we only check the key exists).
-    for rs in resp.json()["results"]:
-        for row in rs:
-            assert "reference_text" in row
+    results = resp.json()["results"]
+    assert results[0][0]["vref"] == "GEN 1:1"
+    assert results[0][0]["reference_text"] == texts["GEN 1:1"]
+    assert results[1][0]["vref"] == "GEN 1:3"
+    assert results[1][0]["reference_text"] == texts["GEN 1:3"]
+
+
+def test_by_vectors_combined_cap_rejected(
+    client, regular_token1, tfidf_vector_assessment_id
+):
+    """len(vectors) * limit above the combined cap is rejected with 422."""
+    from models import TFIDF_MAX_BATCH_RESULTS
+
+    # 500 vectors × 100 limit = 50_000 > 25_000 cap
+    vectors = [_unit_vector(0) for _ in range(500)]
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vectors": vectors,
+            "limit": 100,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+    assert str(TFIDF_MAX_BATCH_RESULTS) in resp.json()["detail"]
 
 
 def test_by_vectors_unauthorized(client, regular_token2, tfidf_vector_assessment_id):
@@ -746,7 +796,9 @@ def test_by_vectors_assessment_not_found(client, regular_token1):
         },
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-    assert resp.status_code in (403, 404)
+    # Missing assessments must return 404, not 403 — a 403 here would leak
+    # existence information via the authz check firing before the lookup.
+    assert resp.status_code == 404
 
 
 def test_by_vectors_rejects_non_finite():
