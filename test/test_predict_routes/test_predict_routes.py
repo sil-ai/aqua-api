@@ -342,6 +342,25 @@ def test_predict_error_message_does_not_leak_exception_details(client, regular_t
     assert "secret" not in error
 
 
+def test_predict_surfaces_value_error_message(client, regular_token1):
+    """ValueError messages are surfaced (caller-side input validation)."""
+    msg = "agent.predict requires vref and source_text on every pair"
+    results = {"ngrams": ValueError(msg)}
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock(results),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams"]),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    error = response.json()["results"]["ngrams"]["error"]
+    assert error == msg
+
+
 def test_predict_unauthorized_reference_returns_403(
     client, regular_token2, test_revision_id
 ):

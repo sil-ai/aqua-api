@@ -35,13 +35,17 @@ router = fastapi.APIRouter()
 PREDICT_APPS: dict[str, str] = {
     "ngrams": "ngrams",
     "tfidf": "tfidf",
-    "agent": "agent",
+    "agent": "agent-critique",
     "semantic-similarity": "semantic-similarity",
     "text_lengths": "text-lengths",
     "word_alignment": "word-alignment",
 }
 
 DEFAULT_PER_APP_TIMEOUT_S = float(os.getenv("PREDICT_PER_APP_TIMEOUT_S", "60"))
+
+# agent.predict does translation + critique via Bedrock and has a 600s
+# Modal-side timeout; 60s is too tight and will produce spurious timeouts.
+PER_APP_TIMEOUT_S: dict[str, float] = {"agent": 300.0}
 
 
 _fn_cache: dict[tuple[str, str], modal.Function] = {}
@@ -103,10 +107,11 @@ async def predict(
     async def call_one(name: str) -> tuple[str, PredictAppResult]:
         started = time.perf_counter()
         modal_app = PREDICT_APPS[name]
+        timeout_s = PER_APP_TIMEOUT_S.get(name, DEFAULT_PER_APP_TIMEOUT_S)
         try:
             fn = _get_predict_fn(modal_app, modal_env)
             data = await asyncio.wait_for(
-                fn.remote.aio(input_payload), timeout=DEFAULT_PER_APP_TIMEOUT_S
+                fn.remote.aio(input_payload), timeout=timeout_s
             )
             duration_ms = int((time.perf_counter() - started) * 1000)
             return name, PredictAppResult(
@@ -117,7 +122,7 @@ async def predict(
             logger.warning(f"predict app {name} timed out after {duration_ms}ms")
             return name, PredictAppResult(
                 status="error",
-                error=f"timeout after {DEFAULT_PER_APP_TIMEOUT_S}s",
+                error=f"timeout after {timeout_s}s",
                 duration_ms=duration_ms,
             )
         except Exception as exc:
@@ -125,8 +130,12 @@ async def predict(
             logger.warning(
                 f"predict app {name} failed: {type(exc).__name__}", exc_info=True
             )
+            # Surface ValueError messages (per-app input validation is caller
+            # error, e.g. "agent.predict requires vref and source_text on every
+            # pair"); opaque type names for other exception classes.
+            error_str = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
             return name, PredictAppResult(
-                status="error", error=type(exc).__name__, duration_ms=duration_ms
+                status="error", error=error_str, duration_ms=duration_ms
             )
 
     logger.info(
