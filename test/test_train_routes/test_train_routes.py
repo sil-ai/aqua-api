@@ -154,6 +154,23 @@ def test_create_training_job_with_apps_filter(
     assert types == {"tfidf", "ngrams"}
 
 
+def test_create_training_job_predict_alias_accepted(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """apps filter accepts PREDICT_APPS-style keys so a caller can reuse the list."""
+    response = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "alias_test"},
+        apps=["agent", "word_alignment"],
+    )
+    assert response.status_code == 200
+    types = {job["type"] for job in response.json()["training_jobs"]}
+    assert types == {"agent-critique", "word-alignment"}
+
+
 def test_create_training_job_unknown_app(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):

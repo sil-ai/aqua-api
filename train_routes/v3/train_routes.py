@@ -58,7 +58,9 @@ VALID_TRANSITIONS = {
 TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed"}
 COMPLETED_STATUSES = {"completed", "completed_with_errors"}
 
-# Maps each inference type to the training types it requires
+# Maps each inference type to the training types it requires. Keys are
+# TrainingType values (not PREDICT_APPS keys) — callers reading readiness
+# to decide whether to call /v3/predict must map via TRAIN_APPS_ALIASES.
 INFERENCE_DEPENDENCIES = {
     "semantic-similarity": ["semantic-similarity"],
     "tfidf": ["tfidf"],
@@ -78,6 +80,14 @@ TRAIN_APPS: dict[str, str] = {
     "word-alignment": "word-alignment",
     "ngrams": "ngrams",
     "agent-critique": "agent-critique",
+}
+
+# Accepts the key names used by PredictInput.apps so a caller can pass the
+# same app list to /v3/train and /v3/predict. Canonical names (the keys
+# above) are also accepted. Extend this map if predict adopts another alias.
+TRAIN_APPS_ALIASES: dict[str, str] = {
+    "agent": "agent-critique",
+    "word_alignment": "word-alignment",
 }
 
 _fn_cache: dict[tuple[str, str], modal.Function] = {}
@@ -187,7 +197,8 @@ async def create_training_job(
     if job_in.apps is None:
         selected_types = all_types
     else:
-        selected_types = list(dict.fromkeys(job_in.apps))
+        resolved = [TRAIN_APPS_ALIASES.get(a, a) for a in job_in.apps]
+        selected_types = list(dict.fromkeys(resolved))
         unknown = sorted(set(selected_types) - set(all_types))
         if unknown:
             raise HTTPException(
