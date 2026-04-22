@@ -480,7 +480,7 @@ def test_by_vector_wrong_length(client, regular_token1, tfidf_vector_assessment_
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 422
-    assert "300" in resp.json()["detail"]
+    assert "300" in str(resp.json()["detail"])
 
 
 def test_by_vector_unauthorized(client, regular_token2, tfidf_vector_assessment_id):
@@ -648,9 +648,9 @@ def test_by_vectors_wrong_length_rejects_whole_request(
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 422
-    detail = resp.json()["detail"]
-    # The offending tuple (index=1, length=10) should be quoted verbatim.
-    assert "(1, 10)" in detail
+    # Pydantic catches the wrong length at parse time and identifies the
+    # offending index in the validator message.
+    assert "vectors[1]" in str(resp.json()["detail"])
 
 
 def test_by_vectors_empty_rejected(client, regular_token1, tfidf_vector_assessment_id):

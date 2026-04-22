@@ -1196,9 +1196,14 @@ class TfidfArtifactsPullResponse(BaseModel):
     svd: TfidfSvdPayload
 
 
+TFIDF_CORPUS_VECTOR_DIM = 300
+
+
 class TfidfByVectorRequest(BaseModel):
     assessment_id: int
-    vector: List[float] = Field(..., max_length=10000)
+    vector: List[float] = Field(
+        ..., min_length=TFIDF_CORPUS_VECTOR_DIM, max_length=TFIDF_CORPUS_VECTOR_DIM
+    )
     limit: int = Field(default=10, ge=1, le=500)
     reference_id: Optional[int] = Field(default=None, ge=1)
 
@@ -1224,10 +1229,12 @@ class TfidfByVectorsRequest(BaseModel):
 
     @field_validator("vectors")
     @classmethod
-    def _reject_non_finite(cls, vs: List[List[float]]) -> List[List[float]]:
+    def _validate_vectors(cls, vs: List[List[float]]) -> List[List[float]]:
         for i, vec in enumerate(vs):
-            if len(vec) > 10000:
-                raise ValueError(f"vectors[{i}] length {len(vec)} exceeds 10000")
+            if len(vec) != TFIDF_CORPUS_VECTOR_DIM:
+                raise ValueError(
+                    f"vectors[{i}] has length {len(vec)}, expected {TFIDF_CORPUS_VECTOR_DIM}"
+                )
             if any(not math.isfinite(x) for x in vec):
                 raise ValueError(f"vectors[{i}] must not contain inf or nan")
         return vs

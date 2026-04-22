@@ -56,16 +56,15 @@ _MAX_COMPONENTS_BYTES = 200 * 1024 * 1024
 _CORPUS_VECTOR_DIM = 300
 
 
-async def _score_against_corpus(
+async def _rank_against_corpus(
     db: AsyncSession,
-    assessment: Assessment,
+    assessment_id: int,
     query_vector: List[float],
     limit: int,
-    reference_id: int | None,
-) -> List[TfidfResult]:
-    """Rank corpus verses by inner-product similarity to query_vector.
+) -> List:
+    """Return top-`limit` (id, vref, similarity) rows for a single query vector.
 
-    The SVD output is L2-normalized, so inner product equals cosine similarity.
+    SVD output is L2-normalized, so inner product equals cosine similarity.
     """
     similarity_expr = cast(
         text(
@@ -76,37 +75,43 @@ async def _score_against_corpus(
 
     query = (
         select(TfidfPcaVector.id, TfidfPcaVector.vref, similarity_expr)
-        .where(TfidfPcaVector.assessment_id == assessment.id)
+        .where(TfidfPcaVector.assessment_id == assessment_id)
         .order_by(similarity_expr.desc())
         .limit(limit)
     )
+    return (await db.execute(query)).all()
 
-    rows = (await db.execute(query)).all()
+
+async def _fetch_verse_texts(
+    db: AsyncSession, revision_id: int | None, vrefs: List[str]
+) -> Dict[str, str]:
+    """Map vref → text for a given revision. Returns {} if revision_id is None or vrefs is empty."""
+    if not revision_id or not vrefs:
+        return {}
+    rows = (
+        await db.execute(
+            select(VerseText.verse_reference, VerseText.text).where(
+                VerseText.revision_id == revision_id,
+                VerseText.verse_reference.in_(vrefs),
+            )
+        )
+    ).all()
+    return {r.verse_reference: r.text for r in rows}
+
+
+async def _score_against_corpus(
+    db: AsyncSession,
+    assessment: Assessment,
+    query_vector: List[float],
+    limit: int,
+    reference_id: int | None,
+) -> List[TfidfResult]:
+    """Rank corpus verses by similarity, then hydrate with revision/reference text."""
+    rows = await _rank_against_corpus(db, assessment.id, query_vector, limit)
     vrefs = [row.vref for row in rows]
 
-    revision_texts: Dict[str, str] = {}
-    if assessment.revision_id and vrefs:
-        rev_rows = (
-            await db.execute(
-                select(VerseText.verse_reference, VerseText.text).where(
-                    VerseText.revision_id == assessment.revision_id,
-                    VerseText.verse_reference.in_(vrefs),
-                )
-            )
-        ).all()
-        revision_texts = {r.verse_reference: r.text for r in rev_rows}
-
-    reference_texts: Dict[str, str] = {}
-    if reference_id and vrefs:
-        ref_rows = (
-            await db.execute(
-                select(VerseText.verse_reference, VerseText.text).where(
-                    VerseText.revision_id == reference_id,
-                    VerseText.verse_reference.in_(vrefs),
-                )
-            )
-        ).all()
-        reference_texts = {r.verse_reference: r.text for r in ref_rows}
+    revision_texts = await _fetch_verse_texts(db, assessment.revision_id, vrefs)
+    reference_texts = await _fetch_verse_texts(db, reference_id, vrefs)
 
     return [
         TfidfResult(
@@ -512,26 +517,34 @@ async def get_tfidf_result_by_vectors(
             ),
         )
 
-    bad = [
-        (i, len(vec))
-        for i, vec in enumerate(body.vectors)
-        if len(vec) != _CORPUS_VECTOR_DIM
-    ]
-    if bad:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"All vectors must have length {_CORPUS_VECTOR_DIM} for assessment "
-                f"{body.assessment_id}; wrong-length entries (index, length): {bad}"
-            ),
-        )
+    # Rank each vector sequentially (AsyncSession doesn't support concurrent
+    # statements), then hydrate revision/reference text once across the union
+    # of vrefs rather than per-vector. Keeps the query count at N+2 instead
+    # of 3N for N vectors.
+    ranked: List[List] = []
+    all_vrefs: set = set()
+    for vec in body.vectors:
+        rows = await _rank_against_corpus(db, body.assessment_id, vec, body.limit)
+        ranked.append(rows)
+        all_vrefs.update(r.vref for r in rows)
 
-    # AsyncSession doesn't support concurrent statements, so score sequentially.
-    # The primary win of this endpoint is saving N HTTP round-trips, not
-    # parallelising DB work inside one request.
+    vrefs_list = list(all_vrefs)
+    revision_texts = await _fetch_verse_texts(db, assessment.revision_id, vrefs_list)
+    reference_texts = await _fetch_verse_texts(db, body.reference_id, vrefs_list)
+
     results = [
-        await _score_against_corpus(db, assessment, vec, body.limit, body.reference_id)
-        for vec in body.vectors
+        [
+            TfidfResult(
+                id=row.id,
+                vref=row.vref,
+                similarity=float(row.cosine_similarity),
+                assessment_id=assessment.id,
+                revision_text=revision_texts.get(row.vref),
+                reference_text=reference_texts.get(row.vref),
+            )
+            for row in rows
+        ]
+        for rows in ranked
     ]
 
     duration = round(time.perf_counter() - request_start, 2)
