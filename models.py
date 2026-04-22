@@ -1056,6 +1056,10 @@ class AgentTranslationOut(BaseModel):
 class TrainingType(str, Enum):
     serval_nmt = "serval-nmt"
     semantic_similarity = "semantic-similarity"
+    tfidf = "tfidf"
+    word_alignment = "word-alignment"
+    ngrams = "ngrams"
+    agent_critique = "agent-critique"
 
 
 class TrainingStatus(str, Enum):
@@ -1073,6 +1077,7 @@ class TrainingJobIn(BaseModel):
     source_revision_id: int
     target_revision_id: int
     options: Optional[Dict[str, Any]] = None
+    apps: Optional[List[str]] = None
 
 
 class TrainingJobOut(BaseModel):

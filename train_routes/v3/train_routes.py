@@ -61,7 +61,35 @@ COMPLETED_STATUSES = {"completed", "completed_with_errors"}
 # Maps each inference type to the training types it requires
 INFERENCE_DEPENDENCIES = {
     "semantic-similarity": ["semantic-similarity"],
+    "tfidf": ["tfidf"],
+    "word-alignment": ["word-alignment"],
+    "ngrams": ["ngrams"],
+    "agent-critique": ["agent-critique"],
 }
+
+# Fan-out registry: training-type value -> Modal app name exposing train().
+# Mirrors PREDICT_APPS in predict_routes/v3/predict_routes.py. Each listed app
+# must publish a @app.function train(input_data) in aqua-assessments.
+# semantic-similarity is registered here but routed through the legacy runner
+# path below until its dedicated train() is deployed.
+TRAIN_APPS: dict[str, str] = {
+    "semantic-similarity": "semantic-similarity",
+    "tfidf": "tfidf",
+    "word-alignment": "word-alignment",
+    "ngrams": "ngrams",
+    "agent-critique": "agent-critique",
+}
+
+_fn_cache: dict[tuple[str, str], "modal.Function"] = {}
+
+
+def _get_train_fn(modal_app: str, env: str) -> "modal.Function":
+    key = (modal_app, env)
+    fn = _fn_cache.get(key)
+    if fn is None:
+        fn = modal.Function.from_name(modal_app, "train", environment_name=env)
+        _fn_cache[key] = fn
+    return fn
 
 
 async def _compute_inference_readiness(
@@ -155,7 +183,26 @@ async def create_training_job(
     training_jobs = []
     skipped_job_ids = []
 
+    all_types = [t.value for t in TrainingType]
+    if job_in.apps is None:
+        selected_types = all_types
+    else:
+        selected_types = list(dict.fromkeys(job_in.apps))
+        unknown = sorted(set(selected_types) - set(all_types))
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown training apps: {unknown}",
+            )
+        if not selected_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one training app must be selected",
+            )
+
     for training_type in TrainingType:
+        if training_type.value not in selected_types:
+            continue
         # Duplicate check per type
         dup_stmt = select(TrainingJob).where(
             TrainingJob.source_revision_id == job_in.source_revision_id,
@@ -201,11 +248,22 @@ async def create_training_job(
     for job in training_jobs:
         await db.refresh(job)
 
-    # Dispatch all jobs to Modal in parallel
+    # Dispatch all jobs to Modal in parallel. Mirrors the predict() fan-out
+    # pattern: one Modal call per job, per-job error isolation.
     async def dispatch_job(job: TrainingJob):
         """Returns (job, exception) tuple. Does NOT mutate the DB session."""
         try:
-            if job.type == TrainingType.semantic_similarity.value:
+            if job.type == TrainingType.serval_nmt.value:
+                f = modal.Function.from_name(
+                    "train-runner", "run_training_job", environment_name=modal_env
+                )
+                job_out = TrainingJobOut.model_validate(job)
+                await f.spawn.aio(job_out.model_dump(mode="json"))
+            elif job.type == TrainingType.semantic_similarity.value:
+                # Transitional: route sem-sim through the runner's train=True
+                # path until aqua-assessments ships a dedicated sem-sim train()
+                # Modal function. Once it does, this branch collapses into the
+                # generic TRAIN_APPS path below.
                 f = modal.Function.from_name(
                     "runner", "run_assessment_runner", environment_name=modal_env
                 )
@@ -221,12 +279,14 @@ async def create_training_job(
                 if job_in.options:
                     config["kwargs"] = job_in.options
                 await f.spawn.aio(config, os.getenv("AQUA_DB", ""), train_job_id=job.id)
-            else:
-                f = modal.Function.from_name(
-                    "train-runner", "run_training_job", environment_name=modal_env
-                )
+            elif job.type in TRAIN_APPS:
+                f = _get_train_fn(TRAIN_APPS[job.type], modal_env)
                 job_out = TrainingJobOut.model_validate(job)
                 await f.spawn.aio(job_out.model_dump(mode="json"))
+            else:
+                raise RuntimeError(
+                    f"No dispatch configured for training type '{job.type}'"
+                )
             return job, None
         except Exception as e:
             logger.error(f"Error dispatching training job {job.id} ({job.type}): {e}")

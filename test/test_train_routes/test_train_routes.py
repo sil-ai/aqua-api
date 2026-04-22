@@ -5,25 +5,75 @@ from database.models import TrainingJob, VerseText
 
 prefix = "v3"
 
+# Keep in sync with TrainingType enum in models.py.
+ALL_TRAINING_TYPES = {
+    "serval-nmt",
+    "semantic-similarity",
+    "tfidf",
+    "word-alignment",
+    "ngrams",
+    "agent-critique",
+}
+
 
 def _auth_headers(token):
     return {"Authorization": f"Bearer {token}"}
 
 
-def _create_training_jobs_via_api(client, token, source_rev, target_rev, options=None):
-    """Helper to POST /train with mocked Modal dispatch. Returns list of jobs."""
+_UNSET = object()
+
+
+def _make_modal_mock(spawn_by_app: dict = None, default_exc=_UNSET):
+    """Build a mock for train_routes.modal.Function.
+
+    spawn_by_app: optional dict mapping Modal app name -> Exception (or None for success).
+    default_exc: Exception raised by any app not listed in spawn_by_app. Defaults to no-op success.
+    Used for per-app failure-isolation tests.
+    """
+
+    spawn_by_app = spawn_by_app or {}
+
+    def _from_name(app_name, *_args, **_kwargs):
+        fn = AsyncMock()
+        if app_name in spawn_by_app:
+            exc = spawn_by_app[app_name]
+        else:
+            exc = None if default_exc is _UNSET else default_exc
+        if isinstance(exc, Exception):
+            fn.spawn.aio = AsyncMock(side_effect=exc)
+        else:
+            fn.spawn.aio = AsyncMock()
+        return fn
+
+    mock_function_cls = AsyncMock()
+    mock_function_cls.from_name = _from_name
+    return mock_function_cls
+
+
+def _create_training_jobs_via_api(
+    client,
+    token,
+    source_rev,
+    target_rev,
+    options=None,
+    apps=None,
+    spawn_by_app=None,
+    default_exc=_UNSET,
+):
+    """Helper to POST /train with mocked Modal dispatch. Returns Response."""
     data = {
         "source_revision_id": source_rev,
         "target_revision_id": target_rev,
     }
     if options is not None:
         data["options"] = options
+    if apps is not None:
+        data["apps"] = apps
 
-    with patch("train_routes.v3.train_routes.modal.Function") as mock_function_cls:
-        mock_fn = AsyncMock()
-        mock_fn.spawn.aio = AsyncMock()
-        mock_function_cls.from_name.return_value = mock_fn
-
+    mock_function_cls = _make_modal_mock(spawn_by_app, default_exc)
+    with patch(
+        "train_routes.v3.train_routes.modal.Function", mock_function_cls
+    ), patch.dict("train_routes.v3.train_routes._fn_cache", {}, clear=True):
         response = client.post(
             f"{prefix}/train",
             json=data,
@@ -45,7 +95,7 @@ def _get_first_job_id(response):
 def test_create_training_job_success(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """POST /train creates jobs for all types with status=queued."""
+    """POST /train with no filter fans out to every trainable type."""
     response = _create_training_jobs_via_api(
         client, regular_token1, test_revision_id, test_revision_id_2
     )
@@ -53,11 +103,8 @@ def test_create_training_job_success(
     assert response.status_code == 200
     data = response.json()
     jobs = data["training_jobs"]
-    assert len(jobs) == 2  # serval-nmt and semantic-similarity
-
     types = {job["type"] for job in jobs}
-    assert "serval-nmt" in types
-    assert "semantic-similarity" in types
+    assert types == ALL_TRAINING_TYPES
 
     for job in jobs:
         assert job["source_revision_id"] == test_revision_id
@@ -67,11 +114,85 @@ def test_create_training_job_success(
         assert job["source_language"] == "eng"
         assert job["target_language"] == "eng"
 
-    # Check inference readiness
+    # Check inference readiness for each trainable assessment app
     readiness = data["inference_readiness"]
-    assert "semantic-similarity" in readiness
-    assert readiness["semantic-similarity"]["ready"] is False
-    assert "semantic-similarity" in readiness["semantic-similarity"]["pending_training"]
+    for key in (
+        "semantic-similarity",
+        "tfidf",
+        "word-alignment",
+        "ngrams",
+        "agent-critique",
+    ):
+        assert key in readiness
+        assert readiness[key]["ready"] is False
+        assert key in readiness[key]["pending_training"]
+
+
+def test_create_training_job_with_apps_filter(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """POST /train with apps filter dispatches only the requested subset."""
+    response = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "apps_filter_test"},
+        apps=["tfidf", "ngrams"],
+    )
+    assert response.status_code == 200
+    types = {job["type"] for job in response.json()["training_jobs"]}
+    assert types == {"tfidf", "ngrams"}
+
+
+def test_create_training_job_unknown_app(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """POST /train rejects unknown apps with 400."""
+    response = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        apps=["not-a-real-app"],
+    )
+    assert response.status_code == 400
+    assert "Unknown" in response.json()["detail"]
+
+
+def test_create_training_job_empty_apps_list(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """POST /train rejects empty apps list with 400."""
+    response = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        apps=[],
+    )
+    assert response.status_code == 400
+
+
+def test_create_training_job_per_app_dispatch_isolation(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """A spawn failure for one assessment app must not affect the others."""
+    response = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "isolation_test"},
+        spawn_by_app={"tfidf": RuntimeError("boom")},
+    )
+    assert response.status_code == 200
+    jobs = {job["type"]: job for job in response.json()["training_jobs"]}
+    assert jobs["tfidf"]["status"] == "failed"
+    assert "dispatch_failed" in jobs["tfidf"]["status_detail"]
+    # Every other job still reached queued (dispatch succeeded)
+    for t in ALL_TRAINING_TYPES - {"tfidf"}:
+        assert jobs[t]["status"] == "queued", f"{t} regressed to {jobs[t]['status']}"
 
 
 def test_create_training_job_invalid_revision(client, regular_token1, test_revision_id):
@@ -619,23 +740,15 @@ def test_delete_training_job_unauthorized(
 def test_dispatch_failure_marks_job_failed(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """POST /train marks jobs as failed when Modal dispatch fails."""
-    data = {
-        "source_revision_id": test_revision_id,
-        "target_revision_id": test_revision_id_2,
-        "options": {"tag": "dispatch_fail_test"},
-    }
-
-    with patch("train_routes.v3.train_routes.modal.Function") as mock_function_cls:
-        mock_fn = AsyncMock()
-        mock_fn.spawn.aio = AsyncMock(side_effect=Exception("Modal dispatch failed"))
-        mock_function_cls.from_name.return_value = mock_fn
-
-        response = client.post(
-            f"{prefix}/train",
-            json=data,
-            headers={"Authorization": f"Bearer {regular_token1}"},
-        )
+    """POST /train marks every job as failed when Modal dispatch fails for all apps."""
+    response = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "dispatch_fail_test"},
+        default_exc=Exception("Modal dispatch failed"),
+    )
 
     assert response.status_code == 200
     for job in _get_jobs(response):
@@ -668,7 +781,7 @@ def test_get_training_status(
     assert response.status_code == 200
     data = response.json()
     assert data["session_id"] == session_id
-    assert len(data["training_jobs"]) == 2
+    assert len(data["training_jobs"]) == len(ALL_TRAINING_TYPES)
     assert "inference_readiness" in data
     assert "semantic-similarity" in data["inference_readiness"]
 
