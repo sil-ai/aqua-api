@@ -80,10 +80,10 @@ TRAIN_APPS: dict[str, str] = {
     "agent-critique": "agent-critique",
 }
 
-_fn_cache: dict[tuple[str, str], "modal.Function"] = {}
+_fn_cache: dict[tuple[str, str], modal.Function] = {}
 
 
-def _get_train_fn(modal_app: str, env: str) -> "modal.Function":
+def _get_train_fn(modal_app: str, env: str) -> modal.Function:
     key = (modal_app, env)
     fn = _fn_cache.get(key)
     if fn is None:
@@ -241,7 +241,10 @@ async def create_training_job(
     if not training_jobs:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Active training jobs already exist for all types (job ids: {skipped_job_ids})",
+            detail=(
+                f"Active training jobs already exist for the requested types "
+                f"{sorted(selected_types)} (job ids: {skipped_job_ids})"
+            ),
         )
 
     await db.commit()

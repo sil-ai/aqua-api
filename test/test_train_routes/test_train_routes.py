@@ -1,19 +1,25 @@
 # test_train_routes.py
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from database.models import TrainingJob, VerseText
+from models import TrainingType
+from train_routes.v3 import train_routes
 
 prefix = "v3"
 
-# Keep in sync with TrainingType enum in models.py.
-ALL_TRAINING_TYPES = {
-    "serval-nmt",
-    "semantic-similarity",
-    "tfidf",
-    "word-alignment",
-    "ngrams",
-    "agent-critique",
-}
+# Derived from TrainingType so the test suite fails loudly if the enum grows
+# a new value without the dispatch/test story being updated.
+ALL_TRAINING_TYPES = {t.value for t in TrainingType}
+
+
+@pytest.fixture(autouse=True)
+def _clear_fn_cache():
+    """Clear the Modal Function cache so patched mocks don't leak between tests."""
+    train_routes._fn_cache.clear()
+    yield
+    train_routes._fn_cache.clear()
 
 
 def _auth_headers(token):
@@ -23,17 +29,19 @@ def _auth_headers(token):
 _UNSET = object()
 
 
-def _make_modal_mock(spawn_by_app: dict = None, default_exc=_UNSET):
+def _make_modal_mock(spawn_by_app: dict = None, default_exc=_UNSET, calls: list = None):
     """Build a mock for train_routes.modal.Function.
 
     spawn_by_app: optional dict mapping Modal app name -> Exception (or None for success).
     default_exc: Exception raised by any app not listed in spawn_by_app. Defaults to no-op success.
-    Used for per-app failure-isolation tests.
+    calls: optional list; every from_name(app, fn_name, ...) invocation is appended as a tuple.
     """
 
     spawn_by_app = spawn_by_app or {}
 
-    def _from_name(app_name, *_args, **_kwargs):
+    def _from_name(app_name, fn_name, *_args, **_kwargs):
+        if calls is not None:
+            calls.append((app_name, fn_name))
         fn = AsyncMock()
         if app_name in spawn_by_app:
             exc = spawn_by_app[app_name]
@@ -59,6 +67,7 @@ def _create_training_jobs_via_api(
     apps=None,
     spawn_by_app=None,
     default_exc=_UNSET,
+    calls: list = None,
 ):
     """Helper to POST /train with mocked Modal dispatch. Returns Response."""
     data = {
@@ -70,7 +79,7 @@ def _create_training_jobs_via_api(
     if apps is not None:
         data["apps"] = apps
 
-    mock_function_cls = _make_modal_mock(spawn_by_app, default_exc)
+    mock_function_cls = _make_modal_mock(spawn_by_app, default_exc, calls=calls)
     with patch(
         "train_routes.v3.train_routes.modal.Function", mock_function_cls
     ), patch.dict("train_routes.v3.train_routes._fn_cache", {}, clear=True):
@@ -193,6 +202,116 @@ def test_create_training_job_per_app_dispatch_isolation(
     # Every other job still reached queued (dispatch succeeded)
     for t in ALL_TRAINING_TYPES - {"tfidf"}:
         assert jobs[t]["status"] == "queued", f"{t} regressed to {jobs[t]['status']}"
+
+
+def test_semantic_similarity_routes_through_runner(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """sem-sim must dispatch to ("runner", "run_assessment_runner"), not TRAIN_APPS."""
+    calls = []
+    response = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "sem_sim_routing_test"},
+        apps=["semantic-similarity"],
+        spawn_by_app={"runner": RuntimeError("runner down")},
+        calls=calls,
+    )
+    assert response.status_code == 200
+    jobs = response.json()["training_jobs"]
+    assert len(jobs) == 1 and jobs[0]["type"] == "semantic-similarity"
+    assert jobs[0]["status"] == "failed"
+    assert ("runner", "run_assessment_runner") in calls
+    # Guard against a regression that would route sem-sim through TRAIN_APPS.
+    assert ("semantic-similarity", "train") not in calls
+
+
+def test_serval_nmt_routes_through_train_runner(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """serval-nmt must dispatch to ("train-runner", "run_training_job")."""
+    calls = []
+    response = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "serval_routing_test"},
+        apps=["serval-nmt"],
+        spawn_by_app={"train-runner": RuntimeError("runner down")},
+        calls=calls,
+    )
+    assert response.status_code == 200
+    jobs = response.json()["training_jobs"]
+    assert len(jobs) == 1 and jobs[0]["type"] == "serval-nmt"
+    assert jobs[0]["status"] == "failed"
+    assert ("train-runner", "run_training_job") in calls
+
+
+def test_duplicate_detection_scoped_to_apps_filter(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """409 from duplicate detection must be scoped to the apps filter, not global."""
+    opts = {"tag": "scoped_dup_test"}
+    # First: train only tfidf
+    r1 = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options=opts,
+        apps=["tfidf"],
+    )
+    assert r1.status_code == 200
+
+    # Second call, same apps=["tfidf"] → 409 because tfidf is the full requested set
+    r2 = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options=opts,
+        apps=["tfidf"],
+    )
+    assert r2.status_code == 409
+
+    # But requesting a different app should still succeed — 409 was NOT global.
+    r3 = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options=opts,
+        apps=["ngrams"],
+    )
+    assert r3.status_code == 200
+    types = {job["type"] for job in r3.json()["training_jobs"]}
+    assert types == {"ngrams"}
+
+    # Clean up so these jobs don't pollute later tests.
+    jobs = db_session.query(TrainingJob).filter_by(status="queued").all()
+    for j in jobs:
+        j.status = "failed"
+    db_session.commit()
+
+
+def test_training_type_enum_covered_by_dispatch():
+    """Every TrainingType value must be reachable by a dispatch branch.
+
+    Prevents adding an enum value without also wiring up the dispatch in
+    train_routes.dispatch_job.
+    """
+    from train_routes.v3.train_routes import TRAIN_APPS
+
+    reachable = set(TRAIN_APPS) | {
+        TrainingType.serval_nmt.value,
+        TrainingType.semantic_similarity.value,
+    }
+    enum_values = {t.value for t in TrainingType}
+    missing = enum_values - reachable
+    assert not missing, f"TrainingType values with no dispatch branch: {missing}"
 
 
 def test_create_training_job_invalid_revision(client, regular_token1, test_revision_id):
