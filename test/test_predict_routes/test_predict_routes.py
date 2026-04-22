@@ -366,12 +366,15 @@ def test_predict_training_not_available_returns_not_trained_status(
 ):
     """A `TrainingNotAvailableError` (matched by class name) surfaces as
     `status="not_trained"` — distinct from generic `"error"` — with the
-    exception message preserved."""
+    exception message preserved.
 
-    # Defined locally because the real class lives in aqua-assessments and
-    # can't be imported here; the route detects it by `__name__` match.
-    class TrainingNotAvailableError(ValueError):
-        pass
+    Using the real class from `predict_errors` (mirroring the one the Modal
+    workers raise) exercises the pickle-resolution path: if the module or
+    class name ever drifts from the assessments-side definition, unpickling
+    will fail and the exception will arrive as a generic `ExecutionError`,
+    failing this test.
+    """
+    from predict_errors import TrainingNotAvailableError
 
     msg = "No TF-IDF artifacts found (source_language=mgq). Run tfidf assess() first."
     results = {"tfidf": TrainingNotAvailableError(msg)}
