@@ -130,6 +130,13 @@ async def predict(
             logger.warning(
                 f"predict app {name} failed: {type(exc).__name__}", exc_info=True
             )
+            # "Training hasn't run yet" is an expected, actionable state —
+            # not an error. Match by class name because the exception class
+            # lives in aqua-assessments and can't be imported here.
+            if type(exc).__name__ == "TrainingNotAvailableError":
+                return name, PredictAppResult(
+                    status="not_trained", error=str(exc), duration_ms=duration_ms
+                )
             # Surface ValueError messages (per-app input validation is caller
             # error, e.g. "agent.predict requires vref and source_text on every
             # pair"); opaque type names for other exception classes.

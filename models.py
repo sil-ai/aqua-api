@@ -375,7 +375,7 @@ class PredictInput(BaseModel):
 
 
 class PredictAppResult(BaseModel):
-    status: Literal["ok", "error"]
+    status: Literal["ok", "error", "not_trained"]
     data: Optional[Any] = None
     error: Optional[str] = None
     duration_ms: int
