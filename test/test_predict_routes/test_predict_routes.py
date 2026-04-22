@@ -361,6 +361,37 @@ def test_predict_surfaces_value_error_message(client, regular_token1):
     assert error == msg
 
 
+def test_predict_training_not_available_returns_not_trained_status(
+    client, regular_token1
+):
+    """A `TrainingNotAvailableError` (matched by class name) surfaces as
+    `status="not_trained"` — distinct from generic `"error"` — with the
+    exception message preserved."""
+
+    # Defined locally because the real class lives in aqua-assessments and
+    # can't be imported here; the route detects it by `__name__` match.
+    class TrainingNotAvailableError(ValueError):
+        pass
+
+    msg = "No TF-IDF artifacts found (source_language=mgq). Run tfidf assess() first."
+    results = {"tfidf": TrainingNotAvailableError(msg)}
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock(results),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["tfidf"]),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    tfidf = response.json()["results"]["tfidf"]
+    assert tfidf["status"] == "not_trained"
+    assert tfidf["error"] == msg
+    assert tfidf["data"] is None
+
+
 def test_predict_unauthorized_reference_returns_403(
     client, regular_token2, test_revision_id
 ):
