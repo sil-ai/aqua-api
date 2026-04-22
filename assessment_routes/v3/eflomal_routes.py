@@ -1,6 +1,7 @@
 __version__ = "v3"
 
 import socket
+from datetime import datetime
 from typing import List
 
 import fastapi
@@ -9,6 +10,9 @@ from sqlalchemy import desc, insert, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from assessment_routes.v3.eflomal_scoring_service import (
+    score_verses_for_assessment,
+)
 from database.dependencies import get_db
 from database.models import (
     Assessment,
@@ -462,6 +466,94 @@ async def push_eflomal_target_word_counts(
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error inserting {len(rows)} target word counts for assessment {assessment_id}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# POST endpoint — compute verse scores from stored artifacts
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/assessment/{assessment_id}/eflomal/score-verses",
+    response_model=InsertResponse,
+)
+async def score_eflomal_verses(
+    assessment_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute per-verse scores from stored eflomal artifacts.
+
+    Loads the dictionary + cooccurrence artifacts for this assessment, scores
+    every verse pair where both the revision and reference have non-empty
+    text, and writes one row per verse into assessment_result (score ∈ [0, 1],
+    flag=False, note=null). On success, also transitions the assessment's
+    status to 'finished'.
+
+    Call this after metadata / dictionary / cooccurrences / target-word-counts
+    have all been pushed; this replaces the runner's previous PATCH-to-
+    finished at the end of the eflomal push flow.
+
+    The operation is idempotent: any pre-existing assessment_result rows for
+    this assessment are deleted before insert, so retries after a partial
+    failure produce a clean, non-duplicated result set.
+    """
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    try:
+        inserted_ids = await score_verses_for_assessment(db, assessment_id)
+
+        # Transition to 'finished' in the same transaction as the inserts.
+        # Only two prior statuses are valid here: 'running' (normal path) and
+        # 'finished' (idempotent retry). Anything else is a caller bug — fail
+        # loudly so the runner can surface it.
+        assessment = (
+            await db.execute(
+                select(Assessment).where(Assessment.id == assessment_id)
+            )
+        ).scalars().first()
+        if assessment is not None:
+            if assessment.status not in ("running", "finished"):
+                await db.rollback()
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Cannot finalize assessment in status "
+                        f"{assessment.status!r}; expected 'running' or 'finished'"
+                    ),
+                )
+            assessment.status = "finished"
+            if assessment.start_time is None:
+                assessment.start_time = datetime.utcnow()
+            assessment.end_time = datetime.utcnow()
+
+        await db.commit()
+        return InsertResponse(ids=inserted_ids)
+    except HTTPException:
+        await db.rollback()
+        raise
+    except SQLAlchemyError:
+        logger.exception(
+            "Eflomal verse scoring failed, assessment_id=%s", assessment_id
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error scoring verses for assessment {assessment_id}",
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected error scoring eflomal verses, assessment_id=%s",
+            assessment_id,
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error scoring verses for assessment {assessment_id}",
         )
 
 
