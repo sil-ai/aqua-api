@@ -18,13 +18,13 @@ def _clear_fn_cache():
 
 
 def _make_modal_mock(results_by_app: dict):
-    """Return a mock `modal.Function` class whose `from_name(fn, app, ...)` maps
+    """Return a mock `modal.Function` class whose `from_name(app, fn, ...)` maps
     to a mock whose `.remote.aio(...)` returns/raises the configured value.
 
     `results_by_app[app_name]` may be a dict (returned), an Exception subclass
     (raised), or a callable (called with the input payload)."""
 
-    def from_name(fn_name, app_name, environment_name=None):
+    def from_name(app_name, fn_name, environment_name=None):
         config = results_by_app[app_name]
         mock_fn = AsyncMock()
         if isinstance(config, Exception):
@@ -243,7 +243,7 @@ def test_predict_forwards_payload_to_modal(client, regular_token1):
     """The payload sent to Modal excludes `apps` and preserves other fields verbatim."""
     captured = {}
 
-    def from_name(fn_name, app_name, environment_name=None):
+    def from_name(app_name, fn_name, environment_name=None):
         mock_fn = AsyncMock()
 
         async def capture(payload):
@@ -278,7 +278,7 @@ def test_predict_duplicate_apps_deduplicated(client, regular_token1):
     """Duplicate entries in `apps` are deduplicated; Modal is called once per app."""
     call_count = {"ngrams": 0}
 
-    def from_name(fn_name, app_name, environment_name=None):
+    def from_name(app_name, fn_name, environment_name=None):
         mock_fn = AsyncMock()
 
         async def counted(payload):

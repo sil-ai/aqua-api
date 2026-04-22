@@ -51,7 +51,7 @@ def _get_predict_fn(modal_app: str, env: str) -> modal.Function:
     key = (modal_app, env)
     fn = _fn_cache.get(key)
     if fn is None:
-        fn = modal.Function.from_name("predict", modal_app, environment_name=env)
+        fn = modal.Function.from_name(modal_app, "predict", environment_name=env)
         _fn_cache[key] = fn
     return fn
 
