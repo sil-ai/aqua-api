@@ -108,7 +108,7 @@ def test_predict_failure_isolated_per_app(client, regular_token1):
     assert body["results"]["ngrams"]["data"] == {"score": 0.1}
 
     assert body["results"]["tfidf"]["status"] == "error"
-    assert "boom" in body["results"]["tfidf"]["error"]
+    assert body["results"]["tfidf"]["error"] == "RuntimeError"
     assert body["results"]["tfidf"]["data"] is None
 
 
@@ -227,3 +227,142 @@ def test_predict_missing_pairs_returns_422(client, regular_token1):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 422
+
+
+def test_predict_empty_pairs_returns_422(client, regular_token1):
+    """Empty pairs list violates min_length and returns 422."""
+    response = client.post(
+        f"/{prefix}/predict",
+        json={"pairs": [], "apps": ["ngrams"]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422
+
+
+def test_predict_forwards_payload_to_modal(client, regular_token1):
+    """The payload sent to Modal excludes `apps` and preserves other fields verbatim."""
+    captured = {}
+
+    def from_name(fn_name, app_name, environment_name=None):
+        mock_fn = AsyncMock()
+
+        async def capture(payload):
+            captured["fn_name"] = fn_name
+            captured["app_name"] = app_name
+            captured["payload"] = payload
+            return {"ok": True}
+
+        mock_fn.remote.aio = AsyncMock(side_effect=capture)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams"], source_language=None),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured["fn_name"] == "predict"
+    assert captured["app_name"] == "ngrams"
+    payload = captured["payload"]
+    assert "apps" not in payload
+    assert payload["pairs"][0]["target_text"] == "Hapo mwanzo..."
+    assert payload["source_language"] is None
+    assert payload["target_language"] == "swh"
+
+
+def test_predict_duplicate_apps_deduplicated(client, regular_token1):
+    """Duplicate entries in `apps` are deduplicated; Modal is called once per app."""
+    call_count = {"ngrams": 0}
+
+    def from_name(fn_name, app_name, environment_name=None):
+        mock_fn = AsyncMock()
+
+        async def counted(payload):
+            call_count[app_name] = call_count.get(app_name, 0) + 1
+            return {"ok": True}
+
+        mock_fn.remote.aio = AsyncMock(side_effect=counted)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams", "ngrams", "ngrams"]),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    assert call_count["ngrams"] == 1
+    assert set(response.json()["results"].keys()) == {"ngrams"}
+
+
+def test_predict_all_apps_failing_still_returns_200(client, regular_token1):
+    """If every selected app raises, the HTTP response is still 200 with per-app errors."""
+    results = {
+        "ngrams": RuntimeError("a"),
+        "tfidf": ValueError("b"),
+    }
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock(results),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams", "tfidf"]),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["results"]["ngrams"]["status"] == "error"
+    assert body["results"]["tfidf"]["status"] == "error"
+
+
+def test_predict_error_message_does_not_leak_exception_details(client, regular_token1):
+    """Exception messages from Modal are replaced by the exception type name."""
+    results = {"ngrams": RuntimeError("secret internal path /etc/foo")}
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock(results),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams"]),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    error = response.json()["results"]["ngrams"]["error"]
+    assert error == "RuntimeError"
+    assert "secret" not in error
+
+
+def test_predict_unauthorized_reference_returns_403(
+    client, regular_token2, test_revision_id
+):
+    """Unauthorized reference_id is rejected even when revision_id is not sent."""
+    response = client.post(
+        f"/{prefix}/predict",
+        json=_body(apps=["ngrams"], reference_id=test_revision_id),
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+    assert str(test_revision_id) in response.json()["detail"]
+
+
+def test_predict_unauthorized_assessment_returns_403(
+    client, regular_token2, test_assessment_id
+):
+    """Unauthorized assessment_id is rejected."""
+    response = client.post(
+        f"/{prefix}/predict",
+        json=_body(apps=["ngrams"], assessment_id=test_assessment_id),
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+    assert str(test_assessment_id) in response.json()["detail"]

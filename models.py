@@ -339,19 +339,19 @@ class TextLengthsInferenceResponse(BaseModel):
 
 
 class TextPair(BaseModel):
-    vref: Optional[str] = None
-    source_text: Optional[str] = None
-    target_text: str
+    vref: Optional[str] = Field(default=None, max_length=50)
+    source_text: Optional[str] = Field(default=None, max_length=10000)
+    target_text: str = Field(..., max_length=10000)
 
 
 class PredictInput(BaseModel):
-    pairs: List[TextPair]
+    pairs: List[TextPair] = Field(..., min_length=1, max_length=5000)
     assessment_id: Optional[int] = None
     revision_id: Optional[int] = None
     reference_id: Optional[int] = None
-    source_language: Optional[str] = None
-    target_language: Optional[str] = None
-    limit: Optional[int] = None
+    source_language: Optional[str] = Field(default=None, max_length=10)
+    target_language: Optional[str] = Field(default=None, max_length=10)
+    limit: Optional[int] = Field(default=None, ge=1, le=10000)
     apps: Optional[List[str]] = None
 
     model_config = {

@@ -66,7 +66,8 @@ async def predict(
 
     Per-app failures are isolated — a slow or failing app never blocks the others.
     """
-    selected = body.apps if body.apps is not None else list(PREDICT_APPS)
+    raw_selected = body.apps if body.apps is not None else list(PREDICT_APPS)
+    selected = list(dict.fromkeys(raw_selected))
     unknown = sorted(set(selected) - set(PREDICT_APPS))
     if unknown:
         raise HTTPException(
@@ -97,7 +98,7 @@ async def predict(
         )
 
     modal_env = os.getenv("MODAL_ENV", "main")
-    input_payload = body.model_dump(exclude={"apps"}, exclude_none=True)
+    input_payload = body.model_dump(exclude={"apps"})
 
     async def call_one(name: str) -> tuple[str, PredictAppResult]:
         started = time.perf_counter()
@@ -121,9 +122,11 @@ async def predict(
             )
         except Exception as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
-            logger.warning(f"predict app {name} failed: {exc}")
+            logger.warning(
+                f"predict app {name} failed: {type(exc).__name__}", exc_info=True
+            )
             return name, PredictAppResult(
-                status="error", error=str(exc), duration_ms=duration_ms
+                status="error", error=type(exc).__name__, duration_ms=duration_ms
             )
 
     logger.info(
