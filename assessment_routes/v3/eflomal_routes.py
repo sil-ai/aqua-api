@@ -512,10 +512,10 @@ async def score_eflomal_verses(
         # 'finished' (idempotent retry). Anything else is a caller bug — fail
         # loudly so the runner can surface it.
         assessment = (
-            await db.execute(
-                select(Assessment).where(Assessment.id == assessment_id)
-            )
-        ).scalars().first()
+            (await db.execute(select(Assessment).where(Assessment.id == assessment_id)))
+            .scalars()
+            .first()
+        )
         if assessment is not None:
             if assessment.status not in ("running", "finished"):
                 await db.rollback()

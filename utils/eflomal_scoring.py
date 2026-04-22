@@ -179,8 +179,7 @@ def score_verse_pair(
         }
 
     link_scores = [
-        compute_link_score(sw, tw, dictionary, cooccurrence)
-        for _, _, sw, tw in links
+        compute_link_score(sw, tw, dictionary, cooccurrence) for _, _, sw, tw in links
     ]
     avg_link_score = sum(link_scores) / len(link_scores)
 

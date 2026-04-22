@@ -8,12 +8,10 @@ is exercised end-to-end against the local test Postgres set up in conftest.
 import math
 
 import pytest
-from sqlalchemy import select
 
 from database.models import (
     Assessment,
     AssessmentResult,
-    EflomalAssessment,
     VerseText,
 )
 from utils.eflomal_scoring import (
@@ -191,9 +189,7 @@ def eflomal_scoring_assessment_id(
 
 
 @pytest.fixture(scope="module")
-def scoring_verse_text(
-    test_db_session, test_revision_id, test_revision_id_2
-):
+def scoring_verse_text(test_db_session, test_revision_id, test_revision_id_2):
     """Seed three matching vrefs on both revisions with text the artifacts
     below will actually align."""
     # revision (target): simple aligned text
@@ -267,8 +263,18 @@ def _push_scoring_artifacts(client, token, assessment_id):
     dict_items = [
         {"source_word": "god", "target_word": "dios", "count": 10, "probability": 0.9},
         {"source_word": "made", "target_word": "hizo", "count": 10, "probability": 0.8},
-        {"source_word": "heaven", "target_word": "cielo", "count": 10, "probability": 0.7},
-        {"source_word": "earth", "target_word": "tierra", "count": 10, "probability": 0.7},
+        {
+            "source_word": "heaven",
+            "target_word": "cielo",
+            "count": 10,
+            "probability": 0.7,
+        },
+        {
+            "source_word": "earth",
+            "target_word": "tierra",
+            "count": 10,
+            "probability": 0.7,
+        },
         {"source_word": "light", "target_word": "luz", "count": 10, "probability": 0.7},
     ]
     resp = client.post(

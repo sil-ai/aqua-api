@@ -57,19 +57,27 @@ async def _load_artifacts(
     Returns (dictionary, src_to_translations, cooccurrence).
     """
     dict_rows = (
-        await db.execute(
-            select(EflomalDictionary).where(
-                EflomalDictionary.assessment_id == eflomal_assessment_id
+        (
+            await db.execute(
+                select(EflomalDictionary).where(
+                    EflomalDictionary.assessment_id == eflomal_assessment_id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     cooc_rows = (
-        await db.execute(
-            select(EflomalCooccurrence).where(
-                EflomalCooccurrence.assessment_id == eflomal_assessment_id
+        (
+            await db.execute(
+                select(EflomalCooccurrence).where(
+                    EflomalCooccurrence.assessment_id == eflomal_assessment_id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     raw_dict_list = [
         {
@@ -144,10 +152,10 @@ async def score_verses_for_assessment(
     """
     # Resolve Assessment and sanity-check the type.
     assessment = (
-        await db.execute(
-            select(Assessment).where(Assessment.id == assessment_id)
-        )
-    ).scalars().first()
+        (await db.execute(select(Assessment).where(Assessment.id == assessment_id)))
+        .scalars()
+        .first()
+    )
     if assessment is None or assessment.deleted:
         raise HTTPException(status_code=404, detail="Assessment not found")
     if assessment.type != "word-alignment":
@@ -167,12 +175,16 @@ async def score_verses_for_assessment(
     # Resolve the EflomalAssessment row; its id is the FK target for the
     # artifact tables (not assessment.id).
     eflomal = (
-        await db.execute(
-            select(EflomalAssessment).where(
-                EflomalAssessment.assessment_id == assessment_id
+        (
+            await db.execute(
+                select(EflomalAssessment).where(
+                    EflomalAssessment.assessment_id == assessment_id
+                )
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if eflomal is None:
         raise HTTPException(
             status_code=404,
@@ -185,9 +197,7 @@ async def score_verses_for_assessment(
     dictionary, src_to_translations, cooccurrence = await _load_artifacts(
         db, eflomal.id
     )
-    pairs = await _load_verse_pairs(
-        db, assessment.revision_id, assessment.reference_id
-    )
+    pairs = await _load_verse_pairs(db, assessment.revision_id, assessment.reference_id)
 
     # Build insert rows. Leave note/source/target null per plan.
     rows = []
@@ -217,9 +227,7 @@ async def score_verses_for_assessment(
 
     # Idempotency: clear any prior rows for this assessment before inserting.
     await db.execute(
-        delete(AssessmentResult).where(
-            AssessmentResult.assessment_id == assessment_id
-        )
+        delete(AssessmentResult).where(AssessmentResult.assessment_id == assessment_id)
     )
 
     if not rows:
