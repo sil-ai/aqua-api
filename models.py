@@ -1196,11 +1196,16 @@ class TfidfArtifactsPullResponse(BaseModel):
     svd: TfidfSvdPayload
 
 
+TFIDF_CORPUS_VECTOR_DIM = 300
+
+
 class TfidfByVectorRequest(BaseModel):
     assessment_id: int
-    vector: List[float]
+    vector: List[float] = Field(
+        ..., min_length=TFIDF_CORPUS_VECTOR_DIM, max_length=TFIDF_CORPUS_VECTOR_DIM
+    )
     limit: int = Field(default=10, ge=1, le=500)
-    reference_id: Optional[int] = None
+    reference_id: Optional[int] = Field(default=None, ge=1)
 
     @field_validator("vector")
     @classmethod
@@ -1208,6 +1213,35 @@ class TfidfByVectorRequest(BaseModel):
         if any(not math.isfinite(x) for x in v):
             raise ValueError("vector must not contain inf or nan")
         return v
+
+
+TFIDF_MAX_BATCH_VECTORS = 500
+TFIDF_MAX_BATCH_RESULTS = 25000
+
+
+class TfidfByVectorsRequest(BaseModel):
+    assessment_id: int
+    vectors: List[List[float]] = Field(
+        ..., min_length=1, max_length=TFIDF_MAX_BATCH_VECTORS
+    )
+    limit: int = Field(default=10, ge=1, le=500)
+    reference_id: Optional[int] = Field(default=None, ge=1)
+
+    @field_validator("vectors")
+    @classmethod
+    def _validate_vectors(cls, vs: List[List[float]]) -> List[List[float]]:
+        for i, vec in enumerate(vs):
+            if len(vec) != TFIDF_CORPUS_VECTOR_DIM:
+                raise ValueError(
+                    f"vectors[{i}] has length {len(vec)}, expected {TFIDF_CORPUS_VECTOR_DIM}"
+                )
+            if any(not math.isfinite(x) for x in vec):
+                raise ValueError(f"vectors[{i}] must not contain inf or nan")
+        return vs
+
+
+class TfidfByVectorsResponse(BaseModel):
+    results: List[List[TfidfResult]]
 
 
 # --- Assessment Results Push/Delete models ---

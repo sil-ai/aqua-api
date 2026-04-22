@@ -1,5 +1,5 @@
 """Tests for /v3/assessment/{id}/tfidf-artifacts, /v3/assessment/tfidf/artifacts,
-and /v3/tfidf_result/by_vector.
+/v3/tfidf_result/by_vector, and /v3/tfidf_result/by_vectors.
 """
 
 import base64
@@ -480,7 +480,7 @@ def test_by_vector_wrong_length(client, regular_token1, tfidf_vector_assessment_
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 422
-    assert "300" in resp.json()["detail"]
+    assert "300" in str(resp.json()["detail"])
 
 
 def test_by_vector_unauthorized(client, regular_token2, tfidf_vector_assessment_id):
@@ -568,6 +568,250 @@ def test_by_vector_rejects_over_max_limit(
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# POST /tfidf_result/by_vectors (batch)
+# ---------------------------------------------------------------------------
+
+
+def test_by_vectors_matches_single_vector(
+    client, regular_token1, tfidf_vector_assessment_id
+):
+    """Batch results must be identical to running the single-vector endpoint per vector."""
+    queries = [_unit_vector(0), _unit_vector(1), _unit_vector(2)]
+
+    singles = []
+    for vec in queries:
+        resp = client.post(
+            f"{prefix}/tfidf_result/by_vector",
+            json={
+                "assessment_id": tfidf_vector_assessment_id,
+                "vector": vec,
+                "limit": 3,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert resp.status_code == 200, resp.text
+        singles.append(resp.json()["results"])
+
+    batch_resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vectors": queries,
+            "limit": 3,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert batch_resp.status_code == 200, batch_resp.text
+    batch = batch_resp.json()["results"]
+
+    assert len(batch) == len(queries)
+    for i, (single, b) in enumerate(zip(singles, batch)):
+        assert b == single, f"vectors[{i}] neighbour set diverged"
+
+
+def test_by_vectors_preserves_input_order(
+    client, regular_token1, tfidf_vector_assessment_id
+):
+    """results[i] must correspond to vectors[i] (not sorted by anything)."""
+    # Deliberately out of natural axis order.
+    queries = [_unit_vector(2), _unit_vector(0), _unit_vector(1)]
+    expected_top = ["GEN 1:3", "GEN 1:1", "GEN 1:2"]
+
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vectors": queries,
+            "limit": 1,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    results = resp.json()["results"]
+    assert [rs[0]["vref"] for rs in results] == expected_top
+
+
+def test_by_vectors_wrong_length_rejects_whole_request(
+    client, regular_token1, tfidf_vector_assessment_id
+):
+    """One partial-length vector rejects the whole request with 422, no partial results."""
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vectors": [_unit_vector(0), [0.0] * 10, _unit_vector(2)],
+            "limit": 3,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+    # Pydantic catches the wrong length at parse time and identifies the
+    # offending index in the validator message.
+    assert "vectors[1]" in str(resp.json()["detail"])
+
+
+def test_by_vectors_empty_rejected(client, regular_token1, tfidf_vector_assessment_id):
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vectors": [],
+            "limit": 3,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+
+
+def test_by_vectors_over_cap_rejected(
+    client, regular_token1, tfidf_vector_assessment_id
+):
+    """Batch beyond TFIDF_MAX_BATCH_VECTORS is rejected by Pydantic before we do any work."""
+    from models import TFIDF_MAX_BATCH_VECTORS
+
+    too_many = [_unit_vector(0) for _ in range(TFIDF_MAX_BATCH_VECTORS + 1)]
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vectors": too_many,
+            "limit": 3,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+
+
+def test_by_vectors_reference_filter_populates_per_vector_text(
+    client,
+    regular_token1,
+    tfidf_vector_assessment_id,
+    test_revision_id_2,
+    test_db_session,
+):
+    """reference_id populates each vector's top result with the right reference text."""
+    from database.models import VerseText
+
+    # Seed distinct reference texts for the three corpus vrefs. Use a unique
+    # marker per verse so we can assert the correct one lands in each result.
+    texts = {
+        "GEN 1:1": "REF-A unique marker",
+        "GEN 1:2": "REF-B unique marker",
+        "GEN 1:3": "REF-C unique marker",
+    }
+    for vref, text in texts.items():
+        existing = (
+            test_db_session.query(VerseText)
+            .filter(
+                VerseText.revision_id == test_revision_id_2,
+                VerseText.verse_reference == vref,
+            )
+            .first()
+        )
+        if existing is None:
+            test_db_session.add(
+                VerseText(
+                    text=text,
+                    revision_id=test_revision_id_2,
+                    verse_reference=vref,
+                )
+            )
+    test_db_session.commit()
+
+    # Query with vectors hitting distinct top neighbours (axis 0 → GEN 1:1, axis 2 → GEN 1:3).
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vectors": [_unit_vector(0), _unit_vector(2)],
+            "limit": 1,
+            "reference_id": test_revision_id_2,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    results = resp.json()["results"]
+    assert results[0][0]["vref"] == "GEN 1:1"
+    assert results[0][0]["reference_text"] == texts["GEN 1:1"]
+    assert results[1][0]["vref"] == "GEN 1:3"
+    assert results[1][0]["reference_text"] == texts["GEN 1:3"]
+
+
+def test_by_vectors_combined_cap_rejected(
+    client, regular_token1, tfidf_vector_assessment_id
+):
+    """len(vectors) * limit above the combined cap is rejected with 422."""
+    from models import TFIDF_MAX_BATCH_RESULTS
+
+    # 500 vectors × 100 limit = 50_000 > 25_000 cap
+    vectors = [_unit_vector(0) for _ in range(500)]
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vectors": vectors,
+            "limit": 100,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+    assert str(TFIDF_MAX_BATCH_RESULTS) in resp.json()["detail"]
+
+
+def test_by_vectors_unauthorized(client, regular_token2, tfidf_vector_assessment_id):
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vectors": [_unit_vector(0)],
+            "limit": 3,
+        },
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert resp.status_code == 403
+
+
+def test_by_vectors_no_auth(client, tfidf_vector_assessment_id):
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": tfidf_vector_assessment_id,
+            "vectors": [_unit_vector(0)],
+            "limit": 3,
+        },
+    )
+    assert resp.status_code == 401
+
+
+def test_by_vectors_assessment_not_found(client, regular_token1):
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_vectors",
+        json={
+            "assessment_id": 999_999_999,
+            "vectors": [_unit_vector(0)],
+            "limit": 3,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    # Missing assessments must return 404, not 403 — a 403 here would leak
+    # existence information via the authz check firing before the lookup.
+    assert resp.status_code == 404
+
+
+def test_by_vectors_rejects_non_finite():
+    """Pydantic validator rejects inf/nan before the request hits pgvector."""
+    from pydantic import ValidationError
+
+    from models import TfidfByVectorsRequest
+
+    with pytest.raises(ValidationError, match=r"vectors\[1\] must not contain"):
+        TfidfByVectorsRequest(
+            assessment_id=1,
+            vectors=[[0.0] * 300, [float("nan")] + [0.0] * 299],
+        )
 
 
 # ---------------------------------------------------------------------------

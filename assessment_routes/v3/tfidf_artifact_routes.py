@@ -26,10 +26,13 @@ from database.models import (
     VerseText,
 )
 from models import (
+    TFIDF_MAX_BATCH_RESULTS,
     TfidfArtifactsPullResponse,
     TfidfArtifactsPushRequest,
     TfidfArtifactsPushResponse,
     TfidfByVectorRequest,
+    TfidfByVectorsRequest,
+    TfidfByVectorsResponse,
     TfidfResult,
     TfidfSvdPayload,
     TfidfVectorizerPayload,
@@ -53,16 +56,15 @@ _MAX_COMPONENTS_BYTES = 200 * 1024 * 1024
 _CORPUS_VECTOR_DIM = 300
 
 
-async def _score_against_corpus(
+async def _rank_against_corpus(
     db: AsyncSession,
-    assessment: Assessment,
+    assessment_id: int,
     query_vector: List[float],
     limit: int,
-    reference_id: int | None,
-) -> List[TfidfResult]:
-    """Rank corpus verses by inner-product similarity to query_vector.
+) -> List:
+    """Return top-`limit` (id, vref, similarity) rows for a single query vector.
 
-    The SVD output is L2-normalized, so inner product equals cosine similarity.
+    SVD output is L2-normalized, so inner product equals cosine similarity.
     """
     similarity_expr = cast(
         text(
@@ -73,37 +75,43 @@ async def _score_against_corpus(
 
     query = (
         select(TfidfPcaVector.id, TfidfPcaVector.vref, similarity_expr)
-        .where(TfidfPcaVector.assessment_id == assessment.id)
+        .where(TfidfPcaVector.assessment_id == assessment_id)
         .order_by(similarity_expr.desc())
         .limit(limit)
     )
+    return (await db.execute(query)).all()
 
-    rows = (await db.execute(query)).all()
+
+async def _fetch_verse_texts(
+    db: AsyncSession, revision_id: int | None, vrefs: List[str]
+) -> Dict[str, str]:
+    """Map vref → text for a given revision. Returns {} if revision_id is None or vrefs is empty."""
+    if not revision_id or not vrefs:
+        return {}
+    rows = (
+        await db.execute(
+            select(VerseText.verse_reference, VerseText.text).where(
+                VerseText.revision_id == revision_id,
+                VerseText.verse_reference.in_(vrefs),
+            )
+        )
+    ).all()
+    return {r.verse_reference: r.text for r in rows}
+
+
+async def _score_against_corpus(
+    db: AsyncSession,
+    assessment: Assessment,
+    query_vector: List[float],
+    limit: int,
+    reference_id: int | None,
+) -> List[TfidfResult]:
+    """Rank corpus verses by similarity, then hydrate with revision/reference text."""
+    rows = await _rank_against_corpus(db, assessment.id, query_vector, limit)
     vrefs = [row.vref for row in rows]
 
-    revision_texts: Dict[str, str] = {}
-    if assessment.revision_id and vrefs:
-        rev_rows = (
-            await db.execute(
-                select(VerseText.verse_reference, VerseText.text).where(
-                    VerseText.revision_id == assessment.revision_id,
-                    VerseText.verse_reference.in_(vrefs),
-                )
-            )
-        ).all()
-        revision_texts = {r.verse_reference: r.text for r in rev_rows}
-
-    reference_texts: Dict[str, str] = {}
-    if reference_id and vrefs:
-        ref_rows = (
-            await db.execute(
-                select(VerseText.verse_reference, VerseText.text).where(
-                    VerseText.revision_id == reference_id,
-                    VerseText.verse_reference.in_(vrefs),
-                )
-            )
-        ).all()
-        reference_texts = {r.verse_reference: r.text for r in ref_rows}
+    revision_texts = await _fetch_verse_texts(db, assessment.revision_id, vrefs)
+    reference_texts = await _fetch_verse_texts(db, reference_id, vrefs)
 
     return [
         TfidfResult(
@@ -386,6 +394,44 @@ async def pull_tfidf_artifacts(
 # ---------------------------------------------------------------------------
 
 
+async def _resolve_assessment_for_by_vector(
+    assessment_id: int, current_user: UserModel, db: AsyncSession
+) -> Assessment:
+    """Load assessment, check authz and artifact-run vector dim. Raises HTTPException."""
+    assessment = await db.scalar(
+        select(Assessment).where(Assessment.id == assessment_id).limit(1)
+    )
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assessment {assessment_id} not found",
+        )
+
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+
+    run = await db.scalar(
+        select(TfidfArtifactRun).where(TfidfArtifactRun.assessment_id == assessment_id)
+    )
+    # The corpus vectors are stored as Vector(300), so queries must always be
+    # 300-dim. If an artifact run claims otherwise, fail fast with 422 rather
+    # than letting pgvector raise a dimension-mismatch error at query time.
+    if run is not None and run.n_components != _CORPUS_VECTOR_DIM:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Assessment {assessment_id} has artifact run "
+                f"n_components={run.n_components}, but stored TF-IDF vectors "
+                f"require dimension {_CORPUS_VECTOR_DIM}"
+            ),
+        )
+
+    return assessment
+
+
 @router.post(
     "/tfidf_result/by_vector",
     response_model=Dict[str, Union[List[TfidfResult], int]],
@@ -403,40 +449,10 @@ async def get_tfidf_result_by_vector(
     """
     request_start = time.perf_counter()
 
-    assessment = await db.scalar(
-        select(Assessment).where(Assessment.id == body.assessment_id).limit(1)
+    assessment = await _resolve_assessment_for_by_vector(
+        body.assessment_id, current_user, db
     )
-    if assessment is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Assessment {body.assessment_id} not found",
-        )
 
-    if not await is_user_authorized_for_assessment(
-        current_user.id, body.assessment_id, db
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to see this assessment",
-        )
-
-    run = await db.scalar(
-        select(TfidfArtifactRun).where(
-            TfidfArtifactRun.assessment_id == body.assessment_id
-        )
-    )
-    # The corpus vectors are stored as Vector(300), so queries must always be
-    # 300-dim. If an artifact run claims otherwise, fail fast with 422 rather
-    # than letting pgvector raise a dimension-mismatch error at query time.
-    if run is not None and run.n_components != _CORPUS_VECTOR_DIM:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Assessment {body.assessment_id} has artifact run "
-                f"n_components={run.n_components}, but stored TF-IDF vectors "
-                f"require dimension {_CORPUS_VECTOR_DIM}"
-            ),
-        )
     if len(body.vector) != _CORPUS_VECTOR_DIM:
         raise HTTPException(
             status_code=422,
@@ -469,3 +485,80 @@ async def get_tfidf_result_by_vector(
     )
 
     return {"results": results, "total_count": len(results)}
+
+
+@router.post(
+    "/tfidf_result/by_vectors",
+    response_model=TfidfByVectorsResponse,
+)
+async def get_tfidf_result_by_vectors(
+    body: TfidfByVectorsRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch companion to /tfidf_result/by_vector — one neighbour set per vector.
+
+    Saves N HTTP round-trips for callers that encode a batch of texts (e.g. the
+    tfidf predict() path from the fan-out predict endpoint).
+    """
+    request_start = time.perf_counter()
+
+    assessment = await _resolve_assessment_for_by_vector(
+        body.assessment_id, current_user, db
+    )
+
+    total_results = len(body.vectors) * body.limit
+    if total_results > TFIDF_MAX_BATCH_RESULTS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"len(vectors) * limit must not exceed {TFIDF_MAX_BATCH_RESULTS}; "
+                f"got {len(body.vectors)} * {body.limit} = {total_results}"
+            ),
+        )
+
+    # Rank each vector sequentially (AsyncSession doesn't support concurrent
+    # statements), then hydrate revision/reference text once across the union
+    # of vrefs rather than per-vector. Keeps the query count at N+2 instead
+    # of 3N for N vectors.
+    ranked: List[List] = []
+    all_vrefs: set = set()
+    for vec in body.vectors:
+        rows = await _rank_against_corpus(db, body.assessment_id, vec, body.limit)
+        ranked.append(rows)
+        all_vrefs.update(r.vref for r in rows)
+
+    vrefs_list = list(all_vrefs)
+    revision_texts = await _fetch_verse_texts(db, assessment.revision_id, vrefs_list)
+    reference_texts = await _fetch_verse_texts(db, body.reference_id, vrefs_list)
+
+    results = [
+        [
+            TfidfResult(
+                id=row.id,
+                vref=row.vref,
+                similarity=float(row.cosine_similarity),
+                assessment_id=assessment.id,
+                revision_text=revision_texts.get(row.vref),
+                reference_text=reference_texts.get(row.vref),
+            )
+            for row in rows
+        ]
+        for rows in ranked
+    ]
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_tfidf_result_by_vectors completed in {duration}s",
+        extra={
+            "method": "POST",
+            "path": "/tfidf_result/by_vectors",
+            "assessment_id": body.assessment_id,
+            "limit": body.limit,
+            "reference_id": body.reference_id,
+            "batch_size": len(body.vectors),
+            "duration_s": duration,
+        },
+    )
+
+    return TfidfByVectorsResponse(results=results)
