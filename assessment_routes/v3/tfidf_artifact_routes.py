@@ -30,6 +30,8 @@ from models import (
     TfidfArtifactsPushRequest,
     TfidfArtifactsPushResponse,
     TfidfByVectorRequest,
+    TfidfByVectorsRequest,
+    TfidfByVectorsResponse,
     TfidfResult,
     TfidfSvdPayload,
     TfidfVectorizerPayload,
@@ -386,6 +388,44 @@ async def pull_tfidf_artifacts(
 # ---------------------------------------------------------------------------
 
 
+async def _resolve_assessment_for_by_vector(
+    assessment_id: int, current_user: UserModel, db: AsyncSession
+) -> Assessment:
+    """Load assessment, check authz and artifact-run vector dim. Raises HTTPException."""
+    assessment = await db.scalar(
+        select(Assessment).where(Assessment.id == assessment_id).limit(1)
+    )
+    if assessment is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assessment {assessment_id} not found",
+        )
+
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+
+    run = await db.scalar(
+        select(TfidfArtifactRun).where(TfidfArtifactRun.assessment_id == assessment_id)
+    )
+    # The corpus vectors are stored as Vector(300), so queries must always be
+    # 300-dim. If an artifact run claims otherwise, fail fast with 422 rather
+    # than letting pgvector raise a dimension-mismatch error at query time.
+    if run is not None and run.n_components != _CORPUS_VECTOR_DIM:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Assessment {assessment_id} has artifact run "
+                f"n_components={run.n_components}, but stored TF-IDF vectors "
+                f"require dimension {_CORPUS_VECTOR_DIM}"
+            ),
+        )
+
+    return assessment
+
+
 @router.post(
     "/tfidf_result/by_vector",
     response_model=Dict[str, Union[List[TfidfResult], int]],
@@ -403,40 +443,10 @@ async def get_tfidf_result_by_vector(
     """
     request_start = time.perf_counter()
 
-    assessment = await db.scalar(
-        select(Assessment).where(Assessment.id == body.assessment_id).limit(1)
+    assessment = await _resolve_assessment_for_by_vector(
+        body.assessment_id, current_user, db
     )
-    if assessment is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Assessment {body.assessment_id} not found",
-        )
 
-    if not await is_user_authorized_for_assessment(
-        current_user.id, body.assessment_id, db
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to see this assessment",
-        )
-
-    run = await db.scalar(
-        select(TfidfArtifactRun).where(
-            TfidfArtifactRun.assessment_id == body.assessment_id
-        )
-    )
-    # The corpus vectors are stored as Vector(300), so queries must always be
-    # 300-dim. If an artifact run claims otherwise, fail fast with 422 rather
-    # than letting pgvector raise a dimension-mismatch error at query time.
-    if run is not None and run.n_components != _CORPUS_VECTOR_DIM:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"Assessment {body.assessment_id} has artifact run "
-                f"n_components={run.n_components}, but stored TF-IDF vectors "
-                f"require dimension {_CORPUS_VECTOR_DIM}"
-            ),
-        )
     if len(body.vector) != _CORPUS_VECTOR_DIM:
         raise HTTPException(
             status_code=422,
@@ -469,3 +479,62 @@ async def get_tfidf_result_by_vector(
     )
 
     return {"results": results, "total_count": len(results)}
+
+
+@router.post(
+    "/tfidf_result/by_vectors",
+    response_model=TfidfByVectorsResponse,
+)
+async def get_tfidf_result_by_vectors(
+    body: TfidfByVectorsRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch companion to /tfidf_result/by_vector — one neighbour set per vector.
+
+    Saves N HTTP round-trips for callers that encode a batch of texts (e.g. the
+    tfidf predict() path from the fan-out predict endpoint).
+    """
+    request_start = time.perf_counter()
+
+    assessment = await _resolve_assessment_for_by_vector(
+        body.assessment_id, current_user, db
+    )
+
+    bad = [
+        (i, len(vec))
+        for i, vec in enumerate(body.vectors)
+        if len(vec) != _CORPUS_VECTOR_DIM
+    ]
+    if bad:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"All vectors must have length {_CORPUS_VECTOR_DIM} for assessment "
+                f"{body.assessment_id}; wrong-length entries (index, length): {bad}"
+            ),
+        )
+
+    # AsyncSession doesn't support concurrent statements, so score sequentially.
+    # The primary win of this endpoint is saving N HTTP round-trips, not
+    # parallelising DB work inside one request.
+    results = [
+        await _score_against_corpus(db, assessment, vec, body.limit, body.reference_id)
+        for vec in body.vectors
+    ]
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_tfidf_result_by_vectors completed in {duration}s",
+        extra={
+            "method": "POST",
+            "path": "/tfidf_result/by_vectors",
+            "assessment_id": body.assessment_id,
+            "limit": body.limit,
+            "reference_id": body.reference_id,
+            "batch_size": len(body.vectors),
+            "duration_s": duration,
+        },
+    )
+
+    return TfidfByVectorsResponse(results=results)

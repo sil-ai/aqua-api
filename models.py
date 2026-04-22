@@ -1210,6 +1210,30 @@ class TfidfByVectorRequest(BaseModel):
         return v
 
 
+TFIDF_MAX_BATCH_VECTORS = 500
+
+
+class TfidfByVectorsRequest(BaseModel):
+    assessment_id: int
+    vectors: List[List[float]] = Field(
+        ..., min_length=1, max_length=TFIDF_MAX_BATCH_VECTORS
+    )
+    limit: int = Field(default=10, ge=1, le=500)
+    reference_id: Optional[int] = None
+
+    @field_validator("vectors")
+    @classmethod
+    def _reject_non_finite(cls, vs: List[List[float]]) -> List[List[float]]:
+        for i, vec in enumerate(vs):
+            if any(not math.isfinite(x) for x in vec):
+                raise ValueError(f"vectors[{i}] must not contain inf or nan")
+        return vs
+
+
+class TfidfByVectorsResponse(BaseModel):
+    results: List[List[TfidfResult]]
+
+
 # --- Assessment Results Push/Delete models ---
 
 
