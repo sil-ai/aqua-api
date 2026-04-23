@@ -1194,6 +1194,27 @@ class EflomalAssessmentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class EflomalPriorItem(BaseModel):
+    """LEX prior row: one BPE token pair with a Dirichlet-prior alpha."""
+
+    source_bpe: str
+    target_bpe: str
+    alpha: float
+
+
+class EflomalBpeModels(BaseModel):
+    """SentencePiece BPE models (serialized protobuf), one per direction."""
+
+    source_model_b64: str
+    target_model_b64: str
+
+
+class EflomalBpeModelsPushResponse(BaseModel):
+    """Push response for /eflomal-bpe-models — row IDs for source and target."""
+
+    ids: List[int]
+
+
 class EflomalResultsPullResponse(BaseModel):
     """Full eflomal training artifacts for inference consumption.
 
@@ -1209,9 +1230,13 @@ class EflomalResultsPullResponse(BaseModel):
     num_dictionary_entries: int
     num_missing_words: int
     created_at: Optional[datetime.datetime] = None
+    reference_revision_id: Optional[int] = None
+    revision_revision_id: Optional[int] = None
     dictionary: list[EflomalDictionaryItem]
     cooccurrences: list[EflomalCooccurrenceItem]
     target_word_counts: list[EflomalTargetWordCountItem]
+    priors: list[EflomalPriorItem] = Field(default_factory=list)
+    bpe_models: Optional[EflomalBpeModels] = None
 
 
 # --- TF-IDF artifact (encoder state) models ---

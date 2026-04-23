@@ -1,10 +1,30 @@
 # test_eflomal_routes.py
 
+import base64
+
 import pytest
 
 from database.models import Assessment
 
 prefix = "v3"
+
+
+def _prior_items(n=5):
+    return [
+        {
+            "source_bpe": f"▁src_{i}",
+            "target_bpe": f"▁tgt_{i}",
+            "alpha": 0.5 + (i % 5) * 0.05,
+        }
+        for i in range(n)
+    ]
+
+
+def _bpe_payload(source_bytes=b"source-proto-bytes", target_bytes=b"target-proto-bytes"):
+    return {
+        "source_model_b64": base64.b64encode(source_bytes).decode("ascii"),
+        "target_model_b64": base64.b64encode(target_bytes).decode("ascii"),
+    }
 
 
 def _metadata_payload(
@@ -88,6 +108,20 @@ def _push_all(client, token, assessment_id, source_language=None, target_languag
     resp = client.post(
         f"{prefix}/assessment/{assessment_id}/eflomal-target-word-counts",
         json=_target_word_count_items(),
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    resp = client.post(
+        f"{prefix}/assessment/{assessment_id}/eflomal-priors",
+        json=_prior_items(),
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    resp = client.post(
+        f"{prefix}/assessment/{assessment_id}/eflomal-bpe-models",
+        json=_bpe_payload(),
         headers=headers,
     )
     assert resp.status_code == 200
@@ -373,6 +407,26 @@ def test_pull_eflomal_results_success(client, regular_token1, _ensure_eflomal_pu
     assert "word" in first_twc
     assert "count" in first_twc
 
+    # Priors (n=5 in _push_all)
+    assert len(data["priors"]) == 5
+    first_prior = data["priors"][0]
+    assert "source_bpe" in first_prior
+    assert "target_bpe" in first_prior
+    assert "alpha" in first_prior
+
+    # BPE models (round-trip base64)
+    assert data["bpe_models"] is not None
+    assert base64.b64decode(data["bpe_models"]["source_model_b64"]) == (
+        b"source-proto-bytes"
+    )
+    assert base64.b64decode(data["bpe_models"]["target_model_b64"]) == (
+        b"target-proto-bytes"
+    )
+
+    # Revision / reference IDs from the parent Assessment
+    assert data["revision_revision_id"] is not None
+    assert data["reference_revision_id"] is not None
+
 
 def test_pull_eflomal_results_not_found(client, regular_token1):
     """Non-existent assessment_id should return 404."""
@@ -444,6 +498,10 @@ def test_pull_eflomal_results_by_language_success(
     assert len(data["dictionary"]) == 10
     assert len(data["cooccurrences"]) == 20
     assert len(data["target_word_counts"]) == 5
+    assert len(data["priors"]) == 5
+    assert data["bpe_models"] is not None
+    assert data["revision_revision_id"] is not None
+    assert data["reference_revision_id"] is not None
 
 
 def test_pull_eflomal_results_by_language_not_found(client, regular_token1):
@@ -507,3 +565,192 @@ def test_pull_eflomal_results_partial_language(client, regular_token1):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Priors endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_push_eflomal_priors(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Push priors entries for an existing eflomal assessment."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors",
+        json=_prior_items(4),
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert len(response.json()["ids"]) == 4
+
+
+def test_push_eflomal_priors_empty_body(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Empty priors list should return 200 with no ids."""
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors",
+        json=[],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["ids"] == []
+
+
+def test_push_eflomal_priors_body_too_large(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Exceeding body size limit should return 400 with a helpful message."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    body = _prior_items(5001)
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors",
+        json=body,
+        headers=headers,
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "5001" in detail
+    assert "5000" in detail
+
+
+def test_push_eflomal_priors_no_metadata(
+    client, regular_token1, test_eflomal_assessment_unpushed_id
+):
+    """Pushing priors before metadata should return 404."""
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_unpushed_id}/eflomal-priors",
+        json=_prior_items(2),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_push_eflomal_priors_unauthorized(
+    client, regular_token2, test_eflomal_assessment_id
+):
+    """User without access should receive 403."""
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors",
+        json=_prior_items(2),
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# BPE models endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_push_eflomal_bpe_models(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Push BPE models (source + target) for an eflomal assessment."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-bpe-models",
+        json=_bpe_payload(),
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert len(response.json()["ids"]) == 2
+
+
+def test_push_eflomal_bpe_models_idempotent(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Second push replaces the prior pair (delete-then-insert)."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    first = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-bpe-models",
+        json=_bpe_payload(b"old-src", b"old-tgt"),
+        headers=headers,
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-bpe-models",
+        json=_bpe_payload(b"new-src", b"new-tgt"),
+        headers=headers,
+    )
+    assert second.status_code == 200
+    assert len(second.json()["ids"]) == 2
+
+    # Pull and verify latest bytes won
+    pull = client.get(
+        f"{prefix}/assessment/eflomal/results",
+        params={"assessment_id": test_eflomal_assessment_id},
+        headers=headers,
+    )
+    assert pull.status_code == 200
+    data = pull.json()
+    assert data["bpe_models"] is not None
+    assert base64.b64decode(data["bpe_models"]["source_model_b64"]) == b"new-src"
+    assert base64.b64decode(data["bpe_models"]["target_model_b64"]) == b"new-tgt"
+
+
+def test_push_eflomal_bpe_models_invalid_base64(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Invalid base64 in either field should return 422."""
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-bpe-models",
+        json={"source_model_b64": "not!!valid!!base64", "target_model_b64": "aGk="},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422
+
+
+def test_push_eflomal_bpe_models_no_metadata(
+    client, regular_token1, test_eflomal_assessment_unpushed_id
+):
+    """Pushing BPE models before metadata should return 404."""
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_unpushed_id}/eflomal-bpe-models",
+        json=_bpe_payload(),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_push_eflomal_bpe_models_unauthorized(
+    client, regular_token2, test_eflomal_assessment_id
+):
+    """User without access should receive 403."""
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-bpe-models",
+        json=_bpe_payload(),
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Back-compat: pulls on assessments without priors / BPE models should succeed
+# ---------------------------------------------------------------------------
+
+
+def test_pull_eflomal_results_without_priors_or_bpe(
+    client, regular_token1, test_eflomal_assessment_id
+):
+    """Older-style assessments (metadata + core data only) still return 200.
+
+    The test_eflomal_assessment_id fixture receives metadata/dictionary/etc via
+    earlier tests but the dedicated priors/BPE-models tests may or may not have
+    run in the same ordering. Exercise a pull and assert the new fields are
+    present with safe defaults when empty.
+    """
+    # Pull: should always succeed regardless of whether priors/BPE exist
+    response = client.get(
+        f"{prefix}/assessment/eflomal/results",
+        params={"assessment_id": test_eflomal_assessment_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "priors" in data
+    assert isinstance(data["priors"], list)
+    assert "bpe_models" in data  # value may be null if BPE not yet pushed

@@ -860,6 +860,69 @@ class EflomalTargetWordCount(Base):
     )
 
 
+class EflomalPrior(Base):
+    """LEX-format priors from the final alignment loop, one row per BPE token pair.
+
+    Consumed at predict-time by eflomal together with the BPE models to
+    score unseen verse pairs against a small anchor sample from training.
+
+    - source_bpe / target_bpe: SentencePiece pieces (e.g. "▁house").
+    - alpha: Dirichlet-prior strength, typically in [0.5, 0.95].
+    """
+
+    __tablename__ = "eflomal_prior"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    assessment_id = Column(
+        Integer, ForeignKey("eflomal_assessment.id", ondelete="CASCADE"), nullable=False
+    )
+    source_bpe = Column(Text, nullable=False)
+    target_bpe = Column(Text, nullable=False)
+    alpha = Column(Float, nullable=False)
+
+    __table_args__ = (
+        Index("ix_eflomal_prior_assessment", "assessment_id"),
+        Index(
+            "ux_eflomal_prior_assessment_source_target",
+            "assessment_id",
+            "source_bpe",
+            "target_bpe",
+            unique=True,
+        ),
+    )
+
+
+class EflomalBpeModel(Base):
+    """Serialized SentencePiece BPE model protobuf, one per direction.
+
+    Two rows per assessment — direction 'source' and 'target'. The
+    model_bytes column stores the output of
+    SentencePieceProcessor.serialized_model_proto() directly.
+    """
+
+    __tablename__ = "eflomal_bpe_model"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    assessment_id = Column(
+        Integer, ForeignKey("eflomal_assessment.id", ondelete="CASCADE"), nullable=False
+    )
+    direction = Column(Text, nullable=False)
+    model_bytes = Column(LargeBinary, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "direction IN ('source', 'target')",
+            name="ck_eflomal_bpe_model_direction",
+        ),
+        Index(
+            "ux_eflomal_bpe_model_assessment_direction",
+            "assessment_id",
+            "direction",
+            unique=True,
+        ),
+    )
+
+
 class LanguageProfile(Base):
     __tablename__ = "language_profiles"
 
