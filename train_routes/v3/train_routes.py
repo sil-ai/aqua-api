@@ -17,6 +17,7 @@ from sqlalchemy.orm import aliased
 
 from database.dependencies import get_db
 from database.models import (
+    Assessment,
     BibleRevision,
     BibleVersion,
     BibleVersionAccess,
@@ -28,6 +29,7 @@ from database.models import (
     VerseText,
 )
 from models import (
+    ASSESSMENT_TERMINAL_STATUSES,
     InferenceReadiness,
     TrainingJobIn,
     TrainingJobOut,
@@ -58,10 +60,104 @@ VALID_TRANSITIONS = {
 TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed"}
 COMPLETED_STATUSES = {"completed", "completed_with_errors"}
 
-# Maps each inference type to the training types it requires
+# Training types that have a corresponding aqua-assessments Assessment row.
+# serval-nmt is excluded — it produces a translation engine, not an assessment.
+# Every type listed here must also appear in AssessmentType in models.py so the
+# Assessment row is readable by the existing /v3/assessment endpoints.
+TRAINABLE_ASSESSMENT_TYPES = {
+    TrainingType.semantic_similarity.value,
+    TrainingType.tfidf.value,
+    TrainingType.word_alignment.value,
+    TrainingType.ngrams.value,
+    TrainingType.agent_critique.value,
+}
+
+# Maps each inference type to the training types it requires. Keys are
+# TrainingType values (not PREDICT_APPS keys) — callers reading readiness
+# to decide whether to call /v3/predict must map via TRAIN_APPS_ALIASES.
 INFERENCE_DEPENDENCIES = {
     "semantic-similarity": ["semantic-similarity"],
+    "tfidf": ["tfidf"],
+    "word-alignment": ["word-alignment"],
+    "ngrams": ["ngrams"],
+    "agent-critique": ["agent-critique"],
 }
+
+# Fan-out registry: training-type value -> Modal app name exposing train().
+# Mirrors PREDICT_APPS in predict_routes/v3/predict_routes.py. Each listed app
+# must publish a @app.function train(input_data) in aqua-assessments.
+# semantic-similarity is registered here but routed through the legacy runner
+# path below until its dedicated train() is deployed.
+TRAIN_APPS: dict[str, str] = {
+    "semantic-similarity": "semantic-similarity",
+    "tfidf": "tfidf",
+    "word-alignment": "word-alignment",
+    "ngrams": "ngrams",
+    "agent-critique": "agent-critique",
+}
+
+# Accepts the key names used by PredictInput.apps so a caller can pass the
+# same app list to /v3/train and /v3/predict. Canonical names (the keys
+# above) are also accepted. Extend this map if predict adopts another alias.
+TRAIN_APPS_ALIASES: dict[str, str] = {
+    "agent": "agent-critique",
+    "word_alignment": "word-alignment",
+}
+
+_fn_cache: dict[tuple[str, str], modal.Function] = {}
+
+
+def _get_train_fn(modal_app: str, env: str) -> modal.Function:
+    key = (modal_app, env)
+    fn = _fn_cache.get(key)
+    if fn is None:
+        fn = modal.Function.from_name(modal_app, "train", environment_name=env)
+        _fn_cache[key] = fn
+    return fn
+
+
+async def _mirror_terminal_status_to_assessment(
+    job: TrainingJob, db: AsyncSession
+) -> None:
+    """Fallback reconciliation: reflect a TrainingJob terminal status onto its
+    linked Assessment when aqua-assessments' own PATCH /v3/assessment/status
+    flow didn't land (dispatch failure, worker died before posting, legacy
+    sem-sim path).
+
+    Mapping: completed → finished; failed / completed_with_errors → failed.
+    completed_with_errors flattens to failed because AssessmentStatus has no
+    cwe value; the TrainingJob detail is copied onto Assessment.status_detail
+    only for the failure paths (carrying an uploading-phase progress detail
+    onto a successful Assessment would be misleading).
+
+    Because this is reconciliation, it deliberately bypasses
+    ASSESSMENT_VALID_TRANSITIONS (queued → terminal is not a valid transition
+    there). To avoid clobbering aqua-assessments' own terminal post, this
+    helper is a no-op if the Assessment is already in a terminal state.
+    Also a no-op for jobs with no linked Assessment (e.g. serval-nmt) or
+    whose Assessment row has been soft-deleted.
+    """
+    if job.assessment_id is None:
+        return
+    assessment = await db.get(Assessment, job.assessment_id)
+    if assessment is None or assessment.deleted:
+        return
+    if assessment.status in ASSESSMENT_TERMINAL_STATUSES:
+        return
+
+    if job.status == "completed":
+        assessment.status = "finished"
+        assessment.status_detail = None
+    elif job.status in ("failed", "completed_with_errors"):
+        assessment.status = "failed"
+        if job.status_detail is not None:
+            assessment.status_detail = job.status_detail
+    else:
+        return
+
+    now = datetime.utcnow()
+    assessment.start_time = job.start_time or assessment.start_time or now
+    assessment.end_time = job.end_time or now
 
 
 async def _compute_inference_readiness(
@@ -155,7 +251,27 @@ async def create_training_job(
     training_jobs = []
     skipped_job_ids = []
 
+    all_types = [t.value for t in TrainingType]
+    if job_in.apps is None:
+        selected_types = all_types
+    else:
+        resolved = [TRAIN_APPS_ALIASES.get(a, a) for a in job_in.apps]
+        selected_types = list(dict.fromkeys(resolved))
+        unknown = sorted(set(selected_types) - set(all_types))
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown training apps: {unknown}",
+            )
+        if not selected_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="At least one training app must be selected",
+            )
+
     for training_type in TrainingType:
+        if training_type.value not in selected_types:
+            continue
         # Duplicate check per type
         dup_stmt = select(TrainingJob).where(
             TrainingJob.source_revision_id == job_in.source_revision_id,
@@ -175,6 +291,24 @@ async def create_training_job(
             logger.info(f"Skipping {training_type.value}: active job already exists")
             continue
 
+        # For trainable assessment types, create a paired Assessment row so
+        # aqua-assessments can write artifacts under the same assessment_id
+        # pattern used by the assess() path. serval-nmt is skipped.
+        assessment_id = None
+        if training_type.value in TRAINABLE_ASSESSMENT_TYPES:
+            assessment = Assessment(
+                revision_id=job_in.source_revision_id,
+                reference_id=job_in.target_revision_id,
+                type=training_type.value,
+                status="queued",
+                requested_time=datetime.utcnow(),
+                owner_id=current_user.id,
+                kwargs=job_in.options,
+            )
+            db.add(assessment)
+            await db.flush()
+            assessment_id = assessment.id
+
         # Create training job record
         training_job = TrainingJob(
             type=training_type.value,
@@ -187,6 +321,7 @@ async def create_training_job(
             requested_time=datetime.utcnow(),
             owner_id=current_user.id,
             session_id=session_id,
+            assessment_id=assessment_id,
         )
         db.add(training_job)
         training_jobs.append(training_job)
@@ -194,23 +329,38 @@ async def create_training_job(
     if not training_jobs:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Active training jobs already exist for all types (job ids: {skipped_job_ids})",
+            detail=(
+                f"Active training jobs already exist for the requested types "
+                f"{sorted(selected_types)} (job ids: {skipped_job_ids})"
+            ),
         )
 
     await db.commit()
     for job in training_jobs:
         await db.refresh(job)
 
-    # Dispatch all jobs to Modal in parallel
+    # Dispatch all jobs to Modal in parallel. Mirrors the predict() fan-out
+    # pattern: one Modal call per job, per-job error isolation.
     async def dispatch_job(job: TrainingJob):
         """Returns (job, exception) tuple. Does NOT mutate the DB session."""
         try:
-            if job.type == TrainingType.semantic_similarity.value:
+            if job.type == TrainingType.serval_nmt.value:
+                f = modal.Function.from_name(
+                    "train-runner", "run_training_job", environment_name=modal_env
+                )
+                job_out = TrainingJobOut.model_validate(job)
+                await f.spawn.aio(job_out.model_dump(mode="json"))
+            elif job.type == TrainingType.semantic_similarity.value:
+                # Transitional: route sem-sim through the runner's train=True
+                # path until aqua-assessments ships a dedicated sem-sim train()
+                # Modal function. Once it does, this branch collapses into the
+                # generic TRAIN_APPS path below.
                 f = modal.Function.from_name(
                     "runner", "run_assessment_runner", environment_name=modal_env
                 )
                 config = {
                     "id": job.id,
+                    "assessment_id": job.assessment_id,
                     "revision_id": job_in.source_revision_id,
                     "reference_id": job_in.target_revision_id,
                     "type": "semantic-similarity",
@@ -221,12 +371,14 @@ async def create_training_job(
                 if job_in.options:
                     config["kwargs"] = job_in.options
                 await f.spawn.aio(config, os.getenv("AQUA_DB", ""), train_job_id=job.id)
-            else:
-                f = modal.Function.from_name(
-                    "train-runner", "run_training_job", environment_name=modal_env
-                )
+            elif job.type in TRAIN_APPS:
+                f = _get_train_fn(TRAIN_APPS[job.type], modal_env)
                 job_out = TrainingJobOut.model_validate(job)
                 await f.spawn.aio(job_out.model_dump(mode="json"))
+            else:
+                raise RuntimeError(
+                    f"No dispatch configured for training type '{job.type}'"
+                )
             return job, None
         except Exception as e:
             logger.error(f"Error dispatching training job {job.id} ({job.type}): {e}")
@@ -238,6 +390,7 @@ async def create_training_job(
             job.status = "failed"
             job.status_detail = f"dispatch_failed: {type(exc).__name__}: {exc}"
             job.end_time = datetime.utcnow()
+            await _mirror_terminal_status_to_assessment(job, db)
     await db.commit()
     for job in training_jobs:
         await db.refresh(job)
@@ -443,6 +596,7 @@ async def update_training_job_status(
     # Set end_time on terminal status
     if update.status in TERMINAL_STATUSES:
         job.end_time = datetime.utcnow()
+        await _mirror_terminal_status_to_assessment(job, db)
 
     await db.commit()
     await db.refresh(job)
