@@ -17,6 +17,7 @@ from sqlalchemy.orm import aliased
 
 from database.dependencies import get_db
 from database.models import (
+    Assessment,
     BibleRevision,
     BibleVersion,
     BibleVersionAccess,
@@ -57,6 +58,18 @@ VALID_TRANSITIONS = {
 
 TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed"}
 COMPLETED_STATUSES = {"completed", "completed_with_errors"}
+
+# Training types that have a corresponding aqua-assessments Assessment row.
+# serval-nmt is excluded — it produces a translation engine, not an assessment.
+# Every type listed here must also appear in AssessmentType in models.py so the
+# Assessment row is readable by the existing /v3/assessment endpoints.
+TRAINABLE_ASSESSMENT_TYPES = {
+    TrainingType.semantic_similarity.value,
+    TrainingType.tfidf.value,
+    TrainingType.word_alignment.value,
+    TrainingType.ngrams.value,
+    TrainingType.agent_critique.value,
+}
 
 # Maps each inference type to the training types it requires. Keys are
 # TrainingType values (not PREDICT_APPS keys) — callers reading readiness
@@ -100,6 +113,42 @@ def _get_train_fn(modal_app: str, env: str) -> modal.Function:
         fn = modal.Function.from_name(modal_app, "train", environment_name=env)
         _fn_cache[key] = fn
     return fn
+
+
+async def _mirror_terminal_status_to_assessment(
+    job: TrainingJob, db: AsyncSession
+) -> None:
+    """Reflect a TrainingJob terminal status onto its linked Assessment.
+
+    completed → finished; failed / completed_with_errors → failed. The latter
+    is flattened onto a single Assessment failed state because AssessmentStatus
+    has no completed_with_errors value — the TrainingJob detail is copied onto
+    Assessment.status_detail so callers can still distinguish.
+
+    No-op for jobs with no linked Assessment (e.g. serval-nmt) or whose
+    Assessment row has been deleted.
+    """
+    if job.assessment_id is None:
+        return
+    assessment = await db.get(Assessment, job.assessment_id)
+    if assessment is None or assessment.deleted:
+        return
+
+    now = datetime.utcnow()
+    if job.status == "completed":
+        assessment.status = "finished"
+    elif job.status == "failed":
+        assessment.status = "failed"
+    elif job.status == "completed_with_errors":
+        assessment.status = "failed"
+    else:
+        return
+
+    if job.status_detail is not None:
+        assessment.status_detail = job.status_detail
+    if assessment.start_time is None:
+        assessment.start_time = now
+    assessment.end_time = now
 
 
 async def _compute_inference_readiness(
@@ -233,6 +282,24 @@ async def create_training_job(
             logger.info(f"Skipping {training_type.value}: active job already exists")
             continue
 
+        # For trainable assessment types, create a paired Assessment row so
+        # aqua-assessments can write artifacts under the same assessment_id
+        # pattern used by the assess() path. serval-nmt is skipped.
+        assessment_id = None
+        if training_type.value in TRAINABLE_ASSESSMENT_TYPES:
+            assessment = Assessment(
+                revision_id=job_in.source_revision_id,
+                reference_id=job_in.target_revision_id,
+                type=training_type.value,
+                status="queued",
+                requested_time=datetime.utcnow(),
+                owner_id=current_user.id,
+                kwargs=job_in.options,
+            )
+            db.add(assessment)
+            await db.flush()
+            assessment_id = assessment.id
+
         # Create training job record
         training_job = TrainingJob(
             type=training_type.value,
@@ -245,6 +312,7 @@ async def create_training_job(
             requested_time=datetime.utcnow(),
             owner_id=current_user.id,
             session_id=session_id,
+            assessment_id=assessment_id,
         )
         db.add(training_job)
         training_jobs.append(training_job)
@@ -312,6 +380,7 @@ async def create_training_job(
             job.status = "failed"
             job.status_detail = f"dispatch_failed: {type(exc).__name__}: {exc}"
             job.end_time = datetime.utcnow()
+            await _mirror_terminal_status_to_assessment(job, db)
     await db.commit()
     for job in training_jobs:
         await db.refresh(job)
@@ -517,6 +586,7 @@ async def update_training_job_status(
     # Set end_time on terminal status
     if update.status in TERMINAL_STATUSES:
         job.end_time = datetime.utcnow()
+        await _mirror_terminal_status_to_assessment(job, db)
 
     await db.commit()
     await db.refresh(job)

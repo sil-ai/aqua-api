@@ -1099,6 +1099,7 @@ class TrainingJobOut(BaseModel):
     end_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
     session_id: Optional[str] = None
+    assessment_id: Optional[int] = None
 
     model_config = {"from_attributes": True, "use_enum_values": True}
 
