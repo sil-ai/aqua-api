@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from database.models import TrainingJob, VerseText
+from database.models import Assessment, TrainingJob, VerseText
 from models import TrainingType
 from train_routes.v3 import train_routes
 
@@ -941,6 +941,452 @@ def test_get_training_status_no_auth(client):
     )
 
     assert response.status_code == 401
+
+
+# -- Assessment creation + status mirroring (issue #571) --
+
+
+def _get_assessment(db_session, assessment_id):
+    """Reload the Assessment row from its own session to see external updates."""
+    db_session.expire_all()
+    return db_session.query(Assessment).filter_by(id=assessment_id).one_or_none()
+
+
+def test_training_job_creates_assessment_for_trainable_types(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Every non-serval-nmt TrainingJob has a matching Assessment row.
+
+    serval-nmt must have assessment_id=None because aqua-assessments has no
+    assessment type for NMT engines.
+    """
+    resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "assessment_creation_test"},
+    )
+    assert resp.status_code == 200
+    jobs = {job["type"]: job for job in resp.json()["training_jobs"]}
+
+    assert jobs["serval-nmt"]["assessment_id"] is None
+
+    for training_type in ALL_TRAINING_TYPES - {"serval-nmt"}:
+        job = jobs[training_type]
+        assert (
+            job["assessment_id"] is not None
+        ), f"{training_type} job missing assessment_id"
+        assessment = _get_assessment(db_session, job["assessment_id"])
+        assert assessment is not None, f"Assessment row missing for {training_type}"
+        assert assessment.type == training_type
+        assert assessment.revision_id == test_revision_id
+        assert assessment.reference_id == test_revision_id_2
+        assert assessment.status == "queued"
+        assert assessment.owner_id == job["owner_id"]
+        assert assessment.kwargs == {"tag": "assessment_creation_test"}
+
+
+def test_assessment_id_reaches_modal_train_payload(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """The assessment_id surfaces on the payload spawned to Modal train()."""
+    payloads_by_app = {}
+
+    def _from_name(app_name, fn_name, *_args, **_kwargs):
+        fn = AsyncMock()
+
+        async def _capture(*args, **kwargs):
+            payloads_by_app.setdefault(app_name, []).append((args, kwargs))
+
+        fn.spawn.aio = AsyncMock(side_effect=_capture)
+        return fn
+
+    mock_function_cls = AsyncMock()
+    mock_function_cls.from_name = _from_name
+
+    with patch(
+        "train_routes.v3.train_routes.modal.Function", mock_function_cls
+    ), patch.dict("train_routes.v3.train_routes._fn_cache", {}, clear=True):
+        resp = client.post(
+            f"{prefix}/train",
+            json={
+                "source_revision_id": test_revision_id,
+                "target_revision_id": test_revision_id_2,
+                "options": {"tag": "payload_test"},
+                "apps": ["tfidf", "ngrams", "word-alignment", "agent-critique"],
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert resp.status_code == 200
+    jobs = {job["type"]: job for job in resp.json()["training_jobs"]}
+
+    for app_name in ("tfidf", "ngrams", "word-alignment", "agent-critique"):
+        calls = payloads_by_app.get(app_name, [])
+        assert calls, f"No spawn captured for {app_name}"
+        args, _kwargs = calls[0]
+        payload = args[0]
+        assert payload["assessment_id"] == jobs[app_name]["assessment_id"]
+        assert payload["id"] == jobs[app_name]["id"]
+
+
+def test_completed_mirrors_to_assessment_finished(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """TrainingJob completed -> Assessment finished; stale status_detail cleared."""
+    resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "mirror_completed_test"},
+        apps=["tfidf"],
+    )
+    assert resp.status_code == 200
+    job = resp.json()["training_jobs"][0]
+    assessment_id = job["assessment_id"]
+    assert assessment_id is not None
+
+    # Drop a progress detail during uploading. On completed, this stale detail
+    # must not leak onto the Assessment.
+    for next_status, detail in [
+        ("preparing", None),
+        ("training", None),
+        ("downloading", None),
+        ("uploading", "uploading artifact 3/4"),
+    ]:
+        body = {"status": next_status}
+        if detail is not None:
+            body["status_detail"] = detail
+        client.patch(
+            f"{prefix}/train/{job['id']}/status",
+            json=body,
+            headers=_auth_headers(regular_token1),
+        )
+    # Assessment should still be queued through non-terminal transitions
+    assert _get_assessment(db_session, assessment_id).status == "queued"
+
+    client.patch(
+        f"{prefix}/train/{job['id']}/status",
+        json={"status": "completed"},
+        headers=_auth_headers(regular_token1),
+    )
+    assessment = _get_assessment(db_session, assessment_id)
+    assert assessment.status == "finished"
+    assert assessment.status_detail is None
+    assert assessment.end_time is not None
+
+
+def test_failed_mirrors_to_assessment_failed(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """TrainingJob failed -> Assessment failed with status_detail copied."""
+    resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "mirror_failed_test"},
+        apps=["ngrams"],
+    )
+    assert resp.status_code == 200
+    job = resp.json()["training_jobs"][0]
+    assessment_id = job["assessment_id"]
+
+    client.patch(
+        f"{prefix}/train/{job['id']}/status",
+        json={"status": "failed", "status_detail": "oom on worker"},
+        headers=_auth_headers(regular_token1),
+    )
+    assessment = _get_assessment(db_session, assessment_id)
+    assert assessment.status == "failed"
+    assert assessment.status_detail == "oom on worker"
+    assert assessment.end_time is not None
+
+
+def test_completed_with_errors_mirrors_to_assessment_failed(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """TrainingJob completed_with_errors -> Assessment failed (no cwe in AssessmentStatus)."""
+    resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "mirror_cwe_test"},
+        apps=["word-alignment"],
+    )
+    assert resp.status_code == 200
+    job = resp.json()["training_jobs"][0]
+    assessment_id = job["assessment_id"]
+
+    for next_status in ["preparing", "training", "downloading", "uploading"]:
+        client.patch(
+            f"{prefix}/train/{job['id']}/status",
+            json={"status": next_status},
+            headers=_auth_headers(regular_token1),
+        )
+    client.patch(
+        f"{prefix}/train/{job['id']}/status",
+        json={
+            "status": "completed_with_errors",
+            "status_detail": "hf upload failed",
+        },
+        headers=_auth_headers(regular_token1),
+    )
+    assessment = _get_assessment(db_session, assessment_id)
+    assert assessment.status == "failed"
+    assert assessment.status_detail == "hf upload failed"
+
+
+def test_assessment_id_reaches_sem_sim_runner_config(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """sem-sim uses the legacy runner path with a hand-built config dict,
+    not TrainingJobOut.model_dump(). assessment_id must still flow through."""
+    spawn_calls = []
+
+    def _from_name(app_name, fn_name, *_args, **_kwargs):
+        fn = AsyncMock()
+
+        async def _capture(*args, **kwargs):
+            spawn_calls.append((app_name, args, kwargs))
+
+        fn.spawn.aio = AsyncMock(side_effect=_capture)
+        return fn
+
+    mock_function_cls = AsyncMock()
+    mock_function_cls.from_name = _from_name
+
+    with patch(
+        "train_routes.v3.train_routes.modal.Function", mock_function_cls
+    ), patch.dict("train_routes.v3.train_routes._fn_cache", {}, clear=True):
+        resp = client.post(
+            f"{prefix}/train",
+            json={
+                "source_revision_id": test_revision_id,
+                "target_revision_id": test_revision_id_2,
+                "options": {"tag": "sem_sim_payload_test"},
+                "apps": ["semantic-similarity"],
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert resp.status_code == 200
+    job = resp.json()["training_jobs"][0]
+
+    runner_calls = [c for c in spawn_calls if c[0] == "runner"]
+    assert runner_calls, "sem-sim never dispatched to runner"
+    _, args, _kwargs = runner_calls[0]
+    config = args[0]
+    assert config["assessment_id"] == job["assessment_id"]
+
+
+def test_non_terminal_transition_does_not_mirror_to_assessment(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """PATCH to training/preparing/etc. must leave the Assessment in queued."""
+    resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "non_terminal_mirror_test"},
+        apps=["tfidf"],
+    )
+    job = resp.json()["training_jobs"][0]
+    assessment_id = job["assessment_id"]
+
+    for next_status in ["preparing", "training"]:
+        client.patch(
+            f"{prefix}/train/{job['id']}/status",
+            json={"status": next_status},
+            headers=_auth_headers(regular_token1),
+        )
+        assessment = _get_assessment(db_session, assessment_id)
+        assert (
+            assessment.status == "queued"
+        ), f"Assessment mirrored on non-terminal '{next_status}'"
+        assert assessment.end_time is None
+
+
+def test_apps_filter_creates_assessments_only_for_selected_types(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """apps=[tfidf] creates one Assessment for tfidf, none for other types."""
+    resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "apps_filter_assessment_test"},
+        apps=["tfidf"],
+    )
+    assert resp.status_code == 200
+    jobs = resp.json()["training_jobs"]
+    assert len(jobs) == 1 and jobs[0]["type"] == "tfidf"
+    assert jobs[0]["assessment_id"] is not None
+
+    db_session.expire_all()
+    assessments = (
+        db_session.query(Assessment)
+        .filter(Assessment.kwargs.op("@>")({"tag": "apps_filter_assessment_test"}))
+        .all()
+    )
+    assert len(assessments) == 1
+    assert assessments[0].type == "tfidf"
+
+
+def test_duplicate_post_does_not_create_duplicate_assessment(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Second POST with same (revision, type, options) returns 409 — no new Assessment."""
+    opts = {"tag": "dup_assessment_test"}
+    r1 = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options=opts,
+        apps=["tfidf"],
+    )
+    assert r1.status_code == 200
+
+    r2 = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options=opts,
+        apps=["tfidf"],
+    )
+    assert r2.status_code == 409
+
+    db_session.expire_all()
+    assessments = (
+        db_session.query(Assessment).filter(Assessment.kwargs.op("@>")(opts)).all()
+    )
+    assert len(assessments) == 1
+
+    # Clean up so queued jobs don't pollute later tests.
+    jobs = (
+        db_session.query(TrainingJob)
+        .filter_by(status="queued")
+        .filter(TrainingJob.options.op("@>")(opts))
+        .all()
+    )
+    for j in jobs:
+        j.status = "failed"
+    db_session.commit()
+
+
+def test_mirror_respects_soft_deleted_assessment(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """A soft-deleted Assessment must not be touched by the mirror helper."""
+    resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "mirror_deleted_test"},
+        apps=["ngrams"],
+    )
+    job = resp.json()["training_jobs"][0]
+    assessment_id = job["assessment_id"]
+
+    assessment = db_session.query(Assessment).filter_by(id=assessment_id).one()
+    assessment.deleted = True
+    db_session.commit()
+
+    client.patch(
+        f"{prefix}/train/{job['id']}/status",
+        json={"status": "failed", "status_detail": "after-delete"},
+        headers=_auth_headers(regular_token1),
+    )
+    db_session.expire_all()
+    assessment = db_session.query(Assessment).filter_by(id=assessment_id).one()
+    assert assessment.status == "queued"
+    assert assessment.status_detail is None
+    assert assessment.end_time is None
+
+
+def test_mirror_does_not_clobber_already_terminal_assessment(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """If aqua-assessments already PATCHed Assessment to finished, mirror must not overwrite."""
+    resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "mirror_no_clobber_test"},
+        apps=["agent-critique"],
+    )
+    job = resp.json()["training_jobs"][0]
+    assessment_id = job["assessment_id"]
+
+    assessment = db_session.query(Assessment).filter_by(id=assessment_id).one()
+    assessment.status = "finished"
+    assessment.status_detail = "posted-by-aqua-assessments"
+    db_session.commit()
+
+    for next_status in ["preparing", "training", "downloading", "uploading"]:
+        client.patch(
+            f"{prefix}/train/{job['id']}/status",
+            json={"status": next_status},
+            headers=_auth_headers(regular_token1),
+        )
+    client.patch(
+        f"{prefix}/train/{job['id']}/status",
+        json={
+            "status": "completed_with_errors",
+            "status_detail": "post-terminal mirror should be ignored",
+        },
+        headers=_auth_headers(regular_token1),
+    )
+    db_session.expire_all()
+    assessment = db_session.query(Assessment).filter_by(id=assessment_id).one()
+    assert assessment.status == "finished"
+    assert assessment.status_detail == "posted-by-aqua-assessments"
+
+
+def test_training_job_options_validator_rejects_non_scalar(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """TrainingJobIn.options reuses the AssessmentIn.kwargs validator so
+    /v3/train can't create Assessment rows that violate /v3/assessment's
+    kwargs constraints."""
+    resp = client.post(
+        f"{prefix}/train",
+        json={
+            "source_revision_id": test_revision_id,
+            "target_revision_id": test_revision_id_2,
+            "options": {"nested": {"not": "scalar"}},
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+
+
+def test_dispatch_failure_mirrors_to_assessment_failed(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """A Modal spawn failure marks both the TrainingJob and the Assessment failed."""
+    resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "mirror_dispatch_fail_test"},
+        apps=["tfidf"],
+        spawn_by_app={"tfidf": RuntimeError("boom")},
+    )
+    assert resp.status_code == 200
+    job = resp.json()["training_jobs"][0]
+    assert job["status"] == "failed"
+    assessment = _get_assessment(db_session, job["assessment_id"])
+    assert assessment.status == "failed"
+    assert "dispatch_failed" in (assessment.status_detail or "")
 
 
 def test_get_training_status_readiness_updates(

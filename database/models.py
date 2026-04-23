@@ -195,12 +195,19 @@ class TrainingJob(Base):
 
     session_id = Column(Text, nullable=True)
 
+    assessment_id = Column(
+        Integer,
+        ForeignKey("assessment.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     deleted = Column(Boolean, default=False)
     deleted_at = Column(TIMESTAMP, nullable=True)
 
     source_revision = relationship("BibleRevision", foreign_keys=[source_revision_id])
     target_revision = relationship("BibleRevision", foreign_keys=[target_revision_id])
     owner = relationship("UserDB")
+    assessment = relationship("Assessment", foreign_keys=[assessment_id])
 
     __table_args__ = (
         Index("ix_training_job_status", "status"),
@@ -214,6 +221,7 @@ class TrainingJob(Base):
             "status",
         ),
         Index("ix_training_job_session_id", "session_id"),
+        Index("ix_training_job_assessment_id", "assessment_id"),
     )
 
 
