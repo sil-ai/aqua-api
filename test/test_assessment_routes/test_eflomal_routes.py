@@ -20,7 +20,9 @@ def _prior_items(n=5):
     ]
 
 
-def _bpe_payload(source_bytes=b"source-proto-bytes", target_bytes=b"target-proto-bytes"):
+def _bpe_payload(
+    source_bytes=b"source-proto-bytes", target_bytes=b"target-proto-bytes"
+):
     return {
         "source_model_b64": base64.b64encode(source_bytes).decode("ascii"),
         "target_model_b64": base64.b64encode(target_bytes).decode("ascii"),
