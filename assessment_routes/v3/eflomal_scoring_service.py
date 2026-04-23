@@ -67,6 +67,14 @@ async def _load_artifacts(
         .scalars()
         .all()
     )
+    if not dict_rows:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Eflomal dictionary is empty for this assessment; "
+                "push dictionary entries before scoring"
+            ),
+        )
     cooc_rows = (
         (
             await db.execute(

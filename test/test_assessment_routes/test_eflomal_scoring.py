@@ -391,7 +391,18 @@ def test_score_eflomal_verses_is_idempotent_on_retry(
     eflomal_scoring_assessment_id,
 ):
     """Calling the endpoint a second time should not double-insert rows;
-    existing assessment_result rows are cleared before each scoring pass."""
+    existing assessment_result rows are cleared before each scoring pass.
+    end_time must also be stable across retries — "latest finished"
+    queries sort on it, so a moving timestamp breaks ordering."""
+    test_db_session.expire_all()
+    first_end_time = (
+        test_db_session.query(Assessment)
+        .filter(Assessment.id == eflomal_scoring_assessment_id)
+        .one()
+        .end_time
+    )
+    assert first_end_time is not None
+
     resp = client.post(
         f"{prefix}/assessment/{eflomal_scoring_assessment_id}/eflomal/score-verses",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -406,6 +417,14 @@ def test_score_eflomal_verses_is_idempotent_on_retry(
     )
     assert len(rows) == len(SCORING_VREFS)
 
+    second_end_time = (
+        test_db_session.query(Assessment)
+        .filter(Assessment.id == eflomal_scoring_assessment_id)
+        .one()
+        .end_time
+    )
+    assert second_end_time == first_end_time
+
 
 def test_score_eflomal_verses_missing_artifacts_returns_404(
     client,
@@ -419,6 +438,50 @@ def test_score_eflomal_verses_missing_artifacts_returns_404(
     )
     assert resp.status_code == 404
     assert "eflomal" in resp.json()["detail"].lower()
+
+
+def test_score_eflomal_verses_empty_dictionary_returns_422(
+    client,
+    regular_token1,
+    test_db_session,
+    test_revision_id,
+    test_revision_id_2,
+):
+    """Metadata pushed but no dictionary rows → scoring must reject with 422
+    rather than silently finalize an all-zero assessment."""
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="word-alignment",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+    assessment_id = assessment.id
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    meta = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json={
+            "assessment_id": assessment_id,
+            "source_language": "eng",
+            "target_language": "spa",
+            "num_verse_pairs": 0,
+            "num_alignment_links": 0,
+            "num_dictionary_entries": 0,
+            "num_missing_words": 0,
+        },
+        headers=headers,
+    )
+    assert meta.status_code == 200, meta.text
+
+    resp = client.post(
+        f"{prefix}/assessment/{assessment_id}/eflomal/score-verses",
+        headers=headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert "dictionary" in resp.json()["detail"].lower()
 
 
 def test_score_eflomal_verses_unauthorized(

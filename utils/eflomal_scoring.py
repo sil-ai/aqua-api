@@ -28,11 +28,13 @@ def normalize_dictionary_list(
 ) -> Dict[Tuple[str, str], Dict]:
     """Fold raw dictionary rows into a lookup keyed by (src_norm, tgt_norm).
 
-    Input rows look like {"source": str, "target": str, "count": int,
-    "probability": float}. Different original casings that normalize to the
-    same pair are merged: counts are summed and probability is averaged
-    weighted by count. Rows whose normalized form is empty on either side
-    are dropped.
+    Input rows must have {"source": str, "target": str, "count": int,
+    "probability": float}. `probability` is required — the aqua-api
+    EflomalDictionary column is NOT NULL and EflomalDictionaryItem requires
+    it at push time — so this function does not handle rows without it.
+    Different original casings that normalize to the same pair are merged:
+    counts are summed and probability is the count-weighted average. Rows
+    whose normalized form is empty on either side are dropped.
     """
     dictionary: Dict[Tuple[str, str], Dict] = {}
     for entry in dict_list:
@@ -42,20 +44,17 @@ def normalize_dictionary_list(
             continue
         key = (src_norm, tgt_norm)
         entry_count = entry["count"]
-        entry_prob = entry.get("probability")
+        entry_prob = entry["probability"]
         if key in dictionary:
             existing = dictionary[key]
             old_count = existing["count"]
             combined_count = old_count + entry_count
-            if entry_prob is not None and "probability" in existing:
-                existing["probability"] = (
-                    existing["probability"] * old_count + entry_prob * entry_count
-                ) / combined_count
+            existing["probability"] = (
+                existing["probability"] * old_count + entry_prob * entry_count
+            ) / combined_count
             existing["count"] = combined_count
         else:
-            dictionary[key] = {"count": entry_count}
-            if entry_prob is not None:
-                dictionary[key]["probability"] = entry_prob
+            dictionary[key] = {"count": entry_count, "probability": entry_prob}
     return dictionary
 
 

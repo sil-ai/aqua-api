@@ -527,10 +527,16 @@ async def score_eflomal_verses(
                         f"{assessment.status!r}; expected 'running' or 'finished'"
                     ),
                 )
+            was_running = assessment.status == "running"
             assessment.status = "finished"
             if assessment.start_time is None:
                 assessment.start_time = datetime.utcnow()
-            assessment.end_time = datetime.utcnow()
+            # Only stamp end_time on the running→finished transition (or if a
+            # prior finalize somehow left it null). Retries on an already-
+            # finished assessment must not mutate end_time — downstream
+            # "latest finished" queries sort on it.
+            if was_running or assessment.end_time is None:
+                assessment.end_time = datetime.utcnow()
 
         await db.commit()
         return InsertResponse(ids=inserted_ids)
