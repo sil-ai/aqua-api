@@ -115,35 +115,44 @@ def _get_train_fn(modal_app: str, env: str) -> modal.Function:
     return fn
 
 
+ASSESSMENT_TERMINAL_STATUSES = {"finished", "failed"}
+
+
 async def _mirror_terminal_status_to_assessment(
     job: TrainingJob, db: AsyncSession
 ) -> None:
-    """Reflect a TrainingJob terminal status onto its linked Assessment.
+    """Fallback reconciliation: reflect a TrainingJob terminal status onto its
+    linked Assessment when aqua-assessments' own PATCH /v3/assessment/status
+    flow didn't land (dispatch failure, worker died before posting, legacy
+    sem-sim path).
 
-    completed → finished; failed / completed_with_errors → failed. The latter
-    is flattened onto a single Assessment failed state because AssessmentStatus
-    has no completed_with_errors value — the TrainingJob detail is copied onto
-    Assessment.status_detail so callers can still distinguish.
+    Mapping: completed → finished; failed / completed_with_errors → failed.
+    completed_with_errors flattens to failed because AssessmentStatus has no
+    cwe value; the TrainingJob detail is copied onto Assessment.status_detail.
 
-    No-op for jobs with no linked Assessment (e.g. serval-nmt) or whose
-    Assessment row has been deleted.
+    Because this is reconciliation, it deliberately bypasses
+    ASSESSMENT_VALID_TRANSITIONS (queued → terminal is not a valid transition
+    there). To avoid clobbering aqua-assessments' own terminal post, this
+    helper is a no-op if the Assessment is already in a terminal state.
+    Also a no-op for jobs with no linked Assessment (e.g. serval-nmt) or
+    whose Assessment row has been soft-deleted.
     """
     if job.assessment_id is None:
         return
     assessment = await db.get(Assessment, job.assessment_id)
     if assessment is None or assessment.deleted:
         return
+    if assessment.status in ASSESSMENT_TERMINAL_STATUSES:
+        return
 
-    now = datetime.utcnow()
     if job.status == "completed":
         assessment.status = "finished"
-    elif job.status == "failed":
-        assessment.status = "failed"
-    elif job.status == "completed_with_errors":
+    elif job.status in ("failed", "completed_with_errors"):
         assessment.status = "failed"
     else:
         return
 
+    now = datetime.utcnow()
     if job.status_detail is not None:
         assessment.status_detail = job.status_detail
     if assessment.start_time is None:
@@ -351,6 +360,7 @@ async def create_training_job(
                 )
                 config = {
                     "id": job.id,
+                    "assessment_id": job.assessment_id,
                     "revision_id": job_in.source_revision_id,
                     "reference_id": job_in.target_revision_id,
                     "type": "semantic-similarity",
