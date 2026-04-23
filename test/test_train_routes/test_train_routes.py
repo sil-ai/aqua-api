@@ -1033,7 +1033,7 @@ def test_assessment_id_reaches_modal_train_payload(
 def test_completed_mirrors_to_assessment_finished(
     client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):
-    """TrainingJob completed -> Assessment finished."""
+    """TrainingJob completed -> Assessment finished; stale status_detail cleared."""
     resp = _create_training_jobs_via_api(
         client,
         regular_token1,
@@ -1047,10 +1047,20 @@ def test_completed_mirrors_to_assessment_finished(
     assessment_id = job["assessment_id"]
     assert assessment_id is not None
 
-    for next_status in ["preparing", "training", "downloading", "uploading"]:
+    # Drop a progress detail during uploading. On completed, this stale detail
+    # must not leak onto the Assessment.
+    for next_status, detail in [
+        ("preparing", None),
+        ("training", None),
+        ("downloading", None),
+        ("uploading", "uploading artifact 3/4"),
+    ]:
+        body = {"status": next_status}
+        if detail is not None:
+            body["status_detail"] = detail
         client.patch(
             f"{prefix}/train/{job['id']}/status",
-            json={"status": next_status},
+            json=body,
             headers=_auth_headers(regular_token1),
         )
     # Assessment should still be queued through non-terminal transitions
@@ -1063,6 +1073,7 @@ def test_completed_mirrors_to_assessment_finished(
     )
     assessment = _get_assessment(db_session, assessment_id)
     assert assessment.status == "finished"
+    assert assessment.status_detail is None
     assert assessment.end_time is not None
 
 
@@ -1337,6 +1348,24 @@ def test_mirror_does_not_clobber_already_terminal_assessment(
     assessment = db_session.query(Assessment).filter_by(id=assessment_id).one()
     assert assessment.status == "finished"
     assert assessment.status_detail == "posted-by-aqua-assessments"
+
+
+def test_training_job_options_validator_rejects_non_scalar(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """TrainingJobIn.options reuses the AssessmentIn.kwargs validator so
+    /v3/train can't create Assessment rows that violate /v3/assessment's
+    kwargs constraints."""
+    resp = client.post(
+        f"{prefix}/train",
+        json={
+            "source_revision_id": test_revision_id,
+            "target_revision_id": test_revision_id_2,
+            "options": {"nested": {"not": "scalar"}},
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
 
 
 def test_dispatch_failure_mirrors_to_assessment_failed(

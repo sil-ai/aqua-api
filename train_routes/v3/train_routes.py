@@ -29,6 +29,7 @@ from database.models import (
     VerseText,
 )
 from models import (
+    ASSESSMENT_TERMINAL_STATUSES,
     InferenceReadiness,
     TrainingJobIn,
     TrainingJobOut,
@@ -115,9 +116,6 @@ def _get_train_fn(modal_app: str, env: str) -> modal.Function:
     return fn
 
 
-ASSESSMENT_TERMINAL_STATUSES = {"finished", "failed"}
-
-
 async def _mirror_terminal_status_to_assessment(
     job: TrainingJob, db: AsyncSession
 ) -> None:
@@ -128,7 +126,9 @@ async def _mirror_terminal_status_to_assessment(
 
     Mapping: completed → finished; failed / completed_with_errors → failed.
     completed_with_errors flattens to failed because AssessmentStatus has no
-    cwe value; the TrainingJob detail is copied onto Assessment.status_detail.
+    cwe value; the TrainingJob detail is copied onto Assessment.status_detail
+    only for the failure paths (carrying an uploading-phase progress detail
+    onto a successful Assessment would be misleading).
 
     Because this is reconciliation, it deliberately bypasses
     ASSESSMENT_VALID_TRANSITIONS (queued → terminal is not a valid transition
@@ -147,17 +147,17 @@ async def _mirror_terminal_status_to_assessment(
 
     if job.status == "completed":
         assessment.status = "finished"
+        assessment.status_detail = None
     elif job.status in ("failed", "completed_with_errors"):
         assessment.status = "failed"
+        if job.status_detail is not None:
+            assessment.status_detail = job.status_detail
     else:
         return
 
     now = datetime.utcnow()
-    if job.status_detail is not None:
-        assessment.status_detail = job.status_detail
-    if assessment.start_time is None:
-        assessment.start_time = now
-    assessment.end_time = now
+    assessment.start_time = job.start_time or assessment.start_time or now
+    assessment.end_time = job.end_time or now
 
 
 async def _compute_inference_readiness(

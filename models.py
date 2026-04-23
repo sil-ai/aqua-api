@@ -235,6 +235,31 @@ class AssessmentType(Enum):
     agent_critique = "agent-critique"
 
 
+def _validate_assessment_kwargs(v):
+    """Shared validator for Assessment.kwargs / TrainingJob.options.
+
+    /v3/train persists options onto Assessment.kwargs (issue #571), so both
+    endpoints must enforce the same shape — otherwise /v3/train can create
+    Assessment rows that break existing /v3/assessment kwargs queries.
+    """
+    if v is None:
+        return v
+    if len(v) > 20:
+        raise ValueError("kwargs may not contain more than 20 keys")
+    for key, val in v.items():
+        if len(key) > 64:
+            raise ValueError(f"kwargs key '{key[:64]}...' exceeds 64-character limit")
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key):
+            raise ValueError(f"kwargs key '{key}' must be a valid Python identifier")
+        if not isinstance(val, (str, int, float, bool, type(None))):
+            raise ValueError(
+                f"kwargs values must be scalar types, got {type(val).__name__} for key '{key}'"
+            )
+        if isinstance(val, str) and len(val) > 1000:
+            raise ValueError("kwargs string values must not exceed 1000 characters")
+    return v
+
+
 class AssessmentIn(BaseModel):
     id: Optional[int] = None
     revision_id: int
@@ -247,26 +272,7 @@ class AssessmentIn(BaseModel):
     @field_validator("kwargs")
     @classmethod
     def validate_kwargs(cls, v):
-        if v is None:
-            return v
-        if len(v) > 20:
-            raise ValueError("kwargs may not contain more than 20 keys")
-        for key, val in v.items():
-            if len(key) > 64:
-                raise ValueError(
-                    f"kwargs key '{key[:64]}...' exceeds 64-character limit"
-                )
-            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key):
-                raise ValueError(
-                    f"kwargs key '{key}' must be a valid Python identifier"
-                )
-            if not isinstance(val, (str, int, float, bool, type(None))):
-                raise ValueError(
-                    f"kwargs values must be scalar types, got {type(val).__name__} for key '{key}'"
-                )
-            if isinstance(val, str) and len(val) > 1000:
-                raise ValueError("kwargs string values must not exceed 1000 characters")
-        return v
+        return _validate_assessment_kwargs(v)
 
     model_config = {
         "json_schema_extra": {
@@ -1078,6 +1084,11 @@ class TrainingJobIn(BaseModel):
     target_revision_id: int
     options: Optional[Dict[str, Any]] = None
     apps: Optional[List[str]] = None
+
+    @field_validator("options")
+    @classmethod
+    def validate_options(cls, v):
+        return _validate_assessment_kwargs(v)
 
 
 class TrainingJobOut(BaseModel):
