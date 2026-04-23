@@ -1177,6 +1177,23 @@ class EflomalAssessmentOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class EflomalMissingWordItem(BaseModel):
+    """One flagged target word from the eflomal missing-words detection."""
+
+    vref: str
+    target_word: str
+    known_sources: str
+    score: float
+
+
+class EflomalMissingWordsResponse(BaseModel):
+    """Response from GET /assessment/{id}/eflomal/missing-words."""
+
+    assessment_id: int
+    results: List[EflomalMissingWordItem]
+    total_count: int
+
+
 class EflomalResultsPullResponse(BaseModel):
     """Full eflomal training artifacts for inference consumption.
 

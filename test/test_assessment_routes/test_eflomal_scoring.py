@@ -194,6 +194,126 @@ def test_score_verse_pair_partial_coverage_bottlenecks_on_min():
 
 
 # ---------------------------------------------------------------------------
+# Unit tests: build_reverse_dictionary + detect_missing_words_for_verse
+# ---------------------------------------------------------------------------
+
+
+def test_build_reverse_dictionary_basic():
+    from utils.eflomal_scoring import build_reverse_dictionary
+
+    dictionary = {
+        ("god", "dios"): {"count": 20, "probability": 0.9},
+        ("lord", "dios"): {"count": 5, "probability": 0.4},  # below default min_count=3
+        ("heaven", "cielo"): {"count": 2, "probability": 0.7},  # below min_count=3
+    }
+    reverse = build_reverse_dictionary(dictionary, min_count=3)
+    # "dios" has two sources above cutoff; "cielo" is below
+    assert "dios" in reverse
+    assert "cielo" not in reverse
+    src_words = [s for s, _ in reverse["dios"]]
+    assert "god" in src_words
+    assert "lord" in src_words
+    # sorted descending by count
+    assert reverse["dios"][0][0] == "god"
+
+
+def test_detect_missing_words_flags_unexpected_target_word():
+    from utils.eflomal_scoring import (
+        build_reverse_dictionary,
+        detect_missing_words_for_verse,
+    )
+
+    # "gracia" normally translates "grace" (count=20, freq=1.0) but "grace"
+    # is absent from the source verse — so "gracia" should be flagged.
+    dictionary = {("grace", "gracia"): {"count": 20, "probability": 0.9}}
+    reverse = build_reverse_dictionary(dictionary, min_count=3)
+    # tgt_word_counts: "gracia" appears 20 times in corpus
+    tgt_word_counts = {"gracia": 20}
+
+    results = detect_missing_words_for_verse(
+        src_text="god made the world",
+        tgt_text="dios hizo gracia mundo",
+        reverse_dict=reverse,
+        tgt_word_counts=tgt_word_counts,
+        min_alignment_count=10,
+        min_frequency=0.5,
+        min_word_len=3,
+    )
+    assert len(results) == 1
+    assert results[0]["target_word"] == "gracia"
+    assert "grace" in results[0]["known_sources"]
+    assert math.isclose(results[0]["score"], 1.0)
+
+
+def test_detect_missing_words_excludes_aligned_indices():
+    from utils.eflomal_scoring import (
+        build_reverse_dictionary,
+        detect_missing_words_for_verse,
+    )
+
+    dictionary = {("grace", "gracia"): {"count": 20, "probability": 0.9}}
+    reverse = build_reverse_dictionary(dictionary, min_count=3)
+    tgt_word_counts = {"gracia": 20}
+
+    # "gracia" is at index 2; mark it as already aligned
+    results = detect_missing_words_for_verse(
+        src_text="god made the world",
+        tgt_text="dios hizo gracia mundo",
+        reverse_dict=reverse,
+        tgt_word_counts=tgt_word_counts,
+        min_alignment_count=10,
+        min_frequency=0.5,
+        aligned_tgt_indices={2},
+    )
+    assert results == []
+
+
+def test_detect_missing_words_skips_when_source_present():
+    from utils.eflomal_scoring import (
+        build_reverse_dictionary,
+        detect_missing_words_for_verse,
+    )
+
+    # "gracia" normally translates "grace"; "grace" IS in the source verse —
+    # the word is not missing, just unaligned by the greedy algorithm.
+    dictionary = {("grace", "gracia"): {"count": 20, "probability": 0.9}}
+    reverse = build_reverse_dictionary(dictionary, min_count=3)
+    tgt_word_counts = {"gracia": 20}
+
+    results = detect_missing_words_for_verse(
+        src_text="god showed grace to all",
+        tgt_text="dios mostro gracia",
+        reverse_dict=reverse,
+        tgt_word_counts=tgt_word_counts,
+        min_alignment_count=10,
+        min_frequency=0.5,
+    )
+    assert results == []
+
+
+def test_detect_missing_words_respects_min_frequency():
+    from utils.eflomal_scoring import (
+        build_reverse_dictionary,
+        detect_missing_words_for_verse,
+    )
+
+    dictionary = {("grace", "gracia"): {"count": 5, "probability": 0.4}}
+    reverse = build_reverse_dictionary(dictionary, min_count=3)
+    # frequency = 5 / 20 = 0.25, below default min_frequency=0.5
+    tgt_word_counts = {"gracia": 20}
+
+    results = detect_missing_words_for_verse(
+        src_text="god made the world",
+        tgt_text="dios hizo gracia mundo",
+        reverse_dict=reverse,
+        tgt_word_counts=tgt_word_counts,
+        min_alignment_count=3,
+        min_frequency=0.5,
+    )
+    assert results == []
+
+
+# ---------------------------------------------------------------------------
 # Integration tests: POST /v3/assessment/{id}/eflomal/score-verses
 # ---------------------------------------------------------------------------
 
@@ -492,6 +612,174 @@ def test_score_eflomal_verses_unauthorized(
     """A user without group access to the assessment's bible version is denied."""
     resp = client.post(
         f"{prefix}/assessment/{eflomal_scoring_assessment_id}/eflomal/score-verses",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Integration tests: GET /v3/assessment/{id}/eflomal/missing-words
+# ---------------------------------------------------------------------------
+
+
+def test_get_eflomal_missing_words_end_to_end(
+    client,
+    regular_token1,
+    test_db_session,
+    test_revision_id,
+    test_revision_id_2,
+    scoring_verse_text,
+):
+    """Happy path: a target word whose known sources are absent from the source
+    verse is returned by the endpoint.
+
+    Verse data: GEN 1:1 source="god made heaven", target="dios hizo cielo extra"
+    Dictionary: extra→bonus (count=15), so "extra" should appear as missing
+    because "bonus" is not in the source verse "god made heaven".
+    """
+    # Create a fresh assessment for this test.
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="word-alignment",
+        status="finished",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+    assessment_id = assessment.id
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Push metadata.
+    meta = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json={
+            "assessment_id": assessment_id,
+            "source_language": "eng",
+            "target_language": "spa",
+            "num_verse_pairs": 1,
+            "num_alignment_links": 3,
+            "num_dictionary_entries": 4,
+            "num_missing_words": 1,
+        },
+        headers=headers,
+    )
+    assert meta.status_code == 200, meta.text
+
+    # Dictionary: known pairs plus "extra"→"bonus" (count=15) so "extra" has
+    # a known source that is absent from the source verse.
+    dict_items = [
+        {"source_word": "god", "target_word": "dios", "count": 10, "probability": 0.9},
+        {"source_word": "made", "target_word": "hizo", "count": 10, "probability": 0.8},
+        {
+            "source_word": "heaven",
+            "target_word": "cielo",
+            "count": 10,
+            "probability": 0.7,
+        },
+        # "bonus" is the known source for "extra" but does not appear in the
+        # source verse "god made heaven".
+        {
+            "source_word": "bonus",
+            "target_word": "extra",
+            "count": 15,
+            "probability": 0.9,
+        },
+    ]
+    resp = client.post(
+        f"{prefix}/assessment/{assessment_id}/eflomal-dictionary",
+        json=dict_items,
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = client.post(
+        f"{prefix}/assessment/{assessment_id}/eflomal-cooccurrences",
+        json=[],
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Target word counts: "extra" appears 15 times → alignment_frequency=1.0.
+    resp = client.post(
+        f"{prefix}/assessment/{assessment_id}/eflomal-target-word-counts",
+        json=[{"word": "extra", "count": 15}],
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Patch the verse text for GEN 1:1 on the target revision to include "extra".
+    from database.models import VerseText as VerseTextModel
+
+    tgt_vt = (
+        test_db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == test_revision_id,
+            VerseTextModel.verse_reference == "GEN 1:1",
+        )
+        .first()
+    )
+    original_text = tgt_vt.text
+    tgt_vt.text = original_text + " extra"
+    test_db_session.commit()
+
+    try:
+        resp = client.get(
+            f"{prefix}/assessment/{assessment_id}/eflomal/missing-words",
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["assessment_id"] == assessment_id
+        assert body["total_count"] >= 1
+        vrefs_with_missing = [r["vref"] for r in body["results"]]
+        assert "GEN 1:1" in vrefs_with_missing
+        gen_1_1_results = [r for r in body["results"] if r["vref"] == "GEN 1:1"]
+        target_words = [r["target_word"] for r in gen_1_1_results]
+        assert "extra" in target_words
+        extra_result = next(r for r in gen_1_1_results if r["target_word"] == "extra")
+        assert "bonus" in extra_result["known_sources"]
+        assert extra_result["score"] >= 0.5
+    finally:
+        # Restore original text so other tests are not affected.
+        tgt_vt.text = original_text
+        test_db_session.commit()
+
+
+def test_get_eflomal_missing_words_no_artifacts_returns_404(
+    client,
+    regular_token1,
+    test_db_session,
+    test_revision_id,
+    test_revision_id_2,
+):
+    """Returns 404 when no eflomal artifacts have been pushed."""
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="word-alignment",
+        status="finished",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+
+    resp = client.get(
+        f"{prefix}/assessment/{assessment.id}/eflomal/missing-words",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 404
+
+
+def test_get_eflomal_missing_words_unauthorized(
+    client,
+    regular_token2,
+    eflomal_scoring_assessment_id,
+):
+    """A user without group access is denied."""
+    resp = client.get(
+        f"{prefix}/assessment/{eflomal_scoring_assessment_id}/eflomal/missing-words",
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
     assert resp.status_code == 403

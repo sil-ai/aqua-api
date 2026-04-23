@@ -206,3 +206,115 @@ def score_verse_pair(
         "coverage": round(coverage, 4),
         "num_links": len(links),
     }
+
+
+def build_reverse_dictionary(
+    dictionary: Dict[Tuple[str, str], Dict],
+    min_count: int = 3,
+) -> Dict[str, List[Tuple[str, int]]]:
+    """Index the dictionary by target word: tgt_norm -> [(src_norm, count), ...]
+    sorted by count descending.
+
+    Only pairs with count >= min_count are kept to filter low-signal noise.
+    Used by detect_missing_words_for_verse to find whether a target word has
+    known source equivalents that are absent from the current verse.
+    """
+    result: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
+    for (src_norm, tgt_norm), info in dictionary.items():
+        if info["count"] >= min_count:
+            result[tgt_norm].append((src_norm, info["count"]))
+    for tgt in result:
+        result[tgt].sort(key=lambda pair: pair[1], reverse=True)
+    return dict(result)
+
+
+def detect_missing_words_for_verse(
+    src_text: str,
+    tgt_text: str,
+    reverse_dict: Dict[str, List[Tuple[str, int]]],
+    tgt_word_counts: Dict[str, int],
+    min_alignment_count: int = 10,
+    min_frequency: float = 0.5,
+    min_word_len: int = 3,
+    aligned_tgt_indices: set = None,
+) -> List[Dict]:
+    """Detect target words that are likely missing translations.
+
+    A target word is flagged as potentially missing if:
+      1. It was not aligned to any source word in this verse.
+      2. The dictionary contains known source equivalents for it
+         (reverse_dict lookup).
+      3. None of those known source equivalents appear in the source verse —
+         i.e. the source side of the "usual translation" is absent, so the
+         target word is unexpectedly present without a counterpart.
+      4. The word meets minimum corpus frequency and alignment-frequency
+         thresholds to filter noise.
+
+    Port of detect_missing_words_single from aqua-assessments scoring.py.
+
+    Args:
+        src_text: Source (reference) verse text.
+        tgt_text: Target (revision) verse text.
+        reverse_dict: tgt_norm -> [(src_norm, count), ...] (see
+            build_reverse_dictionary).
+        tgt_word_counts: Corpus-wide normalized target word counts from
+            EflomalTargetWordCount (used to compute alignment_frequency).
+        min_alignment_count: Minimum total alignment count across the corpus
+            for the target word to be considered signal-rich enough to flag.
+        min_frequency: Minimum alignment_frequency (aligned_count /
+            total_appearances) required to flag a word.
+        min_word_len: Minimum normalized word length to consider.
+        aligned_tgt_indices: Set of target word indices that were already
+            aligned by score_verse_pair. Defaults to empty set (treat
+            all target words as unaligned).
+
+    Returns:
+        List of dicts with keys: target_word, known_sources (str),
+        score (float, rounded to 4 dp).
+    """
+    if aligned_tgt_indices is None:
+        aligned_tgt_indices = set()
+
+    tgt_words = tgt_text.strip().split() if tgt_text else []
+    src_words = src_text.strip().split() if src_text else []
+    src_norms = {normalize_word(w) for w in src_words if normalize_word(w)}
+
+    missing: List[Dict] = []
+    for j, tgt_word in enumerate(tgt_words):
+        if j in aligned_tgt_indices:
+            continue
+
+        tgt_norm = normalize_word(tgt_word)
+        if not tgt_norm or len(tgt_norm) < min_word_len:
+            continue
+
+        known_sources = reverse_dict.get(tgt_norm, [])
+        if not known_sources:
+            continue
+
+        # If any known source equivalent is present in the source verse,
+        # the word is not "missing" — it just wasn't aligned.
+        if any(s in src_norms for s, _ in known_sources):
+            continue
+
+        total_count = sum(c for _, c in known_sources)
+        if total_count < min_alignment_count:
+            continue
+
+        total_appearances = tgt_word_counts.get(tgt_norm, 0)
+        if total_appearances == 0:
+            continue
+        alignment_frequency = total_count / total_appearances
+        if alignment_frequency < min_frequency:
+            continue
+
+        known_str = "; ".join(f"{s}({c})" for s, c in known_sources[:5])
+        missing.append(
+            {
+                "target_word": tgt_word,
+                "known_sources": known_str,
+                "score": round(min(alignment_frequency, 1.0), 4),
+            }
+        )
+
+    return missing

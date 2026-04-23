@@ -153,3 +153,5 @@ Scripts
 
 # GitHub Copilot
 .github/copilot-instructions.md
+
+temp/

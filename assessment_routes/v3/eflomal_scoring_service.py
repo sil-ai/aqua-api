@@ -22,11 +22,14 @@ from database.models import (
     EflomalAssessment,
     EflomalCooccurrence,
     EflomalDictionary,
+    EflomalTargetWordCount,
     VerseText,
 )
 from utils.eflomal_scoring import (
+    build_reverse_dictionary,
     build_src_to_translations,
     compute_link_score,
+    detect_missing_words_for_verse,
     normalize_dictionary_list,
     normalize_word,
     score_verse_pair,
@@ -254,16 +257,126 @@ async def score_verses_for_assessment(
     return inserted_ids
 
 
+async def get_missing_words_for_assessment(
+    db: AsyncSession,
+    assessment_id: int,
+    min_alignment_count: int = 10,
+    min_frequency: float = 0.5,
+    min_word_len: int = 3,
+) -> List[Dict]:
+    """Return per-verse missing-word detections from stored eflomal artifacts.
+
+    For every verse pair where both the revision and reference have text,
+    runs detect_missing_words_for_verse using the stored dictionary and
+    target-word-count artifacts.  Returns a flat list of dicts, one entry per
+    flagged target word, each tagged with its vref.
+
+    Raises HTTPException on the same validation errors as
+    score_verses_for_assessment (404 / 400).
+    """
+    assessment = (
+        (await db.execute(select(Assessment).where(Assessment.id == assessment_id)))
+        .scalars()
+        .first()
+    )
+    if assessment is None or assessment.deleted:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    if assessment.type != "word-alignment":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Assessment type must be 'word-alignment' for eflomal scoring, "
+                f"got {assessment.type!r}"
+            ),
+        )
+    if assessment.revision_id is None or assessment.reference_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Eflomal scoring requires both revision_id and reference_id",
+        )
+
+    eflomal = (
+        (
+            await db.execute(
+                select(EflomalAssessment).where(
+                    EflomalAssessment.assessment_id == assessment_id
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if eflomal is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No eflomal artifacts found — push metadata, dictionary, "
+                "and cooccurrences first"
+            ),
+        )
+
+    dictionary, _src_to_translations, _cooccurrence = await _load_artifacts(
+        db, eflomal.id
+    )
+    if not dictionary:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Eflomal dictionary is empty for this assessment; "
+                "push dictionary entries before requesting missing words"
+            ),
+        )
+
+    # Build reverse dictionary (tgt -> known sources) with min_count=3 to
+    # match the aqua-assessments reference implementation.
+    reverse_dict = build_reverse_dictionary(dictionary, min_count=3)
+
+    # Load target word counts from DB.
+    twc_rows = (
+        (
+            await db.execute(
+                select(EflomalTargetWordCount).where(
+                    EflomalTargetWordCount.assessment_id == eflomal.id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    tgt_word_counts = {r.word: r.count for r in twc_rows}
+
+    pairs = await _load_verse_pairs(db, assessment.revision_id, assessment.reference_id)
+
+    results: List[Dict] = []
+    for vref, src_text, tgt_text in pairs:
+        verse_missing = detect_missing_words_for_verse(
+            src_text,
+            tgt_text,
+            reverse_dict,
+            tgt_word_counts,
+            min_alignment_count=min_alignment_count,
+            min_frequency=min_frequency,
+            min_word_len=min_word_len,
+        )
+        for entry in verse_missing:
+            results.append({"vref": vref, **entry})
+
+    return results
+
+
 __all__ = [
     "score_verses_for_assessment",
+    "get_missing_words_for_assessment",
     # Exported for tests; not called directly by route handlers.
     "_load_artifacts",
     "_load_verse_pairs",
     "_parse_vref",
     # Re-exports for convenience in tests that want to build artifacts inline.
     "normalize_dictionary_list",
+    "build_reverse_dictionary",
     "build_src_to_translations",
     "compute_link_score",
     "normalize_word",
     "score_verse_pair",
+    "detect_missing_words_for_verse",
 ]

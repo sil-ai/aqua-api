@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from assessment_routes.v3.eflomal_scoring_service import (
+    get_missing_words_for_assessment,
     score_verses_for_assessment,
 )
 from database.dependencies import get_db
@@ -28,6 +29,7 @@ from models import (
     EflomalAssessmentOut,
     EflomalCooccurrenceItem,
     EflomalDictionaryItem,
+    EflomalMissingWordsResponse,
     EflomalResultsPullResponse,
     EflomalResultsPushRequest,
     EflomalTargetWordCountItem,
@@ -561,6 +563,81 @@ async def score_eflomal_verses(
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error scoring verses for assessment {assessment_id}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# GET endpoint — compute missing words from stored artifacts
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/assessment/{assessment_id}/eflomal/missing-words",
+    response_model=EflomalMissingWordsResponse,
+)
+async def get_eflomal_missing_words(
+    assessment_id: int,
+    min_alignment_count: int = 10,
+    min_frequency: float = 0.5,
+    min_word_len: int = 3,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Detect missing words for every verse pair using stored eflomal artifacts.
+
+    A target word is flagged as potentially missing if it was not aligned to
+    any source word AND its known corpus-level source equivalents are absent
+    from the current source verse.  The intuition is: if the model knows this
+    target word normally translates word X, but word X doesn't appear in the
+    source verse, the target word is unexpectedly present — a possible
+    translation mistake.
+
+    Requires the dictionary and target-word-count artifacts to have been
+    pushed for this assessment.
+
+    Query params:
+     - min_alignment_count: minimum total alignment count across the corpus
+       for a target word to be considered (default 10).
+     - min_frequency: minimum alignment_frequency (aligned / total appearances)
+       required to flag a word (default 0.5).
+     - min_word_len: minimum normalized word length to consider (default 3).
+    """
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    try:
+        results = await get_missing_words_for_assessment(
+            db,
+            assessment_id,
+            min_alignment_count=min_alignment_count,
+            min_frequency=min_frequency,
+            min_word_len=min_word_len,
+        )
+        return EflomalMissingWordsResponse(
+            assessment_id=assessment_id,
+            results=results,
+            total_count=len(results),
+        )
+    except HTTPException:
+        raise
+    except SQLAlchemyError:
+        logger.exception(
+            "Eflomal missing-words query failed, assessment_id=%s", assessment_id
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error computing missing words for assessment {assessment_id}",
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected error in eflomal missing-words, assessment_id=%s",
+            assessment_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error computing missing words for assessment {assessment_id}",
         )
 
 
