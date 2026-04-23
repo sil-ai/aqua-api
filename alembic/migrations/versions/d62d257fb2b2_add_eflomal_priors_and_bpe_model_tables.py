@@ -27,6 +27,9 @@ def upgrade() -> None:
         sa.Column("source_bpe", sa.Text(), nullable=False),
         sa.Column("target_bpe", sa.Text(), nullable=False),
         sa.Column("alpha", sa.Float(), nullable=False),
+        sa.CheckConstraint(
+            "alpha >= 0.5 AND alpha <= 0.95", name="ck_eflomal_prior_alpha_range"
+        ),
         sa.ForeignKeyConstraint(
             ["assessment_id"], ["eflomal_assessment.id"], ondelete="CASCADE"
         ),

@@ -50,6 +50,10 @@ router = fastapi.APIRouter()
 _BATCH_SIZE = 5_000
 _MAX_BODY_ITEMS = 5_000
 
+# BPE model protobufs are typically 100–300 KB each; allow generous headroom
+# but still cap to protect memory / DB.
+_MAX_BPE_MODEL_BYTES = 10 * 1024 * 1024  # 10 MB per direction
+
 
 def _check_body_size(body):
     if len(body) > _MAX_BODY_ITEMS:
@@ -622,6 +626,16 @@ async def push_eflomal_bpe_models(
             status_code=422,
             detail="source_model_b64 and target_model_b64 must be valid base64",
         )
+
+    for direction, blob in (("source", source_bytes), ("target", target_bytes)):
+        if len(blob) > _MAX_BPE_MODEL_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"{direction}_model_b64 decodes to {len(blob)} bytes "
+                    f"(max {_MAX_BPE_MODEL_BYTES})"
+                ),
+            )
 
     try:
         await db.execute(

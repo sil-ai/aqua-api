@@ -881,6 +881,9 @@ class EflomalPrior(Base):
     alpha = Column(Float, nullable=False)
 
     __table_args__ = (
+        CheckConstraint(
+            "alpha >= 0.5 AND alpha <= 0.95", name="ck_eflomal_prior_alpha_range"
+        ),
         Index("ix_eflomal_prior_assessment", "assessment_id"),
         Index(
             "ux_eflomal_prior_assessment_source_target",

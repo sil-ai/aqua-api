@@ -645,6 +645,19 @@ def test_push_eflomal_priors_unauthorized(
     assert response.status_code == 403
 
 
+def test_push_eflomal_priors_alpha_out_of_range(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Alpha outside [0.5, 0.95] should be rejected with 422."""
+    payload = [{"source_bpe": "▁x", "target_bpe": "▁y", "alpha": 1.5}]
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors",
+        json=payload,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422
+
+
 # ---------------------------------------------------------------------------
 # BPE models endpoint
 # ---------------------------------------------------------------------------
@@ -731,6 +744,24 @@ def test_push_eflomal_bpe_models_unauthorized(
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
     assert response.status_code == 403
+
+
+def test_push_eflomal_bpe_models_too_large(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Oversized BPE model payload should return 413."""
+    oversized = b"\x00" * (10 * 1024 * 1024 + 1)
+    payload = {
+        "source_model_b64": base64.b64encode(oversized).decode("ascii"),
+        "target_model_b64": base64.b64encode(b"tiny").decode("ascii"),
+    }
+    response = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-bpe-models",
+        json=payload,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 413
+    assert "source" in response.json()["detail"]
 
 
 def test_push_eflomal_priors_duplicate_rejected(

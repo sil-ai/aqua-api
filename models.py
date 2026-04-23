@@ -1199,7 +1199,7 @@ class EflomalPriorItem(BaseModel):
 
     source_bpe: str
     target_bpe: str
-    alpha: float
+    alpha: float = Field(ge=0.5, le=0.95, allow_inf_nan=False)
 
 
 class EflomalBpeModels(BaseModel):
