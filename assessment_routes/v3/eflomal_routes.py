@@ -1,11 +1,13 @@
 __version__ = "v3"
 
+import base64
+import binascii
 import socket
 from typing import List
 
 import fastapi
 from fastapi import Depends, HTTPException
-from sqlalchemy import desc, insert, select
+from sqlalchemy import delete, desc, insert, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,15 +17,19 @@ from database.models import (
 )
 from database.models import EflomalAssessment as EflomalAssessmentModel
 from database.models import (
+    EflomalBpeModel,
     EflomalCooccurrence,
     EflomalDictionary,
+    EflomalPrior,
     EflomalTargetWordCount,
 )
 from database.models import UserDB as UserModel
 from models import (
     EflomalAssessmentOut,
+    EflomalBpeModels,
     EflomalCooccurrenceItem,
     EflomalDictionaryItem,
+    EflomalPriorItem,
     EflomalResultsPullResponse,
     EflomalResultsPushRequest,
     EflomalTargetWordCountItem,
@@ -43,6 +49,10 @@ router = fastapi.APIRouter()
 # batching where possible.
 _BATCH_SIZE = 5_000
 _MAX_BODY_ITEMS = 5_000
+
+# BPE model protobufs are typically 100–300 KB each; allow generous headroom
+# but still cap to protect memory / DB.
+_MAX_BPE_MODEL_BYTES = 10 * 1024 * 1024  # 10 MB per direction
 
 
 def _check_body_size(body):
@@ -110,6 +120,39 @@ async def _fetch_eflomal_response(
     )
     twc_rows = twc_result.scalars().all()
 
+    prior_result = await db.execute(
+        select(EflomalPrior).where(EflomalPrior.assessment_id == ea_id)
+    )
+    prior_rows = prior_result.scalars().all()
+
+    bpe_result = await db.execute(
+        select(EflomalBpeModel).where(EflomalBpeModel.assessment_id == ea_id)
+    )
+    bpe_rows = bpe_result.scalars().all()
+
+    bpe_by_direction = {r.direction: r for r in bpe_rows}
+    bpe_models = None
+    if "source" in bpe_by_direction and "target" in bpe_by_direction:
+        bpe_models = EflomalBpeModels(
+            source_model_b64=base64.b64encode(
+                bpe_by_direction["source"].model_bytes
+            ).decode("ascii"),
+            target_model_b64=base64.b64encode(
+                bpe_by_direction["target"].model_bytes
+            ).decode("ascii"),
+        )
+
+    # Fetch parent Assessment to expose revision/reference IDs for predict-time
+    # anchor sampling.
+    parent = await db.execute(
+        select(Assessment.revision_id, Assessment.reference_id).where(
+            Assessment.id == eflomal.assessment_id
+        )
+    )
+    parent_row = parent.first()
+    revision_id = parent_row.revision_id if parent_row else None
+    reference_id = parent_row.reference_id if parent_row else None
+
     return EflomalResultsPullResponse(
         assessment_id=eflomal.assessment_id,
         source_language=eflomal.source_language,
@@ -119,6 +162,8 @@ async def _fetch_eflomal_response(
         num_dictionary_entries=eflomal.num_dictionary_entries,
         num_missing_words=eflomal.num_missing_words,
         created_at=eflomal.created_at,
+        reference_id=reference_id,
+        revision_id=revision_id,
         dictionary=[
             EflomalDictionaryItem(
                 source_word=r.source_word,
@@ -144,6 +189,15 @@ async def _fetch_eflomal_response(
             )
             for r in twc_rows
         ],
+        priors=[
+            EflomalPriorItem(
+                source_bpe=r.source_bpe,
+                target_bpe=r.target_bpe,
+                alpha=r.alpha,
+            )
+            for r in prior_rows
+        ],
+        bpe_models=bpe_models,
     )
 
 
@@ -462,6 +516,179 @@ async def push_eflomal_target_word_counts(
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error inserting {len(rows)} target word counts for assessment {assessment_id}",
+        )
+
+
+@router.post(
+    "/assessment/{assessment_id}/eflomal-priors",
+    response_model=InsertResponse,
+)
+async def push_eflomal_priors(
+    assessment_id: int,
+    body: List[EflomalPriorItem],
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk insert LEX-format priors for an eflomal assessment.
+
+    Maximum of 5,000 items per request. For larger datasets, split into
+    multiple requests of 5,000 items or fewer.
+
+    Not idempotent: enforced by a unique index on (assessment_id, source_bpe,
+    target_bpe). Re-pushing a batch that overlaps previously-inserted rows
+    fails with 400. Callers should push each prior exactly once per
+    assessment.
+
+    Returns the list of inserted row IDs in the same order as the input.
+    """
+    eflomal = await _get_eflomal_assessment(assessment_id, db)
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    _check_body_size(body)
+    if not body:
+        return InsertResponse(ids=[])
+
+    rows = [
+        {
+            "assessment_id": eflomal.id,
+            "source_bpe": item.source_bpe,
+            "target_bpe": item.target_bpe,
+            "alpha": item.alpha,
+        }
+        for item in body
+    ]
+    try:
+        ids = await _batch_insert(db, EflomalPrior, rows)
+        await db.commit()
+        return InsertResponse(ids=ids)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate or constraint violation inserting {len(rows)} priors for assessment {assessment_id}",
+        )
+    except SQLAlchemyError:
+        logger.exception(
+            "Bulk insert failed for eflomal_prior, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting {len(rows)} priors for assessment {assessment_id}",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error pushing eflomal priors, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting {len(rows)} priors for assessment {assessment_id}",
+        )
+
+
+@router.post(
+    "/assessment/{assessment_id}/eflomal-bpe-models",
+    response_model=InsertResponse,
+)
+async def push_eflomal_bpe_models(
+    assessment_id: int,
+    body: EflomalBpeModels,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Store the SentencePiece BPE models for an eflomal assessment.
+
+    Idempotent on (assessment_id, direction): existing rows for this assessment
+    are deleted and replaced with the new pair. The request body carries
+    base64-encoded serialized protobuf bytes for the source and target models.
+    """
+    eflomal = await _get_eflomal_assessment(assessment_id, db)
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    try:
+        source_bytes = base64.b64decode(body.source_model_b64, validate=True)
+        target_bytes = base64.b64decode(body.target_model_b64, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(
+            status_code=422,
+            detail="source_model_b64 and target_model_b64 must be valid base64",
+        )
+
+    for direction, blob in (("source", source_bytes), ("target", target_bytes)):
+        if len(blob) > _MAX_BPE_MODEL_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"{direction}_model_b64 decodes to {len(blob)} bytes "
+                    f"(max {_MAX_BPE_MODEL_BYTES})"
+                ),
+            )
+
+    try:
+        await db.execute(
+            delete(EflomalBpeModel).where(EflomalBpeModel.assessment_id == eflomal.id)
+        )
+        stmt = (
+            insert(EflomalBpeModel)
+            .values(
+                [
+                    {
+                        "assessment_id": eflomal.id,
+                        "direction": "source",
+                        "model_bytes": source_bytes,
+                    },
+                    {
+                        "assessment_id": eflomal.id,
+                        "direction": "target",
+                        "model_bytes": target_bytes,
+                    },
+                ]
+            )
+            .returning(EflomalBpeModel.id)
+        )
+        result = await db.execute(stmt)
+        ids = [r[0] for r in result.fetchall()]
+        await db.commit()
+        return InsertResponse(ids=ids)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Constraint violation inserting BPE models for assessment {assessment_id}",
+        )
+    except SQLAlchemyError:
+        logger.exception(
+            "Insert failed for eflomal_bpe_model, assessment_id=%s", assessment_id
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting BPE models for assessment {assessment_id}",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error pushing eflomal BPE models, assessment_id=%s",
+            assessment_id,
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting BPE models for assessment {assessment_id}",
         )
 
 
