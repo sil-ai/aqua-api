@@ -1,7 +1,7 @@
 """add assessment_id fk to training_job
 
 Revision ID: c9a2f4b7e3d8
-Revises: d7e9f4c2a851
+Revises: 7f2e9a4b8c31
 Create Date: 2026-04-22
 """
 
@@ -11,7 +11,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "c9a2f4b7e3d8"
-down_revision = "d7e9f4c2a851"
+down_revision = "7f2e9a4b8c31"
 branch_labels = None
 depends_on = None
 
