@@ -491,9 +491,10 @@ async def score_eflomal_verses(
     flag=False, note=null). On success, also transitions the assessment's
     status to 'finished'.
 
-    Call this after metadata / dictionary / cooccurrences / target-word-counts
-    have all been pushed; this replaces the runner's previous PATCH-to-
-    finished at the end of the eflomal push flow.
+    Call this after metadata + dictionary + cooccurrences have been pushed —
+    target-word-counts are not consulted by the scoring path. This replaces
+    the runner's previous PATCH-to-finished at the end of the eflomal push
+    flow.
 
     The operation is idempotent: any pre-existing assessment_result rows for
     this assessment are deleted before insert, so retries after a partial

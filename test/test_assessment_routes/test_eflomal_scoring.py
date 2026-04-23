@@ -63,11 +63,23 @@ def test_normalize_dictionary_list_drops_empty_normalized_entries():
     assert list(d.keys()) == [("love", "amor")]
 
 
-def test_build_src_to_translations_sorts_desc_and_applies_min_count():
+def test_build_src_to_translations_default_keeps_all_pairs():
+    # Default min_count=1 — every stored pair stays in the index. Mirrors
+    # the reference _realtime_dictionary's inline index.
     dictionary = {
         ("run", "corre"): {"count": 15, "probability": 0.9},
         ("run", "corren"): {"count": 3, "probability": 0.6},
-        ("run", "correr"): {"count": 2, "probability": 0.4},  # below default min_count
+        ("run", "correr"): {"count": 1, "probability": 0.4},
+    }
+    out = build_src_to_translations(dictionary)
+    assert out["run"] == [("corre", 15), ("corren", 3), ("correr", 1)]
+
+
+def test_build_src_to_translations_explicit_min_count_filters_and_sorts():
+    dictionary = {
+        ("run", "corre"): {"count": 15, "probability": 0.9},
+        ("run", "corren"): {"count": 3, "probability": 0.6},
+        ("run", "correr"): {"count": 2, "probability": 0.4},  # dropped at min_count=3
     }
     out = build_src_to_translations(dictionary, min_count=3)
     assert out["run"] == [("corre", 15), ("corren", 3)]
@@ -137,6 +149,29 @@ def test_score_verse_pair_basic_alignment_produces_expected_score():
     assert math.isclose(out["avg_link_score"], round(expected_avg, 4))
     # verse_score = avg_link_score * coverage = 0.8 * 1.0 = 0.8
     assert math.isclose(out["verse_score"], round(expected_avg, 4))
+
+
+def test_score_verse_pair_coverage_ignores_punctuation_tokens():
+    # Punctuation-only tokens (",", "!", ".") normalize to "" and can't be
+    # aligned. Coverage should be computed over alignable tokens only, so
+    # both sides here are effectively 3/3 — coverage == 1.0, not 3/5 or 3/4.
+    dictionary = {
+        ("god", "dios"): {"count": 10, "probability": 0.9},
+        ("loves", "ama"): {"count": 10, "probability": 0.9},
+        ("us", "nos"): {"count": 10, "probability": 0.9},
+    }
+    src_to_tr = build_src_to_translations(dictionary)
+    out = score_verse_pair(
+        "God , loves us !",
+        "Dios ama nos .",
+        dictionary,
+        src_to_tr,
+        {},
+    )
+    assert out["num_links"] == 3
+    assert math.isclose(out["coverage"], 1.0)
+    assert math.isclose(out["avg_link_score"], 0.9)
+    assert math.isclose(out["verse_score"], 0.9)
 
 
 def test_score_verse_pair_partial_coverage_bottlenecks_on_min():
@@ -251,15 +286,14 @@ def _push_scoring_artifacts(client, token, assessment_id):
             "target_language": "spa",
             "num_verse_pairs": 3,
             "num_alignment_links": 9,
-            "num_dictionary_entries": 3,
+            "num_dictionary_entries": 5,
             "num_missing_words": 0,
         },
         headers=headers,
     )
     assert meta.status_code == 200, meta.text
 
-    # Dictionary: three src→tgt pairs. count=10 >= min_count=3 so they pass
-    # the build_src_to_translations filter.
+    # Dictionary: five src→tgt pairs with count=10 each.
     dict_items = [
         {"source_word": "god", "target_word": "dios", "count": 10, "probability": 0.9},
         {"source_word": "made", "target_word": "hizo", "count": 10, "probability": 0.8},

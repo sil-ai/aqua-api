@@ -89,7 +89,9 @@ async def _load_artifacts(
         for r in dict_rows
     ]
     dictionary = normalize_dictionary_list(raw_dict_list)
-    src_to_translations = build_src_to_translations(dictionary, min_count=3)
+    # No min_count cutoff — match the reference _realtime_dictionary's
+    # alignment behavior (every stored dictionary pair is eligible).
+    src_to_translations = build_src_to_translations(dictionary)
 
     # EflomalCooccurrence rows already store normalized words (per the
     # training pipeline's normalize_word() output), so no further
@@ -190,7 +192,7 @@ async def score_verses_for_assessment(
             status_code=404,
             detail=(
                 "No eflomal artifacts found — push metadata, dictionary, "
-                "cooccurrences, and target-word-counts first"
+                "and cooccurrences first"
             ),
         )
 

@@ -61,14 +61,15 @@ def normalize_dictionary_list(
 
 def build_src_to_translations(
     dictionary: Dict[Tuple[str, str], Dict],
-    min_count: int = 3,
+    min_count: int = 1,
 ) -> Dict[str, List[Tuple[str, int]]]:
     """Index the dictionary by source word: src_norm -> [(tgt_norm, count), ...]
     sorted by count descending.
 
-    Entries with count < min_count are dropped to suppress noise; this mirrors
-    build_reverse_dictionary() in the aqua-assessments port (same cutoff).
-    Used by the greedy dictionary-lookup alignment inside score_verse_pair.
+    Default `min_count=1` keeps every pair; matches the inline index the
+    aqua-assessments reference builds in `_realtime_dictionary`, which
+    applies no cutoff. Callers that want denoising (e.g. missing-words
+    detection) can pass a higher threshold explicitly.
     """
     result: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
     for (src_norm, tgt_norm), info in dictionary.items():
@@ -117,7 +118,7 @@ def score_verse_pair(
     dictionary: Dict[Tuple[str, str], Dict],
     src_to_translations: Dict[str, List[Tuple[str, int]]],
     cooccurrence: Dict[Tuple[str, str], Dict],
-) -> Dict[str, float]:
+) -> Dict[str, float | int]:
     """Score one verse pair from artifacts only (no eflomal call).
 
     Algorithm (port of _realtime_dictionary in aqua-assessments app.py):
@@ -134,6 +135,11 @@ def score_verse_pair(
     All zero if either side is empty or no links are found. Values are
     rounded to 4 decimals to match the aqua-assessments convention and keep
     stored scores consistent across back-end runs.
+
+    Coverage denominators use the count of non-empty-normalized tokens
+    (i.e. tokens that were actually candidates for alignment), not the raw
+    whitespace-split length, so punctuation-only tokens don't silently
+    deflate the score.
     """
     src_words = src_text.strip().split() if src_text else []
     tgt_words = tgt_text.strip().split() if tgt_text else []
@@ -147,18 +153,22 @@ def score_verse_pair(
         }
 
     tgt_norm_to_idx: Dict[str, List[int]] = defaultdict(list)
+    tgt_alignable = 0
     for j, tgt in enumerate(tgt_words):
         tgt_norm = normalize_word(tgt)
         if tgt_norm:
             tgt_norm_to_idx[tgt_norm].append(j)
+            tgt_alignable += 1
 
     links: List[Tuple[int, int, str, str]] = []
     used_tgt: set = set()
+    src_alignable = 0
 
     for i, src in enumerate(src_words):
         src_norm = normalize_word(src)
         if not src_norm:
             continue
+        src_alignable += 1
         for tgt_norm, _count in src_to_translations.get(src_norm, []):
             matched = False
             for j in tgt_norm_to_idx.get(tgt_norm, []):
@@ -185,8 +195,8 @@ def score_verse_pair(
 
     aligned_src = len({i for i, _, _, _ in links})
     aligned_tgt = len({j for _, j, _, _ in links})
-    src_coverage = aligned_src / len(src_words)
-    tgt_coverage = aligned_tgt / len(tgt_words)
+    src_coverage = aligned_src / src_alignable
+    tgt_coverage = aligned_tgt / tgt_alignable
     coverage = min(src_coverage, tgt_coverage)
 
     verse_score = avg_link_score * coverage
