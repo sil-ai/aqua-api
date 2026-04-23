@@ -1,6 +1,7 @@
 __version__ = "v3"
 
 import socket
+from datetime import datetime
 from typing import List
 
 import fastapi
@@ -9,6 +10,10 @@ from sqlalchemy import desc, insert, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from assessment_routes.v3.eflomal_scoring_service import (
+    get_missing_words_for_assessment,
+    score_verses_for_assessment,
+)
 from database.dependencies import get_db
 from database.models import (
     Assessment,
@@ -24,6 +29,7 @@ from models import (
     EflomalAssessmentOut,
     EflomalCooccurrenceItem,
     EflomalDictionaryItem,
+    EflomalMissingWordsResponse,
     EflomalResultsPullResponse,
     EflomalResultsPushRequest,
     EflomalTargetWordCountItem,
@@ -462,6 +468,176 @@ async def push_eflomal_target_word_counts(
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error inserting {len(rows)} target word counts for assessment {assessment_id}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# POST endpoint — compute verse scores from stored artifacts
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/assessment/{assessment_id}/eflomal/score-verses",
+    response_model=InsertResponse,
+)
+async def score_eflomal_verses(
+    assessment_id: int,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compute per-verse scores from stored eflomal artifacts.
+
+    Loads the dictionary + cooccurrence artifacts for this assessment, scores
+    every verse pair where both the revision and reference have non-empty
+    text, and writes one row per verse into assessment_result (score ∈ [0, 1],
+    flag=False, note=null). On success, also transitions the assessment's
+    status to 'finished'.
+
+    Call this after metadata + dictionary + cooccurrences have been pushed —
+    target-word-counts are not consulted by the scoring path. This replaces
+    the runner's previous PATCH-to-finished at the end of the eflomal push
+    flow.
+
+    The operation is idempotent: any pre-existing assessment_result rows for
+    this assessment are deleted before insert, so retries after a partial
+    failure produce a clean, non-duplicated result set.
+    """
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    try:
+        inserted_ids = await score_verses_for_assessment(db, assessment_id)
+
+        # Transition to 'finished' in the same transaction as the inserts.
+        # Only two prior statuses are valid here: 'running' (normal path) and
+        # 'finished' (idempotent retry). Anything else is a caller bug — fail
+        # loudly so the runner can surface it.
+        assessment = (
+            (await db.execute(select(Assessment).where(Assessment.id == assessment_id)))
+            .scalars()
+            .first()
+        )
+        if assessment is not None:
+            if assessment.status not in ("running", "finished"):
+                await db.rollback()
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"Cannot finalize assessment in status "
+                        f"{assessment.status!r}; expected 'running' or 'finished'"
+                    ),
+                )
+            was_running = assessment.status == "running"
+            assessment.status = "finished"
+            if assessment.start_time is None:
+                assessment.start_time = datetime.utcnow()
+            # Only stamp end_time on the running→finished transition (or if a
+            # prior finalize somehow left it null). Retries on an already-
+            # finished assessment must not mutate end_time — downstream
+            # "latest finished" queries sort on it.
+            if was_running or assessment.end_time is None:
+                assessment.end_time = datetime.utcnow()
+
+        await db.commit()
+        return InsertResponse(ids=inserted_ids)
+    except HTTPException:
+        await db.rollback()
+        raise
+    except SQLAlchemyError:
+        logger.exception(
+            "Eflomal verse scoring failed, assessment_id=%s", assessment_id
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error scoring verses for assessment {assessment_id}",
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected error scoring eflomal verses, assessment_id=%s",
+            assessment_id,
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error scoring verses for assessment {assessment_id}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# GET endpoint — compute missing words from stored artifacts
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/assessment/{assessment_id}/eflomal/missing-words",
+    response_model=EflomalMissingWordsResponse,
+)
+async def get_eflomal_missing_words(
+    assessment_id: int,
+    min_alignment_count: int = 10,
+    min_frequency: float = 0.5,
+    min_word_len: int = 3,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Detect missing words for every verse pair using stored eflomal artifacts.
+
+    A target word is flagged as potentially missing if it was not aligned to
+    any source word AND its known corpus-level source equivalents are absent
+    from the current source verse.  The intuition is: if the model knows this
+    target word normally translates word X, but word X doesn't appear in the
+    source verse, the target word is unexpectedly present — a possible
+    translation mistake.
+
+    Requires the dictionary and target-word-count artifacts to have been
+    pushed for this assessment.
+
+    Query params:
+     - min_alignment_count: minimum total alignment count across the corpus
+       for a target word to be considered (default 10).
+     - min_frequency: minimum alignment_frequency (aligned / total appearances)
+       required to flag a word (default 0.5).
+     - min_word_len: minimum normalized word length to consider (default 3).
+    """
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    try:
+        results = await get_missing_words_for_assessment(
+            db,
+            assessment_id,
+            min_alignment_count=min_alignment_count,
+            min_frequency=min_frequency,
+            min_word_len=min_word_len,
+        )
+        return EflomalMissingWordsResponse(
+            assessment_id=assessment_id,
+            results=results,
+            total_count=len(results),
+        )
+    except HTTPException:
+        raise
+    except SQLAlchemyError:
+        logger.exception(
+            "Eflomal missing-words query failed, assessment_id=%s", assessment_id
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error computing missing words for assessment {assessment_id}",
+        )
+    except Exception:
+        logger.exception(
+            "Unexpected error in eflomal missing-words, assessment_id=%s",
+            assessment_id,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error computing missing words for assessment {assessment_id}",
         )
 
 
