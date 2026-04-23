@@ -1209,12 +1209,6 @@ class EflomalBpeModels(BaseModel):
     target_model_b64: str
 
 
-class EflomalBpeModelsPushResponse(BaseModel):
-    """Push response for /eflomal-bpe-models — row IDs for source and target."""
-
-    ids: List[int]
-
-
 class EflomalResultsPullResponse(BaseModel):
     """Full eflomal training artifacts for inference consumption.
 
@@ -1230,8 +1224,8 @@ class EflomalResultsPullResponse(BaseModel):
     num_dictionary_entries: int
     num_missing_words: int
     created_at: Optional[datetime.datetime] = None
-    reference_revision_id: Optional[int] = None
-    revision_revision_id: Optional[int] = None
+    reference_id: Optional[int] = None
+    revision_id: Optional[int] = None
     dictionary: list[EflomalDictionaryItem]
     cooccurrences: list[EflomalCooccurrenceItem]
     target_word_counts: list[EflomalTargetWordCountItem]

@@ -409,12 +409,15 @@ def test_pull_eflomal_results_success(client, regular_token1, _ensure_eflomal_pu
     assert "word" in first_twc
     assert "count" in first_twc
 
-    # Priors (n=5 in _push_all)
-    assert len(data["priors"]) == 5
-    first_prior = data["priors"][0]
-    assert "source_bpe" in first_prior
-    assert "target_bpe" in first_prior
-    assert "alpha" in first_prior
+    # Priors (n=5 in _push_all) — round-trip content check, not just keys
+    expected_priors = {
+        (p["source_bpe"], p["target_bpe"]): p["alpha"] for p in _prior_items(5)
+    }
+    assert len(data["priors"]) == len(expected_priors)
+    for p in data["priors"]:
+        key = (p["source_bpe"], p["target_bpe"])
+        assert key in expected_priors
+        assert p["alpha"] == pytest.approx(expected_priors[key])
 
     # BPE models (round-trip base64)
     assert data["bpe_models"] is not None
@@ -426,8 +429,8 @@ def test_pull_eflomal_results_success(client, regular_token1, _ensure_eflomal_pu
     )
 
     # Revision / reference IDs from the parent Assessment
-    assert data["revision_revision_id"] is not None
-    assert data["reference_revision_id"] is not None
+    assert data["revision_id"] is not None
+    assert data["reference_id"] is not None
 
 
 def test_pull_eflomal_results_not_found(client, regular_token1):
@@ -502,8 +505,8 @@ def test_pull_eflomal_results_by_language_success(
     assert len(data["target_word_counts"]) == 5
     assert len(data["priors"]) == 5
     assert data["bpe_models"] is not None
-    assert data["revision_revision_id"] is not None
-    assert data["reference_revision_id"] is not None
+    assert data["revision_id"] is not None
+    assert data["reference_id"] is not None
 
 
 def test_pull_eflomal_results_by_language_not_found(client, regular_token1):
@@ -730,29 +733,79 @@ def test_push_eflomal_bpe_models_unauthorized(
     assert response.status_code == 403
 
 
+def test_push_eflomal_priors_duplicate_rejected(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Re-pushing a prior that already exists should fail the unique constraint."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    # Use a fixed, unique payload that won't collide with other tests' priors
+    payload = [{"source_bpe": "▁dupe_probe", "target_bpe": "▁dupe_probe", "alpha": 0.7}]
+    first = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors",
+        json=payload,
+        headers=headers,
+    )
+    assert first.status_code == 200
+
+    second = client.post(
+        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors",
+        json=payload,
+        headers=headers,
+    )
+    assert second.status_code == 400
+    assert "Duplicate" in second.json()["detail"]
+
+
 # ---------------------------------------------------------------------------
 # Back-compat: pulls on assessments without priors / BPE models should succeed
 # ---------------------------------------------------------------------------
 
 
-def test_pull_eflomal_results_without_priors_or_bpe(
-    client, regular_token1, test_eflomal_assessment_id
+@pytest.fixture(scope="module")
+def test_eflomal_assessment_metadata_only_id(
+    test_db_session, test_revision_id, test_revision_id_2
 ):
-    """Older-style assessments (metadata + core data only) still return 200.
+    """Word-alignment assessment with eflomal metadata pushed but NO priors/BPE.
 
-    The test_eflomal_assessment_id fixture receives metadata/dictionary/etc via
-    earlier tests but the dedicated priors/BPE-models tests may or may not have
-    run in the same ordering. Exercise a pull and assert the new fields are
-    present with safe defaults when empty.
+    Isolated from test_eflomal_assessment_id so other tests in this module
+    cannot pollute it with priors / BPE models.
     """
-    # Pull: should always succeed regardless of whether priors/BPE exist
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="word-alignment",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+    return assessment.id
+
+
+def test_pull_eflomal_results_without_priors_or_bpe(
+    client, regular_token1, test_eflomal_assessment_metadata_only_id
+):
+    """Older-style assessments (no priors, no BPE) still return 200."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    # Push metadata only — no priors / BPE pushes
+    meta_resp = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json=_metadata_payload(test_eflomal_assessment_metadata_only_id),
+        headers=headers,
+    )
+    assert meta_resp.status_code == 200
+
     response = client.get(
         f"{prefix}/assessment/eflomal/results",
-        params={"assessment_id": test_eflomal_assessment_id},
-        headers={"Authorization": f"Bearer {regular_token1}"},
+        params={"assessment_id": test_eflomal_assessment_metadata_only_id},
+        headers=headers,
     )
     assert response.status_code == 200
     data = response.json()
-    assert "priors" in data
-    assert isinstance(data["priors"], list)
-    assert "bpe_models" in data  # value may be null if BPE not yet pushed
+    # With no priors pushed, the field must be an empty list (not null/missing)
+    assert data["priors"] == []
+    # With no BPE models pushed, the field must be null
+    assert data["bpe_models"] is None
+    # Parent revision/reference IDs come from the Assessment row
+    assert data["revision_id"] is not None
+    assert data["reference_id"] is not None

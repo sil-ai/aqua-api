@@ -27,7 +27,6 @@ from database.models import UserDB as UserModel
 from models import (
     EflomalAssessmentOut,
     EflomalBpeModels,
-    EflomalBpeModelsPushResponse,
     EflomalCooccurrenceItem,
     EflomalDictionaryItem,
     EflomalPriorItem,
@@ -147,8 +146,8 @@ async def _fetch_eflomal_response(
         )
     )
     parent_row = parent.first()
-    revision_revision_id = parent_row.revision_id if parent_row else None
-    reference_revision_id = parent_row.reference_id if parent_row else None
+    revision_id = parent_row.revision_id if parent_row else None
+    reference_id = parent_row.reference_id if parent_row else None
 
     return EflomalResultsPullResponse(
         assessment_id=eflomal.assessment_id,
@@ -159,8 +158,8 @@ async def _fetch_eflomal_response(
         num_dictionary_entries=eflomal.num_dictionary_entries,
         num_missing_words=eflomal.num_missing_words,
         created_at=eflomal.created_at,
-        reference_revision_id=reference_revision_id,
-        revision_revision_id=revision_revision_id,
+        reference_id=reference_id,
+        revision_id=revision_id,
         dictionary=[
             EflomalDictionaryItem(
                 source_word=r.source_word,
@@ -531,6 +530,11 @@ async def push_eflomal_priors(
     Maximum of 5,000 items per request. For larger datasets, split into
     multiple requests of 5,000 items or fewer.
 
+    Not idempotent: enforced by a unique index on (assessment_id, source_bpe,
+    target_bpe). Re-pushing a batch that overlaps previously-inserted rows
+    fails with 400. Callers should push each prior exactly once per
+    assessment.
+
     Returns the list of inserted row IDs in the same order as the input.
     """
     eflomal = await _get_eflomal_assessment(assessment_id, db)
@@ -539,9 +543,9 @@ async def push_eflomal_priors(
             status_code=403, detail="Not authorized for this assessment"
         )
 
+    _check_body_size(body)
     if not body:
         return InsertResponse(ids=[])
-    _check_body_size(body)
 
     rows = [
         {
@@ -590,7 +594,7 @@ async def push_eflomal_priors(
 
 @router.post(
     "/assessment/{assessment_id}/eflomal-bpe-models",
-    response_model=EflomalBpeModelsPushResponse,
+    response_model=InsertResponse,
 )
 async def push_eflomal_bpe_models(
     assessment_id: int,
@@ -644,7 +648,7 @@ async def push_eflomal_bpe_models(
         result = await db.execute(stmt)
         ids = [r[0] for r in result.fetchall()]
         await db.commit()
-        return EflomalBpeModelsPushResponse(ids=ids)
+        return InsertResponse(ids=ids)
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
