@@ -16,7 +16,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import backref, relationship
 from sqlalchemy.sql import func
@@ -1167,3 +1167,55 @@ class TfidfSvd(Base):
     n_features = Column(Integer, nullable=False)
     components_npy = Column(LargeBinary, nullable=False)
     dtype = Column(Text, nullable=False, server_default="float32")
+
+
+class TfidfSvdStaging(Base):
+    """In-flight chunked upload of TF-IDF artifacts. Dropped after commit/abort."""
+
+    __tablename__ = "tfidf_svd_staging"
+
+    upload_id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    assessment_id = Column(
+        Integer,
+        ForeignKey("assessment.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_language = Column(String(3), nullable=True)
+    n_components = Column(Integer, nullable=False)
+    n_corpus_vrefs = Column(Integer, nullable=False)
+    sklearn_version = Column(Text, nullable=False)
+    word_vocabulary = Column(JSONB, nullable=False)
+    word_idf = Column(JSONB, nullable=False)
+    word_params = Column(JSONB, nullable=False)
+    char_vocabulary = Column(JSONB, nullable=False)
+    char_idf = Column(JSONB, nullable=False)
+    char_params = Column(JSONB, nullable=False)
+    svd_n_components = Column(Integer, nullable=False)
+    svd_n_features = Column(Integer, nullable=False)
+    svd_dtype = Column(Text, nullable=False)
+    total_chunks = Column(Integer, nullable=False)
+    created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_tfidf_svd_staging_assessment", "assessment_id"),
+        Index("ix_tfidf_svd_staging_created_at", "created_at"),
+    )
+
+
+class TfidfSvdChunk(Base):
+    """One staged slice of an SVD components matrix. vstacked on commit."""
+
+    __tablename__ = "tfidf_svd_chunk"
+
+    upload_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tfidf_svd_staging.upload_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    chunk_index = Column(Integer, primary_key=True)
+    components_bytes = Column(LargeBinary, nullable=False)
+    received_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
