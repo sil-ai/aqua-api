@@ -6,10 +6,10 @@ Covers /v3/assessment/{id}/tfidf-artifacts/init, /chunk, /commit, /abort.
 import base64
 import io
 import uuid
-from datetime import datetime, timedelta
 
 import numpy as np
 import pytest
+from sqlalchemy import func, text
 
 from database.models import Assessment, TfidfSvdChunk, TfidfSvdStaging
 
@@ -834,6 +834,8 @@ def _insert_stale_staging(
 ) -> uuid.UUID:
     """Drop a hand-crafted staging row (and optional chunk) into the db with a
     backdated created_at, so the sweep treats it as abandoned."""
+    # Backdate via SQL `now() - interval ...` so the comparison stays on the
+    # DB clock — same expression the production sweep uses for its cutoff.
     staging = TfidfSvdStaging(
         upload_id=uuid.uuid4(),
         assessment_id=assessment_id,
@@ -851,7 +853,7 @@ def _insert_stale_staging(
         svd_n_features=2,
         svd_dtype="float32",
         total_chunks=1,
-        created_at=datetime.utcnow() - timedelta(hours=age_hours),
+        created_at=func.now() - text(f"interval '{age_hours} hours'"),
     )
     session.add(staging)
     session.flush()
@@ -961,15 +963,17 @@ def test_init_continues_when_sweep_fails(
     client, regular_token1, chunk_tfidf_assessment_id, test_db_session, monkeypatch
 ):
     """If _sweep_stale_staging raises, /init must still succeed — the cleanup
-    is opportunistic and must never break a user's upload."""
-    from sqlalchemy.exc import SQLAlchemyError
+    is opportunistic and must never break a user's upload.
 
+    Raises a plain RuntimeError (not SQLAlchemyError) to verify the broader
+    `except Exception` actually catches driver-level/non-ORM failures too.
+    """
     from assessment_routes.v3 import tfidf_artifact_routes as routes
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     async def boom(db, *, ttl_hours=routes._STAGING_TTL_HOURS):
-        raise SQLAlchemyError("simulated sweep failure")
+        raise RuntimeError("simulated sweep failure")
 
     monkeypatch.setattr(routes, "_sweep_stale_staging", boom)
 
