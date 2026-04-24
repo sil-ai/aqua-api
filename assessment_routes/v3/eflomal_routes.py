@@ -3,6 +3,8 @@ __version__ = "v3"
 import base64
 import binascii
 import socket
+import unicodedata
+from collections import defaultdict
 from typing import List
 
 import fastapi
@@ -32,6 +34,7 @@ from models import (
     EflomalPriorItem,
     EflomalResultsPullResponse,
     EflomalResultsPushRequest,
+    EflomalReverseDictSource,
     EflomalTargetWordCountItem,
     InsertResponse,
 )
@@ -53,6 +56,17 @@ _MAX_BODY_ITEMS = 5_000
 # BPE model protobufs are typically 100–300 KB each; allow generous headroom
 # but still cap to protect memory / DB.
 _MAX_BPE_MODEL_BYTES = 10 * 1024 * 1024  # 10 MB per direction
+
+_REVERSE_DICT_MIN_COUNT = 3
+
+
+def _normalize_word(word: str) -> str:
+    # casefold can produce non-NFC output (e.g. some CJK/Turkic mappings), so
+    # NFC again after casefold to keep keys byte-identical across clients.
+    folded = unicodedata.normalize("NFC", unicodedata.normalize("NFC", word).casefold())
+    return "".join(
+        ch for ch in folded if unicodedata.category(ch)[0] in ("L", "N", "M")
+    )
 
 
 def _check_body_size(body):
@@ -96,6 +110,31 @@ async def _batch_insert(db, model_cls, rows):
         result = await db.execute(stmt)
         inserted_ids.extend(r[0] for r in result.fetchall())
     return inserted_ids
+
+
+def _build_reverse_dict(
+    dictionary_rows,
+) -> dict[str, list[EflomalReverseDictSource]]:
+    grouped: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for r in dictionary_rows:
+        tgt = _normalize_word(r.target_word)
+        src = _normalize_word(r.source_word)
+        if not tgt or not src:
+            continue
+        grouped[tgt][src] += r.count
+
+    result: dict[str, list[EflomalReverseDictSource]] = {}
+    for tgt, sources in grouped.items():
+        items = [
+            EflomalReverseDictSource(source=src, count=c)
+            for src, c in sources.items()
+            if c >= _REVERSE_DICT_MIN_COUNT
+        ]
+        if not items:
+            continue
+        items.sort(key=lambda s: (-s.count, s.source))
+        result[tgt] = items
+    return result
 
 
 async def _fetch_eflomal_response(
@@ -159,15 +198,7 @@ async def _fetch_eflomal_response(
         created_at=eflomal.created_at,
         reference_id=reference_id,
         revision_id=revision_id,
-        dictionary=[
-            EflomalDictionaryItem(
-                source_word=r.source_word,
-                target_word=r.target_word,
-                count=r.count,
-                probability=r.probability,
-            )
-            for r in dictionary_rows
-        ],
+        reverse_dict=_build_reverse_dict(dictionary_rows),
         target_word_counts=[
             EflomalTargetWordCountItem(
                 word=r.word,
