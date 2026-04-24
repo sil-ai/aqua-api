@@ -316,6 +316,7 @@ async def create_training_job(
                 requested_time=datetime.utcnow(),
                 owner_id=current_user.id,
                 kwargs=job_in.options,
+                is_training=True,
             )
             db.add(assessment)
             await db.flush()

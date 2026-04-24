@@ -545,6 +545,8 @@ async def update_assessment_status(
     assessment.status = update.status
     if update.status_detail is not None:
         assessment.status_detail = update.status_detail
+    if update.percent_complete is not None:
+        assessment.percent_complete = update.percent_complete
 
     if assessment.start_time is None and update.status != "queued":
         assessment.start_time = datetime.utcnow()
