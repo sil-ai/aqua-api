@@ -1,25 +1,14 @@
 # test_train_routes.py
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from database.models import Assessment, TrainingJob, VerseText
 from models import TrainingType
-from train_routes.v3 import train_routes
 
 prefix = "v3"
 
 # Derived from TrainingType so the test suite fails loudly if the enum grows
 # a new value without the dispatch/test story being updated.
 ALL_TRAINING_TYPES = {t.value for t in TrainingType}
-
-
-@pytest.fixture(autouse=True)
-def _clear_fn_cache():
-    """Clear the Modal Function cache so patched mocks don't leak between tests."""
-    train_routes._fn_cache.clear()
-    yield
-    train_routes._fn_cache.clear()
 
 
 def _auth_headers(token):
@@ -40,9 +29,9 @@ def _make_modal_mock(
 
     spawn_by_app: optional dict mapping Modal app name -> Exception (or None for success).
     spawn_by_type: optional dict mapping training-type value -> Exception (or None).
-        After #582 the TRAIN_APPS types share one Modal function ("runner",
-        "run_assessment_runner"), so failures can no longer be isolated by
-        app_name; keying on args[0]["type"] recovers per-type isolation.
+        Non-serval-nmt training types all share one Modal function
+        ("runner", "run_assessment_runner"), so failures can't be isolated
+        by app_name; keying on args[0]["type"] recovers per-type isolation.
     default_exc: Exception raised by any call not matched by the two dicts above.
     calls: optional list; (app, fn_name) is appended per from_name invocation.
     payloads: optional list; (app, args, kwargs) is appended per spawn invocation.
@@ -113,9 +102,7 @@ def _create_training_jobs_via_api(
         calls=calls,
         payloads=payloads,
     )
-    with patch(
-        "train_routes.v3.train_routes.modal.Function", mock_function_cls
-    ), patch.dict("train_routes.v3.train_routes._fn_cache", {}, clear=True):
+    with patch("train_routes.v3.train_routes.modal.Function", mock_function_cls):
         response = client.post(
             f"{prefix}/train",
             json=data,
@@ -238,8 +225,9 @@ def test_create_training_job_per_app_dispatch_isolation(
 ):
     """A spawn failure for one assessment type must not affect the others.
 
-    Post-#582 all TRAIN_APPS share a single Modal function; isolation is
-    recovered by keying the mock on args[0]["type"] rather than app_name.
+    All non-serval-nmt training types share a single Modal function, so
+    isolation is recovered by keying the mock on args[0]["type"] rather
+    than app_name.
     """
     response = _create_training_jobs_via_api(
         client,
@@ -261,7 +249,7 @@ def test_create_training_job_per_app_dispatch_isolation(
 def test_semantic_similarity_routes_through_runner(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """sem-sim must dispatch to ("runner", "run_assessment_runner"), not TRAIN_APPS."""
+    """sem-sim must dispatch to ("runner", "run_assessment_runner")."""
     calls = []
     response = _create_training_jobs_via_api(
         client,
@@ -278,8 +266,6 @@ def test_semantic_similarity_routes_through_runner(
     assert len(jobs) == 1 and jobs[0]["type"] == "semantic-similarity"
     assert jobs[0]["status"] == "failed"
     assert ("runner", "run_assessment_runner") in calls
-    # Guard against a regression that would route sem-sim through TRAIN_APPS.
-    assert ("semantic-similarity", "train") not in calls
 
 
 def test_serval_nmt_routes_through_train_runner(
@@ -304,85 +290,22 @@ def test_serval_nmt_routes_through_train_runner(
     assert ("train-runner", "run_training_job") in calls
 
 
-def test_legacy_flag_falls_back_to_per_app_train(
-    client,
-    regular_token1,
-    test_revision_id,
-    test_revision_id_2,
-    monkeypatch,
-):
-    """TRAIN_DISPATCH_VIA_RUNNER=false restores the pre-#582 per-app train()
-    dispatch for non-sem-sim TRAIN_APPS. Kept as a safety valve while the
-    runner path is rolled out; remove once aqua-assessments#200 deletes
-    train()."""
-    monkeypatch.setenv("TRAIN_DISPATCH_VIA_RUNNER", "false")
-    calls = []
-    response = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "legacy_flag_test"},
-        apps=["tfidf"],
-        calls=calls,
-    )
-    assert response.status_code == 200
-    jobs = response.json()["training_jobs"]
-    assert len(jobs) == 1 and jobs[0]["type"] == "tfidf"
-    assert jobs[0]["status"] == "queued"
-    # Legacy: dispatched to the per-app train() function.
-    assert ("tfidf", "train") in calls
-    # And NOT through the runner.
-    assert ("runner", "run_assessment_runner") not in calls
-
-
-def test_legacy_flag_keeps_sem_sim_on_runner(
-    client,
-    regular_token1,
-    test_revision_id,
-    test_revision_id_2,
-    monkeypatch,
-):
-    """Even with the fallback flag set, sem-sim stays on the runner — it has
-    never had a dedicated train() Modal function."""
-    monkeypatch.setenv("TRAIN_DISPATCH_VIA_RUNNER", "false")
-    calls = []
-    response = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "legacy_flag_semsim_test"},
-        apps=["semantic-similarity"],
-        calls=calls,
-    )
-    assert response.status_code == 200
-    assert ("runner", "run_assessment_runner") in calls
-    assert ("semantic-similarity", "train") not in calls
-
-
 def test_training_job_full_lifecycle_via_runner(
     client,
     regular_token1,
     test_revision_id,
     test_revision_id_2,
     db_session,
-    monkeypatch,
 ):
     """End-to-end lifecycle via the runner (acceptance item for #582).
 
     (1) POST /train dispatches to ("runner", "run_assessment_runner") with
         an AssessmentIn-shaped config and train_job_id kwarg.
-    (2) PATCH /train/{id}/status accepts the full phase sequence allowed by
-        aqua-api's VALID_TRANSITIONS state machine: preparing → training →
-        downloading → uploading → completed. Note that the aqua-assessments
-        runner today emits the same sequence *minus* downloading; emitting
-        the intermediate downloading phase is the aqua-assessments-side
-        pre-merge item tracked alongside this PR, so production parity with
-        this test requires that fix.
+    (2) PATCH /train/{id}/status accepts the full phase sequence the
+        runner emits: preparing → training → downloading → uploading →
+        completed.
     (3) The paired Assessment row mirrors to finished at the end.
     """
-    monkeypatch.setenv("TRAIN_DISPATCH_VIA_RUNNER", "true")
     payloads = []
     calls = []
     create_resp = _create_training_jobs_via_api(
@@ -403,13 +326,12 @@ def test_training_job_full_lifecycle_via_runner(
     # (1) Dispatch target + payload shape.
     runner_calls = [c for c in calls if c == ("runner", "run_assessment_runner")]
     assert len(runner_calls) == 1
-    assert ("tfidf", "train") not in calls
     runner_spawns = [p for p in payloads if p[0] == "runner"]
     assert len(runner_spawns) == 1
     _, args, kwargs = runner_spawns[0]
     config = args[0]
     assert config["type"] == "tfidf"
-    assert config["assessment_id"] == job["assessment_id"]
+    assert config["id"] == job["assessment_id"]
     assert config["train"] is True
     assert kwargs.get("train_job_id") == job["id"]
 
@@ -500,12 +422,9 @@ def test_training_type_enum_covered_by_dispatch():
     Prevents adding an enum value without also wiring up the dispatch in
     train_routes.dispatch_job.
     """
-    from train_routes.v3.train_routes import TRAIN_APPS
+    from train_routes.v3.train_routes import TRAINABLE_ASSESSMENT_TYPES
 
-    reachable = set(TRAIN_APPS) | {
-        TrainingType.serval_nmt.value,
-        TrainingType.semantic_similarity.value,
-    }
+    reachable = TRAINABLE_ASSESSMENT_TYPES | {TrainingType.serval_nmt.value}
     enum_values = {t.value for t in TrainingType}
     missing = enum_values - reachable
     assert not missing, f"TrainingType values with no dispatch branch: {missing}"
@@ -1167,16 +1086,14 @@ def test_training_job_creates_assessment_for_trainable_types(
         assert assessment.kwargs == {"tag": "assessment_creation_test"}
 
 
-def test_train_apps_route_through_runner_with_train_job_id(
-    client, regular_token1, test_revision_id, test_revision_id_2, monkeypatch
+def test_trainable_types_route_through_runner_with_train_job_id(
+    client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """Every TRAIN_APPS type must dispatch through ("runner",
-    "run_assessment_runner") with an AssessmentIn-shaped config and
-    train_job_id passed as a kwarg. Post-#582 opt-in path replacing the
-    old per-app train() fan-out. Asserts both the dispatch target and the
-    train_job_id/assessment_id identity on the payload.
+    """Every non-serval-nmt training type must dispatch through
+    ("runner", "run_assessment_runner") with an AssessmentIn-shaped
+    config and train_job_id passed as a kwarg. Asserts both the dispatch
+    target and the train_job_id/assessment_id identity on the payload.
     """
-    monkeypatch.setenv("TRAIN_DISPATCH_VIA_RUNNER", "true")
     calls = []
     payloads = []
     resp = _create_training_jobs_via_api(
@@ -1217,7 +1134,6 @@ def test_train_apps_route_through_runner_with_train_job_id(
         # /v3/assessment/{id}/results, which are keyed on Assessment.id. So
         # `id` MUST be the Assessment id, not the TrainingJob id.
         assert config["id"] == jobs[t]["assessment_id"]
-        assert config["assessment_id"] == jobs[t]["assessment_id"]
         assert config["revision_id"] == test_revision_id
         assert config["reference_id"] == test_revision_id_2
         assert config["train"] is True
@@ -1338,8 +1254,8 @@ def test_assessment_id_reaches_sem_sim_runner_config(
 ):
     """sem-sim dispatches through ("runner", "run_assessment_runner") with
     an AssessmentIn-shaped config (not TrainingJobOut.model_dump()).
-    assessment_id must reach the runner config — aqua-assessments needs it
-    to write artifacts under the paired Assessment row."""
+    config["id"] must be the Assessment id — aqua-assessments uses it to
+    write artifacts under `/v3/assessment/{id}/...` endpoints."""
     spawn_calls = []
 
     def _from_name(app_name, fn_name, *_args, **_kwargs):
@@ -1354,9 +1270,7 @@ def test_assessment_id_reaches_sem_sim_runner_config(
     mock_function_cls = AsyncMock()
     mock_function_cls.from_name = _from_name
 
-    with patch(
-        "train_routes.v3.train_routes.modal.Function", mock_function_cls
-    ), patch.dict("train_routes.v3.train_routes._fn_cache", {}, clear=True):
+    with patch("train_routes.v3.train_routes.modal.Function", mock_function_cls):
         resp = client.post(
             f"{prefix}/train",
             json={
@@ -1374,7 +1288,7 @@ def test_assessment_id_reaches_sem_sim_runner_config(
     assert runner_calls, "sem-sim never dispatched to runner"
     _, args, _kwargs = runner_calls[0]
     config = args[0]
-    assert config["assessment_id"] == job["assessment_id"]
+    assert config["id"] == job["assessment_id"]
 
 
 def test_non_terminal_transition_does_not_mirror_to_assessment(

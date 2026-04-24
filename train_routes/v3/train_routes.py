@@ -83,56 +83,14 @@ INFERENCE_DEPENDENCIES = {
     "agent-critique": ["agent-critique"],
 }
 
-# Training types dispatched through the assessments runner. Historically this
-# mapped training-type → Modal app name so aqua-api could invoke each app's
-# own train() Modal function. Since #582 these types route through
-# ("runner", "run_assessment_runner") with train_job_id set and the runner
-# dispatches to the right app's assess() internally. The app-name mapping is
-# retained only for the legacy fallback path (TRAIN_DISPATCH_VIA_RUNNER=false)
-# and will be deleted alongside the fallback once aqua-assessments#200 lands.
-TRAIN_APPS: dict[str, str] = {
-    "semantic-similarity": "semantic-similarity",
-    "tfidf": "tfidf",
-    "word-alignment": "word-alignment",
-    "ngrams": "ngrams",
-    "agent-critique": "agent-critique",
-}
-
 # Accepts the key names used by PredictInput.apps so a caller can pass the
-# same app list to /v3/train and /v3/predict. Canonical names (the keys
-# above) are also accepted. Extend this map if predict adopts another alias.
+# same app list to /v3/train and /v3/predict. Canonical names (the
+# TrainingType values) are also accepted. Extend this map if predict adopts
+# another alias.
 TRAIN_APPS_ALIASES: dict[str, str] = {
     "agent": "agent-critique",
     "word_alignment": "word-alignment",
 }
-
-_fn_cache: dict[tuple[str, str], modal.Function] = {}
-
-
-def _get_train_fn(modal_app: str, env: str) -> modal.Function:
-    key = (modal_app, env)
-    fn = _fn_cache.get(key)
-    if fn is None:
-        fn = modal.Function.from_name(modal_app, "train", environment_name=env)
-        _fn_cache[key] = fn
-    return fn
-
-
-def _dispatch_via_runner_enabled() -> bool:
-    """Feature flag for the post-#582 runner-based training dispatch.
-
-    Default: the legacy per-app train() dispatch is used. The runner path
-    requires the aqua-assessments runner to emit the `downloading` phase
-    between `training` and `uploading` (today it doesn't — see PR #583 /
-    cross-repo note) or VALID_TRANSITIONS will 422 the terminal callbacks
-    and leave jobs stuck in `training`. Set TRAIN_DISPATCH_VIA_RUNNER to
-    `true` (case-insensitive, exact string after strip) to opt in once the
-    runner emits the expected phases. Any other value — `"1"`, `"yes"`,
-    `"on"`, empty — is treated as disabled; don't assume shell-style
-    truthiness. Flipped to default-on and removed once aqua-assessments#200
-    ships with the runner-side downloading-phase emission.
-    """
-    return os.getenv("TRAIN_DISPATCH_VIA_RUNNER", "false").strip().lower() == "true"
 
 
 def _build_runner_train_config(
@@ -145,22 +103,13 @@ def _build_runner_train_config(
 ) -> dict:
     """Config passed to run_assessment_runner for a training job.
 
-    Overlaps with AssessmentIn but is not literally AssessmentIn.model_dump
-    — it carries two extra keys (`train` and `assessment_id`) that the
-    runner accepts and aqua-api's AssessmentIn does not define.
+    Overlaps with AssessmentIn.model_dump() but adds `train: True`, which
+    sem-sim's assess() reads to enter its finetune branch (see
+    aqua-assessments `_resolve_finetune_flag`). Non-sem-sim apps ignore it.
 
-    `id` is the **Assessment** id (not the TrainingJob id): the runner
-    uses `self.config.id` to build artifact-push URLs like
+    `id` is the **Assessment** id, not the TrainingJob id: the runner uses
+    `self.config.id` to build artifact-push URLs like
     `/v3/assessment/{id}/results`, which are keyed on Assessment.id.
-
-    `train: True` is what sem-sim's assess() reads to enter its finetune
-    branch (see aqua-assessments `_resolve_finetune_flag`). Other
-    assessment apps ignore it, but leaving it on the payload lets the same
-    builder serve both the sem-sim and non-sem-sim paths.
-
-    `assessment_id` duplicates `id`; kept for readability of the payload
-    in logs. The runner's Assessment Pydantic model ignores unknown keys,
-    so this is harmless.
 
     `train_job_id` is NOT in this dict — it's passed as a kwarg on spawn
     and is what makes the runner switch to training mode and emit phase
@@ -169,7 +118,6 @@ def _build_runner_train_config(
     """
     config = {
         "id": job.assessment_id,
-        "assessment_id": job.assessment_id,
         "revision_id": source_revision_id,
         "reference_id": target_revision_id,
         "type": job.type,
@@ -407,8 +355,6 @@ async def create_training_job(
 
     # Dispatch all jobs to Modal in parallel. Mirrors the predict() fan-out
     # pattern: one Modal call per job, per-job error isolation.
-    via_runner = _dispatch_via_runner_enabled()
-
     async def dispatch_job(job: TrainingJob):
         """Returns (job, exception) tuple. Does NOT mutate the DB session."""
         try:
@@ -418,16 +364,11 @@ async def create_training_job(
                 )
                 job_out = TrainingJobOut.model_validate(job)
                 await f.spawn.aio(job_out.model_dump(mode="json"))
-            elif job.type in TRAIN_APPS and (
-                via_runner or job.type == TrainingType.semantic_similarity.value
-            ):
-                # Post-#582 default: route through the runner's train_job_id
-                # path. The runner dispatches to the right app's assess()
-                # based on config.type and emits the same phase callbacks
+            elif job.type in TRAINABLE_ASSESSMENT_TYPES:
+                # Runner's train_job_id path: dispatches to the right app's
+                # assess() based on config.type and emits the phase callbacks
                 # (preparing → training → downloading → uploading →
-                # completed/failed) that the old per-app train() Modal
-                # functions emitted. sem-sim is always on this path — it
-                # has never had a dedicated train() Modal function.
+                # completed/failed) against PATCH /v3/train/{id}/status.
                 f = modal.Function.from_name(
                     "runner", "run_assessment_runner", environment_name=modal_env
                 )
@@ -440,14 +381,6 @@ async def create_training_job(
                     job_in.options,
                 )
                 await f.spawn.aio(config, os.getenv("AQUA_DB", ""), train_job_id=job.id)
-            elif job.type in TRAIN_APPS:
-                # Legacy fallback: per-app train() Modal function. Only
-                # reachable with TRAIN_DISPATCH_VIA_RUNNER=false and a
-                # non-sem-sim type. Kept as a safety valve during rollout;
-                # remove once aqua-assessments#200 deletes train().
-                f = _get_train_fn(TRAIN_APPS[job.type], modal_env)
-                job_out = TrainingJobOut.model_validate(job)
-                await f.spawn.aio(job_out.model_dump(mode="json"))
             else:
                 raise RuntimeError(
                     f"No dispatch configured for training type '{job.type}'"
