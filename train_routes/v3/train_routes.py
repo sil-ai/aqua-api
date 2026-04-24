@@ -123,9 +123,11 @@ def _dispatch_via_runner_enabled() -> bool:
 
     Default: the runner path is used, which is what aqua-assessments#200
     expects once per-app train() Modal functions are deleted. Set
-    TRAIN_DISPATCH_VIA_RUNNER=false during rollout to fall back to the
-    legacy per-app train() dispatch if the runner path regresses. Removed
-    entirely after aqua-assessments#200 ships.
+    TRAIN_DISPATCH_VIA_RUNNER to `false` (case-insensitive, exact string)
+    during rollout to fall back to the legacy per-app train() dispatch if
+    the runner path regresses. Any other value — including `"0"`, `"no"`,
+    `"off"`, or empty — is treated as enabled; don't assume shell-style
+    truthiness. Removed entirely after aqua-assessments#200 ships.
     """
     return os.getenv("TRAIN_DISPATCH_VIA_RUNNER", "true").lower() != "false"
 
@@ -140,17 +142,21 @@ def _build_runner_train_config(
 ) -> dict:
     """Config passed to run_assessment_runner for a training job.
 
-    Shape is the one sem-sim has already been sending successfully on the
-    train=True path, carried over verbatim to every TRAIN_APPS type as part
-    of #582. `train_job_id` (passed as a kwarg on spawn, not here) is what
-    makes the runner switch to training mode and emit phase callbacks
+    Shape mirrors AssessmentIn.model_dump() — the same payload the runner
+    receives from /v3/assessment — so run_assessment_runner dispatches to
+    the right app's assess() based on `type`. `id` is the Assessment id
+    (not the TrainingJob id): the runner uses `self.config.id` to build
+    artifact-push URLs like `/v3/assessment/{id}/results`, which are keyed
+    on Assessment.id. `train_job_id` is passed as a kwarg on spawn and is
+    what makes the runner switch to training mode and emit phase callbacks
     (preparing → training → downloading → uploading → completed/failed) to
-    PATCH /v3/train/{id}/status. `id` is the TrainingJob id and
-    `assessment_id` is the paired Assessment id; both are sent for
-    compatibility with the runner's existing handling.
+    PATCH /v3/train/{id}/status. `train: True` is what sem-sim's assess()
+    reads to enter its finetune branch (see _resolve_finetune_flag).
+    `assessment_id` is kept for readability; the runner's Assessment model
+    ignores unknown fields.
     """
     config = {
-        "id": job.id,
+        "id": job.assessment_id,
         "assessment_id": job.assessment_id,
         "revision_id": source_revision_id,
         "reference_id": target_revision_id,

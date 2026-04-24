@@ -372,9 +372,13 @@ def test_training_job_full_lifecycle_via_runner(
 
     (1) POST /train dispatches to ("runner", "run_assessment_runner") with
         an AssessmentIn-shaped config and train_job_id kwarg.
-    (2) PATCH /train/{id}/status accepts the full phase sequence emitted by
-        run_assessment_runner: preparing → training → downloading →
-        uploading → completed.
+    (2) PATCH /train/{id}/status accepts the full phase sequence allowed by
+        aqua-api's VALID_TRANSITIONS state machine: preparing → training →
+        downloading → uploading → completed. Note that the aqua-assessments
+        runner today emits the same sequence *minus* downloading; emitting
+        the intermediate downloading phase is the aqua-assessments-side
+        pre-merge item tracked alongside this PR, so production parity with
+        this test requires that fix.
     (3) The paired Assessment row mirrors to finished at the end.
     """
     payloads = []
@@ -1206,6 +1210,10 @@ def test_train_apps_route_through_runner_with_train_job_id(
         args, kwargs = payloads_by_type[t]
         config = args[0]
         assert config["type"] == t
+        # The runner uses config["id"] to build artifact-push URLs like
+        # /v3/assessment/{id}/results, which are keyed on Assessment.id. So
+        # `id` MUST be the Assessment id, not the TrainingJob id.
+        assert config["id"] == jobs[t]["assessment_id"]
         assert config["assessment_id"] == jobs[t]["assessment_id"]
         assert config["revision_id"] == test_revision_id
         assert config["reference_id"] == test_revision_id_2
