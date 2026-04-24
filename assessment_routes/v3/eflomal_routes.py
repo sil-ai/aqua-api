@@ -3,6 +3,8 @@ __version__ = "v3"
 import base64
 import binascii
 import socket
+import unicodedata
+from collections import defaultdict
 from typing import List
 
 import fastapi
@@ -32,6 +34,7 @@ from models import (
     EflomalPriorItem,
     EflomalResultsPullResponse,
     EflomalResultsPushRequest,
+    EflomalReverseDictSource,
     EflomalTargetWordCountItem,
     InsertResponse,
 )
@@ -53,6 +56,20 @@ _MAX_BODY_ITEMS = 5_000
 # BPE model protobufs are typically 100–300 KB each; allow generous headroom
 # but still cap to protect memory / DB.
 _MAX_BPE_MODEL_BYTES = 10 * 1024 * 1024  # 10 MB per direction
+
+# Minimum dictionary count for an entry to appear in reverse_dict. Matches the
+# client-side threshold previously applied in build_reverse_dictionary.
+_REVERSE_DICT_MIN_COUNT = 3
+
+
+def _normalize_word(word: str) -> str:
+    """NFC + casefold + keep Unicode letters / numbers / combining marks.
+
+    Must match the client-side normalize_word in aqua-assessments exactly so
+    that missing-word lookups hit the same keys.
+    """
+    nfc = unicodedata.normalize("NFC", word).casefold()
+    return "".join(ch for ch in nfc if unicodedata.category(ch)[0] in ("L", "N", "M"))
 
 
 def _check_body_size(body):
@@ -96,6 +113,35 @@ async def _batch_insert(db, model_cls, rows):
         result = await db.execute(stmt)
         inserted_ids.extend(r[0] for r in result.fetchall())
     return inserted_ids
+
+
+def _build_reverse_dict(
+    dictionary_rows,
+) -> dict[str, list[EflomalReverseDictSource]]:
+    """Group dictionary rows by normalized target word.
+
+    Rows with count < _REVERSE_DICT_MIN_COUNT are dropped. Source counts
+    sharing a normalized target+source key are summed. Sources are sorted by
+    count descending.
+    """
+    grouped: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for r in dictionary_rows:
+        if r.count < _REVERSE_DICT_MIN_COUNT:
+            continue
+        tgt = _normalize_word(r.target_word)
+        src = _normalize_word(r.source_word)
+        if not tgt or not src:
+            continue
+        grouped[tgt][src] += r.count
+
+    result: dict[str, list[EflomalReverseDictSource]] = {}
+    for tgt, sources in grouped.items():
+        items = [
+            EflomalReverseDictSource(source=src, count=c) for src, c in sources.items()
+        ]
+        items.sort(key=lambda s: s.count, reverse=True)
+        result[tgt] = items
+    return result
 
 
 async def _fetch_eflomal_response(
@@ -159,15 +205,7 @@ async def _fetch_eflomal_response(
         created_at=eflomal.created_at,
         reference_id=reference_id,
         revision_id=revision_id,
-        dictionary=[
-            EflomalDictionaryItem(
-                source_word=r.source_word,
-                target_word=r.target_word,
-                count=r.count,
-                probability=r.probability,
-            )
-            for r in dictionary_rows
-        ],
+        reverse_dict=_build_reverse_dict(dictionary_rows),
         target_word_counts=[
             EflomalTargetWordCountItem(
                 word=r.word,

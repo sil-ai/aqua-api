@@ -387,13 +387,16 @@ def test_pull_eflomal_results_success(client, regular_token1, _ensure_eflomal_pu
     assert data["num_missing_words"] == 3
     assert data["created_at"] is not None
 
-    # Dictionary entries (n_dict=10 in _push_all)
-    assert len(data["dictionary"]) == 10
-    first_dict = data["dictionary"][0]
-    assert "source_word" in first_dict
-    assert "target_word" in first_dict
-    assert "count" in first_dict
-    assert "probability" in first_dict
+    # reverse_dict is built server-side from dictionary rows with count >= 3,
+    # keyed by normalized target word. _dictionary_items uses counts 1..10, so
+    # 8 entries survive the filter (counts 3..10), each with a single source.
+    assert "dictionary" not in data
+    reverse_dict = data["reverse_dict"]
+    assert len(reverse_dict) == 8
+    # "tgt_2" normalizes to "tgt2" (underscore dropped by NFC+casefold+L|N|M).
+    assert "tgt2" in reverse_dict
+    sources = reverse_dict["tgt2"]
+    assert sources == [{"source": "src2", "count": 3}]
 
     # Target word counts (n_twc=5 in _push_all)
     assert len(data["target_word_counts"]) == 5
@@ -492,7 +495,8 @@ def test_pull_eflomal_results_by_language_success(
     assert data["num_dictionary_entries"] == 10
     assert data["num_missing_words"] == 3
     assert data["created_at"] is not None
-    assert len(data["dictionary"]) == 10
+    assert "dictionary" not in data
+    assert len(data["reverse_dict"]) == 8
     assert len(data["target_word_counts"]) == 5
     assert len(data["priors"]) == 5
     assert data["bpe_models"] is not None

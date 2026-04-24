@@ -1202,6 +1202,13 @@ class EflomalPriorItem(BaseModel):
     alpha: float = Field(ge=0.5, le=0.95, allow_inf_nan=False)
 
 
+class EflomalReverseDictSource(BaseModel):
+    """One source-word candidate in a reverse_dict entry."""
+
+    source: str
+    count: int
+
+
 class EflomalBpeModels(BaseModel):
     """SentencePiece BPE models (serialized protobuf), one per direction."""
 
@@ -1226,7 +1233,9 @@ class EflomalResultsPullResponse(BaseModel):
     created_at: Optional[datetime.datetime] = None
     reference_id: Optional[int] = None
     revision_id: Optional[int] = None
-    dictionary: list[EflomalDictionaryItem]
+    reverse_dict: dict[str, list["EflomalReverseDictSource"]] = Field(
+        default_factory=dict
+    )
     target_word_counts: list[EflomalTargetWordCountItem]
     priors: list[EflomalPriorItem] = Field(default_factory=list)
     bpe_models: Optional[EflomalBpeModels] = None
