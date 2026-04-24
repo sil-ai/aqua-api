@@ -300,7 +300,7 @@ def test_training_job_full_lifecycle_via_runner(
     """End-to-end lifecycle via the runner (acceptance item for #582).
 
     (1) POST /train dispatches to ("runner", "run_assessment_runner") with
-        an AssessmentIn-shaped config and train_job_id kwarg.
+        an AssessmentIn-shaped config carrying is_training=True.
     (2) PATCH /train/{id}/status accepts the full phase sequence the
         runner emits: preparing → training → downloading → uploading →
         completed.
@@ -332,8 +332,9 @@ def test_training_job_full_lifecycle_via_runner(
     config = args[0]
     assert config["type"] == "tfidf"
     assert config["id"] == job["assessment_id"]
-    assert "train" not in config  # training mode is signaled by train_job_id kwarg
-    assert kwargs.get("train_job_id") == job["id"]
+    assert "train" not in config  # training mode is signaled by is_training on config
+    assert config.get("is_training") is True
+    assert "train_job_id" not in kwargs
 
     # (2) Simulate the runner's phase callbacks on the status endpoint.
     last_percent = {
@@ -1087,13 +1088,13 @@ def test_training_job_creates_assessment_for_trainable_types(
         assert assessment.is_training is True
 
 
-def test_trainable_types_route_through_runner_with_train_job_id(
+def test_trainable_types_route_through_runner_with_is_training(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
     """Every non-serval-nmt training type must dispatch through
     ("runner", "run_assessment_runner") with an AssessmentIn-shaped
-    config and train_job_id passed as a kwarg. Asserts both the dispatch
-    target and the train_job_id/assessment_id identity on the payload.
+    config carrying is_training=True. Asserts both the dispatch target
+    and the assessment_id identity on the payload.
     """
     calls = []
     payloads = []
@@ -1137,12 +1138,13 @@ def test_trainable_types_route_through_runner_with_train_job_id(
         assert config["id"] == jobs[t]["assessment_id"]
         assert config["revision_id"] == test_revision_id
         assert config["reference_id"] == test_revision_id_2
-        # Training mode is signaled by the train_job_id kwarg, not by a
-        # config["train"] flag — that used to be required by sem-sim's
-        # assess() but has been superseded by a `finetune` kwarg that
-        # callers opt into via /v3/train options.
+        # Training mode is signaled by is_training=True on the config
+        # dict, not by a config["train"] flag — that used to be required
+        # by sem-sim's assess() but has been superseded by a `finetune`
+        # kwarg that callers opt into via /v3/train options.
         assert "train" not in config
-        assert kwargs.get("train_job_id") == jobs[t]["id"]
+        assert config.get("is_training") is True
+        assert "train_job_id" not in kwargs
 
 
 def test_completed_mirrors_to_assessment_finished(
