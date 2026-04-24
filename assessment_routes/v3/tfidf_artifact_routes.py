@@ -6,6 +6,7 @@ import io
 import socket
 import time
 import uuid
+from datetime import datetime, timedelta
 from typing import Dict, List, Union
 
 import fastapi
@@ -68,6 +69,10 @@ _MAX_COMPONENTS_BYTES = 200 * 1024 * 1024
 # Per-chunk cap for the chunked upload path. Keeps any individual POST well
 # under platform/proxy limits even when the aggregate matrix is multi-GB.
 _MAX_CHUNK_BYTES = 100 * 1024 * 1024
+
+# Age at which an unfinished staging row is considered abandoned and gets
+# swept opportunistically on the next /init. Cascaded chunk rows go with it.
+_STAGING_TTL_HOURS = 24
 
 # TfidfPcaVector.vector is declared Vector(300); queries against the corpus
 # must always be 300-dim regardless of what artifact metadata claims.
@@ -352,6 +357,39 @@ async def _load_tfidf_assessment_for_upload(
     return assessment
 
 
+async def _sweep_stale_staging(
+    db: AsyncSession, *, ttl_hours: int = _STAGING_TTL_HOURS
+) -> int:
+    """Drop tfidf_svd_staging rows older than ttl_hours; chunks cascade.
+
+    Uses SKIP LOCKED so a concurrent /chunk write (which holds FOR KEY SHARE)
+    on a stale-but-still-touched row defers to the next sweep instead of
+    blocking this /init.
+    """
+    cutoff = datetime.utcnow() - timedelta(hours=ttl_hours)
+    stale = (
+        select(TfidfSvdStaging.upload_id)
+        .where(TfidfSvdStaging.created_at < cutoff)
+        .with_for_update(skip_locked=True)
+    )
+    # synchronize_session=False because the in_(subquery) clause can't be
+    # evaluated in Python by the ORM; nothing in this session has loaded the
+    # stale rows anyway, so there's no identity-map state to invalidate.
+    result = await db.execute(
+        delete(TfidfSvdStaging)
+        .where(TfidfSvdStaging.upload_id.in_(stale))
+        .execution_options(synchronize_session=False)
+    )
+    deleted = result.rowcount or 0
+    if deleted:
+        logger.info(
+            "Swept %d stale tfidf staging row(s) older than %dh",
+            deleted,
+            ttl_hours,
+        )
+    return deleted
+
+
 def _validate_vectorizer_shapes(body: TfidfArtifactsInitRequest) -> None:
     n_word_features = len(body.word_vectorizer.vocabulary)
     n_char_features = len(body.char_vectorizer.vocabulary)
@@ -400,6 +438,14 @@ async def init_tfidf_artifacts_upload(
     """
     await _load_tfidf_assessment_for_upload(assessment_id, current_user, db)
     _validate_vectorizer_shapes(body)
+
+    try:
+        await _sweep_stale_staging(db)
+    except SQLAlchemyError:
+        # Sweep is opportunistic — never fail the user's /init because
+        # cleanup of someone else's abandoned upload couldn't proceed.
+        logger.exception("Stale tfidf staging sweep failed; continuing with /init")
+        await db.rollback()
 
     staging = TfidfSvdStaging(
         assessment_id=assessment_id,
