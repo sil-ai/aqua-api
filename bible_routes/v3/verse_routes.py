@@ -45,7 +45,9 @@ def _combine_text(field, values):
     return " ".join(v for v in values if v and v != "<range>")
 
 
-def _sample_items(items, limit, random, seed):
+def _sample_items(
+    items: List[Any], limit: Optional[int], random: bool, seed: Optional[int]
+) -> List[Any]:
     if limit is None or limit >= len(items):
         return items
     if not random:
@@ -773,18 +775,27 @@ async def get_texts(
     limit: Optional[int] = Query(
         None,
         ge=1,
-        description="Maximum number of verses to return per revision_id.",
+        description=(
+            "Maximum number of verses to return per revision_id. "
+            "With include_verses='all', limit applies to the 41,899 canonical "
+            "verse slots (so some returned rows may have empty text)."
+        ),
     ),
     random: bool = Query(
         False,
         description=(
             "If true, sample uniformly at random (after include_verses filtering) "
-            "instead of returning the first `limit` verses in canonical order."
+            "instead of returning the first `limit` verses in canonical order. "
+            "Response is still ordered canonically."
         ),
     ),
     seed: Optional[int] = Query(
         None,
-        description="RNG seed for deterministic sampling. Ignored if random=false.",
+        description=(
+            "RNG seed for deterministic sampling. Only meaningful when "
+            "random=true; ignored otherwise. If omitted with random=true, "
+            "sampling is non-deterministic."
+        ),
     ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -800,6 +811,15 @@ async def get_texts(
     Description: List of revision IDs to fetch (minimum 2).
     - include_verses: IncludeVerses (all|union|intersection, default "union")
     Description: Which verses to include in the response.
+    - limit: Optional[int]
+    Description: Maximum number of verses per revision_id. Sampling happens
+    after include_verses filtering and <range> merging.
+    - random: bool (default false)
+    Description: If true, sample uniformly at random; otherwise return the
+    first `limit` verses in canonical order.
+    - seed: Optional[int]
+    Description: RNG seed. Combined with random=true, two calls with the
+    same seed return the same sample. Ignored if random=false.
 
     Returns:
     Dict[str, List[VerseText]]: Dictionary keyed by revision_id (as string),

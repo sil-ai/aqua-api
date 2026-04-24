@@ -1731,7 +1731,7 @@ def test_texts_endpoint_limit_without_random(client, regular_token1, db_session)
     assert len(data[str(revision_id1)]) == 5
     assert len(data[str(revision_id2)]) == 5
     # First verse should be the canonical first
-    assert data[str(revision_id1)][0]["verse_references"][0] == "GEN 1:1"
+    assert data[str(revision_id1)][0]["verse_reference"] == "GEN 1:1"
 
 
 def test_texts_endpoint_random_sample_deterministic(client, regular_token1, db_session):
@@ -1761,6 +1761,7 @@ def test_texts_endpoint_random_sample_deterministic(client, regular_token1, db_s
     # Different seed should give different sample
     params_alt = {**params, "seed": 99999}
     r3 = client.get(f"/{prefix}/texts", params=params_alt, headers=headers)
+    assert r3.status_code == 200
     refs3 = [v["verse_reference"] for v in r3.json()[str(revision_id1)]]
     assert refs1 != refs3
 
