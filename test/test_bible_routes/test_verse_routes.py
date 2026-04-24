@@ -1708,3 +1708,84 @@ def test_texts_include_verses_whitespace_treated_as_empty(
 
     # GEN 1:3 should be excluded (whitespace-only = empty)
     assert "GEN 1:3" not in rev1_vrefs
+
+
+def test_texts_endpoint_limit_without_random(client, regular_token1, db_session):
+    """Test /texts with ?limit returns the first N verses in canonical order."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "limit": 5,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data[str(revision_id1)]) == 5
+    assert len(data[str(revision_id2)]) == 5
+    # First verse should be the canonical first
+    assert data[str(revision_id1)][0]["verse_reference"] == "GEN 1:1"
+
+
+def test_texts_endpoint_random_sample_deterministic(client, regular_token1, db_session):
+    """Test /texts with ?random&seed returns the same sample on repeat calls."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    params = {
+        "revision_ids": [revision_id1, revision_id2],
+        "limit": 10,
+        "random": "true",
+        "seed": 17087,
+    }
+    r1 = client.get(f"/{prefix}/texts", params=params, headers=headers)
+    r2 = client.get(f"/{prefix}/texts", params=params, headers=headers)
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    d1, d2 = r1.json(), r2.json()
+    assert len(d1[str(revision_id1)]) == 10
+    refs1 = [v["verse_reference"] for v in d1[str(revision_id1)]]
+    refs2 = [v["verse_reference"] for v in d2[str(revision_id1)]]
+    assert refs1 == refs2
+
+    # Different seed should give different sample
+    params_alt = {**params, "seed": 99999}
+    r3 = client.get(f"/{prefix}/texts", params=params_alt, headers=headers)
+    assert r3.status_code == 200
+    refs3 = [v["verse_reference"] for v in r3.json()[str(revision_id1)]]
+    assert refs1 != refs3
+
+
+def test_texts_endpoint_limit_with_include_verses_all(
+    client, regular_token1, db_session
+):
+    """Test /texts with ?limit respects include_verses=all."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "all",
+            "limit": 3,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data[str(revision_id1)]) == 3
+    assert len(data[str(revision_id2)]) == 3
