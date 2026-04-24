@@ -132,7 +132,7 @@ def _build_reverse_dict(
         ]
         if not items:
             continue
-        items.sort(key=lambda s: s.count, reverse=True)
+        items.sort(key=lambda s: (-s.count, s.source))
         result[tgt] = items
     return result
 
