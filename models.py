@@ -1233,7 +1233,7 @@ class EflomalResultsPullResponse(BaseModel):
     created_at: Optional[datetime.datetime] = None
     reference_id: Optional[int] = None
     revision_id: Optional[int] = None
-    reverse_dict: dict[str, list["EflomalReverseDictSource"]] = Field(
+    reverse_dict: dict[str, list[EflomalReverseDictSource]] = Field(
         default_factory=dict
     )
     target_word_counts: list[EflomalTargetWordCountItem]

@@ -9,6 +9,27 @@ from database.models import Assessment
 prefix = "v3"
 
 
+def test_build_reverse_dict_aggregates_and_filters_collisions():
+    """Colliding raw rows aggregate under normalization, then min_count filter."""
+    from types import SimpleNamespace
+
+    from assessment_routes.v3.eflomal_routes import _build_reverse_dict
+
+    rows = [
+        # God+god collide under normalization, summed count 4 >= 3 survives.
+        SimpleNamespace(source_word="God", target_word="Mungu", count=2),
+        SimpleNamespace(source_word="god", target_word="mungu", count=2),
+        # Lord+lord collide too, but summed count 2 < 3 gets filtered out.
+        SimpleNamespace(source_word="Lord", target_word="Mungu", count=1),
+        SimpleNamespace(source_word="lord", target_word="mungu", count=1),
+        # Lone row below threshold is excluded.
+        SimpleNamespace(source_word="spirit", target_word="roho", count=2),
+    ]
+    result = _build_reverse_dict(rows)
+    assert set(result.keys()) == {"mungu"}
+    assert [(s.source, s.count) for s in result["mungu"]] == [("god", 4)]
+
+
 def _prior_items(n=5):
     return [
         {
