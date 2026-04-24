@@ -1,9 +1,10 @@
 __version__ = "v3"
 
 import pathlib
+import random as random_module
 import unicodedata
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
@@ -42,6 +43,15 @@ def _is_range_marker(x):
 
 def _combine_text(field, values):
     return " ".join(v for v in values if v and v != "<range>")
+
+
+def _sample_items(items, limit, random, seed):
+    if limit is None or limit >= len(items):
+        return items
+    if not random:
+        return items[:limit]
+    indices = sorted(random_module.Random(seed).sample(range(len(items)), limit))
+    return [items[i] for i in indices]
 
 
 def extract_unique_words(text: str) -> List[str]:
@@ -760,6 +770,22 @@ async def get_texts(
             "'intersection': only verses where every revision has text."
         ),
     ),
+    limit: Optional[int] = Query(
+        None,
+        ge=1,
+        description="Maximum number of verses to return per revision_id.",
+    ),
+    random: bool = Query(
+        False,
+        description=(
+            "If true, sample uniformly at random (after include_verses filtering) "
+            "instead of returning the first `limit` verses in canonical order."
+        ),
+    ),
+    seed: Optional[int] = Query(
+        None,
+        description="RNG seed for deterministic sampling. Ignored if random=false.",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -866,7 +892,8 @@ async def get_texts(
     if include_verses == IncludeVerses.all:
         # Return exactly 41,899 rows per revision — no merging,
         # <range> markers replaced with empty strings
-        for vref in _VREF_LIST:
+        vrefs_to_emit = _sample_items(_VREF_LIST, limit, random, seed)
+        for vref in vrefs_to_emit:
             rev_verses = vref_to_revisions.get(vref, {})
             book, cv = vref.split(" ", 1)
             chapter_str, verse_str = cv.split(":")
@@ -931,6 +958,8 @@ async def get_texts(
         merged_records = [
             r for r in merged_records if any(r[f].strip() for f in text_fields)
         ]
+
+    merged_records = _sample_items(merged_records, limit, random, seed)
 
     for record in merged_records:
         vrefs = record["vrefs"]
