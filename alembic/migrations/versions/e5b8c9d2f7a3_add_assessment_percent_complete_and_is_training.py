@@ -30,7 +30,7 @@ def upgrade() -> None:
             "is_training",
             sa.Boolean(),
             nullable=False,
-            server_default=sa.false(),
+            server_default="false",
         ),
     )
 
