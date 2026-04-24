@@ -367,6 +367,7 @@ def test_training_job_full_lifecycle_via_runner(
     test_revision_id,
     test_revision_id_2,
     db_session,
+    monkeypatch,
 ):
     """End-to-end lifecycle via the runner (acceptance item for #582).
 
@@ -381,6 +382,7 @@ def test_training_job_full_lifecycle_via_runner(
         this test requires that fix.
     (3) The paired Assessment row mirrors to finished at the end.
     """
+    monkeypatch.setenv("TRAIN_DISPATCH_VIA_RUNNER", "true")
     payloads = []
     calls = []
     create_resp = _create_training_jobs_via_api(
@@ -1166,14 +1168,15 @@ def test_training_job_creates_assessment_for_trainable_types(
 
 
 def test_train_apps_route_through_runner_with_train_job_id(
-    client, regular_token1, test_revision_id, test_revision_id_2
+    client, regular_token1, test_revision_id, test_revision_id_2, monkeypatch
 ):
     """Every TRAIN_APPS type must dispatch through ("runner",
     "run_assessment_runner") with an AssessmentIn-shaped config and
-    train_job_id passed as a kwarg. Post-#582 default path, replacing the
+    train_job_id passed as a kwarg. Post-#582 opt-in path replacing the
     old per-app train() fan-out. Asserts both the dispatch target and the
     train_job_id/assessment_id identity on the payload.
     """
+    monkeypatch.setenv("TRAIN_DISPATCH_VIA_RUNNER", "true")
     calls = []
     payloads = []
     resp = _create_training_jobs_via_api(

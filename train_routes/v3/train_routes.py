@@ -121,15 +121,18 @@ def _get_train_fn(modal_app: str, env: str) -> modal.Function:
 def _dispatch_via_runner_enabled() -> bool:
     """Feature flag for the post-#582 runner-based training dispatch.
 
-    Default: the runner path is used, which is what aqua-assessments#200
-    expects once per-app train() Modal functions are deleted. Set
-    TRAIN_DISPATCH_VIA_RUNNER to `false` (case-insensitive, exact string)
-    during rollout to fall back to the legacy per-app train() dispatch if
-    the runner path regresses. Any other value — including `"0"`, `"no"`,
-    `"off"`, or empty — is treated as enabled; don't assume shell-style
-    truthiness. Removed entirely after aqua-assessments#200 ships.
+    Default: the legacy per-app train() dispatch is used. The runner path
+    requires the aqua-assessments runner to emit the `downloading` phase
+    between `training` and `uploading` (today it doesn't — see PR #583 /
+    cross-repo note) or VALID_TRANSITIONS will 422 the terminal callbacks
+    and leave jobs stuck in `training`. Set TRAIN_DISPATCH_VIA_RUNNER to
+    `true` (case-insensitive, exact string after strip) to opt in once the
+    runner emits the expected phases. Any other value — `"1"`, `"yes"`,
+    `"on"`, empty — is treated as disabled; don't assume shell-style
+    truthiness. Flipped to default-on and removed once aqua-assessments#200
+    ships with the runner-side downloading-phase emission.
     """
-    return os.getenv("TRAIN_DISPATCH_VIA_RUNNER", "true").lower() != "false"
+    return os.getenv("TRAIN_DISPATCH_VIA_RUNNER", "false").strip().lower() == "true"
 
 
 def _build_runner_train_config(
@@ -142,18 +145,27 @@ def _build_runner_train_config(
 ) -> dict:
     """Config passed to run_assessment_runner for a training job.
 
-    Shape mirrors AssessmentIn.model_dump() — the same payload the runner
-    receives from /v3/assessment — so run_assessment_runner dispatches to
-    the right app's assess() based on `type`. `id` is the Assessment id
-    (not the TrainingJob id): the runner uses `self.config.id` to build
-    artifact-push URLs like `/v3/assessment/{id}/results`, which are keyed
-    on Assessment.id. `train_job_id` is passed as a kwarg on spawn and is
-    what makes the runner switch to training mode and emit phase callbacks
-    (preparing → training → downloading → uploading → completed/failed) to
-    PATCH /v3/train/{id}/status. `train: True` is what sem-sim's assess()
-    reads to enter its finetune branch (see _resolve_finetune_flag).
-    `assessment_id` is kept for readability; the runner's Assessment model
-    ignores unknown fields.
+    Overlaps with AssessmentIn but is not literally AssessmentIn.model_dump
+    — it carries two extra keys (`train` and `assessment_id`) that the
+    runner accepts and aqua-api's AssessmentIn does not define.
+
+    `id` is the **Assessment** id (not the TrainingJob id): the runner
+    uses `self.config.id` to build artifact-push URLs like
+    `/v3/assessment/{id}/results`, which are keyed on Assessment.id.
+
+    `train: True` is what sem-sim's assess() reads to enter its finetune
+    branch (see aqua-assessments `_resolve_finetune_flag`). Other
+    assessment apps ignore it, but leaving it on the payload lets the same
+    builder serve both the sem-sim and non-sem-sim paths.
+
+    `assessment_id` duplicates `id`; kept for readability of the payload
+    in logs. The runner's Assessment Pydantic model ignores unknown keys,
+    so this is harmless.
+
+    `train_job_id` is NOT in this dict — it's passed as a kwarg on spawn
+    and is what makes the runner switch to training mode and emit phase
+    callbacks (preparing → training → downloading → uploading →
+    completed/failed) to PATCH /v3/train/{id}/status.
     """
     config = {
         "id": job.assessment_id,
