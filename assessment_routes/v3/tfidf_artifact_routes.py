@@ -2,13 +2,17 @@ __version__ = "v3"
 
 import base64
 import binascii
+import io
 import socket
 import time
+import uuid
 from typing import Dict, List, Union
 
 import fastapi
+import numpy as np
 from fastapi import Depends, HTTPException, status
-from sqlalchemy import Float, cast, delete, desc, select, text
+from sqlalchemy import Float, cast, delete, desc, func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +23,8 @@ from database.models import (
     TfidfArtifactRun,
     TfidfPcaVector,
     TfidfSvd,
+    TfidfSvdChunk,
+    TfidfSvdStaging,
     TfidfVectorizerArtifact,
 )
 from database.models import UserDB as UserModel
@@ -27,6 +33,13 @@ from database.models import (
 )
 from models import (
     TFIDF_MAX_BATCH_RESULTS,
+    TfidfArtifactsAbortRequest,
+    TfidfArtifactsAbortResponse,
+    TfidfArtifactsChunkRequest,
+    TfidfArtifactsChunkResponse,
+    TfidfArtifactsCommitRequest,
+    TfidfArtifactsInitRequest,
+    TfidfArtifactsInitResponse,
     TfidfArtifactsPullResponse,
     TfidfArtifactsPushRequest,
     TfidfArtifactsPushResponse,
@@ -51,9 +64,20 @@ router = fastapi.APIRouter()
 # overhead without letting a single request dominate API memory.
 _MAX_COMPONENTS_BYTES = 200 * 1024 * 1024
 
+# Per-chunk cap for the chunked upload path. Keeps any individual POST well
+# under platform/proxy limits even when the aggregate matrix is multi-GB.
+_MAX_CHUNK_BYTES = 100 * 1024 * 1024
+
 # TfidfPcaVector.vector is declared Vector(300); queries against the corpus
 # must always be 300-dim regardless of what artifact metadata claims.
 _CORPUS_VECTOR_DIM = 300
+
+
+def _parse_upload_id(raw: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(raw)
+    except (ValueError, AttributeError, TypeError):
+        raise HTTPException(status_code=422, detail=f"Invalid upload_id: {raw!r}")
 
 
 async def _rank_against_corpus(
@@ -297,6 +321,435 @@ async def push_tfidf_artifacts(
         n_word_features=n_word_features,
         n_char_features=n_char_features,
         components_bytes=len(components_bytes),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Chunked upload — for SVD matrices that exceed the single-POST cap.
+# Flow: init → chunks (N POSTs) → commit. Abort drops an in-flight upload.
+# ---------------------------------------------------------------------------
+
+
+async def _load_tfidf_assessment_for_upload(
+    assessment_id: int, current_user: UserModel, db: AsyncSession
+) -> Assessment:
+    """Common guard for init/commit: assessment exists, is tfidf, user authorized."""
+    assessment = await db.scalar(
+        select(Assessment).where(Assessment.id == assessment_id).limit(1)
+    )
+    if assessment is None:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    if assessment.type != "tfidf":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Assessment type must be 'tfidf', got '{assessment.type}'",
+        )
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+    return assessment
+
+
+def _validate_vectorizer_shapes(body: TfidfArtifactsInitRequest) -> tuple[int, int]:
+    n_word_features = len(body.word_vectorizer.vocabulary)
+    n_char_features = len(body.char_vectorizer.vocabulary)
+    if n_word_features != len(body.word_vectorizer.idf):
+        raise HTTPException(
+            status_code=422,
+            detail="word_vectorizer.vocabulary and idf must have the same length",
+        )
+    if n_char_features != len(body.char_vectorizer.idf):
+        raise HTTPException(
+            status_code=422,
+            detail="char_vectorizer.vocabulary and idf must have the same length",
+        )
+    if body.n_components != body.svd.n_components:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"body.n_components ({body.n_components}) must equal "
+                f"svd.n_components ({body.svd.n_components})"
+            ),
+        )
+    if body.svd.n_features != n_word_features + n_char_features:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"svd.n_features ({body.svd.n_features}) must equal "
+                f"n_word_features + n_char_features ({n_word_features + n_char_features})"
+            ),
+        )
+    return n_word_features, n_char_features
+
+
+@router.post(
+    "/assessment/{assessment_id}/tfidf-artifacts/init",
+    response_model=TfidfArtifactsInitResponse,
+)
+async def init_tfidf_artifacts_upload(
+    assessment_id: int,
+    body: TfidfArtifactsInitRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a chunked TF-IDF artifact upload.
+
+    Creates a staging row with the vectorizer and SVD metadata. Returns an
+    upload_id that the caller uses to POST chunks and finally commit.
+    """
+    await _load_tfidf_assessment_for_upload(assessment_id, current_user, db)
+    _validate_vectorizer_shapes(body)
+
+    staging = TfidfSvdStaging(
+        assessment_id=assessment_id,
+        source_language=body.source_language,
+        n_components=body.n_components,
+        n_corpus_vrefs=body.n_corpus_vrefs,
+        sklearn_version=body.sklearn_version,
+        word_vocabulary=body.word_vectorizer.vocabulary,
+        word_idf=body.word_vectorizer.idf,
+        word_params=body.word_vectorizer.params,
+        char_vocabulary=body.char_vectorizer.vocabulary,
+        char_idf=body.char_vectorizer.idf,
+        char_params=body.char_vectorizer.params,
+        svd_n_components=body.svd.n_components,
+        svd_n_features=body.svd.n_features,
+        svd_dtype=body.svd.dtype,
+        total_chunks=body.total_chunks,
+    )
+    try:
+        db.add(staging)
+        await db.commit()
+        await db.refresh(staging)
+    except SQLAlchemyError:
+        logger.exception(
+            "Failed to open tfidf staging upload, assessment_id=%s", assessment_id
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to open staging upload for assessment {assessment_id}",
+        )
+
+    return TfidfArtifactsInitResponse(
+        upload_id=str(staging.upload_id),
+        assessment_id=assessment_id,
+        total_chunks=body.total_chunks,
+    )
+
+
+@router.post(
+    "/assessment/{assessment_id}/tfidf-artifacts/chunks",
+    response_model=TfidfArtifactsChunkResponse,
+)
+async def upload_tfidf_artifact_chunk(
+    assessment_id: int,
+    body: TfidfArtifactsChunkRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Push one chunk of SVD components. Idempotent per (upload_id, chunk_index)."""
+    upload_id = _parse_upload_id(body.upload_id)
+
+    staging = await db.scalar(
+        select(TfidfSvdStaging).where(TfidfSvdStaging.upload_id == upload_id)
+    )
+    if staging is None:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    if staging.assessment_id != assessment_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"upload_id belongs to assessment {staging.assessment_id}, "
+                f"not {assessment_id}"
+            ),
+        )
+    if not await is_user_authorized_for_assessment(
+        current_user.id, staging.assessment_id, db
+    ):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+    if body.chunk_index >= staging.total_chunks:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"chunk_index {body.chunk_index} out of range for "
+                f"total_chunks={staging.total_chunks}"
+            ),
+        )
+
+    try:
+        chunk_bytes = base64.b64decode(body.components_b64, validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid base64 in components_b64: {e}",
+        )
+    if len(chunk_bytes) > _MAX_CHUNK_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"chunk decoded to {len(chunk_bytes)} bytes, "
+                f"over the {_MAX_CHUNK_BYTES}-byte per-chunk limit"
+            ),
+        )
+
+    stmt = (
+        pg_insert(TfidfSvdChunk)
+        .values(
+            upload_id=upload_id,
+            chunk_index=body.chunk_index,
+            components_bytes=chunk_bytes,
+        )
+        .on_conflict_do_update(
+            index_elements=["upload_id", "chunk_index"],
+            set_={
+                "components_bytes": chunk_bytes,
+                "received_at": func.now(),
+            },
+        )
+    )
+    try:
+        await db.execute(stmt)
+        chunks_received = await db.scalar(
+            select(func.count())
+            .select_from(TfidfSvdChunk)
+            .where(TfidfSvdChunk.upload_id == upload_id)
+        )
+        await db.commit()
+    except SQLAlchemyError:
+        logger.exception("Failed to persist tfidf chunk, upload_id=%s", upload_id)
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to persist chunk {body.chunk_index}",
+        )
+
+    return TfidfArtifactsChunkResponse(
+        upload_id=str(upload_id),
+        chunk_index=body.chunk_index,
+        bytes_received=len(chunk_bytes),
+        chunks_received=int(chunks_received or 0),
+        total_chunks=staging.total_chunks,
+    )
+
+
+@router.post(
+    "/assessment/{assessment_id}/tfidf-artifacts/commit",
+    response_model=TfidfArtifactsPushResponse,
+)
+async def commit_tfidf_artifacts_upload(
+    assessment_id: int,
+    body: TfidfArtifactsCommitRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Reassemble staged chunks and materialise final artifact rows.
+
+    Validates all total_chunks chunks are present, vstacks them into a single
+    components_ matrix, and writes the TfidfArtifactRun + vectorizer + SVD rows
+    in one transaction. Existing artifacts for the assessment are replaced.
+    """
+    upload_id = _parse_upload_id(body.upload_id)
+
+    staging = await db.scalar(
+        select(TfidfSvdStaging).where(TfidfSvdStaging.upload_id == upload_id)
+    )
+    if staging is None:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    if staging.assessment_id != assessment_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"upload_id belongs to assessment {staging.assessment_id}, "
+                f"not {assessment_id}"
+            ),
+        )
+    await _load_tfidf_assessment_for_upload(assessment_id, current_user, db)
+
+    chunk_rows = (
+        await db.execute(
+            select(TfidfSvdChunk.chunk_index, TfidfSvdChunk.components_bytes)
+            .where(TfidfSvdChunk.upload_id == upload_id)
+            .order_by(TfidfSvdChunk.chunk_index)
+        )
+    ).all()
+    if len(chunk_rows) != staging.total_chunks:
+        present = {row.chunk_index for row in chunk_rows}
+        missing = sorted(set(range(staging.total_chunks)) - present)
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"expected {staging.total_chunks} chunks, got {len(chunk_rows)} "
+                f"(missing: {missing})"
+            ),
+        )
+
+    try:
+        slabs = [
+            np.load(io.BytesIO(row.components_bytes), allow_pickle=False)
+            for row in chunk_rows
+        ]
+    except (ValueError, OSError) as e:
+        raise HTTPException(
+            status_code=422, detail=f"Chunk is not a valid .npy payload: {e}"
+        )
+
+    expected_dtype = np.dtype(staging.svd_dtype)
+    for idx, slab in enumerate(slabs):
+        if slab.ndim != 2 or slab.shape[1] != staging.svd_n_features:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"chunk {idx} has shape {slab.shape}; expected "
+                    f"(*, {staging.svd_n_features})"
+                ),
+            )
+        if slab.dtype != expected_dtype:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"chunk {idx} has dtype {slab.dtype}; expected " f"{expected_dtype}"
+                ),
+            )
+
+    combined = np.vstack(slabs) if slabs else np.empty((0, staging.svd_n_features))
+    if combined.shape != (staging.svd_n_components, staging.svd_n_features):
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"reassembled shape {combined.shape} does not match declared "
+                f"({staging.svd_n_components}, {staging.svd_n_features})"
+            ),
+        )
+
+    buf = io.BytesIO()
+    np.save(buf, combined, allow_pickle=False)
+    components_npy = buf.getvalue()
+
+    n_word_features = len(staging.word_vocabulary)
+    n_char_features = len(staging.char_vocabulary)
+
+    try:
+        await db.execute(
+            delete(TfidfArtifactRun).where(
+                TfidfArtifactRun.assessment_id == assessment_id
+            )
+        )
+        db.add(
+            TfidfArtifactRun(
+                assessment_id=assessment_id,
+                source_language=staging.source_language,
+                n_components=staging.n_components,
+                n_word_features=n_word_features,
+                n_char_features=n_char_features,
+                n_corpus_vrefs=staging.n_corpus_vrefs,
+                sklearn_version=staging.sklearn_version,
+            )
+        )
+        await db.flush()
+        db.add(
+            TfidfVectorizerArtifact(
+                assessment_id=assessment_id,
+                kind="word",
+                vocabulary=staging.word_vocabulary,
+                idf=staging.word_idf,
+                params=staging.word_params,
+            )
+        )
+        db.add(
+            TfidfVectorizerArtifact(
+                assessment_id=assessment_id,
+                kind="char",
+                vocabulary=staging.char_vocabulary,
+                idf=staging.char_idf,
+                params=staging.char_params,
+            )
+        )
+        db.add(
+            TfidfSvd(
+                assessment_id=assessment_id,
+                n_components=staging.svd_n_components,
+                n_features=staging.svd_n_features,
+                components_npy=components_npy,
+                dtype=staging.svd_dtype,
+            )
+        )
+        await db.execute(
+            delete(TfidfSvdStaging).where(TfidfSvdStaging.upload_id == upload_id)
+        )
+        await db.commit()
+    except SQLAlchemyError:
+        logger.exception(
+            "Failed to commit tfidf chunked upload, upload_id=%s", upload_id
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to commit tfidf upload for assessment {assessment_id}",
+        )
+
+    return TfidfArtifactsPushResponse(
+        assessment_id=assessment_id,
+        n_word_features=n_word_features,
+        n_char_features=n_char_features,
+        components_bytes=len(components_npy),
+    )
+
+
+@router.post(
+    "/assessment/{assessment_id}/tfidf-artifacts/abort",
+    response_model=TfidfArtifactsAbortResponse,
+)
+async def abort_tfidf_artifacts_upload(
+    assessment_id: int,
+    body: TfidfArtifactsAbortRequest,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel an in-flight chunked upload and drop its staged chunks."""
+    upload_id = _parse_upload_id(body.upload_id)
+
+    staging = await db.scalar(
+        select(TfidfSvdStaging).where(TfidfSvdStaging.upload_id == upload_id)
+    )
+    if staging is None:
+        raise HTTPException(status_code=404, detail="Upload not found")
+    if staging.assessment_id != assessment_id:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"upload_id belongs to assessment {staging.assessment_id}, "
+                f"not {assessment_id}"
+            ),
+        )
+    if not await is_user_authorized_for_assessment(
+        current_user.id, staging.assessment_id, db
+    ):
+        raise HTTPException(
+            status_code=403, detail="Not authorized for this assessment"
+        )
+
+    chunks_removed = await db.scalar(
+        select(func.count())
+        .select_from(TfidfSvdChunk)
+        .where(TfidfSvdChunk.upload_id == upload_id)
+    )
+    try:
+        await db.execute(
+            delete(TfidfSvdStaging).where(TfidfSvdStaging.upload_id == upload_id)
+        )
+        await db.commit()
+    except SQLAlchemyError:
+        logger.exception("Failed to abort tfidf upload, upload_id=%s", upload_id)
+        await db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to abort upload")
+
+    return TfidfArtifactsAbortResponse(
+        upload_id=str(upload_id),
+        chunks_removed=int(chunks_removed or 0),
     )
 
 

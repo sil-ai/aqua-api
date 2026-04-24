@@ -1319,6 +1319,59 @@ class TfidfArtifactsPullResponse(BaseModel):
     svd: TfidfSvdPayload
 
 
+# --- Chunked TF-IDF artifact upload (for components_ arrays over the single-POST cap) ---
+
+
+class TfidfSvdMeta(BaseModel):
+    n_components: int
+    n_features: int
+    dtype: Literal["float32", "float64"] = "float32"
+
+
+class TfidfArtifactsInitRequest(BaseModel):
+    source_language: Optional[str] = Field(default=None, max_length=3)
+    n_components: int
+    n_corpus_vrefs: int
+    sklearn_version: str
+    word_vectorizer: TfidfVectorizerPayload
+    char_vectorizer: TfidfVectorizerPayload
+    svd: TfidfSvdMeta
+    total_chunks: int = Field(..., ge=1, le=1024)
+
+
+class TfidfArtifactsInitResponse(BaseModel):
+    upload_id: str
+    assessment_id: int
+    total_chunks: int
+
+
+class TfidfArtifactsChunkRequest(BaseModel):
+    upload_id: str
+    chunk_index: int = Field(..., ge=0)
+    components_b64: str
+
+
+class TfidfArtifactsChunkResponse(BaseModel):
+    upload_id: str
+    chunk_index: int
+    bytes_received: int
+    chunks_received: int
+    total_chunks: int
+
+
+class TfidfArtifactsCommitRequest(BaseModel):
+    upload_id: str
+
+
+class TfidfArtifactsAbortRequest(BaseModel):
+    upload_id: str
+
+
+class TfidfArtifactsAbortResponse(BaseModel):
+    upload_id: str
+    chunks_removed: int
+
+
 TFIDF_CORPUS_VECTOR_DIM = 300
 
 
