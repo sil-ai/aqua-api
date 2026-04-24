@@ -1281,10 +1281,15 @@ class TfidfVectorizerPayload(BaseModel):
     params: Dict[str, Any]
 
 
-class TfidfSvdPayload(BaseModel):
-    n_components: int
-    n_features: int
+# TfidfSvdMeta (shape + dtype only) is shared by chunked uploads that don't
+# carry the bytes inline. TfidfSvdPayload adds the base64-encoded .npy blob.
+class TfidfSvdMeta(BaseModel):
+    n_components: int = Field(..., ge=1, le=4096)
+    n_features: int = Field(..., ge=1, le=10_000_000)
     dtype: Literal["float32", "float64"] = "float32"
+
+
+class TfidfSvdPayload(TfidfSvdMeta):
     components_b64: str
 
 
@@ -1320,12 +1325,6 @@ class TfidfArtifactsPullResponse(BaseModel):
 
 
 # --- Chunked TF-IDF artifact upload (for components_ arrays over the single-POST cap) ---
-
-
-class TfidfSvdMeta(BaseModel):
-    n_components: int
-    n_features: int
-    dtype: Literal["float32", "float64"] = "float32"
 
 
 class TfidfArtifactsInitRequest(BaseModel):

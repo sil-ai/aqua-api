@@ -9,7 +9,6 @@ Create Date: 2026-04-24 19:00:00.000000
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
@@ -21,11 +20,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # gen_random_uuid() is a core function in PostgreSQL 13+ (no pgcrypto
+    # extension required). Earlier Postgres versions will fail CREATE TABLE
+    # with "function gen_random_uuid() does not exist".
     op.create_table(
         "tfidf_svd_staging",
         sa.Column(
             "upload_id",
-            postgresql.UUID(as_uuid=True),
+            sa.dialects.postgresql.UUID(as_uuid=True),
             server_default=sa.text("gen_random_uuid()"),
             nullable=False,
         ),
@@ -36,21 +38,33 @@ def upgrade() -> None:
         sa.Column("sklearn_version", sa.Text(), nullable=False),
         sa.Column(
             "word_vocabulary",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.dialects.postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
         ),
-        sa.Column("word_idf", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column(
-            "word_params", postgresql.JSONB(astext_type=sa.Text()), nullable=False
+            "word_idf",
+            sa.dialects.postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+        ),
+        sa.Column(
+            "word_params",
+            sa.dialects.postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
         ),
         sa.Column(
             "char_vocabulary",
-            postgresql.JSONB(astext_type=sa.Text()),
+            sa.dialects.postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
         ),
-        sa.Column("char_idf", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column(
-            "char_params", postgresql.JSONB(astext_type=sa.Text()), nullable=False
+            "char_idf",
+            sa.dialects.postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+        ),
+        sa.Column(
+            "char_params",
+            sa.dialects.postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
         ),
         sa.Column("svd_n_components", sa.Integer(), nullable=False),
         sa.Column("svd_n_features", sa.Integer(), nullable=False),
@@ -82,7 +96,9 @@ def upgrade() -> None:
 
     op.create_table(
         "tfidf_svd_chunk",
-        sa.Column("upload_id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "upload_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False
+        ),
         sa.Column("chunk_index", sa.Integer(), nullable=False),
         sa.Column("components_bytes", sa.LargeBinary(), nullable=False),
         sa.Column(

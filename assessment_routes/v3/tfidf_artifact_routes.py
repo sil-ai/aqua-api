@@ -32,6 +32,7 @@ from database.models import (
     VerseText,
 )
 from models import (
+    TFIDF_CORPUS_VECTOR_DIM,
     TFIDF_MAX_BATCH_RESULTS,
     TfidfArtifactsAbortRequest,
     TfidfArtifactsAbortResponse,
@@ -70,7 +71,7 @@ _MAX_CHUNK_BYTES = 100 * 1024 * 1024
 
 # TfidfPcaVector.vector is declared Vector(300); queries against the corpus
 # must always be 300-dim regardless of what artifact metadata claims.
-_CORPUS_VECTOR_DIM = 300
+# Imported as TFIDF_CORPUS_VECTOR_DIM from models.py.
 
 
 def _parse_upload_id(raw: str) -> uuid.UUID:
@@ -351,7 +352,7 @@ async def _load_tfidf_assessment_for_upload(
     return assessment
 
 
-def _validate_vectorizer_shapes(body: TfidfArtifactsInitRequest) -> tuple[int, int]:
+def _validate_vectorizer_shapes(body: TfidfArtifactsInitRequest) -> None:
     n_word_features = len(body.word_vectorizer.vocabulary)
     n_char_features = len(body.char_vectorizer.vocabulary)
     if n_word_features != len(body.word_vectorizer.idf):
@@ -380,7 +381,6 @@ def _validate_vectorizer_shapes(body: TfidfArtifactsInitRequest) -> tuple[int, i
                 f"n_word_features + n_char_features ({n_word_features + n_char_features})"
             ),
         )
-    return n_word_features, n_char_features
 
 
 @router.post(
@@ -440,7 +440,7 @@ async def init_tfidf_artifacts_upload(
 
 
 @router.post(
-    "/assessment/{assessment_id}/tfidf-artifacts/chunks",
+    "/assessment/{assessment_id}/tfidf-artifacts/chunk",
     response_model=TfidfArtifactsChunkResponse,
 )
 async def upload_tfidf_artifact_chunk(
@@ -452,25 +452,23 @@ async def upload_tfidf_artifact_chunk(
     """Push one chunk of SVD components. Idempotent per (upload_id, chunk_index)."""
     upload_id = _parse_upload_id(body.upload_id)
 
-    staging = await db.scalar(
-        select(TfidfSvdStaging).where(TfidfSvdStaging.upload_id == upload_id)
-    )
-    if staging is None:
-        raise HTTPException(status_code=404, detail="Upload not found")
-    if staging.assessment_id != assessment_id:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"upload_id belongs to assessment {staging.assessment_id}, "
-                f"not {assessment_id}"
-            ),
-        )
-    if not await is_user_authorized_for_assessment(
-        current_user.id, staging.assessment_id, db
-    ):
+    # Authorize against the URL assessment *before* any staging lookup, so
+    # callers cannot probe upload_ids to discover which assessments they exist
+    # on. Uploads whose staging row belongs to a different assessment return
+    # the same 404 as uploads that do not exist.
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=403, detail="Not authorized for this assessment"
         )
+
+    staging = await db.scalar(
+        select(TfidfSvdStaging).where(
+            TfidfSvdStaging.upload_id == upload_id,
+            TfidfSvdStaging.assessment_id == assessment_id,
+        )
+    )
+    if staging is None:
+        raise HTTPException(status_code=404, detail="Upload not found")
     if body.chunk_index >= staging.total_chunks:
         raise HTTPException(
             status_code=422,
@@ -513,6 +511,10 @@ async def upload_tfidf_artifact_chunk(
     )
     try:
         await db.execute(stmt)
+        # Advisory: count inside this transaction is correct for the current
+        # upsert, but can skew against a concurrent writer for the same
+        # upload_id. Callers relying on this to decide when to commit should
+        # treat it as a hint, not a strict ready signal.
         chunks_received = await db.scalar(
             select(func.count())
             .select_from(TfidfSvdChunk)
@@ -554,20 +556,26 @@ async def commit_tfidf_artifacts_upload(
     """
     upload_id = _parse_upload_id(body.upload_id)
 
+    # Authorize against the URL assessment before touching staging, so we
+    # never 422 with a cross-assessment upload_id (which would leak the owning
+    # assessment id to unauthorized callers). Mismatched or missing uploads
+    # both surface as 404.
+    await _load_tfidf_assessment_for_upload(assessment_id, current_user, db)
+
+    # Lock the staging row for the duration of this transaction so two
+    # concurrent commits for the same upload_id serialise — without this,
+    # both passes the chunk-count check and both try to write the final
+    # artifact rows, producing a unique-constraint collision.
     staging = await db.scalar(
-        select(TfidfSvdStaging).where(TfidfSvdStaging.upload_id == upload_id)
+        select(TfidfSvdStaging)
+        .where(
+            TfidfSvdStaging.upload_id == upload_id,
+            TfidfSvdStaging.assessment_id == assessment_id,
+        )
+        .with_for_update()
     )
     if staging is None:
         raise HTTPException(status_code=404, detail="Upload not found")
-    if staging.assessment_id != assessment_id:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"upload_id belongs to assessment {staging.assessment_id}, "
-                f"not {assessment_id}"
-            ),
-        )
-    await _load_tfidf_assessment_for_upload(assessment_id, current_user, db)
 
     chunk_rows = (
         await db.execute(
@@ -597,6 +605,9 @@ async def commit_tfidf_artifacts_upload(
             status_code=422, detail=f"Chunk is not a valid .npy payload: {e}"
         )
 
+    # np.save preserves byte order in the header, so dtype equality rejects
+    # big-endian clients even though the numeric type matches. Compare by
+    # kind+itemsize instead.
     expected_dtype = np.dtype(staging.svd_dtype)
     for idx, slab in enumerate(slabs):
         if slab.ndim != 2 or slab.shape[1] != staging.svd_n_features:
@@ -607,7 +618,10 @@ async def commit_tfidf_artifacts_upload(
                     f"(*, {staging.svd_n_features})"
                 ),
             )
-        if slab.dtype != expected_dtype:
+        if (slab.dtype.kind, slab.dtype.itemsize) != (
+            expected_dtype.kind,
+            expected_dtype.itemsize,
+        ):
             raise HTTPException(
                 status_code=422,
                 detail=(
@@ -709,28 +723,27 @@ async def abort_tfidf_artifacts_upload(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Cancel an in-flight chunked upload and drop its staged chunks."""
+    """Cancel an in-flight chunked upload and drop its staged chunks.
+
+    Authorization is at the assessment level — any caller authorized for the
+    assessment can abort any in-flight upload for it (uploads have no
+    per-initiator ownership by design).
+    """
     upload_id = _parse_upload_id(body.upload_id)
 
-    staging = await db.scalar(
-        select(TfidfSvdStaging).where(TfidfSvdStaging.upload_id == upload_id)
-    )
-    if staging is None:
-        raise HTTPException(status_code=404, detail="Upload not found")
-    if staging.assessment_id != assessment_id:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"upload_id belongs to assessment {staging.assessment_id}, "
-                f"not {assessment_id}"
-            ),
-        )
-    if not await is_user_authorized_for_assessment(
-        current_user.id, staging.assessment_id, db
-    ):
+    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=403, detail="Not authorized for this assessment"
         )
+
+    staging = await db.scalar(
+        select(TfidfSvdStaging).where(
+            TfidfSvdStaging.upload_id == upload_id,
+            TfidfSvdStaging.assessment_id == assessment_id,
+        )
+    )
+    if staging is None:
+        raise HTTPException(status_code=404, detail="Upload not found")
 
     chunks_removed = await db.scalar(
         select(func.count())
@@ -872,13 +885,13 @@ async def _resolve_assessment_for_by_vector(
     # The corpus vectors are stored as Vector(300), so queries must always be
     # 300-dim. If an artifact run claims otherwise, fail fast with 422 rather
     # than letting pgvector raise a dimension-mismatch error at query time.
-    if run is not None and run.n_components != _CORPUS_VECTOR_DIM:
+    if run is not None and run.n_components != TFIDF_CORPUS_VECTOR_DIM:
         raise HTTPException(
             status_code=422,
             detail=(
                 f"Assessment {assessment_id} has artifact run "
                 f"n_components={run.n_components}, but stored TF-IDF vectors "
-                f"require dimension {_CORPUS_VECTOR_DIM}"
+                f"require dimension {TFIDF_CORPUS_VECTOR_DIM}"
             ),
         )
 
@@ -906,12 +919,12 @@ async def get_tfidf_result_by_vector(
         body.assessment_id, current_user, db
     )
 
-    if len(body.vector) != _CORPUS_VECTOR_DIM:
+    if len(body.vector) != TFIDF_CORPUS_VECTOR_DIM:
         raise HTTPException(
             status_code=422,
             detail=(
                 f"Vector length {len(body.vector)} does not match required "
-                f"dimension {_CORPUS_VECTOR_DIM} for assessment {body.assessment_id}"
+                f"dimension {TFIDF_CORPUS_VECTOR_DIM} for assessment {body.assessment_id}"
             ),
         )
 

@@ -1,6 +1,6 @@
 """Tests for the chunked TF-IDF artifact upload endpoints.
 
-Covers /v3/assessment/{id}/tfidf-artifacts/init, /chunks, /commit, /abort.
+Covers /v3/assessment/{id}/tfidf-artifacts/init, /chunk, /commit, /abort.
 """
 
 import base64
@@ -83,7 +83,9 @@ def _init_body(
 
 
 def _decode_components(payload: dict) -> np.ndarray:
-    return np.load(io.BytesIO(base64.b64decode(payload["components_b64"])))
+    return np.load(
+        io.BytesIO(base64.b64decode(payload["components_b64"])), allow_pickle=False
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +158,7 @@ def test_chunked_upload_round_trip(client, regular_token1, chunk_tfidf_assessmen
     # Upload chunks in mixed order to confirm commit sorts by index.
     for i in [2, 0, 3, 1]:
         resp = client.post(
-            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
             json={
                 "upload_id": upload_id,
                 "chunk_index": i,
@@ -217,7 +219,7 @@ def test_chunked_upload_chunk_idempotency(
     # Upload a wrong chunk 0 first, then overwrite with the correct one.
     wrong = np.zeros_like(slabs[0])
     client.post(
-        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
         json={
             "upload_id": upload_id,
             "chunk_index": 0,
@@ -226,7 +228,7 @@ def test_chunked_upload_chunk_idempotency(
         headers=headers,
     )
     client.post(
-        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
         json={
             "upload_id": upload_id,
             "chunk_index": 0,
@@ -235,7 +237,7 @@ def test_chunked_upload_chunk_idempotency(
         headers=headers,
     )
     client.post(
-        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
         json={
             "upload_id": upload_id,
             "chunk_index": 1,
@@ -322,7 +324,7 @@ def test_commit_missing_chunks_rejected(
     # Only upload chunk 0 and 2 — chunk 1 missing.
     for i in [0, 2]:
         client.post(
-            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
             json={
                 "upload_id": upload_id,
                 "chunk_index": i,
@@ -357,7 +359,7 @@ def test_chunk_index_out_of_range(client, regular_token1, chunk_tfidf_assessment
     ).json()["upload_id"]
 
     resp = client.post(
-        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
         json={
             "upload_id": upload_id,
             "chunk_index": 5,  # total_chunks=2, so 5 is out of range
@@ -377,7 +379,9 @@ def test_chunk_index_out_of_range(client, regular_token1, chunk_tfidf_assessment
 def test_chunk_upload_id_assessment_mismatch(
     client, regular_token1, chunk_tfidf_assessment_id, chunk_non_tfidf_assessment_id
 ):
-    """Posting a chunk to the wrong assessment_id in the URL is rejected."""
+    """Posting a chunk whose upload_id belongs to a different assessment
+    returns 404 (same as an unknown upload_id) — we must not reveal which
+    assessment an upload_id belongs to."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
     upload_id = client.post(
         f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/init",
@@ -386,7 +390,7 @@ def test_chunk_upload_id_assessment_mismatch(
     ).json()["upload_id"]
 
     resp = client.post(
-        f"{prefix}/assessment/{chunk_non_tfidf_assessment_id}/tfidf-artifacts/chunks",
+        f"{prefix}/assessment/{chunk_non_tfidf_assessment_id}/tfidf-artifacts/chunk",
         json={
             "upload_id": upload_id,
             "chunk_index": 0,
@@ -394,8 +398,8 @@ def test_chunk_upload_id_assessment_mismatch(
         },
         headers=headers,
     )
-    assert resp.status_code == 422
-    assert str(chunk_tfidf_assessment_id) in resp.json()["detail"]
+    assert resp.status_code == 404
+    assert str(chunk_tfidf_assessment_id) not in resp.json()["detail"]
 
     client.post(
         f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
@@ -406,7 +410,7 @@ def test_chunk_upload_id_assessment_mismatch(
 
 def test_chunk_unknown_upload_id(client, regular_token1, chunk_tfidf_assessment_id):
     resp = client.post(
-        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
         json={
             "upload_id": "00000000-0000-0000-0000-000000000000",
             "chunk_index": 0,
@@ -419,7 +423,7 @@ def test_chunk_unknown_upload_id(client, regular_token1, chunk_tfidf_assessment_
 
 def test_chunk_invalid_upload_id(client, regular_token1, chunk_tfidf_assessment_id):
     resp = client.post(
-        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
         json={
             "upload_id": "not-a-uuid",
             "chunk_index": 0,
@@ -450,7 +454,7 @@ def test_chunk_shape_mismatch_rejected_on_commit(
     bad = _build_components(3, 9, seed=2)
     for i, slab in enumerate([ok, bad]):
         client.post(
-            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
             json={
                 "upload_id": upload_id,
                 "chunk_index": i,
@@ -489,7 +493,7 @@ def test_abort_drops_staging_and_chunks(
     # Only upload 2 of 3 chunks, then abort.
     for i in [0, 1]:
         client.post(
-            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
             json={
                 "upload_id": upload_id,
                 "chunk_index": i,
@@ -508,7 +512,7 @@ def test_abort_drops_staging_and_chunks(
 
     # After abort, further chunk posts with this upload_id must 404.
     resp = client.post(
-        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
         json={
             "upload_id": upload_id,
             "chunk_index": 2,
@@ -541,7 +545,7 @@ def test_commit_replaces_existing_artifacts(
     ).json()["upload_id"]
     for i, slab in enumerate(slabs):
         client.post(
-            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunks",
+            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
             json={
                 "upload_id": upload_id,
                 "chunk_index": i,
@@ -570,7 +574,12 @@ def test_commit_replaces_existing_artifacts(
 def test_abort_unauthorized(
     client, regular_token1, regular_token2, chunk_tfidf_assessment_id
 ):
-    """Another user cannot abort someone else's staging upload."""
+    """A user without access to the assessment cannot abort its uploads.
+
+    Abort authz is at the assessment level, not the upload-initiator level:
+    any caller authorized for the assessment may abort any in-flight upload
+    for it.
+    """
     upload_id = client.post(
         f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/init",
         json=_init_body(total_chunks=1),
@@ -588,4 +597,226 @@ def test_abort_unauthorized(
         f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
         json={"upload_id": upload_id},
         headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage: post-commit/abort behaviour, oversize, dtype, total=1
+# ---------------------------------------------------------------------------
+
+
+def _run_single_chunk_upload(
+    client, headers, assessment_id, *, arr, source_language="swh"
+) -> str:
+    """Helper: init + 1 chunk + commit a tiny matrix. Returns the upload_id used."""
+    body = _init_body(
+        n_components=arr.shape[0],
+        n_word_features=3,
+        n_char_features=4,
+        total_chunks=1,
+        source_language=source_language,
+    )
+    upload_id = client.post(
+        f"{prefix}/assessment/{assessment_id}/tfidf-artifacts/init",
+        json=body,
+        headers=headers,
+    ).json()["upload_id"]
+    client.post(
+        f"{prefix}/assessment/{assessment_id}/tfidf-artifacts/chunk",
+        json={
+            "upload_id": upload_id,
+            "chunk_index": 0,
+            "components_b64": _chunk_b64(arr),
+        },
+        headers=headers,
+    )
+    commit = client.post(
+        f"{prefix}/assessment/{assessment_id}/tfidf-artifacts/commit",
+        json={"upload_id": upload_id},
+        headers=headers,
+    )
+    assert commit.status_code == 200, commit.text
+    return upload_id
+
+
+def test_total_chunks_one_happy_path(client, regular_token1, chunk_tfidf_assessment_id):
+    """total_chunks=1 is the corner case most likely to hit off-by-one bugs."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    arr = _build_components(4, 7, seed=101)
+    _run_single_chunk_upload(client, headers, chunk_tfidf_assessment_id, arr=arr)
+
+    pulled = client.get(
+        f"{prefix}/assessment/tfidf/artifacts",
+        params={"assessment_id": chunk_tfidf_assessment_id},
+        headers=headers,
+    ).json()
+    assert np.array_equal(arr, _decode_components(pulled["svd"]))
+
+
+def test_second_commit_same_upload_id_404s(
+    client, regular_token1, chunk_tfidf_assessment_id
+):
+    """Commit deletes the staging row, so a replay of the same upload_id 404s."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    arr = _build_components(4, 7, seed=201)
+    upload_id = _run_single_chunk_upload(
+        client, headers, chunk_tfidf_assessment_id, arr=arr
+    )
+
+    resp = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/commit",
+        json={"upload_id": upload_id},
+        headers=headers,
+    )
+    assert resp.status_code == 404
+
+
+def test_chunk_post_after_commit_404s(
+    client, regular_token1, chunk_tfidf_assessment_id
+):
+    """Late chunk posts to an already-committed upload_id must 404."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    arr = _build_components(4, 7, seed=202)
+    upload_id = _run_single_chunk_upload(
+        client, headers, chunk_tfidf_assessment_id, arr=arr
+    )
+
+    resp = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
+        json={
+            "upload_id": upload_id,
+            "chunk_index": 0,
+            "components_b64": _chunk_b64(arr),
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 404
+
+
+def test_abort_after_commit_404s(client, regular_token1, chunk_tfidf_assessment_id):
+    """Abort on an already-committed upload_id must 404."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    arr = _build_components(4, 7, seed=203)
+    upload_id = _run_single_chunk_upload(
+        client, headers, chunk_tfidf_assessment_id, arr=arr
+    )
+
+    resp = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
+        json={"upload_id": upload_id},
+        headers=headers,
+    )
+    assert resp.status_code == 404
+
+
+def test_chunk_invalid_base64(client, regular_token1, chunk_tfidf_assessment_id):
+    """Garbled components_b64 on the chunk endpoint returns 422."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    upload_id = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/init",
+        json=_init_body(total_chunks=1),
+        headers=headers,
+    ).json()["upload_id"]
+
+    resp = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
+        json={
+            "upload_id": upload_id,
+            "chunk_index": 0,
+            "components_b64": "not-valid-base64!!!",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert "base64" in resp.json()["detail"]
+
+    client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
+        json={"upload_id": upload_id},
+        headers=headers,
+    )
+
+
+def test_chunk_dtype_mismatch_rejected_at_commit(
+    client, regular_token1, chunk_tfidf_assessment_id
+):
+    """Init declared float32 but a chunk was saved as float64 — commit rejects."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    # Init says float32
+    upload_id = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/init",
+        json=_init_body(
+            n_components=4,
+            n_word_features=3,
+            n_char_features=4,
+            total_chunks=1,
+            dtype="float32",
+        ),
+        headers=headers,
+    ).json()["upload_id"]
+    # But the chunk is float64
+    wrong_dtype = _build_components(4, 7, dtype="float64", seed=7)
+    client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
+        json={
+            "upload_id": upload_id,
+            "chunk_index": 0,
+            "components_b64": _chunk_b64(wrong_dtype),
+        },
+        headers=headers,
+    )
+
+    resp = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/commit",
+        json={"upload_id": upload_id},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    assert "dtype" in resp.json()["detail"]
+
+    client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
+        json={"upload_id": upload_id},
+        headers=headers,
+    )
+
+
+def test_chunk_oversize_rejected_with_413(
+    client, regular_token1, chunk_tfidf_assessment_id
+):
+    """A chunk decoded past _MAX_CHUNK_BYTES is rejected with 413.
+
+    Rather than actually allocating 100 MiB of bytes, monkey-patch the cap
+    down to a small value for the duration of this test.
+    """
+    from assessment_routes.v3 import tfidf_artifact_routes as routes
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    upload_id = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/init",
+        json=_init_body(total_chunks=1),
+        headers=headers,
+    ).json()["upload_id"]
+
+    original_cap = routes._MAX_CHUNK_BYTES
+    routes._MAX_CHUNK_BYTES = 32  # bytes — any real chunk blows past this
+    try:
+        resp = client.post(
+            f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/chunk",
+            json={
+                "upload_id": upload_id,
+                "chunk_index": 0,
+                "components_b64": _chunk_b64(_build_components(8, 7)),
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 413
+        assert "per-chunk" in resp.json()["detail"]
+    finally:
+        routes._MAX_CHUNK_BYTES = original_cap
+
+    client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
+        json={"upload_id": upload_id},
+        headers=headers,
     )
