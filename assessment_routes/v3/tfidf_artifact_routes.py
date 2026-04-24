@@ -232,7 +232,7 @@ async def push_tfidf_artifacts(
         )
     # Sanity-check the components bytes against the declared shape/dtype. np.save
     # adds a small header (~128 bytes); allow 1KB of slack.
-    dtype_bytes = {"float32": 4, "float64": 8}[body.svd.dtype]
+    dtype_bytes = {"float16": 2, "float32": 4, "float64": 8}[body.svd.dtype]
     expected_payload = body.svd.n_components * body.svd.n_features * dtype_bytes
     if (
         len(components_bytes) < expected_payload

@@ -1286,7 +1286,7 @@ class TfidfVectorizerPayload(BaseModel):
 class TfidfSvdMeta(BaseModel):
     n_components: int = Field(..., ge=1, le=4096)
     n_features: int = Field(..., ge=1, le=10_000_000)
-    dtype: Literal["float32", "float64"] = "float32"
+    dtype: Literal["float16", "float32", "float64"] = "float32"
 
 
 class TfidfSvdPayload(TfidfSvdMeta):

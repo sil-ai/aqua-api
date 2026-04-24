@@ -205,6 +205,38 @@ def test_tfidf_artifact_round_trip(client, regular_token1, tfidf_assessment_id):
     assert np.array_equal(orig, round_tripped)
 
 
+def test_tfidf_artifact_round_trip_float16(client, regular_token1, tfidf_assessment_id):
+    """fp16 payloads are accepted and round-trip byte-for-byte."""
+    body = _make_artifact_body(n_word_features=3, n_char_features=4)
+    n_features = 3 + 4
+    body["svd"]["dtype"] = "float16"
+    body["svd"]["components_b64"] = _components_b64(5, n_features, dtype="float16")
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    resp = client.post(
+        f"{prefix}/assessment/{tfidf_assessment_id}/tfidf-artifacts",
+        json=body,
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    resp = client.get(
+        f"{prefix}/assessment/tfidf/artifacts",
+        params={"assessment_id": tfidf_assessment_id},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    pulled = resp.json()
+    assert pulled["svd"]["dtype"] == "float16"
+
+    orig = _decode_components(body["svd"])
+    round_tripped = _decode_components(pulled["svd"])
+    assert orig.dtype == np.float16
+    assert round_tripped.dtype == np.float16
+    assert round_tripped.shape == orig.shape
+    assert np.array_equal(orig, round_tripped)
+
+
 def test_tfidf_artifact_idempotency(client, regular_token1, tfidf_assessment_id):
     """Re-posting replaces the artifacts rather than creating duplicates."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
