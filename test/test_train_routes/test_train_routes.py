@@ -332,7 +332,7 @@ def test_training_job_full_lifecycle_via_runner(
     config = args[0]
     assert config["type"] == "tfidf"
     assert config["id"] == job["assessment_id"]
-    assert config["train"] is True
+    assert "train" not in config  # training mode is signaled by train_job_id kwarg
     assert kwargs.get("train_job_id") == job["id"]
 
     # (2) Simulate the runner's phase callbacks on the status endpoint.
@@ -1136,7 +1136,11 @@ def test_trainable_types_route_through_runner_with_train_job_id(
         assert config["id"] == jobs[t]["assessment_id"]
         assert config["revision_id"] == test_revision_id
         assert config["reference_id"] == test_revision_id_2
-        assert config["train"] is True
+        # Training mode is signaled by the train_job_id kwarg, not by a
+        # config["train"] flag — that used to be required by sem-sim's
+        # assess() but has been superseded by a `finetune` kwarg that
+        # callers opt into via /v3/train options.
+        assert "train" not in config
         assert kwargs.get("train_job_id") == jobs[t]["id"]
 
 

@@ -103,25 +103,23 @@ def _build_runner_train_config(
 ) -> dict:
     """Config passed to run_assessment_runner for a training job.
 
-    Overlaps with AssessmentIn.model_dump() but adds `train: True`, which
-    sem-sim's assess() reads to enter its finetune branch (see
-    aqua-assessments `_resolve_finetune_flag`). Non-sem-sim apps ignore it.
-
-    `id` is the **Assessment** id, not the TrainingJob id: the runner uses
-    `self.config.id` to build artifact-push URLs like
-    `/v3/assessment/{id}/results`, which are keyed on Assessment.id.
+    Mirrors AssessmentIn.model_dump(). `id` is the **Assessment** id, not
+    the TrainingJob id: the runner uses `self.config.id` to build
+    artifact-push URLs like `/v3/assessment/{id}/results`, which are keyed
+    on Assessment.id.
 
     `train_job_id` is NOT in this dict — it's passed as a kwarg on spawn
     and is what makes the runner switch to training mode and emit phase
     callbacks (preparing → training → downloading → uploading →
-    completed/failed) to PATCH /v3/train/{id}/status.
+    completed/failed) to PATCH /v3/train/{id}/status. Per-app behavior
+    toggles (e.g. sem-sim's `finetune`) flow through the caller's
+    `options` → `config["kwargs"]` — aqua-api doesn't hard-code them.
     """
     config = {
         "id": job.assessment_id,
         "revision_id": source_revision_id,
         "reference_id": target_revision_id,
         "type": job.type,
-        "train": True,
         "source_language": source_language,
         "target_language": target_language,
     }
