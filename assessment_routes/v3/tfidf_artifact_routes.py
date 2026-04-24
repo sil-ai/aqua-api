@@ -6,7 +6,6 @@ import io
 import socket
 import time
 import uuid
-from datetime import datetime, timedelta
 from typing import Dict, List, Union
 
 import fastapi
@@ -366,10 +365,13 @@ async def _sweep_stale_staging(
     on a stale-but-still-touched row defers to the next sweep instead of
     blocking this /init.
     """
-    cutoff = datetime.utcnow() - timedelta(hours=ttl_hours)
+    # Compute the cutoff in SQL (now() - interval) so it uses the same clock
+    # as the column's server_default=func.now() — no Python-vs-DB clock skew,
+    # no UTC-vs-local-time hazard from the column being plain TIMESTAMP.
+    cutoff_expr = func.now() - text(f"interval '{ttl_hours} hours'")
     stale = (
         select(TfidfSvdStaging.upload_id)
-        .where(TfidfSvdStaging.created_at < cutoff)
+        .where(TfidfSvdStaging.created_at < cutoff_expr)
         .with_for_update(skip_locked=True)
     )
     # synchronize_session=False because the in_(subquery) clause can't be
@@ -380,7 +382,7 @@ async def _sweep_stale_staging(
         .where(TfidfSvdStaging.upload_id.in_(stale))
         .execution_options(synchronize_session=False)
     )
-    deleted = result.rowcount or 0
+    deleted = result.rowcount
     if deleted:
         logger.info(
             "Swept %d stale tfidf staging row(s) older than %dh",
@@ -439,11 +441,17 @@ async def init_tfidf_artifacts_upload(
     await _load_tfidf_assessment_for_upload(assessment_id, current_user, db)
     _validate_vectorizer_shapes(body)
 
+    # The sweep runs before the staging insert and any rollback here drops
+    # the whole transaction. _load_tfidf_assessment_for_upload above is a
+    # plain read with no locks, so that's fine; if it ever takes a lock
+    # this ordering needs revisiting.
     try:
         await _sweep_stale_staging(db)
-    except SQLAlchemyError:
+    except Exception:
         # Sweep is opportunistic — never fail the user's /init because
         # cleanup of someone else's abandoned upload couldn't proceed.
+        # Catch broadly (not just SQLAlchemyError) so driver-level failures
+        # like asyncpg connection errors honour the same contract.
         logger.exception("Stale tfidf staging sweep failed; continuing with /init")
         await db.rollback()
 

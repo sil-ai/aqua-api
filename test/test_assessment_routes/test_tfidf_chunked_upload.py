@@ -868,17 +868,44 @@ def _insert_stale_staging(
 
 
 def test_init_sweeps_stale_staging_rows(
-    client, regular_token1, chunk_tfidf_assessment_id, test_db_session
+    client,
+    regular_token1,
+    chunk_tfidf_assessment_id,
+    chunk_non_tfidf_assessment_id,
+    test_db_session,
+    monkeypatch,
 ):
     """/init drops staging rows older than the TTL (with their chunks via cascade),
-    leaves fresh rows alone, and still creates the new upload."""
+    sweeps purely by age (not assessment), leaves fresh rows alone, and logs the count.
+    """
+    from assessment_routes.v3 import tfidf_artifact_routes as routes
+
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     stale_id = _insert_stale_staging(
         test_db_session, chunk_tfidf_assessment_id, age_hours=48
     )
+    # A stale row attached to a different assessment must also be swept —
+    # the cleanup is purely time-based, not assessment-scoped.
+    cross_stale_id = _insert_stale_staging(
+        test_db_session,
+        chunk_non_tfidf_assessment_id,
+        age_hours=72,
+        with_chunk=False,
+    )
     fresh_id = _insert_stale_staging(
         test_db_session, chunk_tfidf_assessment_id, age_hours=1, with_chunk=False
+    )
+
+    info_calls = []
+    real_info = routes.logger.info
+    monkeypatch.setattr(
+        routes.logger,
+        "info",
+        lambda msg, *args, **kwargs: (
+            info_calls.append((msg, args)),
+            real_info(msg, *args, **kwargs),
+        )[1],
     )
 
     resp = client.post(
@@ -901,10 +928,22 @@ def test_init_sweeps_stale_staging_rows(
     )
     assert (
         test_db_session.query(TfidfSvdStaging)
+        .filter_by(upload_id=cross_stale_id)
+        .one_or_none()
+        is None
+    )
+    assert (
+        test_db_session.query(TfidfSvdStaging)
         .filter_by(upload_id=fresh_id)
         .one_or_none()
         is not None
     )
+
+    sweep_logs = [
+        (msg, args) for msg, args in info_calls if "Swept" in msg and "stale" in msg
+    ]
+    assert len(sweep_logs) == 1
+    assert sweep_logs[0][1][0] == 2  # two stale rows reported
 
     client.post(
         f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
@@ -914,5 +953,44 @@ def test_init_sweeps_stale_staging_rows(
     client.post(
         f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
         json={"upload_id": str(fresh_id)},
+        headers=headers,
+    )
+
+
+def test_init_continues_when_sweep_fails(
+    client, regular_token1, chunk_tfidf_assessment_id, test_db_session, monkeypatch
+):
+    """If _sweep_stale_staging raises, /init must still succeed — the cleanup
+    is opportunistic and must never break a user's upload."""
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from assessment_routes.v3 import tfidf_artifact_routes as routes
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    async def boom(db, *, ttl_hours=routes._STAGING_TTL_HOURS):
+        raise SQLAlchemyError("simulated sweep failure")
+
+    monkeypatch.setattr(routes, "_sweep_stale_staging", boom)
+
+    resp = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/init",
+        json=_init_body(total_chunks=1),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    new_upload_id = resp.json()["upload_id"]
+
+    test_db_session.expire_all()
+    assert (
+        test_db_session.query(TfidfSvdStaging)
+        .filter_by(upload_id=uuid.UUID(new_upload_id))
+        .one_or_none()
+        is not None
+    )
+
+    client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
+        json={"upload_id": new_upload_id},
         headers=headers,
     )
