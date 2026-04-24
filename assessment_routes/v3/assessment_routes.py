@@ -388,7 +388,9 @@ async def add_assessment(
             .where(
                 Assessment.revision_id == a.revision_id,
                 Assessment.type == a.type,
-                Assessment.status.in_(["queued", "running"]),
+                Assessment.status.notin_(
+                    [s.value for s in ASSESSMENT_TERMINAL_STATUSES]
+                ),
                 Assessment.deleted.is_not(True),
                 Assessment.requested_time > stale_cutoff,
             )
