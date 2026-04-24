@@ -126,6 +126,8 @@ class Assessment(Base):
     type = Column(Text)
     status = Column(Text)
     status_detail = Column(Text, nullable=True)
+    percent_complete = Column(Float, nullable=True)
+    is_training = Column(Boolean, nullable=False, default=False, server_default="false")
     requested_time = Column(TIMESTAMP, default=func.now())
     start_time = Column(TIMESTAMP)
     end_time = Column(TIMESTAMP)

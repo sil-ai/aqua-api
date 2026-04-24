@@ -388,7 +388,9 @@ async def add_assessment(
             .where(
                 Assessment.revision_id == a.revision_id,
                 Assessment.type == a.type,
-                Assessment.status.in_(["queued", "running"]),
+                Assessment.status.notin_(
+                    [s.value for s in ASSESSMENT_TERMINAL_STATUSES]
+                ),
                 Assessment.deleted.is_not(True),
                 Assessment.requested_time > stale_cutoff,
             )
@@ -545,6 +547,8 @@ async def update_assessment_status(
     assessment.status = update.status
     if update.status_detail is not None:
         assessment.status_detail = update.status_detail
+    if update.percent_complete is not None:
+        assessment.percent_complete = update.percent_complete
 
     if assessment.start_time is None and update.status != "queued":
         assessment.start_time = datetime.utcnow()

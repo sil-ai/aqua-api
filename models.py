@@ -200,13 +200,41 @@ class VerseText(BaseModel):
 
 class AssessmentStatus(str, Enum):
     queued = "queued"
+    preparing = "preparing"
     running = "running"
+    training = "training"
+    downloading = "downloading"
+    uploading = "uploading"
     finished = "finished"
     failed = "failed"
 
 
+# Training-job runs use the phased path queued → preparing → training →
+# downloading → uploading → finished. Plain assessments use queued →
+# running → finished. failed is reachable from any non-terminal state.
 ASSESSMENT_VALID_TRANSITIONS = {
-    AssessmentStatus.queued: {AssessmentStatus.running, AssessmentStatus.failed},
+    AssessmentStatus.queued: {
+        AssessmentStatus.preparing,
+        AssessmentStatus.running,
+        AssessmentStatus.failed,
+    },
+    AssessmentStatus.preparing: {
+        AssessmentStatus.training,
+        AssessmentStatus.failed,
+    },
+    AssessmentStatus.training: {
+        AssessmentStatus.training,
+        AssessmentStatus.downloading,
+        AssessmentStatus.failed,
+    },
+    AssessmentStatus.downloading: {
+        AssessmentStatus.uploading,
+        AssessmentStatus.failed,
+    },
+    AssessmentStatus.uploading: {
+        AssessmentStatus.finished,
+        AssessmentStatus.failed,
+    },
     # running → running is intentional: allows runners to send progress updates
     AssessmentStatus.running: {
         AssessmentStatus.running,
@@ -221,6 +249,7 @@ ASSESSMENT_TERMINAL_STATUSES = {AssessmentStatus.finished, AssessmentStatus.fail
 class AssessmentStatusUpdate(BaseModel):
     status: AssessmentStatus
     status_detail: Optional[str] = None
+    percent_complete: Optional[float] = Field(None, ge=0.0, le=100.0)
 
     model_config = {"use_enum_values": True}
 
@@ -298,6 +327,8 @@ class AssessmentOut(BaseModel):
     end_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
     status_detail: Optional[str] = None
+    percent_complete: Optional[float] = None
+    is_training: bool = False
 
     model_config = {
         "json_schema_extra": {

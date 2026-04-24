@@ -1084,6 +1084,7 @@ def test_training_job_creates_assessment_for_trainable_types(
         assert assessment.status == "queued"
         assert assessment.owner_id == job["owner_id"]
         assert assessment.kwargs == {"tag": "assessment_creation_test"}
+        assert assessment.is_training is True
 
 
 def test_trainable_types_route_through_runner_with_train_job_id(
