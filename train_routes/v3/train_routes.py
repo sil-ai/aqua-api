@@ -108,12 +108,12 @@ def _build_runner_train_config(
     artifact-push URLs like `/v3/assessment/{id}/results`, which are keyed
     on Assessment.id.
 
-    `train_job_id` is NOT in this dict — it's passed as a kwarg on spawn
-    and is what makes the runner switch to training mode and emit phase
-    callbacks (preparing → training → downloading → uploading →
-    completed/failed) to PATCH /v3/train/{id}/status. Per-app behavior
-    toggles (e.g. sem-sim's `finetune`) flow through the caller's
-    `options` → `config["kwargs"]` — aqua-api doesn't hard-code them.
+    `is_training=True` is the single signal the runner keys on to emit the
+    phased status sequence (preparing → training → downloading → uploading
+    → finished) against PATCH /v3/assessment/{id}/status. Per-app
+    behaviour toggles (e.g. sem-sim's `finetune`) flow through the
+    caller's `options` → `config["kwargs"]` — aqua-api doesn't hard-code
+    them.
     """
     config = {
         "id": job.assessment_id,
@@ -122,6 +122,7 @@ def _build_runner_train_config(
         "type": job.type,
         "source_language": source_language,
         "target_language": target_language,
+        "is_training": True,
     }
     if options:
         config["kwargs"] = options
@@ -364,10 +365,11 @@ async def create_training_job(
                 job_out = TrainingJobOut.model_validate(job)
                 await f.spawn.aio(job_out.model_dump(mode="json"))
             elif job.type in TRAINABLE_ASSESSMENT_TYPES:
-                # Runner's train_job_id path: dispatches to the right app's
-                # assess() based on config.type and emits the phase callbacks
-                # (preparing → training → downloading → uploading →
-                # completed/failed) against PATCH /v3/train/{id}/status.
+                # Runner dispatches to the right app's assess() based on
+                # config.type and, because config["is_training"] is True,
+                # emits the phased status sequence (preparing → training →
+                # downloading → uploading → finished/failed) against
+                # PATCH /v3/assessment/{id}/status.
                 f = modal.Function.from_name(
                     "runner", "run_assessment_runner", environment_name=modal_env
                 )
@@ -379,7 +381,7 @@ async def create_training_job(
                     target_language,
                     job_in.options,
                 )
-                await f.spawn.aio(config, os.getenv("AQUA_DB", ""), train_job_id=job.id)
+                await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
             else:
                 raise RuntimeError(
                     f"No dispatch configured for training type '{job.type}'"
