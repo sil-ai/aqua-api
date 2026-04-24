@@ -1227,7 +1227,6 @@ class EflomalResultsPullResponse(BaseModel):
     reference_id: Optional[int] = None
     revision_id: Optional[int] = None
     dictionary: list[EflomalDictionaryItem]
-    cooccurrences: list[EflomalCooccurrenceItem]
     target_word_counts: list[EflomalTargetWordCountItem]
     priors: list[EflomalPriorItem] = Field(default_factory=list)
     bpe_models: Optional[EflomalBpeModels] = None

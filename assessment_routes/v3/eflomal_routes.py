@@ -108,11 +108,6 @@ async def _fetch_eflomal_response(
     )
     dictionary_rows = dict_result.scalars().all()
 
-    cooc_result = await db.execute(
-        select(EflomalCooccurrence).where(EflomalCooccurrence.assessment_id == ea_id)
-    )
-    cooccurrence_rows = cooc_result.scalars().all()
-
     twc_result = await db.execute(
         select(EflomalTargetWordCount).where(
             EflomalTargetWordCount.assessment_id == ea_id
@@ -172,15 +167,6 @@ async def _fetch_eflomal_response(
                 probability=r.probability,
             )
             for r in dictionary_rows
-        ],
-        cooccurrences=[
-            EflomalCooccurrenceItem(
-                source_word=r.source_word,
-                target_word=r.target_word,
-                co_occur_count=r.co_occur_count,
-                aligned_count=r.aligned_count,
-            )
-            for r in cooccurrence_rows
         ],
         target_word_counts=[
             EflomalTargetWordCountItem(

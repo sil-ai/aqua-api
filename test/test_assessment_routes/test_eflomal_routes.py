@@ -395,14 +395,6 @@ def test_pull_eflomal_results_success(client, regular_token1, _ensure_eflomal_pu
     assert "count" in first_dict
     assert "probability" in first_dict
 
-    # Cooccurrence entries (n_cooc=20 in _push_all)
-    assert len(data["cooccurrences"]) == 20
-    first_cooc = data["cooccurrences"][0]
-    assert "source_word" in first_cooc
-    assert "target_word" in first_cooc
-    assert "co_occur_count" in first_cooc
-    assert "aligned_count" in first_cooc
-
     # Target word counts (n_twc=5 in _push_all)
     assert len(data["target_word_counts"]) == 5
     first_twc = data["target_word_counts"][0]
@@ -501,7 +493,6 @@ def test_pull_eflomal_results_by_language_success(
     assert data["num_missing_words"] == 3
     assert data["created_at"] is not None
     assert len(data["dictionary"]) == 10
-    assert len(data["cooccurrences"]) == 20
     assert len(data["target_word_counts"]) == 5
     assert len(data["priors"]) == 5
     assert data["bpe_models"] is not None
