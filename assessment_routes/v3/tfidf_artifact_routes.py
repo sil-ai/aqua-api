@@ -461,11 +461,17 @@ async def upload_tfidf_artifact_chunk(
             status_code=403, detail="Not authorized for this assessment"
         )
 
+    # FOR KEY SHARE conflicts with the commit endpoint's FOR UPDATE lock, so
+    # a commit in progress forces this chunk write to wait (or, if commit
+    # already finished and deleted staging, returns 404 cleanly) instead of
+    # racing into an FK-violation 500 on the cascaded tfidf_svd_chunk delete.
     staging = await db.scalar(
-        select(TfidfSvdStaging).where(
+        select(TfidfSvdStaging)
+        .where(
             TfidfSvdStaging.upload_id == upload_id,
             TfidfSvdStaging.assessment_id == assessment_id,
         )
+        .with_for_update(key_share=True)
     )
     if staging is None:
         raise HTTPException(status_code=404, detail="Upload not found")
@@ -607,7 +613,8 @@ async def commit_tfidf_artifacts_upload(
 
     # np.save preserves byte order in the header, so dtype equality rejects
     # big-endian clients even though the numeric type matches. Compare by
-    # kind+itemsize instead.
+    # kind+itemsize, then normalise to expected_dtype so the persisted .npy
+    # bytes match the declared svd_dtype metadata exactly.
     expected_dtype = np.dtype(staging.svd_dtype)
     for idx, slab in enumerate(slabs):
         if slab.ndim != 2 or slab.shape[1] != staging.svd_n_features:
@@ -628,6 +635,8 @@ async def commit_tfidf_artifacts_upload(
                     f"chunk {idx} has dtype {slab.dtype}; expected " f"{expected_dtype}"
                 ),
             )
+        if slab.dtype != expected_dtype:
+            slabs[idx] = slab.astype(expected_dtype, copy=False)
 
     combined = np.vstack(slabs) if slabs else np.empty((0, staging.svd_n_features))
     if combined.shape != (staging.svd_n_components, staging.svd_n_features):
