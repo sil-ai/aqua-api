@@ -1,25 +1,14 @@
 # test_train_routes.py
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 from database.models import Assessment, TrainingJob, VerseText
 from models import TrainingType
-from train_routes.v3 import train_routes
 
 prefix = "v3"
 
 # Derived from TrainingType so the test suite fails loudly if the enum grows
 # a new value without the dispatch/test story being updated.
 ALL_TRAINING_TYPES = {t.value for t in TrainingType}
-
-
-@pytest.fixture(autouse=True)
-def _clear_fn_cache():
-    """Clear the Modal Function cache so patched mocks don't leak between tests."""
-    train_routes._fn_cache.clear()
-    yield
-    train_routes._fn_cache.clear()
 
 
 def _auth_headers(token):
@@ -29,28 +18,53 @@ def _auth_headers(token):
 _UNSET = object()
 
 
-def _make_modal_mock(spawn_by_app: dict = None, default_exc=_UNSET, calls: list = None):
+def _make_modal_mock(
+    spawn_by_app: dict = None,
+    spawn_by_type: dict = None,
+    default_exc=_UNSET,
+    calls: list = None,
+    payloads: list = None,
+):
     """Build a mock for train_routes.modal.Function.
 
     spawn_by_app: optional dict mapping Modal app name -> Exception (or None for success).
-    default_exc: Exception raised by any app not listed in spawn_by_app. Defaults to no-op success.
-    calls: optional list; every from_name(app, fn_name, ...) invocation is appended as a tuple.
+    spawn_by_type: optional dict mapping training-type value -> Exception (or None).
+        Non-serval-nmt training types all share one Modal function
+        ("runner", "run_assessment_runner"), so failures can't be isolated
+        by app_name; keying on args[0]["type"] recovers per-type isolation.
+    default_exc: Exception raised by any call not matched by the two dicts above.
+    calls: optional list; (app, fn_name) is appended per from_name invocation.
+    payloads: optional list; (app, args, kwargs) is appended per spawn invocation.
     """
 
     spawn_by_app = spawn_by_app or {}
+    spawn_by_type = spawn_by_type or {}
 
     def _from_name(app_name, fn_name, *_args, **_kwargs):
         if calls is not None:
             calls.append((app_name, fn_name))
+
         fn = AsyncMock()
-        if app_name in spawn_by_app:
-            exc = spawn_by_app[app_name]
-        else:
-            exc = None if default_exc is _UNSET else default_exc
-        if isinstance(exc, Exception):
-            fn.spawn.aio = AsyncMock(side_effect=exc)
-        else:
-            fn.spawn.aio = AsyncMock()
+
+        async def _spawn(*args, **kwargs):
+            if payloads is not None:
+                payloads.append((app_name, args, kwargs))
+            if args and isinstance(args[0], dict):
+                type_key = args[0].get("type")
+                if type_key in spawn_by_type:
+                    exc = spawn_by_type[type_key]
+                    if isinstance(exc, Exception):
+                        raise exc
+                    return
+            if app_name in spawn_by_app:
+                exc = spawn_by_app[app_name]
+                if isinstance(exc, Exception):
+                    raise exc
+                return
+            if default_exc is not _UNSET and isinstance(default_exc, Exception):
+                raise default_exc
+
+        fn.spawn.aio = AsyncMock(side_effect=_spawn)
         return fn
 
     mock_function_cls = AsyncMock()
@@ -66,8 +80,10 @@ def _create_training_jobs_via_api(
     options=None,
     apps=None,
     spawn_by_app=None,
+    spawn_by_type=None,
     default_exc=_UNSET,
     calls: list = None,
+    payloads: list = None,
 ):
     """Helper to POST /train with mocked Modal dispatch. Returns Response."""
     data = {
@@ -79,10 +95,14 @@ def _create_training_jobs_via_api(
     if apps is not None:
         data["apps"] = apps
 
-    mock_function_cls = _make_modal_mock(spawn_by_app, default_exc, calls=calls)
-    with patch(
-        "train_routes.v3.train_routes.modal.Function", mock_function_cls
-    ), patch.dict("train_routes.v3.train_routes._fn_cache", {}, clear=True):
+    mock_function_cls = _make_modal_mock(
+        spawn_by_app,
+        spawn_by_type,
+        default_exc,
+        calls=calls,
+        payloads=payloads,
+    )
+    with patch("train_routes.v3.train_routes.modal.Function", mock_function_cls):
         response = client.post(
             f"{prefix}/train",
             json=data,
@@ -203,14 +223,19 @@ def test_create_training_job_empty_apps_list(
 def test_create_training_job_per_app_dispatch_isolation(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """A spawn failure for one assessment app must not affect the others."""
+    """A spawn failure for one assessment type must not affect the others.
+
+    All non-serval-nmt training types share a single Modal function, so
+    isolation is recovered by keying the mock on args[0]["type"] rather
+    than app_name.
+    """
     response = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
         options={"tag": "isolation_test"},
-        spawn_by_app={"tfidf": RuntimeError("boom")},
+        spawn_by_type={"tfidf": RuntimeError("boom")},
     )
     assert response.status_code == 200
     jobs = {job["type"]: job for job in response.json()["training_jobs"]}
@@ -224,7 +249,7 @@ def test_create_training_job_per_app_dispatch_isolation(
 def test_semantic_similarity_routes_through_runner(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """sem-sim must dispatch to ("runner", "run_assessment_runner"), not TRAIN_APPS."""
+    """sem-sim must dispatch to ("runner", "run_assessment_runner")."""
     calls = []
     response = _create_training_jobs_via_api(
         client,
@@ -241,8 +266,6 @@ def test_semantic_similarity_routes_through_runner(
     assert len(jobs) == 1 and jobs[0]["type"] == "semantic-similarity"
     assert jobs[0]["status"] == "failed"
     assert ("runner", "run_assessment_runner") in calls
-    # Guard against a regression that would route sem-sim through TRAIN_APPS.
-    assert ("semantic-similarity", "train") not in calls
 
 
 def test_serval_nmt_routes_through_train_runner(
@@ -265,6 +288,85 @@ def test_serval_nmt_routes_through_train_runner(
     assert len(jobs) == 1 and jobs[0]["type"] == "serval-nmt"
     assert jobs[0]["status"] == "failed"
     assert ("train-runner", "run_training_job") in calls
+
+
+def test_training_job_full_lifecycle_via_runner(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_revision_id_2,
+    db_session,
+):
+    """End-to-end lifecycle via the runner (acceptance item for #582).
+
+    (1) POST /train dispatches to ("runner", "run_assessment_runner") with
+        an AssessmentIn-shaped config and train_job_id kwarg.
+    (2) PATCH /train/{id}/status accepts the full phase sequence the
+        runner emits: preparing → training → downloading → uploading →
+        completed.
+    (3) The paired Assessment row mirrors to finished at the end.
+    """
+    payloads = []
+    calls = []
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "lifecycle_via_runner_test"},
+        apps=["tfidf"],
+        calls=calls,
+        payloads=payloads,
+    )
+    assert create_resp.status_code == 200
+    job = create_resp.json()["training_jobs"][0]
+    assert job["type"] == "tfidf"
+    assert job["status"] == "queued"
+
+    # (1) Dispatch target + payload shape.
+    runner_calls = [c for c in calls if c == ("runner", "run_assessment_runner")]
+    assert len(runner_calls) == 1
+    runner_spawns = [p for p in payloads if p[0] == "runner"]
+    assert len(runner_spawns) == 1
+    _, args, kwargs = runner_spawns[0]
+    config = args[0]
+    assert config["type"] == "tfidf"
+    assert config["id"] == job["assessment_id"]
+    assert "train" not in config  # training mode is signaled by train_job_id kwarg
+    assert kwargs.get("train_job_id") == job["id"]
+
+    # (2) Simulate the runner's phase callbacks on the status endpoint.
+    last_percent = {
+        "preparing": 5.0,
+        "training": 40.0,
+        "downloading": 75.0,
+        "uploading": 90.0,
+        "completed": 100.0,
+    }
+    for next_status in [
+        "preparing",
+        "training",
+        "downloading",
+        "uploading",
+        "completed",
+    ]:
+        resp = client.patch(
+            f"{prefix}/train/{job['id']}/status",
+            json={
+                "status": next_status,
+                "percent_complete": last_percent[next_status],
+            },
+            headers=_auth_headers(regular_token1),
+        )
+        assert (
+            resp.status_code == 200
+        ), f"phase {next_status} rejected: {resp.status_code} {resp.text}"
+        assert resp.json()["status"] == next_status
+
+    # (3) Assessment mirrored to finished.
+    assessment = _get_assessment(db_session, job["assessment_id"])
+    assert assessment.status == "finished"
+    assert assessment.end_time is not None
 
 
 def test_duplicate_detection_scoped_to_apps_filter(
@@ -320,12 +422,9 @@ def test_training_type_enum_covered_by_dispatch():
     Prevents adding an enum value without also wiring up the dispatch in
     train_routes.dispatch_job.
     """
-    from train_routes.v3.train_routes import TRAIN_APPS
+    from train_routes.v3.train_routes import TRAINABLE_ASSESSMENT_TYPES
 
-    reachable = set(TRAIN_APPS) | {
-        TrainingType.serval_nmt.value,
-        TrainingType.semantic_similarity.value,
-    }
+    reachable = TRAINABLE_ASSESSMENT_TYPES | {TrainingType.serval_nmt.value}
     enum_values = {t.value for t in TrainingType}
     missing = enum_values - reachable
     assert not missing, f"TrainingType values with no dispatch branch: {missing}"
@@ -987,47 +1086,62 @@ def test_training_job_creates_assessment_for_trainable_types(
         assert assessment.kwargs == {"tag": "assessment_creation_test"}
 
 
-def test_assessment_id_reaches_modal_train_payload(
+def test_trainable_types_route_through_runner_with_train_job_id(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """The assessment_id surfaces on the payload spawned to Modal train()."""
-    payloads_by_app = {}
-
-    def _from_name(app_name, fn_name, *_args, **_kwargs):
-        fn = AsyncMock()
-
-        async def _capture(*args, **kwargs):
-            payloads_by_app.setdefault(app_name, []).append((args, kwargs))
-
-        fn.spawn.aio = AsyncMock(side_effect=_capture)
-        return fn
-
-    mock_function_cls = AsyncMock()
-    mock_function_cls.from_name = _from_name
-
-    with patch(
-        "train_routes.v3.train_routes.modal.Function", mock_function_cls
-    ), patch.dict("train_routes.v3.train_routes._fn_cache", {}, clear=True):
-        resp = client.post(
-            f"{prefix}/train",
-            json={
-                "source_revision_id": test_revision_id,
-                "target_revision_id": test_revision_id_2,
-                "options": {"tag": "payload_test"},
-                "apps": ["tfidf", "ngrams", "word-alignment", "agent-critique"],
-            },
-            headers={"Authorization": f"Bearer {regular_token1}"},
-        )
+    """Every non-serval-nmt training type must dispatch through
+    ("runner", "run_assessment_runner") with an AssessmentIn-shaped
+    config and train_job_id passed as a kwarg. Asserts both the dispatch
+    target and the train_job_id/assessment_id identity on the payload.
+    """
+    calls = []
+    payloads = []
+    resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "runner_payload_test"},
+        apps=["tfidf", "ngrams", "word-alignment", "agent-critique"],
+        calls=calls,
+        payloads=payloads,
+    )
     assert resp.status_code == 200
     jobs = {job["type"]: job for job in resp.json()["training_jobs"]}
 
-    for app_name in ("tfidf", "ngrams", "word-alignment", "agent-critique"):
-        calls = payloads_by_app.get(app_name, [])
-        assert calls, f"No spawn captured for {app_name}"
-        args, _kwargs = calls[0]
-        payload = args[0]
-        assert payload["assessment_id"] == jobs[app_name]["assessment_id"]
-        assert payload["id"] == jobs[app_name]["id"]
+    # Dispatch target: one call to ("runner", "run_assessment_runner") per job.
+    assert calls.count(("runner", "run_assessment_runner")) == 4
+    # And zero calls to per-app train() — that is the legacy path.
+    for legacy_app in ("tfidf", "ngrams", "word-alignment", "agent-critique"):
+        assert (
+            legacy_app,
+            "train",
+        ) not in calls, f"{legacy_app} was dispatched to the legacy per-app train()"
+
+    payloads_by_type = {}
+    for app_name, args, kwargs in payloads:
+        if app_name != "runner":
+            continue
+        config = args[0]
+        payloads_by_type[config["type"]] = (args, kwargs)
+
+    for t in ("tfidf", "ngrams", "word-alignment", "agent-critique"):
+        assert t in payloads_by_type, f"No runner spawn captured for {t}"
+        args, kwargs = payloads_by_type[t]
+        config = args[0]
+        assert config["type"] == t
+        # The runner uses config["id"] to build artifact-push URLs like
+        # /v3/assessment/{id}/results, which are keyed on Assessment.id. So
+        # `id` MUST be the Assessment id, not the TrainingJob id.
+        assert config["id"] == jobs[t]["assessment_id"]
+        assert config["revision_id"] == test_revision_id
+        assert config["reference_id"] == test_revision_id_2
+        # Training mode is signaled by the train_job_id kwarg, not by a
+        # config["train"] flag — that used to be required by sem-sim's
+        # assess() but has been superseded by a `finetune` kwarg that
+        # callers opt into via /v3/train options.
+        assert "train" not in config
+        assert kwargs.get("train_job_id") == jobs[t]["id"]
 
 
 def test_completed_mirrors_to_assessment_finished(
@@ -1142,8 +1256,10 @@ def test_completed_with_errors_mirrors_to_assessment_failed(
 def test_assessment_id_reaches_sem_sim_runner_config(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """sem-sim uses the legacy runner path with a hand-built config dict,
-    not TrainingJobOut.model_dump(). assessment_id must still flow through."""
+    """sem-sim dispatches through ("runner", "run_assessment_runner") with
+    an AssessmentIn-shaped config (not TrainingJobOut.model_dump()).
+    config["id"] must be the Assessment id — aqua-assessments uses it to
+    write artifacts under `/v3/assessment/{id}/...` endpoints."""
     spawn_calls = []
 
     def _from_name(app_name, fn_name, *_args, **_kwargs):
@@ -1158,9 +1274,7 @@ def test_assessment_id_reaches_sem_sim_runner_config(
     mock_function_cls = AsyncMock()
     mock_function_cls.from_name = _from_name
 
-    with patch(
-        "train_routes.v3.train_routes.modal.Function", mock_function_cls
-    ), patch.dict("train_routes.v3.train_routes._fn_cache", {}, clear=True):
+    with patch("train_routes.v3.train_routes.modal.Function", mock_function_cls):
         resp = client.post(
             f"{prefix}/train",
             json={
@@ -1178,7 +1292,7 @@ def test_assessment_id_reaches_sem_sim_runner_config(
     assert runner_calls, "sem-sim never dispatched to runner"
     _, args, _kwargs = runner_calls[0]
     config = args[0]
-    assert config["assessment_id"] == job["assessment_id"]
+    assert config["id"] == job["assessment_id"]
 
 
 def test_non_terminal_transition_does_not_mirror_to_assessment(
@@ -1379,7 +1493,7 @@ def test_dispatch_failure_mirrors_to_assessment_failed(
         test_revision_id_2,
         options={"tag": "mirror_dispatch_fail_test"},
         apps=["tfidf"],
-        spawn_by_app={"tfidf": RuntimeError("boom")},
+        spawn_by_type={"tfidf": RuntimeError("boom")},
     )
     assert resp.status_code == 200
     job = resp.json()["training_jobs"][0]

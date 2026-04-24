@@ -83,37 +83,49 @@ INFERENCE_DEPENDENCIES = {
     "agent-critique": ["agent-critique"],
 }
 
-# Fan-out registry: training-type value -> Modal app name exposing train().
-# Mirrors PREDICT_APPS in predict_routes/v3/predict_routes.py. Each listed app
-# must publish a @app.function train(input_data) in aqua-assessments.
-# semantic-similarity is registered here but routed through the legacy runner
-# path below until its dedicated train() is deployed.
-TRAIN_APPS: dict[str, str] = {
-    "semantic-similarity": "semantic-similarity",
-    "tfidf": "tfidf",
-    "word-alignment": "word-alignment",
-    "ngrams": "ngrams",
-    "agent-critique": "agent-critique",
-}
-
 # Accepts the key names used by PredictInput.apps so a caller can pass the
-# same app list to /v3/train and /v3/predict. Canonical names (the keys
-# above) are also accepted. Extend this map if predict adopts another alias.
+# same app list to /v3/train and /v3/predict. Canonical names (the
+# TrainingType values) are also accepted. Extend this map if predict adopts
+# another alias.
 TRAIN_APPS_ALIASES: dict[str, str] = {
     "agent": "agent-critique",
     "word_alignment": "word-alignment",
 }
 
-_fn_cache: dict[tuple[str, str], modal.Function] = {}
 
+def _build_runner_train_config(
+    job: TrainingJob,
+    source_revision_id: int,
+    target_revision_id: int,
+    source_language: str,
+    target_language: str,
+    options,
+) -> dict:
+    """Config passed to run_assessment_runner for a training job.
 
-def _get_train_fn(modal_app: str, env: str) -> modal.Function:
-    key = (modal_app, env)
-    fn = _fn_cache.get(key)
-    if fn is None:
-        fn = modal.Function.from_name(modal_app, "train", environment_name=env)
-        _fn_cache[key] = fn
-    return fn
+    Mirrors AssessmentIn.model_dump(). `id` is the **Assessment** id, not
+    the TrainingJob id: the runner uses `self.config.id` to build
+    artifact-push URLs like `/v3/assessment/{id}/results`, which are keyed
+    on Assessment.id.
+
+    `train_job_id` is NOT in this dict — it's passed as a kwarg on spawn
+    and is what makes the runner switch to training mode and emit phase
+    callbacks (preparing → training → downloading → uploading →
+    completed/failed) to PATCH /v3/train/{id}/status. Per-app behavior
+    toggles (e.g. sem-sim's `finetune`) flow through the caller's
+    `options` → `config["kwargs"]` — aqua-api doesn't hard-code them.
+    """
+    config = {
+        "id": job.assessment_id,
+        "revision_id": source_revision_id,
+        "reference_id": target_revision_id,
+        "type": job.type,
+        "source_language": source_language,
+        "target_language": target_language,
+    }
+    if options:
+        config["kwargs"] = options
+    return config
 
 
 async def _mirror_terminal_status_to_assessment(
@@ -350,31 +362,23 @@ async def create_training_job(
                 )
                 job_out = TrainingJobOut.model_validate(job)
                 await f.spawn.aio(job_out.model_dump(mode="json"))
-            elif job.type == TrainingType.semantic_similarity.value:
-                # Transitional: route sem-sim through the runner's train=True
-                # path until aqua-assessments ships a dedicated sem-sim train()
-                # Modal function. Once it does, this branch collapses into the
-                # generic TRAIN_APPS path below.
+            elif job.type in TRAINABLE_ASSESSMENT_TYPES:
+                # Runner's train_job_id path: dispatches to the right app's
+                # assess() based on config.type and emits the phase callbacks
+                # (preparing → training → downloading → uploading →
+                # completed/failed) against PATCH /v3/train/{id}/status.
                 f = modal.Function.from_name(
                     "runner", "run_assessment_runner", environment_name=modal_env
                 )
-                config = {
-                    "id": job.id,
-                    "assessment_id": job.assessment_id,
-                    "revision_id": job_in.source_revision_id,
-                    "reference_id": job_in.target_revision_id,
-                    "type": "semantic-similarity",
-                    "train": True,
-                    "source_language": source_language,
-                    "target_language": target_language,
-                }
-                if job_in.options:
-                    config["kwargs"] = job_in.options
+                config = _build_runner_train_config(
+                    job,
+                    job_in.source_revision_id,
+                    job_in.target_revision_id,
+                    source_language,
+                    target_language,
+                    job_in.options,
+                )
                 await f.spawn.aio(config, os.getenv("AQUA_DB", ""), train_job_id=job.id)
-            elif job.type in TRAIN_APPS:
-                f = _get_train_fn(TRAIN_APPS[job.type], modal_env)
-                job_out = TrainingJobOut.model_validate(job)
-                await f.spawn.aio(job_out.model_dump(mode="json"))
             else:
                 raise RuntimeError(
                     f"No dispatch configured for training type '{job.type}'"
