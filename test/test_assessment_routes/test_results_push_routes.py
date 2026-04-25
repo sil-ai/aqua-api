@@ -1,0 +1,456 @@
+import pytest
+
+from database.models import Assessment
+
+prefix = "v3"
+
+
+@pytest.fixture(scope="module")
+def push_assessment_id(test_db_session, test_revision_id, test_revision_id_2):
+    """Create an assessment for push results tests."""
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="sentence-length",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+    return assessment.id
+
+
+# ---------------------------------------------------------------------------
+# POST /assessment/{id}/results
+# ---------------------------------------------------------------------------
+
+
+def test_push_results(client, regular_token1, push_assessment_id):
+    body = [
+        {
+            "vref": "GEN 1:1",
+            "score": 0.95,
+            "flag": False,
+            "source": "In the beginning",
+            "target": "Hapo mwanzo",
+        },
+        {
+            "vref": "GEN 1:2",
+            "score": 0.80,
+        },
+    ]
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["ids"]) == 2
+    assert all(isinstance(i, int) for i in data["ids"])
+
+
+def test_push_results_empty_body(client, regular_token1, push_assessment_id):
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json=[],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["ids"] == []
+
+
+def test_push_results_nonexistent_assessment(client, regular_token1):
+    response = client.post(
+        f"{prefix}/assessment/999999/results",
+        json=[{"vref": "GEN 1:1", "score": 0.5}],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_push_results_unauthorized(client, regular_token2, push_assessment_id):
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json=[{"vref": "GEN 1:1", "score": 0.5}],
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+
+
+def test_push_results_no_auth(client, push_assessment_id):
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json=[{"vref": "GEN 1:1", "score": 0.5}],
+    )
+    assert response.status_code == 401
+
+
+def test_push_results_invalid_vref(client, regular_token1, push_assessment_id):
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json=[{"vref": "INVALID", "score": 0.5}],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 400
+
+
+def test_push_results_body_too_large(client, regular_token1, push_assessment_id):
+    body = [{"vref": "GEN 1:1", "score": 0.5}] * 5001
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "5001" in detail
+    assert "5000" in detail
+    assert "split into batches" in detail
+
+
+# ---------------------------------------------------------------------------
+# POST /assessment/{id}/alignment-scores
+# ---------------------------------------------------------------------------
+
+
+def test_push_alignment_scores(client, regular_token1, push_assessment_id):
+    body = [
+        {
+            "vref": "GEN 1:1",
+            "score": 0.99,
+            "source": "beginning",
+            "target": "mwanzo",
+        },
+    ]
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-scores",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()["ids"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# POST /assessment/{id}/text-lengths
+# ---------------------------------------------------------------------------
+
+
+def test_push_text_lengths(client, regular_token1, push_assessment_id):
+    body = [
+        {
+            "vref": "GEN 1:1",
+            "word_lengths": 5.0,
+            "char_lengths": 25.0,
+            "word_lengths_z": 0.3,
+            "char_lengths_z": -0.1,
+        },
+        {
+            "vref": "GEN 1:2",
+            "word_lengths": 8.0,
+            "char_lengths": 40.0,
+            "word_lengths_z": 1.2,
+            "char_lengths_z": 0.5,
+        },
+    ]
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/text-lengths",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()["ids"]) == 2
+
+
+# ---------------------------------------------------------------------------
+# POST /assessment/{id}/tfidf-vectors
+# ---------------------------------------------------------------------------
+
+
+def test_push_tfidf_vectors(client, regular_token1, push_assessment_id):
+    body = [
+        {
+            "vref": "GEN 1:1",
+            "vector": [0.1] * 300,
+        },
+    ]
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/tfidf-vectors",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()["ids"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# POST /assessment/{id}/ngrams
+# ---------------------------------------------------------------------------
+
+
+def test_push_ngrams(client, regular_token1, push_assessment_id):
+    body = [
+        {
+            "ngram": "the word",
+            "ngram_size": 2,
+            "vrefs": ["GEN 1:1", "GEN 1:2"],
+        },
+        {
+            "ngram": "in the beginning",
+            "ngram_size": 3,
+            "vrefs": ["GEN 1:1"],
+        },
+    ]
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/ngrams",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["ids"]) == 2
+
+
+def test_push_ngrams_empty(client, regular_token1, push_assessment_id):
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/ngrams",
+        json=[],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["ids"] == []
+
+
+def test_push_ngrams_nonexistent_assessment(client, regular_token1):
+    response = client.post(
+        f"{prefix}/assessment/999999/ngrams",
+        json=[{"ngram": "test", "ngram_size": 1, "vrefs": ["GEN 1:1"]}],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_push_ngrams_unauthorized(client, regular_token2, push_assessment_id):
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/ngrams",
+        json=[{"ngram": "test", "ngram_size": 1, "vrefs": ["GEN 1:1"]}],
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# DELETE /assessment/{id}/results
+# ---------------------------------------------------------------------------
+
+
+def test_delete_results(client, regular_token1, push_assessment_id):
+    # First insert some results to delete
+    insert_resp = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json=[
+            {"vref": "GEN 1:3", "score": 0.5},
+            {"vref": "GEN 1:4", "score": 0.6},
+        ],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert insert_resp.status_code == 200
+    ids = insert_resp.json()["ids"]
+
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json={"ids": ids},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 2
+
+
+def test_delete_results_empty_ids(client, regular_token1, push_assessment_id):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json={"ids": []},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 0
+
+
+def test_delete_results_nonexistent_assessment(client, regular_token1):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/999999/results",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_delete_results_unauthorized(client, regular_token2, push_assessment_id):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/results",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# DELETE /assessment/{id}/alignment-scores
+# ---------------------------------------------------------------------------
+
+
+def test_delete_alignment_scores(client, regular_token1, push_assessment_id):
+    insert_resp = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-scores",
+        json=[
+            {
+                "vref": "GEN 1:1",
+                "score": 0.9,
+                "source": "beginning",
+                "target": "mwanzo",
+            },
+            {"vref": "GEN 1:2", "score": 0.85, "source": "earth", "target": "dunia"},
+        ],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert insert_resp.status_code == 200
+    ids = insert_resp.json()["ids"]
+
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/alignment-scores",
+        json={"ids": ids},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 2
+
+
+def test_delete_alignment_scores_nonexistent(client, regular_token1):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/999999/alignment-scores",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DELETE /assessment/{id}/text-lengths
+# ---------------------------------------------------------------------------
+
+
+def test_delete_text_lengths(client, regular_token1, push_assessment_id):
+    insert_resp = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/text-lengths",
+        json=[
+            {
+                "vref": "GEN 1:3",
+                "word_lengths": 5.0,
+                "char_lengths": 25.0,
+                "word_lengths_z": 0.3,
+                "char_lengths_z": -0.1,
+            },
+        ],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert insert_resp.status_code == 200
+    ids = insert_resp.json()["ids"]
+
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/text-lengths",
+        json={"ids": ids},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 1
+
+
+def test_delete_text_lengths_nonexistent(client, regular_token1):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/999999/text-lengths",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DELETE /assessment/{id}/tfidf-vectors
+# ---------------------------------------------------------------------------
+
+
+def test_delete_tfidf_vectors(client, regular_token1, push_assessment_id):
+    insert_resp = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/tfidf-vectors",
+        json=[{"vref": "GEN 1:3", "vector": [0.1] * 300}],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert insert_resp.status_code == 200
+    ids = insert_resp.json()["ids"]
+
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/tfidf-vectors",
+        json={"ids": ids},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 1
+
+
+def test_delete_tfidf_vectors_nonexistent(client, regular_token1):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/999999/tfidf-vectors",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DELETE /assessment/{id}/ngrams
+# ---------------------------------------------------------------------------
+
+
+def test_delete_ngrams(client, regular_token1, push_assessment_id):
+    # Insert ngrams with vrefs
+    insert_resp = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/ngrams",
+        json=[
+            {"ngram": "delete me", "ngram_size": 2, "vrefs": ["GEN 1:1", "GEN 1:2"]},
+            {"ngram": "also delete", "ngram_size": 2, "vrefs": ["GEN 1:3"]},
+        ],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert insert_resp.status_code == 200
+    ids = insert_resp.json()["ids"]
+
+    # Delete should cascade to vref rows
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/ngrams",
+        json={"ids": ids},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 2
+
+
+def test_delete_ngrams_nonexistent(client, regular_token1):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/999999/ngrams",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404

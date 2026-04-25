@@ -35,13 +35,13 @@ def create_bible_version(client, regular_token1, db_session):
     return version_id
 
 
-def upload_revision(client, token, version_id):
+def upload_revision(client, token, version_id, fixture="fixtures/eng-eng-kjv.txt"):
     headers = {"Authorization": f"Bearer {token}"}
     test_revision = {
         "version_id": version_id,
         "name": "Test Revision",
     }
-    test_upload_file = Path("fixtures/eng-eng-kjv.txt")
+    test_upload_file = Path(fixture)
 
     with open(test_upload_file, "rb") as file:
         files = {"file": file}
@@ -476,6 +476,348 @@ def test_words_endpoint_cross_book_boundary(client, regular_token1, db_session):
     assert len(words) > 0, "Should have words from both books"
 
 
+def test_text_endpoint_basic(client, regular_token1, db_session):
+    """Test /text endpoint returns verses with correct fields and ids."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    assert len(data) > 0
+    first_verse = data[0]
+    assert first_verse["verse_reference"] == "GEN 1:1"
+    assert first_verse["verse_references"] == ["GEN 1:1"]
+    assert first_verse["first_verse_reference"] == "GEN 1:1"
+    assert first_verse["book"] == "GEN"
+    assert first_verse["chapter"] == 1
+    assert first_verse["verse"] == 1
+    assert first_verse["revision_id"] == revision_id
+    assert first_verse["id"] is not None
+    assert "beginning" in first_verse["text"].lower()
+
+
+def test_text_endpoint_with_range_markers(client, regular_token1, db_session):
+    """Test /text endpoint merges <range> markers into verse ranges."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    # Get the DB ids before modifying
+    gen_1_1 = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id,
+            VerseTextModel.verse_reference == "GEN 1:1",
+        )
+        .first()
+    )
+    gen_1_1_id = gen_1_1.id
+
+    # Set GEN 1:2 to <range>
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # First entry should be merged GEN 1:1-2
+    first = data[0]
+    assert first["verse_reference"] == "GEN 1:1-2"
+    assert first["verse_references"] == ["GEN 1:1", "GEN 1:2"]
+    assert first["first_verse_reference"] == "GEN 1:1"
+    assert "beginning" in first["text"].lower()  # GEN 1:1
+    assert "<range>" not in first["text"]
+
+    # id should be the id of the first verse (GEN 1:1), not GEN 1:2
+    assert first["id"] == gen_1_1_id
+    assert first["book"] == "GEN"
+    assert first["chapter"] == 1
+    assert first["verse"] == 1
+
+    # GEN 1:2 should not appear as a standalone entry
+    vrefs = [v["verse_reference"] for v in data]
+    assert "GEN 1:2" not in vrefs
+
+
+def test_text_endpoint_multi_verse_range(client, regular_token1, db_session):
+    """Test /text endpoint with 3+ consecutive <range> markers."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    # Set GEN 1:2 and GEN 1:3 to <range>
+    for vref in ["GEN 1:2", "GEN 1:3"]:
+        verse = (
+            db_session.query(VerseTextModel)
+            .filter(
+                VerseTextModel.revision_id == revision_id,
+                VerseTextModel.verse_reference == vref,
+            )
+            .first()
+        )
+        verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    first = data[0]
+    assert first["verse_reference"] == "GEN 1:1-3"
+    assert first["verse_references"] == ["GEN 1:1", "GEN 1:2", "GEN 1:3"]
+    assert first["first_verse_reference"] == "GEN 1:1"
+    assert "beginning" in first["text"].lower()  # GEN 1:1
+    assert "<range>" not in first["text"]
+
+
+def test_text_endpoint_range_at_chapter_boundary(client, regular_token1, db_session):
+    """Test that <range> markers don't merge across chapter boundaries."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    # Set first verse of GEN chapter 2 to <range>
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id,
+            VerseTextModel.verse_reference == "GEN 2:1",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    vrefs = {v["verse_reference"]: v for v in data}
+    # GEN 2:1 should be standalone (orphan range cleared to empty text)
+    assert "GEN 2:1" in vrefs
+    assert vrefs["GEN 2:1"]["text"] == ""
+
+    # No cross-chapter merge should exist
+    for vref in vrefs:
+        if "GEN 1:" in vref and "-" in vref:
+            assert "2:" not in vref, f"Cross-chapter merge detected: {vref}"
+
+
+def test_text_endpoint_range_on_first_verse(client, regular_token1, db_session):
+    """Test <range> on the very first verse of a revision (orphan range)."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    # Set GEN 1:1 (first verse) to <range>
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id,
+            VerseTextModel.verse_reference == "GEN 1:1",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # First verse should be standalone with cleared text
+    first = data[0]
+    assert first["verse_reference"] == "GEN 1:1"
+    assert first["verse_references"] == ["GEN 1:1"]
+    assert first["first_verse_reference"] == "GEN 1:1"
+    assert first["text"] == ""
+
+    # No <range> should appear in any output
+    for v in data:
+        assert "<range>" not in v["text"]
+
+
+def test_text_endpoint_empty_verse_not_treated_as_range(
+    client, regular_token1, db_session
+):
+    """Test that empty verses are not treated as <range> markers."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    # Set GEN 1:2 to empty string (not a range marker)
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
+    )
+    verse.text = ""
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # GEN 1:2 should exist as separate entry (not merged)
+    gen_1_2 = next((v for v in data if v["verse_reference"] == "GEN 1:2"), None)
+    assert gen_1_2 is not None
+    assert gen_1_2["text"] == ""
+
+    # GEN 1:1 should still be standalone
+    gen_1_1 = next((v for v in data if v["verse_reference"] == "GEN 1:1"), None)
+    assert gen_1_1 is not None
+    assert "beginning" in gen_1_1["text"].lower()
+
+
+def test_text_endpoint_include_verses_all(client, regular_token1, db_session):
+    """Test /text endpoint with include_verses=all returns all 41,899 canonical verses."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Default (union) should return only verses with text
+    response_default = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    assert response_default.status_code == 200
+    default_count = len(response_default.json())
+
+    # include_verses=all should return all 41,899 canonical verses
+    response_all = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "all"},
+        headers=headers,
+    )
+    assert response_all.status_code == 200
+    all_data = response_all.json()
+    assert len(all_data) == 41899
+    assert len(all_data) > default_count
+
+    # GEN 1:1 should have text
+    gen_1_1 = next(v for v in all_data if v["verse_reference"] == "GEN 1:1")
+    assert gen_1_1["text"] != ""
+
+    # A verse not in the revision should have empty text
+    # (the KJV fixture has many verses, so pick one from a book not in it)
+    empty_verses = [v for v in all_data if v["text"] == ""]
+    assert len(empty_verses) > 0
+
+
+def test_text_endpoint_include_verses_all_no_merging(
+    client, regular_token1, db_session
+):
+    """Test /text with include_verses=all returns exactly 41,899 rows even with <range> markers."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    # Set GEN 1:2 to <range>
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "all"},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Must be exactly 41,899 rows (no merging)
+    assert len(data) == 41899
+
+    # GEN 1:2 should appear as its own row with empty text (range replaced)
+    verse_map = {v["verse_reference"]: v for v in data}
+    assert "GEN 1:2" in verse_map
+    assert verse_map["GEN 1:2"]["text"] == ""
+
+    # GEN 1:1 should not be merged with GEN 1:2
+    assert verse_map["GEN 1:1"]["verse_references"] == ["GEN 1:1"]
+
+
+def test_text_endpoint_include_verses_union_is_default(
+    client, regular_token1, db_session
+):
+    """Test that include_verses=union matches default behavior."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response_default = client.get(
+        f"/{prefix}/text", params={"revision_id": revision_id}, headers=headers
+    )
+    response_union = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "union"},
+        headers=headers,
+    )
+
+    assert response_default.status_code == 200
+    assert response_union.status_code == 200
+    assert response_default.json() == response_union.json()
+
+
+def test_text_endpoint_include_verses_intersection(client, regular_token1, db_session):
+    """Test that include_verses=intersection is treated identically to union for single revision."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response_union = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "union"},
+        headers=headers,
+    )
+    response_intersection = client.get(
+        f"/{prefix}/text",
+        params={"revision_id": revision_id, "include_verses": "intersection"},
+        headers=headers,
+    )
+
+    assert response_union.status_code == 200
+    assert response_intersection.status_code == 200
+    assert response_union.json() == response_intersection.json()
+
+
 def test_texts_endpoint_basic(client, regular_token1, db_session):
     """Test /texts endpoint with two revisions without ranges."""
     version_id = create_bible_version(client, regular_token1, db_session)
@@ -502,11 +844,14 @@ def test_texts_endpoint_basic(client, regular_token1, db_session):
     # Both should have the same number of verses
     assert len(data[str(revision_id1)]) == len(data[str(revision_id2)])
 
-    # Check that verses are properly formatted
+    # Check that verses are properly formatted with new fields
     for verse in data[str(revision_id1)]:
         assert "verse_reference" in verse
         assert "text" in verse
         assert verse["revision_id"] == revision_id1
+        assert verse["verse_references"] is not None
+        assert verse["first_verse_reference"] is not None
+        assert verse["first_verse_reference"] == verse["verse_references"][0]
 
 
 def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
@@ -550,6 +895,8 @@ def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
 
     # First entry should be merged (GEN 1:1-2)
     assert first_verse_rev1["verse_reference"] == "GEN 1:1-2"
+    assert first_verse_rev1["verse_references"] == ["GEN 1:1", "GEN 1:2"]
+    assert first_verse_rev1["first_verse_reference"] == "GEN 1:1"
     assert first_verse_rev1["verse_reference"] == first_verse_rev2["verse_reference"]
 
     # Revision 1's merged text should combine verses 1 and 2 (KJV text)
@@ -562,6 +909,10 @@ def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
 
     # Revision 2's merged text should NOT contain <range>
     assert "<range>" not in first_verse_rev2["text"]
+
+    # Rev2 should also have the new fields populated correctly
+    assert first_verse_rev2["verse_references"] == ["GEN 1:1", "GEN 1:2"]
+    assert first_verse_rev2["first_verse_reference"] == "GEN 1:1"
 
 
 def test_texts_endpoint_unauthorized(
@@ -748,6 +1099,197 @@ def test_texts_endpoint_empty_verse_not_treated_as_range(
     assert gen_1_2_rev2["text"] != ""  # Rev2 still has the original KJV text
 
 
+def test_texts_endpoint_multi_verse_range(client, regular_token1, db_session):
+    """Test /texts endpoint with 3+ consecutive <range> markers (GEN 1:2 and 1:3 both <range>)."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:2 and GEN 1:3 to <range> in revision 2
+    for vref in ["GEN 1:2", "GEN 1:3"]:
+        verse = (
+            db_session.query(VerseTextModel)
+            .filter(
+                VerseTextModel.revision_id == revision_id2,
+                VerseTextModel.verse_reference == vref,
+            )
+            .first()
+        )
+        verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # First entry should be merged GEN 1:1-3
+    first_rev1 = data[str(revision_id1)][0]
+    first_rev2 = data[str(revision_id2)][0]
+    assert first_rev1["verse_reference"] == "GEN 1:1-3"
+    assert first_rev2["verse_reference"] == "GEN 1:1-3"
+
+    # Rev1 text should combine all three verses
+    assert "beginning" in first_rev1["text"].lower()  # GEN 1:1
+    assert "without form" in first_rev1["text"].lower()  # GEN 1:2
+    assert "light" in first_rev1["text"].lower()  # GEN 1:3
+
+    # Rev2 text should NOT contain <range>
+    assert "<range>" not in first_rev2["text"]
+
+
+def test_texts_endpoint_range_at_chapter_boundary(client, regular_token1, db_session):
+    """Test that <range> markers don't merge across chapter boundaries."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set the first verse of GEN chapter 2 to <range> in revision 2
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id2,
+            VerseTextModel.verse_reference == "GEN 2:1",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # GEN 2:1 should exist as a standalone entry (not merged with chapter 1)
+    rev2_verses = {v["verse_reference"]: v for v in data[str(revision_id2)]}
+    assert "GEN 2:1" in rev2_verses, "GEN 2:1 should exist as standalone entry"
+    assert rev2_verses["GEN 2:1"]["text"] == ""  # orphan range cleared
+
+    # No cross-chapter range like "GEN 1:31-2:1" should exist
+    for vref in rev2_verses:
+        if "GEN 1:" in vref and "-" in vref:
+            assert "2:" not in vref, f"Cross-chapter merge detected: {vref}"
+
+
+def test_texts_endpoint_both_revisions_different_ranges(
+    client, regular_token1, db_session
+):
+    """Test /texts when both revisions have <range> on different verses."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Rev1: GEN 1:2 is <range> (merges 1:1-2)
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id1,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+
+    # Rev2: GEN 1:4 is <range> (merges 1:3-4)
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id2,
+            VerseTextModel.verse_reference == "GEN 1:4",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+    rev2_vrefs = [v["verse_reference"] for v in data[str(revision_id2)]]
+
+    # Both revisions should have the same verse references (aligned)
+    assert rev1_vrefs == rev2_vrefs
+
+    # Both GEN 1:1-2 and GEN 1:3-4 merges should be present
+    assert "GEN 1:1-2" in rev1_vrefs
+    assert "GEN 1:3-4" in rev1_vrefs
+
+    # Neither revision should contain <range> in any text
+    for v in data[str(revision_id1)] + data[str(revision_id2)]:
+        assert "<range>" not in v["text"]
+
+
+def test_texts_endpoint_range_on_first_verse(client, regular_token1, db_session):
+    """Test <range> on the very first verse of a revision (no preceding verse to merge into)."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:1 (first verse) to <range> in revision 2
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id2,
+            VerseTextModel.verse_reference == "GEN 1:1",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    # Should not crash - either handles gracefully or skips the orphan range
+    assert response.status_code == 200
+    data = response.json()
+
+    # Both revisions should still return data and be aligned
+    assert len(data[str(revision_id1)]) > 0
+    assert len(data[str(revision_id1)]) == len(data[str(revision_id2)])
+
+    # GEN 1:1 should appear as standalone with cleared text in rev2
+    first_rev2 = data[str(revision_id2)][0]
+    assert first_rev2["verse_reference"] == "GEN 1:1"
+    assert first_rev2["text"] == ""
+
+    # Rev1 GEN 1:1 should still have its original text
+    first_rev1 = data[str(revision_id1)][0]
+    assert first_rev1["verse_reference"] == "GEN 1:1"
+    assert "beginning" in first_rev1["text"].lower()
+
+    # No <range> markers should appear in any output text
+    for v in data[str(revision_id2)]:
+        assert "<range>" not in v["text"]
+
+
 def test_chapters_endpoint_basic(client, regular_token1, db_session):
     """Test /chapters endpoint returns available chapters for a revision."""
     version_id = create_bible_version(client, regular_token1, db_session)
@@ -898,3 +1440,352 @@ def test_vref_text_endpoint_unauthorized(
     )
     assert response.status_code == 403
     assert "not authorized" in response.json()["detail"].lower()
+
+
+# =============================================================================
+# /texts include_verses parameter tests
+# =============================================================================
+
+
+def test_texts_include_verses_intersection(client, regular_token1, db_session):
+    """Test include_verses=intersection only keeps verses where all revisions have text."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Delete GEN 1:3 from revision 2 so it has empty text
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).delete()
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "intersection",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+    rev2_vrefs = [v["verse_reference"] for v in data[str(revision_id2)]]
+
+    # Both should be aligned (same vrefs)
+    assert rev1_vrefs == rev2_vrefs
+
+    # GEN 1:3 should NOT be present (excluded because rev2 has no text)
+    assert "GEN 1:3" not in rev1_vrefs
+
+    # GEN 1:1 and GEN 1:2 should still be present
+    assert "GEN 1:1" in rev1_vrefs
+    assert "GEN 1:2" in rev1_vrefs
+
+
+def test_texts_include_verses_all(client, regular_token1, db_session):
+    """Test include_verses=all returns all canonical verses with empty text for missing ones."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    # Rev1: full KJV Bible, Rev2: only Genesis 1:1-3
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(
+        client,
+        regular_token1,
+        version_id2,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Get union count for comparison (only verses with text in at least one rev)
+    response_union = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "union",
+        },
+        headers=headers,
+    )
+    assert response_union.status_code == 200
+    union_count = len(response_union.json()[str(revision_id1)])
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "all",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_verses = data[str(revision_id1)]
+    rev2_vrefs = {v["verse_reference"]: v for v in data[str(revision_id2)]}
+
+    # 'all' should return all 41,899 canonical verses
+    assert len(rev1_verses) == 41899
+    assert len(rev1_verses) > union_count
+
+    # Rev2 should have GEN 1:1-3 with text, but EXO 1:1 with empty text
+    assert rev2_vrefs["GEN 1:1"]["text"] != ""
+    assert "EXO 1:1" in rev2_vrefs
+    assert rev2_vrefs["EXO 1:1"]["text"] == ""
+
+
+def test_texts_include_verses_all_no_merging(client, regular_token1, db_session):
+    """Test include_verses=all returns exactly 41,899 rows even with <range> markers."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:2 to <range> in revision 1
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id1,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "all",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_verses = data[str(revision_id1)]
+    rev2_verses = data[str(revision_id2)]
+
+    # Both revisions must have exactly 41,899 rows (no merging in all mode)
+    assert len(rev1_verses) == 41899
+    assert len(rev2_verses) == 41899
+
+    # GEN 1:2 should appear as its own row with empty text (range replaced)
+    rev1_map = {v["verse_reference"]: v for v in rev1_verses}
+    assert "GEN 1:2" in rev1_map
+    assert rev1_map["GEN 1:2"]["text"] == ""
+
+    # GEN 1:1 should not be merged with GEN 1:2
+    assert rev1_map["GEN 1:1"]["verse_references"] == ["GEN 1:1"]
+
+
+def test_texts_include_verses_union_default(client, regular_token1, db_session):
+    """Test that default (include_verses=union) keeps verses where at least one revision has text."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Delete GEN 1:3 from revision 2
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).delete()
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Default (no include_verses param) should behave as union
+    response = client.get(
+        f"/{prefix}/texts",
+        params={"revision_ids": [revision_id1, revision_id2]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+
+    # GEN 1:3 should still be present (rev1 has text)
+    assert "GEN 1:3" in rev1_vrefs
+
+    # Verify rev2's GEN 1:3 has empty text
+    rev2_map = {v["verse_reference"]: v for v in data[str(revision_id2)]}
+    assert rev2_map["GEN 1:3"]["text"] == ""
+
+
+def test_texts_include_verses_union_removes_when_all_empty(
+    client, regular_token1, db_session
+):
+    """Test union removes verses where ALL revisions have empty text."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:3 to empty text in BOTH revisions
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id1,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).update({"text": ""})
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).update({"text": ""})
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "union",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+
+    # GEN 1:3 should be excluded (both revisions have no text)
+    assert "GEN 1:3" not in rev1_vrefs
+    # Other verses should still be present
+    assert "GEN 1:1" in rev1_vrefs
+    assert "GEN 1:2" in rev1_vrefs
+
+
+def test_texts_include_verses_whitespace_treated_as_empty(
+    client, regular_token1, db_session
+):
+    """Test that whitespace-only text is treated as empty by include_verses filtering."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    # Set GEN 1:3 to whitespace-only in both revisions
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id1,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).update({"text": "   "})
+    db_session.query(VerseTextModel).filter(
+        VerseTextModel.revision_id == revision_id2,
+        VerseTextModel.verse_reference == "GEN 1:3",
+    ).update({"text": "  \t "})
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # With union, whitespace-only should count as empty
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "union",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    rev1_vrefs = [v["verse_reference"] for v in data[str(revision_id1)]]
+
+    # GEN 1:3 should be excluded (whitespace-only = empty)
+    assert "GEN 1:3" not in rev1_vrefs
+
+
+def test_texts_endpoint_limit_without_random(client, regular_token1, db_session):
+    """Test /texts with ?limit returns the first N verses in canonical order."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "limit": 5,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data[str(revision_id1)]) == 5
+    assert len(data[str(revision_id2)]) == 5
+    # First verse should be the canonical first
+    assert data[str(revision_id1)][0]["verse_reference"] == "GEN 1:1"
+
+
+def test_texts_endpoint_random_sample_deterministic(client, regular_token1, db_session):
+    """Test /texts with ?random&seed returns the same sample on repeat calls."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    params = {
+        "revision_ids": [revision_id1, revision_id2],
+        "limit": 10,
+        "random": "true",
+        "seed": 17087,
+    }
+    r1 = client.get(f"/{prefix}/texts", params=params, headers=headers)
+    r2 = client.get(f"/{prefix}/texts", params=params, headers=headers)
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    d1, d2 = r1.json(), r2.json()
+    assert len(d1[str(revision_id1)]) == 10
+    refs1 = [v["verse_reference"] for v in d1[str(revision_id1)]]
+    refs2 = [v["verse_reference"] for v in d2[str(revision_id1)]]
+    assert refs1 == refs2
+
+    # Different seed should give different sample
+    params_alt = {**params, "seed": 99999}
+    r3 = client.get(f"/{prefix}/texts", params=params_alt, headers=headers)
+    assert r3.status_code == 200
+    refs3 = [v["verse_reference"] for v in r3.json()[str(revision_id1)]]
+    assert refs1 != refs3
+
+
+def test_texts_endpoint_limit_with_include_verses_all(
+    client, regular_token1, db_session
+):
+    """Test /texts with ?limit respects include_verses=all."""
+    version_id1 = create_bible_version(client, regular_token1, db_session)
+    version_id2 = create_bible_version(client, regular_token1, db_session)
+    revision_id1 = upload_revision(client, regular_token1, version_id1)
+    revision_id2 = upload_revision(client, regular_token1, version_id2)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    response = client.get(
+        f"/{prefix}/texts",
+        params={
+            "revision_ids": [revision_id1, revision_id2],
+            "include_verses": "all",
+            "limit": 3,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data[str(revision_id1)]) == 3
+    assert len(data[str(revision_id2)]) == 3

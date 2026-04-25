@@ -9,11 +9,14 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
+    SmallInteger,
     String,
     Text,
+    UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import backref, relationship
 from sqlalchemy.sql import func
@@ -122,6 +125,9 @@ class Assessment(Base):
     reference_id = Column(Integer, ForeignKey("bible_revision.id"))
     type = Column(Text)
     status = Column(Text)
+    status_detail = Column(Text, nullable=True)
+    percent_complete = Column(Float, nullable=True)
+    is_training = Column(Boolean, nullable=False, default=False, server_default="false")
     requested_time = Column(TIMESTAMP, default=func.now())
     start_time = Column(TIMESTAMP)
     end_time = Column(TIMESTAMP)
@@ -154,6 +160,70 @@ class Assessment(Base):
             "status",
             "end_time",
         ),
+    )
+
+
+class TrainingJob(Base):
+    __tablename__ = "training_job"
+
+    id = Column(Integer, primary_key=True)
+    type = Column(Text, nullable=False)
+    source_revision_id = Column(
+        Integer, ForeignKey("bible_revision.id"), nullable=False
+    )
+    target_revision_id = Column(
+        Integer, ForeignKey("bible_revision.id"), nullable=False
+    )
+    source_language = Column(
+        String(3), ForeignKey("iso_language.iso639"), nullable=False
+    )
+    target_language = Column(
+        String(3), ForeignKey("iso_language.iso639"), nullable=False
+    )
+
+    status = Column(Text, nullable=False, default="queued")
+    status_detail = Column(Text, nullable=True)
+    percent_complete = Column(Float, nullable=True)
+
+    external_ids = Column(JSONB, nullable=True)
+    result_url = Column(Text, nullable=True)
+    result_metadata = Column(JSONB, nullable=True)
+    options = Column(JSONB, nullable=True)
+
+    requested_time = Column(TIMESTAMP, default=func.now())
+    start_time = Column(TIMESTAMP, nullable=True)
+    end_time = Column(TIMESTAMP, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    session_id = Column(Text, nullable=True)
+
+    assessment_id = Column(
+        Integer,
+        ForeignKey("assessment.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    deleted = Column(Boolean, default=False)
+    deleted_at = Column(TIMESTAMP, nullable=True)
+
+    source_revision = relationship("BibleRevision", foreign_keys=[source_revision_id])
+    target_revision = relationship("BibleRevision", foreign_keys=[target_revision_id])
+    owner = relationship("UserDB")
+    assessment = relationship("Assessment", foreign_keys=[assessment_id])
+
+    __table_args__ = (
+        Index("ix_training_job_status", "status"),
+        Index("ix_training_job_type_status", "type", "status"),
+        Index("ix_training_job_lang_pair", "source_language", "target_language"),
+        Index(
+            "ix_training_job_revisions_type_status",
+            "source_revision_id",
+            "target_revision_id",
+            "type",
+            "status",
+        ),
+        Index("ix_training_job_session_id", "session_id"),
+        Index("ix_training_job_assessment_id", "assessment_id"),
     )
 
 
@@ -476,6 +546,13 @@ class AgentLexemeCardExample(Base):
             "ix_agent_lexeme_card_examples_revision",
             "revision_id",
         ),
+        # Lightweight index for batch-loading examples by card + revision
+        # (the unique index includes text columns, making it 20x larger)
+        Index(
+            "ix_agent_lexeme_card_examples_card_revision",
+            "lexeme_card_id",
+            "revision_id",
+        ),
     )
 
     # Relationships
@@ -647,9 +724,9 @@ class AgentTranslation(Base):
 class EflomalAssessment(Base):
     """One row per eflomal training run (one per assessment).
 
-    Stores metadata about the training run. The source/target language pair
-    is derived from the assessment's revision and reference bible versions,
-    so it is not duplicated here.
+    Stores metadata about the training run. Can query by source/target language
+    or assessment_id.
+
     """
 
     __tablename__ = "eflomal_assessment"
@@ -658,11 +735,21 @@ class EflomalAssessment(Base):
     assessment_id = Column(
         Integer, ForeignKey("assessment.id"), nullable=False, unique=True
     )
+    source_language = Column(String(3), nullable=True)
+    target_language = Column(String(3), nullable=True)
     num_verse_pairs = Column(Integer)
     num_alignment_links = Column(Integer)
     num_dictionary_entries = Column(Integer)
     num_missing_words = Column(Integer)
     created_at = Column(TIMESTAMP, default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ix_eflomal_assessment_language_pair",
+            "source_language",
+            "target_language",
+        ),
+    )
 
 
 class EflomalDictionary(Base):
@@ -773,3 +860,362 @@ class EflomalTargetWordCount(Base):
             unique=True,
         ),
     )
+
+
+class EflomalPrior(Base):
+    """LEX-format priors from the final alignment loop, one row per BPE token pair.
+
+    Consumed at predict-time by eflomal together with the BPE models to
+    score unseen verse pairs against a small anchor sample from training.
+
+    - source_bpe / target_bpe: SentencePiece pieces (e.g. "▁house").
+    - alpha: Dirichlet-prior strength, typically in [0.5, 0.95].
+    """
+
+    __tablename__ = "eflomal_prior"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    assessment_id = Column(
+        Integer, ForeignKey("eflomal_assessment.id", ondelete="CASCADE"), nullable=False
+    )
+    source_bpe = Column(Text, nullable=False)
+    target_bpe = Column(Text, nullable=False)
+    alpha = Column(Float, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "alpha >= 0.5 AND alpha <= 0.95", name="ck_eflomal_prior_alpha_range"
+        ),
+        Index("ix_eflomal_prior_assessment", "assessment_id"),
+        Index(
+            "ux_eflomal_prior_assessment_source_target",
+            "assessment_id",
+            "source_bpe",
+            "target_bpe",
+            unique=True,
+        ),
+    )
+
+
+class EflomalBpeModel(Base):
+    """Serialized SentencePiece BPE model protobuf, one per direction.
+
+    Two rows per assessment — direction 'source' and 'target'. The
+    model_bytes column stores the output of
+    SentencePieceProcessor.serialized_model_proto() directly.
+    """
+
+    __tablename__ = "eflomal_bpe_model"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    assessment_id = Column(
+        Integer, ForeignKey("eflomal_assessment.id", ondelete="CASCADE"), nullable=False
+    )
+    direction = Column(Text, nullable=False)
+    model_bytes = Column(LargeBinary, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "direction IN ('source', 'target')",
+            name="ck_eflomal_bpe_model_direction",
+        ),
+        Index(
+            "ux_eflomal_bpe_model_assessment_direction",
+            "assessment_id",
+            "direction",
+            unique=True,
+        ),
+    )
+
+
+class LanguageProfile(Base):
+    __tablename__ = "language_profiles"
+
+    iso_639_3 = Column(String(3), ForeignKey("iso_language.iso639"), primary_key=True)
+    name = Column(Text, nullable=False)
+    autonym = Column(Text, nullable=True)
+    family = Column(Text, nullable=True)
+    branch = Column(Text, nullable=True)
+    script = Column(Text, nullable=True)
+    typology_summary = Column(Text, nullable=True)
+    morphology_notes = Column(Text, nullable=True)
+    grammar_sketch = Column(Text, nullable=True)
+    common_affixes = Column(JSONB, nullable=True)
+    sources = Column(JSONB, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+
+class LanguageMorpheme(Base):
+    __tablename__ = "language_morphemes"
+
+    id = Column(Integer, primary_key=True)
+    iso_639_3 = Column(
+        String(3),
+        ForeignKey("language_profiles.iso_639_3", ondelete="CASCADE"),
+        nullable=False,
+    )
+    morpheme = Column(Text, nullable=False)
+    morpheme_class = Column(Text, nullable=False)
+    first_seen_revision_id = Column(
+        Integer,
+        ForeignKey("bible_revision.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    first_seen_at = Column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index(
+            "ux_language_morphemes_iso_morpheme",
+            "iso_639_3",
+            "morpheme",
+            unique=True,
+        ),
+        Index("ix_language_morphemes_iso", "iso_639_3"),
+        Index("ix_language_morphemes_iso_class", "iso_639_3", "morpheme_class"),
+    )
+
+
+class LanguageAffix(Base):
+    __tablename__ = "language_affixes"
+
+    id = Column(Integer, primary_key=True)
+    iso_639_3 = Column(
+        String(3),
+        ForeignKey("language_profiles.iso_639_3", ondelete="CASCADE"),
+        nullable=False,
+    )
+    form = Column(Text, nullable=False)
+    position = Column(Text, nullable=False)
+    gloss = Column(Text, nullable=False)
+    examples = Column(JSONB, nullable=True)
+    n_runs = Column(SmallInteger, nullable=False, server_default="1")
+    source_model = Column(Text, nullable=True)
+    first_seen_revision_id = Column(
+        Integer,
+        ForeignKey("bible_revision.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    first_seen_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        CheckConstraint(
+            "position IN ('prefix', 'suffix', 'infix')",
+            name="ck_language_affixes_position",
+        ),
+        CheckConstraint("n_runs >= 1", name="ck_language_affixes_n_runs_min_1"),
+        Index(
+            "ux_language_affixes_iso_form_position_gloss",
+            "iso_639_3",
+            "form",
+            "position",
+            "gloss",
+            unique=True,
+        ),
+        Index("ix_language_affixes_iso", "iso_639_3"),
+        Index("ix_language_affixes_iso_position", "iso_639_3", "position"),
+    )
+
+
+class TokenizerRun(Base):
+    __tablename__ = "tokenizer_runs"
+
+    id = Column(Integer, primary_key=True)
+    iso_639_3 = Column(
+        String(3),
+        ForeignKey("language_profiles.iso_639_3", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision_id = Column(
+        Integer,
+        ForeignKey("bible_revision.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    n_sample_verses = Column(Integer)
+    sample_method = Column(Text)
+    source_model = Column(Text)
+    stats_json = Column(JSONB)
+    status = Column(Text, nullable=False, server_default="completed")
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_tokenizer_runs_iso", "iso_639_3"),
+        Index("ix_tokenizer_runs_revision", "revision_id"),
+    )
+
+
+class VerseMorphemeIndex(Base):
+    __tablename__ = "verse_morpheme_index"
+
+    id = Column(Integer, primary_key=True)
+    verse_text_id = Column(
+        Integer,
+        ForeignKey("verse_text.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    morpheme_id = Column(
+        Integer,
+        ForeignKey("language_morphemes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    count = Column(Integer, nullable=False, server_default="1")
+    surface_forms = Column(JSONB)
+
+    __table_args__ = (
+        UniqueConstraint("verse_text_id", "morpheme_id", name="uq_verse_morpheme"),
+        Index("ix_verse_morpheme_index_morpheme", "morpheme_id"),
+        Index("ix_verse_morpheme_index_verse", "verse_text_id"),
+    )
+
+
+class WordMorphemeIndex(Base):
+    __tablename__ = "word_morpheme_index"
+
+    id = Column(Integer, primary_key=True)
+    iso_639_3 = Column(
+        String(3),
+        ForeignKey("language_profiles.iso_639_3", ondelete="CASCADE"),
+        nullable=False,
+    )
+    word = Column(Text, nullable=False)
+    morpheme_id = Column(
+        Integer,
+        ForeignKey("language_morphemes.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position = Column(Integer, nullable=False)
+    total_morphemes = Column(Integer, nullable=False)
+    word_count = Column(Integer, nullable=False, server_default="1")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "iso_639_3",
+            "word",
+            "morpheme_id",
+            "position",
+            name="uq_word_morpheme_pos",
+        ),
+        Index("ix_word_morpheme_iso", "iso_639_3"),
+        Index("ix_word_morpheme_morpheme", "morpheme_id"),
+    )
+
+
+class TfidfArtifactRun(Base):
+    """One row per TF-IDF assessment that produced encoder artifacts.
+
+    Header row for the TF-IDF artifact store. Artifacts (two vectorizers +
+    one SVD matrix) hang off this by assessment_id.
+    """
+
+    __tablename__ = "tfidf_artifact_runs"
+
+    assessment_id = Column(
+        Integer,
+        ForeignKey("assessment.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    source_language = Column(String(3), nullable=True)
+    n_components = Column(Integer, nullable=False)
+    n_word_features = Column(Integer, nullable=False)
+    n_char_features = Column(Integer, nullable=False)
+    n_corpus_vrefs = Column(Integer, nullable=False)
+    sklearn_version = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_tfidf_artifact_runs_lang", "source_language"),
+        Index("ix_tfidf_artifact_runs_lang_created", "source_language", "created_at"),
+    )
+
+
+class TfidfVectorizerArtifact(Base):
+    """Fitted TfidfVectorizer state — one row for 'word', one for 'char'."""
+
+    __tablename__ = "tfidf_vectorizers"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    assessment_id = Column(
+        Integer,
+        ForeignKey("tfidf_artifact_runs.assessment_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind = Column(Text, nullable=False)
+    vocabulary = Column(JSONB, nullable=False)
+    idf = Column(JSONB, nullable=False)
+    params = Column(JSONB, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "assessment_id", "kind", name="uq_tfidf_vectorizer_assessment_kind"
+        ),
+        CheckConstraint("kind IN ('word', 'char')", name="ck_tfidf_vectorizer_kind"),
+    )
+
+
+class TfidfSvd(Base):
+    """Fitted TruncatedSVD components matrix, stored as raw npy bytes."""
+
+    __tablename__ = "tfidf_svd"
+
+    assessment_id = Column(
+        Integer,
+        ForeignKey("tfidf_artifact_runs.assessment_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    n_components = Column(Integer, nullable=False)
+    n_features = Column(Integer, nullable=False)
+    components_npy = Column(LargeBinary, nullable=False)
+    dtype = Column(Text, nullable=False, server_default="float32")
+
+
+class TfidfSvdStaging(Base):
+    """In-flight chunked upload of TF-IDF artifacts. Dropped after commit/abort."""
+
+    __tablename__ = "tfidf_svd_staging"
+
+    upload_id = Column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    assessment_id = Column(
+        Integer,
+        ForeignKey("assessment.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_language = Column(String(3), nullable=True)
+    n_components = Column(Integer, nullable=False)
+    n_corpus_vrefs = Column(Integer, nullable=False)
+    sklearn_version = Column(Text, nullable=False)
+    word_vocabulary = Column(JSONB, nullable=False)
+    word_idf = Column(JSONB, nullable=False)
+    word_params = Column(JSONB, nullable=False)
+    char_vocabulary = Column(JSONB, nullable=False)
+    char_idf = Column(JSONB, nullable=False)
+    char_params = Column(JSONB, nullable=False)
+    svd_n_components = Column(Integer, nullable=False)
+    svd_n_features = Column(Integer, nullable=False)
+    svd_dtype = Column(Text, nullable=False)
+    total_chunks = Column(Integer, nullable=False)
+    created_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_tfidf_svd_staging_assessment", "assessment_id"),
+        Index("ix_tfidf_svd_staging_created_at", "created_at"),
+    )
+
+
+class TfidfSvdChunk(Base):
+    """One staged slice of an SVD components matrix. vstacked on commit."""
+
+    __tablename__ = "tfidf_svd_chunk"
+
+    upload_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("tfidf_svd_staging.upload_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    chunk_index = Column(Integer, primary_key=True)
+    components_bytes = Column(LargeBinary, nullable=False)
+    received_at = Column(TIMESTAMP, nullable=False, server_default=func.now())

@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 import fastapi
-import httpx
+import modal
 from dotenv import load_dotenv
 
 # Third party imports
@@ -23,7 +23,13 @@ from database.models import UserDB as UserModel
 from database.models import UserGroup
 
 # Local application imports
-from models import AssessmentIn, AssessmentOut
+from models import (
+    ASSESSMENT_TERMINAL_STATUSES,
+    ASSESSMENT_VALID_TRANSITIONS,
+    AssessmentIn,
+    AssessmentOut,
+    AssessmentStatusUpdate,
+)
 from security_routes.auth_routes import get_current_user
 from utils.logging_config import setup_logger
 
@@ -144,7 +150,7 @@ async def get_assessments(
                 ReferenceRevision, ReferenceRevision.id == Assessment.reference_id
             )
             .filter(
-                Assessment.deleted.is_(False),
+                Assessment.deleted.is_not(True),
                 BibleRevision.bible_version_id.in_(version_ids),
                 or_(
                     Assessment.reference_id.is_(None),
@@ -172,18 +178,13 @@ async def get_assessments(
 
 
 # Helper function to call assessment runner
-async def call_assessment_runner(assessment: AssessmentIn, return_all_results: bool):
-    if os.getenv("MODAL_ENV", "main") == "main":
-        runner_url = "https://sil-ai--runner-assessment-runner.modal.run"
-    else:
-        runner_url = "https://sil-ai-dev--runner-assessment-runner.modal.run"
-
-    modal_env = os.getenv("MODAL_ENV", "main")
+async def call_assessment_runner(
+    assessment: AssessmentIn, return_all_results: bool, modal_env: str
+):
     logger.info(
         "Calling Modal runner",
         extra={
             "modal_env": modal_env,
-            "runner_url": runner_url,
             "assessment_id": assessment.id,
             "revision_id": assessment.revision_id,
             "reference_id": assessment.reference_id,
@@ -191,33 +192,19 @@ async def call_assessment_runner(assessment: AssessmentIn, return_all_results: b
             "return_all_results": return_all_results,
         },
     )
-    params = {
-        "return_all_results": return_all_results,
-    }
-    headers = {"Authorization": "Bearer " + os.getenv("MODAL_WEBHOOK_TOKEN")}
 
-    try:
-        # Asynchronously post the request to the runner
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                runner_url, params=params, headers=headers, json=assessment.model_dump()
-            )
-    except (httpx.RequestError, httpx.HTTPStatusError) as e:
-        logger.error(
-            "Modal runner request failed",
-            exc_info=True,
-            extra={
-                "assessment_id": assessment.id,
-                "runner_url": runner_url,
-                "error_type": type(e).__name__,
-            },
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Assessment runner service is unavailable or failed.",
-        ) from e
-
-    return response
+    f = modal.Function.from_name(
+        "runner", "run_assessment_runner", environment_name=modal_env
+    )
+    config = assessment.model_dump()
+    # Backward compat: copy vref range from kwargs to top-level so the
+    # runner (separate repo) can read them at either location.
+    if config.get("kwargs"):
+        for key in ("first_vref", "last_vref"):
+            if key in config["kwargs"]:
+                config[key] = config["kwargs"][key]
+    config["return_all_results"] = return_all_results
+    await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
 
 
 @router.post("/assessment", response_model=List[AssessmentOut])
@@ -226,6 +213,18 @@ async def add_assessment(
     extra_kwargs: Optional[str] = Query(
         None,
         description="JSON-encoded dict of extra keyword arguments to pass to the assessment function",
+    ),
+    use_eflomal: Optional[bool] = Query(
+        None,
+        description="Run eflomal-based word alignment. Requires source_language and target_language.",
+    ),
+    force: bool = Query(
+        False,
+        description="Force rerun even if a completed assessment already exists",
+    ),
+    modal_env: Optional[str] = Query(
+        None,
+        description="Modal environment to run the assessment in (e.g. 'main' or 'dev'). Defaults to server MODAL_ENV.",
     ),
     return_all_results: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -237,7 +236,8 @@ async def add_assessment(
     Currently supported assessment types are:
     - semantic-similarity (requires reference)
     - sentence-length
-    - word-alignment (requires reference)
+    - word-alignment (requires reference; can optionally run eflomal-based alignment
+      when `use_eflomal=true` and `source_language` and `target_language` are provided)
     - ngrams
     - tfidf
     - text-lengths
@@ -252,6 +252,12 @@ async def add_assessment(
     Add an assessment entry. For regular users, an entry is added for each group they are part of.
     For admin users, the entry is not linked to any specific group.
     """
+    if modal_env is not None and not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admin users can specify modal_env.",
+        )
+
     if (
         a.type in ["semantic-similarity", "word-alignment", "agent-critique"]
         and a.reference_id is None
@@ -278,6 +284,102 @@ async def add_assessment(
             raise HTTPException(status_code=400, detail=str(e)) from e
         a.kwargs = parsed_kwargs
 
+    # Fold the use_eflomal query param into kwargs so it reaches Modal and the dedup check
+    if use_eflomal:
+        combined_kwargs = dict(a.kwargs or {})
+        combined_kwargs["use_eflomal"] = True
+        try:
+            combined_kwargs = AssessmentIn.validate_kwargs(combined_kwargs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        a.kwargs = combined_kwargs
+        parsed_kwargs = combined_kwargs
+
+    # Eflomal word-alignment requires source and target languages
+    is_eflomal = a.kwargs and a.kwargs.get("use_eflomal")
+    if is_eflomal:
+        if a.type != "word-alignment":
+            raise HTTPException(
+                status_code=400,
+                detail="use_eflomal is only valid for word-alignment assessments.",
+            )
+        if not a.source_language or not a.target_language:
+            raise HTTPException(
+                status_code=400,
+                detail="Eflomal word-alignment requires source_language and target_language.",
+            )
+
+    # Check for already-completed assessment (force=true bypasses this)
+    if not force:
+        completed_stmt = (
+            select(Assessment)
+            .where(
+                Assessment.revision_id == a.revision_id,
+                Assessment.type == a.type,
+                Assessment.status == "finished",
+                Assessment.deleted.is_not(True),
+            )
+            .order_by(Assessment.end_time.desc())
+            .limit(1)
+        )
+        if a.reference_id is not None:
+            completed_stmt = completed_stmt.where(
+                Assessment.reference_id == a.reference_id
+            )
+        else:
+            completed_stmt = completed_stmt.where(Assessment.reference_id.is_(None))
+        # Distinguish eflomal from regular word-alignment
+        if is_eflomal:
+            completed_stmt = completed_stmt.where(
+                Assessment.kwargs.op("@>")({"use_eflomal": True})
+            )
+        elif a.type == "word-alignment":
+            completed_stmt = completed_stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.op("@>")({"use_eflomal": True}),
+                )
+            )
+        # Distinguish by verse range
+        if parsed_kwargs and parsed_kwargs.get("first_vref"):
+            completed_stmt = completed_stmt.where(
+                Assessment.kwargs.op("@>")({"first_vref": parsed_kwargs["first_vref"]})
+            )
+        else:
+            completed_stmt = completed_stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.has_key("first_vref"),
+                )
+            )
+        if parsed_kwargs and parsed_kwargs.get("last_vref"):
+            completed_stmt = completed_stmt.where(
+                Assessment.kwargs.op("@>")({"last_vref": parsed_kwargs["last_vref"]})
+            )
+        else:
+            completed_stmt = completed_stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.has_key("last_vref"),
+                )
+            )
+        result = await db.execute(completed_stmt)
+        existing = result.scalars().first()
+        if existing is not None:
+            logger.info(
+                "Blocked duplicate of finished assessment",
+                extra={
+                    "existing_id": existing.id,
+                    "user_id": current_user.id,
+                    "revision_id": a.revision_id,
+                    "type": a.type,
+                },
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=f"Assessment already completed (id={existing.id}). Use force=true to rerun.",
+            )
+
     # Check for duplicate in-progress assessment (admins can bypass)
     if not current_user.is_admin:
         stale_cutoff = datetime.now() - timedelta(hours=STALE_ASSESSMENT_HOURS)
@@ -286,7 +388,9 @@ async def add_assessment(
             .where(
                 Assessment.revision_id == a.revision_id,
                 Assessment.type == a.type,
-                Assessment.status.in_(["queued", "running"]),
+                Assessment.status.notin_(
+                    [s.value for s in ASSESSMENT_TERMINAL_STATUSES]
+                ),
                 Assessment.deleted.is_not(True),
                 Assessment.requested_time > stale_cutoff,
             )
@@ -296,6 +400,39 @@ async def add_assessment(
             stmt = stmt.where(Assessment.reference_id == a.reference_id)
         else:
             stmt = stmt.where(Assessment.reference_id.is_(None))
+        # Distinguish eflomal from regular word-alignment
+        if is_eflomal:
+            stmt = stmt.where(Assessment.kwargs.op("@>")({"use_eflomal": True}))
+        elif a.type == "word-alignment":
+            stmt = stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.op("@>")({"use_eflomal": True}),
+                )
+            )
+        # Distinguish by verse range
+        if parsed_kwargs and parsed_kwargs.get("first_vref"):
+            stmt = stmt.where(
+                Assessment.kwargs.op("@>")({"first_vref": parsed_kwargs["first_vref"]})
+            )
+        else:
+            stmt = stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.has_key("first_vref"),
+                )
+            )
+        if parsed_kwargs and parsed_kwargs.get("last_vref"):
+            stmt = stmt.where(
+                Assessment.kwargs.op("@>")({"last_vref": parsed_kwargs["last_vref"]})
+            )
+        else:
+            stmt = stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    ~Assessment.kwargs.has_key("last_vref"),
+                )
+            )
         result = await db.execute(stmt)
         existing_id = result.scalars().first()
         if existing_id is not None:
@@ -319,19 +456,109 @@ async def add_assessment(
     await db.refresh(assessment)
     a.id = assessment.id
 
-    # Call runner using helper function
-    response = await call_assessment_runner(a, return_all_results)
+    # Resolve Modal environment once at the route level
+    resolved_modal_env = modal_env or os.getenv("MODAL_ENV", "main")
 
-    if not 200 <= response.status_code < 300:
+    # Dispatch to Modal runner (fire-and-forget via spawn)
+    try:
+        await call_assessment_runner(a, return_all_results, resolved_modal_env)
+    except Exception as e:
+        logger.error(
+            "Modal runner dispatch failed",
+            exc_info=True,
+            extra={
+                "assessment_id": assessment.id,
+                "modal_env": resolved_modal_env,
+                "error_type": type(e).__name__,
+            },
+        )
         try:
             await db.delete(assessment)
             await db.commit()
-            raise HTTPException(status_code=response.status_code, detail=response.text)
-        except SQLAlchemyError as e:
+        except SQLAlchemyError as cleanup_err:
             await db.rollback()
-            raise HTTPException(status_code=response.status_code, detail=str(e)) from e
+            logger.error(
+                f"Failed to delete assessment {assessment.id} after runner error: {cleanup_err}"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Assessment runner service is unavailable or failed.",
+        ) from e
 
     return [AssessmentOut.model_validate(assessment)]
+
+
+@router.patch("/assessment/{assessment_id}/status", response_model=AssessmentOut)
+async def update_assessment_status(
+    assessment_id: int,
+    update: AssessmentStatusUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Runner callback to update assessment status.
+
+    Auth: admin, assessment owner, or any user with group access to the
+    assessment's bible version.  This mirrors the training PATCH pattern.
+    """
+    result = await db.execute(select(Assessment).where(Assessment.id == assessment_id))
+    assessment = result.scalars().first()
+    if not assessment or assessment.deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found",
+        )
+
+    if not current_user.is_admin and assessment.owner_id != current_user.id:
+        revision = await db.get(BibleRevision, assessment.revision_id)
+        if not revision:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment revision not found",
+            )
+        version_access = await db.execute(
+            select(BibleVersionAccess.bible_version_id).where(
+                BibleVersionAccess.group_id.in_(
+                    select(UserGroup.group_id).where(
+                        UserGroup.user_id == current_user.id
+                    )
+                )
+            )
+        )
+        accessible_version_ids = {row[0] for row in version_access.all()}
+        if revision.bible_version_id not in accessible_version_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this assessment",
+            )
+
+    if assessment.status in ASSESSMENT_TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Assessment is already in terminal status '{assessment.status}'",
+        )
+
+    allowed_next = ASSESSMENT_VALID_TRANSITIONS.get(assessment.status, set())
+    if update.status not in allowed_next:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid transition from '{assessment.status}' to '{update.status}'",
+        )
+
+    assessment.status = update.status
+    if update.status_detail is not None:
+        assessment.status_detail = update.status_detail
+    if update.percent_complete is not None:
+        assessment.percent_complete = update.percent_complete
+
+    if assessment.start_time is None and update.status != "queued":
+        assessment.start_time = datetime.utcnow()
+
+    if update.status in ASSESSMENT_TERMINAL_STATUSES:
+        assessment.end_time = datetime.utcnow()
+
+    await db.commit()
+    await db.refresh(assessment)
+    return AssessmentOut.model_validate(assessment)
 
 
 @router.delete("/assessment")

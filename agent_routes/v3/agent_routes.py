@@ -3,11 +3,15 @@ __version__ = "v3"
 import datetime
 import socket
 import time
+import unicodedata
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
+from sqlalchemy import bindparam
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.types import Text as TextType
 
 from database.dependencies import get_db
 from database.models import (
@@ -181,28 +185,34 @@ async def add_word_alignments_bulk(
                 for item in request.alignments
             ]
 
-            # Use INSERT...ON CONFLICT DO UPDATE for atomic upsert
-            insert_stmt = insert(AgentWordAlignment).values(records)
+            # Use INSERT...ON CONFLICT DO UPDATE for atomic upsert.
+            # Batch to stay under PostgreSQL's 32,767 parameter limit.
+            _PG_MAX_PARAMS = 32_767
+            cols_per_row = len(AgentWordAlignment.__table__.columns)
+            batch_size = _PG_MAX_PARAMS // cols_per_row
 
-            upsert_stmt = insert_stmt.on_conflict_do_update(
-                index_elements=[
-                    "source_language",
-                    "target_language",
-                    "source_word",
-                    "target_word",
-                ],
-                set_={
-                    "score": insert_stmt.excluded.score,
-                    "is_human_verified": insert_stmt.excluded.is_human_verified,
-                    "last_updated": func.now(),
-                },
-            ).returning(AgentWordAlignment.id)
+            affected_ids = []
+            for i in range(0, len(records), batch_size):
+                batch = records[i : i + batch_size]
+                insert_stmt = insert(AgentWordAlignment).values(batch)
 
-            result = await db.execute(upsert_stmt)
+                upsert_stmt = insert_stmt.on_conflict_do_update(
+                    index_elements=[
+                        "source_language",
+                        "target_language",
+                        "source_word",
+                        "target_word",
+                    ],
+                    set_={
+                        "score": insert_stmt.excluded.score,
+                        "is_human_verified": insert_stmt.excluded.is_human_verified,
+                        "last_updated": func.now(),
+                    },
+                ).returning(AgentWordAlignment.id)
+
+                result = await db.execute(upsert_stmt)
+                affected_ids.extend(row[0] for row in result.fetchall())
             await db.commit()
-
-            # Fetch complete records by IDs
-            affected_ids = [row[0] for row in result.fetchall()]
             if affected_ids:
                 fetch_result = await db.execute(
                     select(AgentWordAlignment).where(
@@ -512,6 +522,7 @@ async def add_lexeme_card(
     request_start = time.perf_counter()
     try:
         from sqlalchemy import delete, select
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
         from sqlalchemy.sql import func
 
         # Sort alignment_scores by value in descending order (highest scores first)
@@ -570,15 +581,23 @@ async def add_lexeme_card(
                     )
                     await db.execute(delete_query)
 
-                    # Add new examples
-                    for example in card.examples:
-                        example_obj = AgentLexemeCardExample(
-                            lexeme_card_id=existing_card.id,
-                            revision_id=revision_id,
-                            source_text=example.get("source", ""),
-                            target_text=example.get("target", ""),
+                    # Add new examples; ON CONFLICT DO NOTHING silently skips any
+                    # duplicate (source_text, target_text) pairs within the payload.
+                    example_records = [
+                        {
+                            "lexeme_card_id": existing_card.id,
+                            "revision_id": revision_id,
+                            "source_text": example.get("source", ""),
+                            "target_text": example.get("target", ""),
+                        }
+                        for example in card.examples
+                    ]
+                    if example_records:
+                        await db.execute(
+                            pg_insert(AgentLexemeCardExample).values(example_records)
+                            # Relies on ix_agent_lexeme_card_examples_unique
+                            .on_conflict_do_nothing()
                         )
-                        db.add(example_obj)
                 else:
                     # If examples is None and replace_existing=True, remove this revision's examples
                     delete_query = delete(AgentLexemeCardExample).where(
@@ -608,17 +627,25 @@ async def add_lexeme_card(
                     existing_senses = existing_card.senses or []
                     existing_card.senses = existing_senses + card.senses
 
-                # For examples: append to this revision_id's examples
-                # The unique index will prevent duplicate examples automatically
+                # For examples: append to this revision_id's examples.
+                # Use ON CONFLICT DO NOTHING so duplicates (already inserted for
+                # the same lexeme_card / revision / source / target) are silently
+                # skipped instead of raising IntegrityError.
                 if card.examples:
-                    for example in card.examples:
-                        example_obj = AgentLexemeCardExample(
-                            lexeme_card_id=existing_card.id,
-                            revision_id=revision_id,
-                            source_text=example.get("source", ""),
-                            target_text=example.get("target", ""),
-                        )
-                        db.add(example_obj)
+                    example_records = [
+                        {
+                            "lexeme_card_id": existing_card.id,
+                            "revision_id": revision_id,
+                            "source_text": example.get("source", ""),
+                            "target_text": example.get("target", ""),
+                        }
+                        for example in card.examples
+                    ]
+                    await db.execute(
+                        pg_insert(AgentLexemeCardExample).values(example_records)
+                        # Relies on ix_agent_lexeme_card_examples_unique
+                        .on_conflict_do_nothing()
+                    )
 
             await db.commit()
             await db.refresh(existing_card)
@@ -691,16 +718,23 @@ async def add_lexeme_card(
             db.add(lexeme_card)
             await db.flush()  # Flush to get the ID before adding examples
 
-            # Add examples to the separate table
+            # Add examples to the separate table. Use ON CONFLICT DO NOTHING to
+            # tolerate duplicate (source_text, target_text) entries in the payload.
             if card.examples:
-                for example in card.examples:
-                    example_obj = AgentLexemeCardExample(
-                        lexeme_card_id=lexeme_card.id,
-                        revision_id=revision_id,
-                        source_text=example.get("source", ""),
-                        target_text=example.get("target", ""),
-                    )
-                    db.add(example_obj)
+                example_records = [
+                    {
+                        "lexeme_card_id": lexeme_card.id,
+                        "revision_id": revision_id,
+                        "source_text": example.get("source", ""),
+                        "target_text": example.get("target", ""),
+                    }
+                    for example in card.examples
+                ]
+                await db.execute(
+                    pg_insert(AgentLexemeCardExample).values(example_records)
+                    # Relies on ix_agent_lexeme_card_examples_unique
+                    .on_conflict_do_nothing()
+                )
 
             await db.commit()
             await db.refresh(lexeme_card)
@@ -804,6 +838,7 @@ async def _apply_lexeme_card_patch(
 ) -> LexemeCardOut:
     """Apply patch data to a lexeme card and return the updated card."""
     from sqlalchemy import delete, select
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
     from sqlalchemy.sql import func
 
     provided_fields = patch_data.model_fields_set
@@ -924,15 +959,23 @@ async def _apply_lexeme_card_patch(
                 )
                 await db.execute(delete_query)
 
-            # Add new examples
-            for example in examples:
-                example_obj = AgentLexemeCardExample(
-                    lexeme_card_id=card.id,
-                    revision_id=revision_id,
-                    source_text=example.get("source", ""),
-                    target_text=example.get("target", ""),
-                )
-                db.add(example_obj)
+            # Add new examples. Use ON CONFLICT DO NOTHING so duplicates (either
+            # within the payload, or colliding with pre-existing rows in the
+            # append/merge case) are silently skipped instead of raising 500.
+            example_records = [
+                {
+                    "lexeme_card_id": card.id,
+                    "revision_id": revision_id,
+                    "source_text": example.get("source", ""),
+                    "target_text": example.get("target", ""),
+                }
+                for example in examples
+            ]
+            await db.execute(
+                pg_insert(AgentLexemeCardExample).values(example_records)
+                # Relies on ix_agent_lexeme_card_examples_unique
+                .on_conflict_do_nothing()
+            )
 
     # Update last_updated timestamp
     card.last_updated = func.now()
@@ -1169,6 +1212,50 @@ async def patch_lexeme_card_by_lemma(
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Error patching lexeme card by lemma: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.delete("/agent/lexeme-card/{card_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_lexeme_card(
+    card_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Delete a lexeme card by ID.
+
+    Associated examples are deleted automatically via cascade
+    (both ORM-level cascade="all, delete-orphan" and DB-level ondelete="CASCADE").
+
+    This endpoint is used by aqua-assessments during card consolidation.
+    Any authenticated user can delete any card (consistent with other card endpoints).
+
+    Returns 204 No Content on success, 404 if card not found.
+    """
+    try:
+        from sqlalchemy import select
+
+        query = select(AgentLexemeCard).where(AgentLexemeCard.id == card_id)
+        result = await db.execute(query)
+        card = result.scalar_one_or_none()
+
+        if not card:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Lexeme card with id {card_id} not found",
+            )
+
+        await db.delete(card)
+        await db.commit()
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error deleting lexeme card: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
@@ -1506,6 +1593,7 @@ async def get_lexeme_cards(
     target_language: str,
     source_word: str = None,
     target_word: str = None,
+    target_words: str = None,
     pos: str = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -1523,6 +1611,9 @@ async def get_lexeme_cards(
       (case-insensitive exact match)
     - target_word: str (optional) - Filter by target_lemma or surface_forms
       (case-insensitive exact match)
+    - target_words: str (optional) - Comma-separated list of target words. Returns
+      cards where target_lemma or any surface_form matches any of the given words
+      (case-insensitive, NFC-normalized). Cannot be used with target_word.
     - pos: str (optional) - Filter by part of speech
 
     Returns:
@@ -1533,8 +1624,17 @@ async def get_lexeme_cards(
     try:
         from sqlalchemy import desc, select, text
 
-        # Get revision IDs the user has access to
-        authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
+        # Normalize inputs before validation
+        source_word = source_word.strip() if source_word else None
+        target_word = target_word.strip() if target_word else None
+
+        if target_word and target_words is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot use both 'target_word' and 'target_words' parameters.",
+            )
+
+        is_admin = current_user.is_admin
 
         # Base conditions: language pair filter
         conditions = [
@@ -1547,14 +1647,11 @@ async def get_lexeme_cards(
             conditions.append(AgentLexemeCard.pos == pos)
 
         # Word filtering: both source_word and target_word search
-        # lemma OR surface_forms (case-insensitive exact match)
+        # lemma OR surface_forms (case-insensitive exact match, NFC-normalized)
         word_conditions = []
 
-        source_word = source_word.strip() if source_word else None
-        target_word = target_word.strip() if target_word else None
-
         if source_word:
-            source_word_lower = source_word.lower()
+            source_word_lower = unicodedata.normalize("NFC", source_word).lower()
             word_conditions.append(
                 text(
                     "((LOWER(agent_lexeme_cards.source_lemma) = :source_word_lower) OR "
@@ -1565,7 +1662,7 @@ async def get_lexeme_cards(
             )
 
         if target_word:
-            target_word_lower = target_word.lower()
+            target_word_lower = unicodedata.normalize("NFC", target_word).lower()
             word_conditions.append(
                 text(
                     "((LOWER(agent_lexeme_cards.target_lemma) = :target_word_lower) OR "
@@ -1573,6 +1670,30 @@ async def get_lexeme_cards(
                     "EXISTS (SELECT 1 FROM jsonb_array_elements_text(agent_lexeme_cards.surface_forms) AS elem "
                     "WHERE LOWER(elem) = :target_word_lower)))"
                 ).bindparams(target_word_lower=target_word_lower)
+            )
+
+        if target_words is not None:
+            # Parse comma-separated list, NFC-normalize and lowercase each word
+            words_list = [
+                unicodedata.normalize("NFC", w.strip()).lower()
+                for w in target_words.split(",")
+                if w.strip()
+            ]
+            if not words_list:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="'target_words' parameter contains no valid words.",
+                )
+            tw_param = bindparam(
+                "target_words_arr", value=words_list, type_=ARRAY(TextType)
+            )
+            word_conditions.append(
+                text(
+                    "(LOWER(agent_lexeme_cards.target_lemma) = ANY(:target_words_arr) OR "
+                    "(jsonb_typeof(agent_lexeme_cards.surface_forms) = 'array' AND "
+                    "EXISTS (SELECT 1 FROM jsonb_array_elements_text(agent_lexeme_cards.surface_forms) AS elem "
+                    "WHERE LOWER(elem) = ANY(:target_words_arr))))"
+                ).bindparams(tw_param)
             )
 
         query = (
@@ -1585,7 +1706,70 @@ async def get_lexeme_cards(
         result = await db.execute(query)
         cards = result.scalars().all()
 
-        # Build response cards with examples from the separate table
+        # Batch-load all examples for the returned cards in a single query
+        card_ids = [card.id for card in cards]
+        examples_by_card: dict[int, list[dict]] = {cid: [] for cid in card_ids}
+
+        if card_ids:
+            from database.models import (
+                BibleRevision,
+                BibleVersion,
+                BibleVersionAccess,
+                UserGroup,
+            )
+
+            examples_conditions = [
+                AgentLexemeCardExample.lexeme_card_id.in_(card_ids),
+            ]
+            # For non-admins, filter examples to authorized revisions in
+            # the source or target language.  This is safe because examples
+            # are always created from revisions in the card's language pair
+            # (the POST endpoint requires a revision_id for the language).
+            if not is_admin:
+                authorized_lang_revisions = (
+                    select(BibleRevision.id)
+                    .distinct()
+                    .join(
+                        BibleVersion,
+                        BibleVersion.id == BibleRevision.bible_version_id,
+                    )
+                    .join(
+                        BibleVersionAccess,
+                        BibleVersionAccess.bible_version_id == BibleVersion.id,
+                    )
+                    .join(
+                        UserGroup,
+                        UserGroup.group_id == BibleVersionAccess.group_id,
+                    )
+                    .where(
+                        UserGroup.user_id == current_user.id,
+                        BibleVersion.iso_language.in_(
+                            [source_language, target_language]
+                        ),
+                    )
+                )
+                examples_conditions.append(
+                    AgentLexemeCardExample.revision_id.in_(authorized_lang_revisions),
+                )
+            examples_query = (
+                select(
+                    AgentLexemeCardExample.lexeme_card_id,
+                    AgentLexemeCardExample.source_text,
+                    AgentLexemeCardExample.target_text,
+                )
+                .where(*examples_conditions)
+                .order_by(
+                    AgentLexemeCardExample.lexeme_card_id,
+                    AgentLexemeCardExample.id,
+                )
+            )
+            examples_result = await db.execute(examples_query)
+            for row in examples_result.all():
+                examples_by_card[row.lexeme_card_id].append(
+                    {"source": row.source_text, "target": row.target_text}
+                )
+
+        # Build response cards
         response_cards = []
         for card in cards:
             card_dict = {
@@ -1604,29 +1788,8 @@ async def get_lexeme_cards(
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
                 "last_user_edit": card.last_user_edit,
+                "examples": examples_by_card[card.id],
             }
-
-            # Query examples for this lexeme card from all authorized revisions, ordered by ID (insertion order)
-            if authorized_revision_ids:
-                examples_query = (
-                    select(AgentLexemeCardExample)
-                    .where(
-                        AgentLexemeCardExample.lexeme_card_id == card.id,
-                        AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
-                    )
-                    .order_by(AgentLexemeCardExample.id)
-                )
-                examples_result = await db.execute(examples_query)
-                examples_objs = examples_result.scalars().all()
-
-                # Convert to list of dicts
-                card_dict["examples"] = [
-                    {"source": ex.source_text, "target": ex.target_text}
-                    for ex in examples_objs
-                ]
-            else:
-                card_dict["examples"] = []
-
             response_cards.append(LexemeCardOut.model_validate(card_dict))
 
         duration = round(time.perf_counter() - request_start, 2)
@@ -1639,6 +1802,7 @@ async def get_lexeme_cards(
                 "target_language": target_language,
                 "source_word": source_word,
                 "target_word": target_word,
+                "target_words": target_words,
                 "pos": pos,
                 "duration_s": duration,
             },

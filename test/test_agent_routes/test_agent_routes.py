@@ -1,5 +1,12 @@
 # test_agent_routes.py
-from database.models import AgentCritiqueIssue, AgentWordAlignment
+import unicodedata
+
+from database.models import (
+    AgentCritiqueIssue,
+    AgentLexemeCard,
+    AgentLexemeCardExample,
+    AgentWordAlignment,
+)
 
 prefix = "v3"
 
@@ -1088,6 +1095,129 @@ def test_get_lexeme_cards_by_target_lemma(
     assert all(card["target_lemma"] == "upendo" for card in data)
 
 
+def test_get_lexeme_cards_by_target_words(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test filtering lexeme cards by comma-separated target_words."""
+    # Add test data with unique lemmas for this test
+    for lemma in ["tw_maji", "tw_moto", "tw_ardhi"]:
+        client.post(
+            f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+            json={
+                "source_lemma": f"src_{lemma}",
+                "target_lemma": lemma,
+                "source_language": "eng",
+                "target_language": "swh",
+            },
+        )
+
+    # Filter by two of three target words
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=tw_maji,tw_moto",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    lemmas = {card["target_lemma"] for card in data}
+    assert "tw_maji" in lemmas
+    assert "tw_moto" in lemmas
+    assert "tw_ardhi" not in lemmas
+
+
+def test_get_lexeme_cards_target_words_surface_forms(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that target_words also matches surface_forms."""
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "run_tw_sf",
+            "target_lemma": "kimbia_tw_sf",
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": ["anakimbia_tw_sf", "walikimbia_tw_sf"],
+        },
+    )
+
+    # Search by a surface form, not the lemma
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=anakimbia_tw_sf",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    assert any(card["target_lemma"] == "kimbia_tw_sf" for card in data)
+
+
+def test_get_lexeme_cards_target_words_case_insensitive(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test that target_words matching is case-insensitive."""
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "god_tw_ci",
+            "target_lemma": "tw_mungu",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=TW_MUNGU",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert any(card["target_lemma"] == "tw_mungu" for card in data)
+
+
+def test_get_lexeme_cards_target_words_conflicts_with_target_word(
+    client, regular_token1, db_session
+):
+    """Test that using both target_word and target_words returns 400."""
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=foo&target_words=bar",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Cannot use both" in response.json()["detail"]
+
+
+def test_get_lexeme_cards_target_words_all_blank_returns_400(
+    client, regular_token1, db_session
+):
+    """Test that target_words with only blanks/commas returns 400."""
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=%20,%20,",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "no valid words" in response.json()["detail"]
+
+
+def test_get_lexeme_cards_target_words_empty_string_returns_400(
+    client, regular_token1, db_session
+):
+    """Test that target_words with an explicit empty value returns 400."""
+    response = client.get(
+        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_words=",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "no valid words" in response.json()["detail"]
+
+
 def test_get_lexeme_cards_by_pos(client, regular_token1, db_session, test_revision_id):
     """Test getting lexeme cards filtered by part of speech."""
     # Add test data
@@ -1564,6 +1694,105 @@ def test_add_lexeme_card_upsert_append_default(
     # POS and confidence should be updated
     assert data2["pos"] == "verb"
     assert data2["confidence"] == 0.90
+
+
+def test_add_lexeme_card_create_with_intra_payload_duplicates(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Creating a new card with duplicate examples in a single payload must not 500."""
+    payload = {
+        "source_lemma": "jump",
+        "target_lemma": "ruka",
+        "source_language": "eng",
+        "target_language": "swh",
+        "pos": "verb",
+        "examples": [
+            {"source": "I jump", "target": "Naruka"},
+            {"source": "I jump", "target": "Naruka"},  # duplicate
+            {"source": "We jump", "target": "Tunaruka"},
+        ],
+    }
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    example_pairs = {(e["source"], e["target"]) for e in data["examples"]}
+    assert example_pairs == {("I jump", "Naruka"), ("We jump", "Tunaruka")}
+
+
+def test_add_lexeme_card_upsert_append_duplicate_examples_no_500(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Regression for #517: appending examples that already exist for the same
+    (lexeme_card_id, revision_id, source_text, target_text) must not 500 on the
+    unique constraint — duplicates should be silently skipped."""
+    payload = {
+        "source_lemma": "run",
+        "target_lemma": "kimbia",
+        "source_language": "eng",
+        "target_language": "swh",
+        "pos": "verb",
+        "surface_forms": ["kimbia"],
+        "examples": [
+            {"source": "I run", "target": "Nakimbia"},
+            {"source": "We run", "target": "Tunakimbia"},
+        ],
+    }
+
+    # First POST creates the card and inserts the two examples.
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response1.status_code == 200
+    assert len(response1.json()["examples"]) == 2
+
+    # Second POST with the same examples plus a new one should NOT 500.
+    # The existing (source, target) pairs must be silently skipped.
+    payload["examples"] = [
+        {"source": "I run", "target": "Nakimbia"},  # duplicate
+        {"source": "We run", "target": "Tunakimbia"},  # duplicate
+        {"source": "They run", "target": "Wanakimbia"},  # new
+    ]
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response2.status_code == 200
+    data2 = response2.json()
+    assert len(data2["examples"]) == 3
+    example_pairs = {(e["source"], e["target"]) for e in data2["examples"]}
+    assert example_pairs == {
+        ("I run", "Nakimbia"),
+        ("We run", "Tunakimbia"),
+        ("They run", "Wanakimbia"),
+    }
+
+    # A payload containing internal duplicates must also be tolerated.
+    payload["examples"] = [
+        {"source": "She runs", "target": "Anakimbia"},
+        {"source": "She runs", "target": "Anakimbia"},
+    ]
+    response3 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response3.status_code == 200
+    data3 = response3.json()
+    example_pairs = {(e["source"], e["target"]) for e in data3["examples"]}
+    assert len(data3["examples"]) == 4
+    assert example_pairs == {
+        ("I run", "Nakimbia"),
+        ("We run", "Tunakimbia"),
+        ("They run", "Wanakimbia"),
+        ("She runs", "Anakimbia"),
+    }
 
 
 def test_add_lexeme_card_upsert_append_explicit(
@@ -5211,3 +5440,182 @@ def test_deduplicate_no_duplicates(client, regular_token1, db_session):
     assert resp.status_code == 200
     data = resp.json()
     assert data["duplicates_found"] == 0
+
+
+def test_post_lexeme_card_nfc_normalizes_text_fields(
+    client, regular_token1, db_session, test_revision_id
+):
+    """NFD-encoded text fields are stored as NFC in lexeme cards."""
+
+    # NFD form: 'a' + combining acute accent
+    nfd_lemma = "a\u0301pelile"
+    nfc_lemma = unicodedata.normalize("NFC", nfd_lemma)
+    assert nfd_lemma != nfc_lemma  # Different byte sequences
+
+    nfd_surface = "wa\u0301pelile"
+    nfc_surface = unicodedata.normalize("NFC", nfd_surface)
+
+    nfd_source_lemma = "cre\u0301er"
+    nfc_source_lemma = unicodedata.normalize("NFC", nfd_source_lemma)
+
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": nfd_source_lemma,
+            "target_lemma": nfd_lemma,
+            "source_language": "eng",
+            "target_language": "swh",
+            "surface_forms": [nfd_surface],
+            "source_surface_forms": [nfd_source_lemma],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    # target_lemma is also lowercased
+    assert data["target_lemma"] == nfc_lemma.lower()
+    assert data["source_lemma"] == nfc_source_lemma
+    assert data["surface_forms"] == [nfc_surface]
+    assert data["source_surface_forms"] == [nfc_source_lemma]
+
+
+def test_patch_lexeme_card_nfc_normalizes_text_fields(
+    client, regular_token1, db_session, test_revision_id
+):
+    """PATCH endpoint NFC-normalizes text fields in updates."""
+
+    # First create a card with NFC text
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "build",
+            "target_lemma": "nfc_patch_test",
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # Patch with NFD-encoded values
+    nfd_surface = "a\u0301pelile"
+    nfc_surface = unicodedata.normalize("NFC", nfd_surface)
+
+    response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "surface_forms": [nfd_surface],
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["surface_forms"] == [nfc_surface]
+
+
+def test_post_lexeme_card_nfd_nfc_treated_as_same_lemma(
+    client, regular_token1, db_session, test_revision_id
+):
+    """NFD and NFC forms of the same target_lemma should be treated as duplicates."""
+
+    nfd_lemma = "a\u0301pelile_dedup"
+    nfc_lemma = unicodedata.normalize("NFC", nfd_lemma)
+
+    # Create card with NFD lemma
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "create",
+            "target_lemma": nfd_lemma,
+            "source_language": "eng",
+            "target_language": "swh",
+        },
+    )
+    assert response.status_code == 200
+
+    # Create card with NFC lemma — should upsert, not create a new one
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "create",
+            "target_lemma": nfc_lemma,
+            "source_language": "eng",
+            "target_language": "swh",
+            "confidence": 0.99,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should have updated the existing card, not created a new one
+    assert data["confidence"] == 0.99
+
+
+def test_delete_lexeme_card_success(
+    client, regular_token1, db_session, test_revision_id
+):
+    """Test DELETE removes a lexeme card and its examples via cascade."""
+    # Create a card with examples
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "remove",
+            "target_lemma": "delete_test_target",
+            "source_language": "eng",
+            "target_language": "swh",
+            "examples": [
+                {"source_text": "remove this", "target_text": "ondoa hii"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # Verify examples exist in DB before delete
+    examples_before = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .all()
+    )
+    assert len(examples_before) > 0
+
+    # Delete the card
+    delete_response = client.delete(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert delete_response.status_code == 204
+
+    # Verify card is gone from DB
+    db_session.expire_all()
+    card = (
+        db_session.query(AgentLexemeCard).filter(AgentLexemeCard.id == card_id).first()
+    )
+    assert card is None
+
+    # Verify examples were cascade-deleted
+    examples_after = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .all()
+    )
+    assert len(examples_after) == 0
+
+
+def test_delete_lexeme_card_not_found(client, regular_token1):
+    """Test DELETE returns 404 for non-existent card."""
+    response = client.delete(
+        "/v3/agent/lexeme-card/999999",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_delete_lexeme_card_unauthorized(client):
+    """Test DELETE requires authentication."""
+    response = client.delete("/v3/agent/lexeme-card/1")
+    assert response.status_code == 401

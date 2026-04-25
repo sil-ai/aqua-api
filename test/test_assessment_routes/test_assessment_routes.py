@@ -1,6 +1,6 @@
 # test_assessment_routes.py
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import patch
 
 from database.models import Assessment, BibleVersionAccess
 from database.models import UserDB
@@ -109,7 +109,7 @@ def test_add_assessment_success(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         # Make the request
         response = client.post(
@@ -239,14 +239,7 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        # Ensure that accessing .text returns something serializable
-        mock_response.text = "Error message"
-        # If your code calls .json(), ensure it returns a serializable object
-        mock_response.json.return_value = {"error": "mock error"}
-
-        mock_runner.return_value = mock_response
+        mock_runner.side_effect = Exception("Modal runner dispatch failed")
         # Make the request
         response = client.post(
             f"{prefix}/assessment",
@@ -254,7 +247,7 @@ def test_add_assessment_failure(client, regular_token1, db_session, test_db_sess
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
-        assert response.status_code == 500
+        assert response.status_code == 503
 
 
 def test_assessment_filtering(
@@ -286,7 +279,7 @@ def test_assessment_filtering(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         # Create assessment 1
         response = client.post(
@@ -465,7 +458,7 @@ def test_duplicate_assessment_returns_409(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -495,7 +488,7 @@ def test_duplicate_assessment_different_type_allowed(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -520,17 +513,17 @@ def test_duplicate_assessment_different_type_allowed(
         assert second.status_code == 200
 
 
-def test_duplicate_assessment_different_kwargs_blocked(
+def test_duplicate_in_progress_different_kwargs_blocked(
     client, regular_token1, db_session, test_db_session
 ):
-    """Different kwargs on same assessment type should still trigger 409."""
+    """In-progress check blocks same type+revision regardless of non-dedup kwargs like top_k."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -567,7 +560,7 @@ def test_duplicate_assessment_stale_allowed(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -602,7 +595,7 @@ def test_duplicate_assessment_running_returns_409(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         first = client.post(
             f"{prefix}/assessment",
@@ -628,6 +621,42 @@ def test_duplicate_assessment_running_returns_409(
         assert str(first_id) in second.json()["detail"]
 
 
+def test_in_progress_different_vref_allowed(
+    client, regular_token1, db_session, test_db_session
+):
+    """In-progress assessment with different verse range should not block."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 1:1", "last_vref": "GEN 5:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+
+        # Different verse range should succeed even while first is in-progress
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 6:1", "last_vref": "GEN 10:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 200
+
+
 def test_duplicate_assessment_admin_bypass(
     client, regular_token1, admin_token, db_session, test_db_session
 ):
@@ -640,7 +669,7 @@ def test_duplicate_assessment_admin_bypass(
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
-        mock_runner.return_value = Mock(status_code=200)
+        mock_runner.return_value = None
 
         # Regular user submits first
         first = client.post(
@@ -657,3 +686,832 @@ def test_duplicate_assessment_admin_bypass(
             headers={"Authorization": f"Bearer {admin_token}"},
         )
         assert second.status_code == 200
+
+
+def test_completed_assessment_returns_409(
+    client, regular_token1, db_session, test_db_session
+):
+    """POST assessment that already completed returns 409 with existing ID."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    assessment_data = {"revision_id": revision_id, "type": "sentence-length"}
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark the assessment as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        second = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409
+        assert str(first_id) in second.json()["detail"]
+        assert "already completed" in second.json()["detail"]
+
+
+def test_completed_assessment_force_rerun(
+    client, regular_token1, db_session, test_db_session
+):
+    """force=true allows rerunning a completed assessment."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    assessment_data = {"revision_id": revision_id, "type": "sentence-length"}
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark the assessment as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # force=true should allow rerun
+        second = client.post(
+            f"{prefix}/assessment",
+            params={**assessment_data, "force": True},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 200
+        second_id = second.json()[0]["id"]
+        assert second_id != first_id
+
+
+def test_completed_assessment_different_type_allowed(
+    client, regular_token1, db_session, test_db_session
+):
+    """Completed assessment of different type should not block."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Different type should succeed
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "semantic-similarity",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 200
+
+
+def test_completed_assessment_different_kwargs_blocked(
+    client, regular_token1, db_session, test_db_session
+):
+    """Finished assessment with different kwargs still blocks (same type+revision)."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"top_k": 5}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Different kwargs on same type+revision still blocked
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"top_k": 10}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409
+        assert str(first_id) in second.json()["detail"]
+
+
+def test_completed_assessment_different_vref_allowed(
+    client, regular_token1, db_session, test_db_session
+):
+    """Completed assessment with different verse range should not block."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 1:1", "last_vref": "GEN 5:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Different verse range should succeed
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 6:1", "last_vref": "GEN 10:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 200
+
+
+def test_completed_assessment_same_vref_blocked(
+    client, regular_token1, db_session, test_db_session
+):
+    """Completed assessment with same verse range should block (409)."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 1:1", "last_vref": "GEN 5:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Same verse range should be blocked
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 1:1", "last_vref": "GEN 5:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409
+        assert str(first_id) in second.json()["detail"]
+
+
+def test_completed_assessment_no_vref_not_blocked_by_vref(
+    client, regular_token1, db_session, test_db_session
+):
+    """Full-Bible run (no vref) should not be blocked by a partial-range assessment."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"first_vref": "GEN 1:1", "last_vref": "GEN 5:32"}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Full-Bible run (no vref) should not be blocked
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 200
+
+
+def test_completed_assessment_admin_also_blocked(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """Admin users are also blocked by completed assessment check (must use force)."""
+    from datetime import datetime
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    assessment_data = {"revision_id": revision_id, "type": "sentence-length"}
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Mark as finished
+        assessment = (
+            db_session.query(Assessment).filter(Assessment.id == first_id).first()
+        )
+        assessment.status = "finished"
+        assessment.end_time = datetime.now()
+        db_session.commit()
+
+        # Admin without force should still be blocked
+        second = client.post(
+            f"{prefix}/assessment",
+            params=assessment_data,
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert second.status_code == 409
+
+        # Admin with force should succeed
+        third = client.post(
+            f"{prefix}/assessment",
+            params={**assessment_data, "force": True},
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert third.status_code == 200
+
+
+# --- PATCH /assessment/{id}/status tests ---
+
+
+def _create_assessment(client, token, db_session):
+    """Helper: create a version, revision, and queued assessment. Returns assessment_id."""
+    version_id = create_bible_version(client, token, db_session)
+    revision_id = upload_revision(client, token, version_id)
+    reference_id = upload_revision(client, token, version_id)
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        resp = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        return resp.json()[0]["id"]
+
+
+def _patch_status(client, token, assessment_id, payload):
+    return client.patch(
+        f"{prefix}/assessment/{assessment_id}/status",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_patch_assessment_status_valid_transitions(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status walks through valid transitions."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    # queued -> running
+    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "running"
+    assert data["start_time"] is not None
+
+    # running -> running (progress update with status_detail)
+    resp = _patch_status(
+        client,
+        regular_token1,
+        aid,
+        {"status": "running", "status_detail": "50% complete"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status_detail"] == "50% complete"
+
+    # running -> finished
+    resp = _patch_status(client, regular_token1, aid, {"status": "finished"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "finished"
+    assert data["end_time"] is not None
+
+
+def test_patch_assessment_status_invalid_transition(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status rejects invalid state transitions."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    # queued -> finished (skipping running) should fail
+    resp = _patch_status(client, regular_token1, aid, {"status": "finished"})
+    assert resp.status_code == 422
+
+
+def test_patch_assessment_status_terminal_rejected(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status rejects updates to terminal assessments."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    # Move to failed
+    resp = _patch_status(client, regular_token1, aid, {"status": "failed"})
+    assert resp.status_code == 200
+
+    # Try to update again
+    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+    assert resp.status_code == 409
+
+
+def test_patch_assessment_status_not_found(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status returns 404 for non-existent assessment."""
+    resp = _patch_status(client, regular_token1, 99999, {"status": "running"})
+    assert resp.status_code == 404
+
+
+def test_patch_assessment_status_deleted(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status returns 404 for deleted assessment."""
+    aid = _create_assessment(client, regular_token1, db_session)
+    delete_assessment(client, regular_token1, aid)
+
+    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+    assert resp.status_code == 404
+
+
+def test_patch_assessment_status_unauthorized(
+    client, regular_token1, regular_token2, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status rejects unauthorized users."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    # regular_token2 is in a different group and should not have access
+    resp = _patch_status(client, regular_token2, aid, {"status": "running"})
+    assert resp.status_code == 403
+
+
+def test_patch_assessment_status_admin_can_update(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status allows admin to update any assessment."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _patch_status(client, admin_token, aid, {"status": "running"})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "running"
+
+
+def test_patch_assessment_status_phased_sequence(
+    client, regular_token1, db_session, test_db_session
+):
+    """PATCH /assessment/{id}/status walks the training-phase sequence and
+    persists percent_complete on each step."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    steps = [
+        ("preparing", 5.0),
+        ("training", 30.0),
+        ("training", 75.0),
+        ("downloading", 90.0),
+        ("uploading", 95.0),
+        ("finished", 100.0),
+    ]
+    for next_status, pct in steps:
+        resp = _patch_status(
+            client,
+            regular_token1,
+            aid,
+            {"status": next_status, "percent_complete": pct},
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["status"] == next_status
+        assert data["percent_complete"] == pct
+
+    assert data["end_time"] is not None
+
+
+def test_patch_assessment_status_percent_complete_on_running(
+    client, regular_token1, db_session, test_db_session
+):
+    """percent_complete is persisted on the plain running path too."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _patch_status(
+        client,
+        regular_token1,
+        aid,
+        {"status": "running", "percent_complete": 42.0},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["percent_complete"] == 42.0
+
+
+def test_patch_assessment_status_percent_complete_out_of_range(
+    client, regular_token1, db_session, test_db_session
+):
+    """percent_complete outside [0, 100] is rejected by the schema."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _patch_status(
+        client,
+        regular_token1,
+        aid,
+        {"status": "running", "percent_complete": 150.0},
+    )
+    assert resp.status_code == 422
+
+
+def test_patch_assessment_status_phased_invalid_skip(
+    client, regular_token1, db_session, test_db_session
+):
+    """Skipping phases (preparing → uploading) is rejected."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _patch_status(client, regular_token1, aid, {"status": "preparing"})
+    assert resp.status_code == 200
+
+    resp = _patch_status(client, regular_token1, aid, {"status": "uploading"})
+    assert resp.status_code == 422
+
+
+def test_assessment_via_assess_route_is_not_training(
+    client, regular_token1, db_session, test_db_session
+):
+    """Assessments created via the plain /assessment route have is_training=False."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+    assert resp.status_code == 200
+    assert resp.json()["is_training"] is False
+
+
+def test_patch_assessment_status_failed_from_each_phase(
+    client, regular_token1, db_session, test_db_session
+):
+    """failed must be reachable from each non-terminal phased status."""
+    walk = ["preparing", "training", "downloading", "uploading"]
+    for stop_at in walk:
+        aid = _create_assessment(client, regular_token1, db_session)
+        for next_status in walk:
+            resp = _patch_status(client, regular_token1, aid, {"status": next_status})
+            assert resp.status_code == 200, f"{next_status}: {resp.text}"
+            if next_status == stop_at:
+                break
+
+        resp = _patch_status(client, regular_token1, aid, {"status": "failed"})
+        assert resp.status_code == 200, f"failed from {stop_at}: {resp.text}"
+        assert resp.json()["status"] == "failed"
+
+
+def test_patch_assessment_status_cross_path_preparing_to_running_rejected(
+    client, regular_token1, db_session, test_db_session
+):
+    """Once on the phased path, the plain `running` status is not reachable."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _patch_status(client, regular_token1, aid, {"status": "preparing"})
+    assert resp.status_code == 200
+
+    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+    assert resp.status_code == 422
+
+
+def test_patch_assessment_status_percent_complete_persists_when_omitted(
+    client, regular_token1, db_session, test_db_session
+):
+    """Sending a PATCH without percent_complete must not clear a prior value."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _patch_status(
+        client,
+        regular_token1,
+        aid,
+        {"status": "running", "percent_complete": 75.0},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["percent_complete"] == 75.0
+
+    resp = _patch_status(
+        client,
+        regular_token1,
+        aid,
+        {"status": "running", "status_detail": "still going"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["percent_complete"] == 75.0
+
+
+def test_patch_assessment_status_start_time_set_on_preparing(
+    client, regular_token1, db_session, test_db_session
+):
+    """The first non-queued transition (preparing) stamps start_time."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _patch_status(client, regular_token1, aid, {"status": "preparing"})
+    assert resp.status_code == 200
+    assert resp.json()["start_time"] is not None
+
+
+def test_create_assessment_blocked_while_in_phased_status(
+    client, regular_token1, db_session, test_db_session
+):
+    """A plain POST /assessment must 409 while a duplicate row is in any
+    in-progress phased status (preparing/training/downloading/uploading),
+    not just queued/running."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        aid = first.json()[0]["id"]
+
+    # Drive the existing row deep into the phased path.
+    for next_status in ["preparing", "training"]:
+        resp = _patch_status(client, regular_token1, aid, {"status": next_status})
+        assert resp.status_code == 200
+
+    # Second POST for the same revision/type must be blocked.
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409, second.text
+
+
+# --- use_eflomal validation and dedup tests ---
+
+
+def test_use_eflomal_wrong_type(client, regular_token1, db_session, test_db_session):
+    """use_eflomal=true on a non-word-alignment type returns 400."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "use_eflomal": True,
+                "source_language": "eng",
+                "target_language": "swh",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert response.status_code == 400
+    assert "use_eflomal" in response.json()["detail"]
+
+
+def test_use_eflomal_missing_languages(
+    client, regular_token1, db_session, test_db_session
+):
+    """use_eflomal=true without source_language or target_language returns 400."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        # Missing both languages
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+                "use_eflomal": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 400
+        assert "language" in response.json()["detail"].lower()
+
+        # Missing only target_language
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+                "use_eflomal": True,
+                "source_language": "eng",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 400
+
+
+def test_use_eflomal_dedup_separate_from_regular(
+    client, regular_token1, db_session, test_db_session
+):
+    """Eflomal and regular word-alignment use separate in-progress dedup buckets."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    base_params = {
+        "revision_id": revision_id,
+        "reference_id": reference_id,
+        "type": "word-alignment",
+    }
+    eflomal_params = {
+        **base_params,
+        "use_eflomal": True,
+        "source_language": "eng",
+        "target_language": "swh",
+    }
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        # Submit eflomal assessment
+        eflomal_resp = client.post(
+            f"{prefix}/assessment",
+            params=eflomal_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert eflomal_resp.status_code == 200
+
+        # Regular word-alignment on the same revision pair must NOT be blocked by eflomal
+        regular_resp = client.post(
+            f"{prefix}/assessment",
+            params=base_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert regular_resp.status_code == 200
+
+        # Second eflomal submission on same params must be blocked
+        eflomal_dup = client.post(
+            f"{prefix}/assessment",
+            params=eflomal_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert eflomal_dup.status_code == 409
+
+        # Second regular submission on same params must also be blocked
+        regular_dup = client.post(
+            f"{prefix}/assessment",
+            params=base_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert regular_dup.status_code == 409

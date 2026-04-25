@@ -1,8 +1,10 @@
 __version__ = "v3"
 
 import pathlib
+import random as random_module
 import unicodedata
-from typing import Any, Dict, List
+from enum import Enum
+from typing import Any, Dict, List, Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
@@ -23,9 +25,35 @@ from utils.verse_range_utils import merge_verse_ranges
 
 router = fastapi.APIRouter()
 
+
+class IncludeVerses(str, Enum):
+    all = "all"
+    union = "union"
+    intersection = "intersection"
+
+
 # Load vref list once at module level
 _VREF_PATH = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "vref.txt"
 _VREF_LIST = _VREF_PATH.read_text(encoding="utf-8").splitlines()
+
+
+def _is_range_marker(x):
+    return x == "<range>"
+
+
+def _combine_text(field, values):
+    return " ".join(v for v in values if v and v != "<range>")
+
+
+def _sample_items(
+    items: List[Any], limit: Optional[int], random: bool, seed: Optional[int]
+) -> List[Any]:
+    if limit is None or limit >= len(items):
+        return items
+    if not random:
+        return items[:limit]
+    indices = sorted(random_module.Random(seed).sample(range(len(items)), limit))
+    return [items[i] for i in indices]
 
 
 def extract_unique_words(text: str) -> List[str]:
@@ -300,6 +328,15 @@ async def get_book(
 @router.get("/text", response_model=List[VerseText])
 async def get_text(
     revision_id: int,
+    include_verses: IncludeVerses = Query(
+        IncludeVerses.union,
+        description=(
+            "Which verses to include in the response. "
+            "'all': all 41,899 canonical verses, with empty text for missing verses. "
+            "'union': only verses that have text (default). "
+            "'intersection': treated identically to 'union' for a single revision."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -309,6 +346,10 @@ async def get_text(
     Input:
     - revision_id: int
     Description: The unique identifier for the revision.
+    - include_verses: IncludeVerses (all|union|intersection, default "union")
+    Description: Which verses to include. 'all' returns all 41,899 canonical
+    verses with empty text for missing ones. 'union' and 'intersection' are
+    treated identically for a single revision (both return only verses that have text).
 
     Returns:
     Fields(VerseText):
@@ -333,12 +374,122 @@ async def get_text(
             detail="User not authorized to access this revision.",
         )
     stmt = (
-        select(VerseModel)
+        select(
+            VerseModel.id,
+            VerseModel.text,
+            VerseModel.verse_reference,
+            VerseModel.revision_id,
+            VerseModel.book,
+            VerseModel.chapter,
+            VerseModel.verse,
+        )
+        .join(
+            VerseReferenceModel,
+            VerseModel.verse_reference == VerseReferenceModel.full_verse_id,
+        )
+        .join(
+            ChapterReferenceModel,
+            VerseReferenceModel.chapter == ChapterReferenceModel.full_chapter_id,
+        )
+        .join(
+            BookReferenceModel,
+            VerseReferenceModel.book_reference == BookReferenceModel.abbreviation,
+        )
         .where(VerseModel.revision_id == revision_id)
-        .order_by(VerseModel.id)
+        .order_by(
+            BookReferenceModel.number,
+            ChapterReferenceModel.number,
+            VerseReferenceModel.number,
+        )
     )
     result = await db.execute(stmt)
-    verses = result.scalars().all()
+    all_verses = result.all()
+
+    # Map vref -> verse info for preserving DB values after merge
+    vref_to_info = {
+        verse.verse_reference: {
+            "id": verse.id,
+            "text": verse.text or "",
+            "book": verse.book,
+            "chapter": verse.chapter,
+            "verse": verse.verse,
+        }
+        for verse in all_verses
+    }
+
+    if include_verses == IncludeVerses.all:
+        # Return exactly 41,899 rows — one per canonical verse, no merging
+        verses = []
+        for vref in _VREF_LIST:
+            info = vref_to_info.get(vref)
+            if info:
+                book = info["book"]
+                chapter = info["chapter"]
+                verse_num = info["verse"]
+                verse_id = info["id"]
+                text = "" if info["text"] == "<range>" else info["text"]
+            else:
+                book, cv = vref.split(" ", 1)
+                chapter_str, verse_str = cv.split(":")
+                chapter = int(chapter_str)
+                verse_num = int(verse_str)
+                verse_id = None
+                text = ""
+            verses.append(
+                VerseText(
+                    id=verse_id,
+                    text=text,
+                    verse_reference=vref,
+                    verse_references=[vref],
+                    first_verse_reference=vref,
+                    revision_id=revision_id,
+                    book=book,
+                    chapter=chapter,
+                    verse=verse_num,
+                )
+            )
+        return verses
+
+    # union / intersection: merge <range> markers, return only DB verses
+    combined_records = [
+        {"vrefs": [v.verse_reference], "text": v.text or ""} for v in all_verses
+    ]
+
+    merged_records = merge_verse_ranges(
+        combined_records,
+        verse_ref_field="vrefs",
+        combine_fields=["text"],
+        check_fields=["text"],
+        is_range_marker=_is_range_marker,
+        combine_function=_combine_text,
+    )
+
+    # Convert merged records back to VerseText objects
+    verses = []
+    for record in merged_records:
+        vrefs = record["vrefs"]
+        if len(vrefs) == 1:
+            verse_ref = vrefs[0]
+        else:
+            verse_ref = format_verse_range(vrefs[0], vrefs[-1])
+
+        first_vref = vrefs[0]
+        info = vref_to_info.get(first_vref, {})
+
+        verses.append(
+            VerseText(
+                id=info.get("id"),
+                text=record["text"],
+                verse_reference=verse_ref,
+                verse_references=vrefs,
+                first_verse_reference=first_vref,
+                revision_id=revision_id,
+                book=info.get("book"),
+                chapter=info.get("chapter"),
+                verse=info.get("verse"),
+            )
+        )
+
     return verses
 
 
@@ -612,6 +763,40 @@ def format_verse_range(first_vref: str, last_vref: str) -> str:
 @router.get("/texts", response_model=Dict[str, List[VerseText]])
 async def get_texts(
     revision_ids: List[int] = Query(..., min_items=2),
+    include_verses: IncludeVerses = Query(
+        IncludeVerses.union,
+        description=(
+            "Which verses to include in the response. "
+            "'all': all 41,899 canonical verses, with empty text for missing verses. "
+            "'union': verses where at least one revision has text (default). "
+            "'intersection': only verses where every revision has text."
+        ),
+    ),
+    limit: Optional[int] = Query(
+        None,
+        ge=1,
+        description=(
+            "Maximum number of verses to return per revision_id. "
+            "With include_verses='all', limit applies to the 41,899 canonical "
+            "verse slots (so some returned rows may have empty text)."
+        ),
+    ),
+    random: bool = Query(
+        False,
+        description=(
+            "If true, sample uniformly at random (after include_verses filtering) "
+            "instead of returning the first `limit` verses in canonical order. "
+            "Response is still ordered canonically."
+        ),
+    ),
+    seed: Optional[int] = Query(
+        None,
+        description=(
+            "RNG seed for deterministic sampling. Only meaningful when "
+            "random=true; ignored otherwise. If omitted with random=true, "
+            "sampling is non-deterministic."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -624,6 +809,17 @@ async def get_texts(
     Input:
     - revision_ids: List[int]
     Description: List of revision IDs to fetch (minimum 2).
+    - include_verses: IncludeVerses (all|union|intersection, default "union")
+    Description: Which verses to include in the response.
+    - limit: Optional[int]
+    Description: Maximum number of verses per revision_id. Sampling happens
+    after include_verses filtering and <range> merging.
+    - random: bool (default false)
+    Description: If true, sample uniformly at random; otherwise return the
+    first `limit` verses in canonical order.
+    - seed: Optional[int]
+    Description: RNG seed. Combined with random=true, two calls with the
+    same seed return the same sample. Ignored if random=false.
 
     Returns:
     Dict[str, List[VerseText]]: Dictionary keyed by revision_id (as string),
@@ -633,7 +829,9 @@ async def get_texts(
     Notes:
     - The returned dictionary will include an entry for every requested
       revision_id.
-    - If a revision contains no verses, its value will be an empty list.
+    - With include_verses='all', every revision gets all 41,899 canonical
+      verses (empty text for missing ones). With 'union' or 'intersection',
+      a revision with no matching verses will have an empty list.
     - If a verse exists in one revision but not another, the missing revision
       will have an empty string for that verse's text.
     """
@@ -688,23 +886,67 @@ async def get_texts(
 
     # Group by verse_reference: {vref -> {revision_id -> verse_row}}
     vref_to_revisions: Dict[str, Dict[int, Any]] = {}
-    # Track ordering of vrefs (first seen order from canonical query)
-    vref_order: List[str] = []
+    # Track ordering of vrefs from the query (canonical order)
+    queried_vref_order: List[str] = []
 
     for verse in all_verses:
         vref = verse.verse_reference
         if vref not in vref_to_revisions:
             vref_to_revisions[vref] = {}
-            vref_order.append(vref)
+            queried_vref_order.append(vref)
         vref_to_revisions[vref][verse.revision_id] = verse
+
+    # Determine verse ordering based on include_verses mode
+    if include_verses == IncludeVerses.all:
+        # Use the canonical vref list loaded at module startup
+        vref_order = _VREF_LIST
+    else:
+        vref_order = queried_vref_order
 
     # Create combined records with text field per revision
     # Each record: {"vrefs": ["GEN 1:1"], "text_123": "...", "text_456": "..."}
     text_fields = [f"text_{rev_id}" for rev_id in revision_ids]
+    rev_id_strs = [str(rev_id) for rev_id in revision_ids]
+    result_dict: Dict[str, List[VerseText]] = {key: [] for key in rev_id_strs}
+
+    if include_verses == IncludeVerses.all:
+        # Return exactly 41,899 rows per revision — no merging,
+        # <range> markers replaced with empty strings
+        vrefs_to_emit = _sample_items(_VREF_LIST, limit, random, seed)
+        for vref in vrefs_to_emit:
+            rev_verses = vref_to_revisions.get(vref, {})
+            book, cv = vref.split(" ", 1)
+            chapter_str, verse_str = cv.split(":")
+            chapter = int(chapter_str)
+            verse_num = int(verse_str)
+
+            for rev_id, rev_id_str in zip(revision_ids, rev_id_strs):
+                if rev_id in rev_verses:
+                    text = rev_verses[rev_id].text or ""
+                    text = "" if text == "<range>" else text
+                else:
+                    text = ""
+                result_dict[rev_id_str].append(
+                    VerseText(
+                        id=None,
+                        text=text,
+                        verse_reference=vref,
+                        verse_references=[vref],
+                        first_verse_reference=vref,
+                        revision_id=rev_id,
+                        book=book,
+                        chapter=chapter,
+                        verse=verse_num,
+                    )
+                )
+
+        return result_dict
+
+    # union / intersection: merge <range> markers, then filter
     combined_records: List[Dict] = []
 
     for vref in vref_order:
-        rev_verses = vref_to_revisions[vref]
+        rev_verses = vref_to_revisions.get(vref, {})
         record = {"vrefs": [vref]}
         for rev_id in revision_ids:
             field_name = f"text_{rev_id}"
@@ -721,21 +963,23 @@ async def get_texts(
         verse_ref_field="vrefs",
         combine_fields=text_fields,
         check_fields=text_fields,
-        is_range_marker=lambda x: x == "<range>",
-        # combine_function filters out empty strings and "<range>" markers:
-        # - empty strings represent "no verse text" for that revision
-        # - "<range>" is a structural marker, not actual text content
-        # Only actual text content is joined with spaces.
-        combine_function=lambda field, values: " ".join(
-            v for v in values if v and v != "<range>"
-        ),
+        is_range_marker=_is_range_marker,
+        combine_function=_combine_text,
     )
 
-    # Split back to per-revision lists (use string keys for JSON compatibility)
-    # Pre-compute string keys and field names to avoid repeated string operations
-    rev_id_strs = [str(rev_id) for rev_id in revision_ids]
-    rev_field_names = [f"text_{rev_id}" for rev_id in revision_ids]
-    result_dict: Dict[str, List[VerseText]] = {key: [] for key in rev_id_strs}
+    # Apply include_verses filtering
+    if include_verses == IncludeVerses.intersection:
+        # Keep only records where ALL revisions have non-empty text
+        merged_records = [
+            r for r in merged_records if all(r[f].strip() for f in text_fields)
+        ]
+    else:
+        # union: keep records where at least one revision has non-empty text
+        merged_records = [
+            r for r in merged_records if any(r[f].strip() for f in text_fields)
+        ]
+
+    merged_records = _sample_items(merged_records, limit, random, seed)
 
     for record in merged_records:
         vrefs = record["vrefs"]
@@ -754,13 +998,15 @@ async def get_texts(
 
         # Create VerseText for each revision
         for rev_id, rev_id_str, field_name in zip(
-            revision_ids, rev_id_strs, rev_field_names
+            revision_ids, rev_id_strs, text_fields
         ):
             result_dict[rev_id_str].append(
                 VerseText(
                     id=None,
                     text=record[field_name],
                     verse_reference=verse_ref,
+                    verse_references=vrefs,
+                    first_verse_reference=first_vref,
                     revision_id=rev_id,
                     book=book,
                     chapter=chapter,
