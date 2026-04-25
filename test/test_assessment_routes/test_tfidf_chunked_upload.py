@@ -5,11 +5,13 @@ Covers /v3/assessment/{id}/tfidf-artifacts/init, /chunk, /commit, /abort.
 
 import base64
 import io
+import uuid
 
 import numpy as np
 import pytest
+from sqlalchemy import func, text
 
-from database.models import Assessment
+from database.models import Assessment, TfidfSvdChunk, TfidfSvdStaging
 
 prefix = "v3"
 
@@ -818,5 +820,181 @@ def test_chunk_oversize_rejected_with_413(
     client.post(
         f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
         json={"upload_id": upload_id},
+        headers=headers,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Stale-staging sweep — /init opportunistically drops abandoned uploads
+# ---------------------------------------------------------------------------
+
+
+def _insert_stale_staging(
+    session, assessment_id: int, *, age_hours: float, with_chunk: bool = True
+) -> uuid.UUID:
+    """Drop a hand-crafted staging row (and optional chunk) into the db with a
+    backdated created_at, so the sweep treats it as abandoned."""
+    # Backdate via SQL `now() - interval ...` so the comparison stays on the
+    # DB clock — same expression the production sweep uses for its cutoff.
+    staging = TfidfSvdStaging(
+        upload_id=uuid.uuid4(),
+        assessment_id=assessment_id,
+        source_language="swh",
+        n_components=4,
+        n_corpus_vrefs=1,
+        sklearn_version="1.6.1",
+        word_vocabulary={"w0": 0},
+        word_idf=[1.0],
+        word_params={},
+        char_vocabulary={"c0": 0},
+        char_idf=[1.0],
+        char_params={},
+        svd_n_components=4,
+        svd_n_features=2,
+        svd_dtype="float32",
+        total_chunks=1,
+        created_at=func.now() - text(f"interval '{age_hours} hours'"),
+    )
+    session.add(staging)
+    session.flush()
+    if with_chunk:
+        session.add(
+            TfidfSvdChunk(
+                upload_id=staging.upload_id,
+                chunk_index=0,
+                components_bytes=b"placeholder",
+            )
+        )
+    session.commit()
+    return staging.upload_id
+
+
+def test_init_sweeps_stale_staging_rows(
+    client,
+    regular_token1,
+    chunk_tfidf_assessment_id,
+    chunk_non_tfidf_assessment_id,
+    test_db_session,
+    monkeypatch,
+):
+    """/init drops staging rows older than the TTL (with their chunks via cascade),
+    sweeps purely by age (not assessment), leaves fresh rows alone, and logs the count.
+    """
+    from assessment_routes.v3 import tfidf_artifact_routes as routes
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    stale_id = _insert_stale_staging(
+        test_db_session, chunk_tfidf_assessment_id, age_hours=48
+    )
+    # A stale row attached to a different assessment must also be swept —
+    # the cleanup is purely time-based, not assessment-scoped.
+    cross_stale_id = _insert_stale_staging(
+        test_db_session,
+        chunk_non_tfidf_assessment_id,
+        age_hours=72,
+        with_chunk=False,
+    )
+    fresh_id = _insert_stale_staging(
+        test_db_session, chunk_tfidf_assessment_id, age_hours=1, with_chunk=False
+    )
+
+    info_calls = []
+    real_info = routes.logger.info
+    monkeypatch.setattr(
+        routes.logger,
+        "info",
+        lambda msg, *args, **kwargs: (
+            info_calls.append((msg, args)),
+            real_info(msg, *args, **kwargs),
+        )[1],
+    )
+
+    resp = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/init",
+        json=_init_body(total_chunks=1),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    new_upload_id = resp.json()["upload_id"]
+
+    test_db_session.expire_all()
+    assert (
+        test_db_session.query(TfidfSvdStaging)
+        .filter_by(upload_id=stale_id)
+        .one_or_none()
+        is None
+    )
+    assert (
+        test_db_session.query(TfidfSvdChunk).filter_by(upload_id=stale_id).count() == 0
+    )
+    assert (
+        test_db_session.query(TfidfSvdStaging)
+        .filter_by(upload_id=cross_stale_id)
+        .one_or_none()
+        is None
+    )
+    assert (
+        test_db_session.query(TfidfSvdStaging)
+        .filter_by(upload_id=fresh_id)
+        .one_or_none()
+        is not None
+    )
+
+    sweep_logs = [
+        (msg, args) for msg, args in info_calls if "Swept" in msg and "stale" in msg
+    ]
+    assert len(sweep_logs) == 1
+    assert sweep_logs[0][1][0] == 2  # two stale rows reported
+
+    client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
+        json={"upload_id": new_upload_id},
+        headers=headers,
+    )
+    client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
+        json={"upload_id": str(fresh_id)},
+        headers=headers,
+    )
+
+
+def test_init_continues_when_sweep_fails(
+    client, regular_token1, chunk_tfidf_assessment_id, test_db_session, monkeypatch
+):
+    """If _sweep_stale_staging raises, /init must still succeed — the cleanup
+    is opportunistic and must never break a user's upload.
+
+    Raises a plain RuntimeError (not SQLAlchemyError) to verify the broader
+    `except Exception` actually catches driver-level/non-ORM failures too.
+    """
+    from assessment_routes.v3 import tfidf_artifact_routes as routes
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    async def boom(db, *, ttl_hours=routes._STAGING_TTL_HOURS):
+        raise RuntimeError("simulated sweep failure")
+
+    monkeypatch.setattr(routes, "_sweep_stale_staging", boom)
+
+    resp = client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/init",
+        json=_init_body(total_chunks=1),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    new_upload_id = resp.json()["upload_id"]
+
+    test_db_session.expire_all()
+    assert (
+        test_db_session.query(TfidfSvdStaging)
+        .filter_by(upload_id=uuid.UUID(new_upload_id))
+        .one_or_none()
+        is not None
+    )
+
+    client.post(
+        f"{prefix}/assessment/{chunk_tfidf_assessment_id}/tfidf-artifacts/abort",
+        json={"upload_id": new_upload_id},
         headers=headers,
     )
