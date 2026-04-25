@@ -29,7 +29,7 @@ def _make_modal_mock(
 
     spawn_by_app: optional dict mapping Modal app name -> Exception (or None for success).
     spawn_by_type: optional dict mapping training-type value -> Exception (or None).
-        Non-serval-nmt training types all share one Modal function
+        All training types share one Modal function
         ("runner", "run_assessment_runner"), so failures can't be isolated
         by app_name; keying on args[0]["type"] recovers per-type isolation.
     default_exc: Exception raised by any call not matched by the two dicts above.
@@ -225,9 +225,8 @@ def test_create_training_job_per_app_dispatch_isolation(
 ):
     """A spawn failure for one assessment type must not affect the others.
 
-    All non-serval-nmt training types share a single Modal function, so
-    isolation is recovered by keying the mock on args[0]["type"] rather
-    than app_name.
+    All training types share a single Modal function, so isolation is
+    recovered by keying the mock on args[0]["type"] rather than app_name.
     """
     response = _create_training_jobs_via_api(
         client,
@@ -266,28 +265,6 @@ def test_semantic_similarity_routes_through_runner(
     assert len(jobs) == 1 and jobs[0]["type"] == "semantic-similarity"
     assert jobs[0]["status"] == "failed"
     assert ("runner", "run_assessment_runner") in calls
-
-
-def test_serval_nmt_routes_through_train_runner(
-    client, regular_token1, test_revision_id, test_revision_id_2
-):
-    """serval-nmt must dispatch to ("train-runner", "run_training_job")."""
-    calls = []
-    response = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "serval_routing_test"},
-        apps=["serval-nmt"],
-        spawn_by_app={"train-runner": RuntimeError("runner down")},
-        calls=calls,
-    )
-    assert response.status_code == 200
-    jobs = response.json()["training_jobs"]
-    assert len(jobs) == 1 and jobs[0]["type"] == "serval-nmt"
-    assert jobs[0]["status"] == "failed"
-    assert ("train-runner", "run_training_job") in calls
 
 
 def test_training_job_full_lifecycle_via_runner(
@@ -425,9 +402,8 @@ def test_training_type_enum_covered_by_dispatch():
     """
     from train_routes.v3.train_routes import TRAINABLE_ASSESSMENT_TYPES
 
-    reachable = TRAINABLE_ASSESSMENT_TYPES | {TrainingType.serval_nmt.value}
     enum_values = {t.value for t in TrainingType}
-    missing = enum_values - reachable
+    missing = enum_values - TRAINABLE_ASSESSMENT_TYPES
     assert not missing, f"TrainingType values with no dispatch branch: {missing}"
 
 
@@ -560,6 +536,7 @@ def test_patch_status_valid_transitions(
         test_revision_id,
         test_revision_id_2,
         options={"tag": "status_test"},
+        apps=["tfidf"],
     )
     job_id = _get_first_job_id(create_resp)
 
@@ -711,6 +688,7 @@ def test_patch_status_completed_with_errors(
         test_revision_id,
         test_revision_id_2,
         options={"tag": "completed_errors_test"},
+        apps=["tfidf"],
     )
     job_id = _get_first_job_id(create_resp)
 
@@ -1055,11 +1033,7 @@ def _get_assessment(db_session, assessment_id):
 def test_training_job_creates_assessment_for_trainable_types(
     client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):
-    """Every non-serval-nmt TrainingJob has a matching Assessment row.
-
-    serval-nmt must have assessment_id=None because aqua-assessments has no
-    assessment type for NMT engines.
-    """
+    """Every TrainingJob has a matching Assessment row."""
     resp = _create_training_jobs_via_api(
         client,
         regular_token1,
@@ -1070,9 +1044,7 @@ def test_training_job_creates_assessment_for_trainable_types(
     assert resp.status_code == 200
     jobs = {job["type"]: job for job in resp.json()["training_jobs"]}
 
-    assert jobs["serval-nmt"]["assessment_id"] is None
-
-    for training_type in ALL_TRAINING_TYPES - {"serval-nmt"}:
+    for training_type in ALL_TRAINING_TYPES:
         job = jobs[training_type]
         assert (
             job["assessment_id"] is not None
@@ -1091,7 +1063,7 @@ def test_training_job_creates_assessment_for_trainable_types(
 def test_trainable_types_route_through_runner_with_is_training(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
-    """Every non-serval-nmt training type must dispatch through
+    """Every training type must dispatch through
     ("runner", "run_assessment_runner") with an AssessmentIn-shaped
     config carrying is_training=True. Asserts both the dispatch target
     and the assessment_id identity on the payload.

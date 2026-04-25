@@ -1091,7 +1091,6 @@ class AgentTranslationOut(BaseModel):
 
 
 class TrainingType(str, Enum):
-    serval_nmt = "serval-nmt"
     semantic_similarity = "semantic-similarity"
     tfidf = "tfidf"
     word_alignment = "word-alignment"
