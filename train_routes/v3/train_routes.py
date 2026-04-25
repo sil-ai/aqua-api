@@ -61,8 +61,12 @@ TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed"}
 COMPLETED_STATUSES = {"completed", "completed_with_errors"}
 
 # Training types that have a corresponding aqua-assessments Assessment row.
-# Every type listed here must also appear in AssessmentType in models.py so the
-# Assessment row is readable by the existing /v3/assessment endpoints.
+# Every type listed here must also appear in AssessmentType in models.py so
+# the Assessment row is readable by the existing /v3/assessment endpoints.
+# Post-#592 every TrainingType is in this set — adding a new TrainingType
+# without adding it here will fail
+# test_all_training_types_have_assessment_route and dispatch_job will
+# reject it at runtime.
 TRAINABLE_ASSESSMENT_TYPES = {
     TrainingType.semantic_similarity.value,
     TrainingType.tfidf.value,
@@ -354,6 +358,10 @@ async def create_training_job(
     async def dispatch_job(job: TrainingJob):
         """Returns (job, exception) tuple. Does NOT mutate the DB session."""
         try:
+            if job.type not in TRAINABLE_ASSESSMENT_TYPES:
+                raise RuntimeError(
+                    f"No dispatch configured for training type '{job.type}'"
+                )
             # Runner dispatches to the right app's assess() based on
             # config.type and, because config["is_training"] is True,
             # emits the phased status sequence (preparing → training →

@@ -394,17 +394,22 @@ def test_duplicate_detection_scoped_to_apps_filter(
     db_session.commit()
 
 
-def test_training_type_enum_covered_by_dispatch():
-    """Every TrainingType value must be reachable by a dispatch branch.
+def test_all_training_types_have_assessment_route():
+    """Every TrainingType value must be in TRAINABLE_ASSESSMENT_TYPES.
 
-    Prevents adding an enum value without also wiring up the dispatch in
-    train_routes.dispatch_job.
+    Post-#592 dispatch is no longer split per type — every job goes through
+    ("runner", "run_assessment_runner") with a paired Assessment row. This
+    test catches a future TrainingType added without also being added to
+    TRAINABLE_ASSESSMENT_TYPES, which would cause dispatch_job to raise at
+    runtime.
     """
     from train_routes.v3.train_routes import TRAINABLE_ASSESSMENT_TYPES
 
     enum_values = {t.value for t in TrainingType}
     missing = enum_values - TRAINABLE_ASSESSMENT_TYPES
-    assert not missing, f"TrainingType values with no dispatch branch: {missing}"
+    assert (
+        not missing
+    ), f"TrainingType values missing from TRAINABLE_ASSESSMENT_TYPES: {missing}"
 
 
 def test_create_training_job_invalid_revision(client, regular_token1, test_revision_id):
@@ -722,6 +727,7 @@ def test_patch_status_unauthenticated(
         test_revision_id,
         test_revision_id_2,
         options={"tag": "bad_token_test"},
+        apps=["tfidf"],
     )
     job_id = _get_first_job_id(create_resp)
 
@@ -798,6 +804,7 @@ def test_get_training_data_filter(
         test_revision_id,
         test_revision_id_2,
         options={"tag": "data_filter_test"},
+        apps=["tfidf"],
     )
     job_id = _get_first_job_id(create_resp)
 
@@ -829,6 +836,7 @@ def test_get_training_data_merge(
         test_revision_id,
         test_revision_id_2,
         options={"tag": "data_merge_test"},
+        apps=["tfidf"],
     )
     job_id = _get_first_job_id(create_resp)
 
@@ -852,6 +860,7 @@ def test_get_training_data_empty(
         test_revision_id,
         test_revision_id_2,
         options={"tag": "data_empty_test"},
+        apps=["tfidf"],
     )
     job_id = _get_first_job_id(create_resp)
 
@@ -913,6 +922,7 @@ def test_delete_training_job_active_rejected(
         test_revision_id,
         test_revision_id_2,
         options={"tag": "delete_active_test"},
+        apps=["tfidf"],
     )
     job_id = _get_first_job_id(create_resp)
 
@@ -1030,7 +1040,7 @@ def _get_assessment(db_session, assessment_id):
     return db_session.query(Assessment).filter_by(id=assessment_id).one_or_none()
 
 
-def test_training_job_creates_assessment_for_trainable_types(
+def test_training_job_creates_assessment_for_all_types(
     client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):
     """Every TrainingJob has a matching Assessment row."""
