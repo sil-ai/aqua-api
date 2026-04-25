@@ -61,7 +61,6 @@ TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed"}
 COMPLETED_STATUSES = {"completed", "completed_with_errors"}
 
 # Training types that have a corresponding aqua-assessments Assessment row.
-# serval-nmt is excluded — it produces a translation engine, not an assessment.
 # Every type listed here must also appear in AssessmentType in models.py so the
 # Assessment row is readable by the existing /v3/assessment endpoints.
 TRAINABLE_ASSESSMENT_TYPES = {
@@ -146,8 +145,7 @@ async def _mirror_terminal_status_to_assessment(
     Because this is reconciliation, it deliberately bypasses
     ASSESSMENT_VALID_TRANSITIONS (queued → terminal is not a valid transition
     there). To avoid clobbering aqua-assessments' own terminal post, this
-    helper is a no-op if the Assessment is already in a terminal state.
-    Also a no-op for jobs with no linked Assessment (e.g. serval-nmt) or
+    helper is a no-op if the Assessment is already in a terminal state, or
     whose Assessment row has been soft-deleted.
     """
     if job.assessment_id is None:
@@ -306,7 +304,7 @@ async def create_training_job(
 
         # For trainable assessment types, create a paired Assessment row so
         # aqua-assessments can write artifacts under the same assessment_id
-        # pattern used by the assess() path. serval-nmt is skipped.
+        # pattern used by the assess() path.
         assessment_id = None
         if training_type.value in TRAINABLE_ASSESSMENT_TYPES:
             assessment = Assessment(
@@ -358,13 +356,7 @@ async def create_training_job(
     async def dispatch_job(job: TrainingJob):
         """Returns (job, exception) tuple. Does NOT mutate the DB session."""
         try:
-            if job.type == TrainingType.serval_nmt.value:
-                f = modal.Function.from_name(
-                    "train-runner", "run_training_job", environment_name=modal_env
-                )
-                job_out = TrainingJobOut.model_validate(job)
-                await f.spawn.aio(job_out.model_dump(mode="json"))
-            elif job.type in TRAINABLE_ASSESSMENT_TYPES:
+            if job.type in TRAINABLE_ASSESSMENT_TYPES:
                 # Runner dispatches to the right app's assess() based on
                 # config.type and, because config["is_training"] is True,
                 # emits the phased status sequence (preparing → training →
