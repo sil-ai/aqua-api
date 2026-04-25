@@ -61,9 +61,14 @@ TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed"}
 COMPLETED_STATUSES = {"completed", "completed_with_errors"}
 
 # Training types that have a corresponding aqua-assessments Assessment row.
-# serval-nmt is excluded — it produces a translation engine, not an assessment.
-# Every type listed here must also appear in AssessmentType in models.py so the
-# Assessment row is readable by the existing /v3/assessment endpoints.
+# Every type listed here must also appear in AssessmentType in models.py so
+# the Assessment row is readable by the existing /v3/assessment endpoints.
+# Post-#592 every TrainingType is in this set — adding a new TrainingType
+# without adding it here will fail
+# test_all_training_types_have_assessment_route, and any job created for
+# that type will be immediately marked failed by dispatch_job (the
+# RuntimeError is caught and written to status_detail; the endpoint still
+# returns 200).
 TRAINABLE_ASSESSMENT_TYPES = {
     TrainingType.semantic_similarity.value,
     TrainingType.tfidf.value,
@@ -147,8 +152,7 @@ async def _mirror_terminal_status_to_assessment(
     ASSESSMENT_VALID_TRANSITIONS (queued → terminal is not a valid transition
     there). To avoid clobbering aqua-assessments' own terminal post, this
     helper is a no-op if the Assessment is already in a terminal state.
-    Also a no-op for jobs with no linked Assessment (e.g. serval-nmt) or
-    whose Assessment row has been soft-deleted.
+    Also a no-op if the Assessment row has been soft-deleted.
     """
     if job.assessment_id is None:
         return
@@ -304,24 +308,22 @@ async def create_training_job(
             logger.info(f"Skipping {training_type.value}: active job already exists")
             continue
 
-        # For trainable assessment types, create a paired Assessment row so
-        # aqua-assessments can write artifacts under the same assessment_id
-        # pattern used by the assess() path. serval-nmt is skipped.
-        assessment_id = None
-        if training_type.value in TRAINABLE_ASSESSMENT_TYPES:
-            assessment = Assessment(
-                revision_id=job_in.source_revision_id,
-                reference_id=job_in.target_revision_id,
-                type=training_type.value,
-                status="queued",
-                requested_time=datetime.utcnow(),
-                owner_id=current_user.id,
-                kwargs=job_in.options,
-                is_training=True,
-            )
-            db.add(assessment)
-            await db.flush()
-            assessment_id = assessment.id
+        # Create a paired Assessment row so aqua-assessments can write
+        # artifacts under the same assessment_id pattern used by the assess()
+        # path.
+        assessment = Assessment(
+            revision_id=job_in.source_revision_id,
+            reference_id=job_in.target_revision_id,
+            type=training_type.value,
+            status="queued",
+            requested_time=datetime.utcnow(),
+            owner_id=current_user.id,
+            kwargs=job_in.options,
+            is_training=True,
+        )
+        db.add(assessment)
+        await db.flush()
+        assessment_id = assessment.id
 
         # Create training job record
         training_job = TrainingJob(
@@ -358,34 +360,27 @@ async def create_training_job(
     async def dispatch_job(job: TrainingJob):
         """Returns (job, exception) tuple. Does NOT mutate the DB session."""
         try:
-            if job.type == TrainingType.serval_nmt.value:
-                f = modal.Function.from_name(
-                    "train-runner", "run_training_job", environment_name=modal_env
-                )
-                job_out = TrainingJobOut.model_validate(job)
-                await f.spawn.aio(job_out.model_dump(mode="json"))
-            elif job.type in TRAINABLE_ASSESSMENT_TYPES:
-                # Runner dispatches to the right app's assess() based on
-                # config.type and, because config["is_training"] is True,
-                # emits the phased status sequence (preparing → training →
-                # downloading → uploading → finished/failed) against
-                # PATCH /v3/assessment/{id}/status.
-                f = modal.Function.from_name(
-                    "runner", "run_assessment_runner", environment_name=modal_env
-                )
-                config = _build_runner_train_config(
-                    job,
-                    job_in.source_revision_id,
-                    job_in.target_revision_id,
-                    source_language,
-                    target_language,
-                    job_in.options,
-                )
-                await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
-            else:
+            if job.type not in TRAINABLE_ASSESSMENT_TYPES:
                 raise RuntimeError(
                     f"No dispatch configured for training type '{job.type}'"
                 )
+            # Runner dispatches to the right app's assess() based on
+            # config.type and, because config["is_training"] is True,
+            # emits the phased status sequence (preparing → training →
+            # downloading → uploading → finished/failed) against
+            # PATCH /v3/assessment/{id}/status.
+            f = modal.Function.from_name(
+                "runner", "run_assessment_runner", environment_name=modal_env
+            )
+            config = _build_runner_train_config(
+                job,
+                job_in.source_revision_id,
+                job_in.target_revision_id,
+                source_language,
+                target_language,
+                job_in.options,
+            )
+            await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
             return job, None
         except Exception as e:
             logger.error(f"Error dispatching training job {job.id} ({job.type}): {e}")
