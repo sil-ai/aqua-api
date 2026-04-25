@@ -65,8 +65,10 @@ COMPLETED_STATUSES = {"completed", "completed_with_errors"}
 # the Assessment row is readable by the existing /v3/assessment endpoints.
 # Post-#592 every TrainingType is in this set — adding a new TrainingType
 # without adding it here will fail
-# test_all_training_types_have_assessment_route and dispatch_job will
-# reject it at runtime.
+# test_all_training_types_have_assessment_route, and any job created for
+# that type will be immediately marked failed by dispatch_job (the
+# RuntimeError is caught and written to status_detail; the endpoint still
+# returns 200).
 TRAINABLE_ASSESSMENT_TYPES = {
     TrainingType.semantic_similarity.value,
     TrainingType.tfidf.value,

@@ -400,8 +400,10 @@ def test_all_training_types_have_assessment_route():
     Post-#592 dispatch is no longer split per type — every job goes through
     ("runner", "run_assessment_runner") with a paired Assessment row. This
     test catches a future TrainingType added without also being added to
-    TRAINABLE_ASSESSMENT_TYPES, which would cause dispatch_job to raise at
-    runtime.
+    TRAINABLE_ASSESSMENT_TYPES, which at runtime would raise inside
+    dispatch_job, get caught by the except handler, and surface as a job
+    marked failed with a dispatch_failed status_detail (the endpoint still
+    returns 200).
     """
     from train_routes.v3.train_routes import TRAINABLE_ASSESSMENT_TYPES
 
