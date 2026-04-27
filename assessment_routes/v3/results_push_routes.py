@@ -210,6 +210,12 @@ async def push_alignment_scores(
     multiple requests of 5,000 items or fewer.
 
     Returns the list of inserted row IDs in the same order as the input.
+
+    ``hide`` is hardcoded to ``False`` and is not part of ``AlignmentScoreItem``
+    — it is a UI-only flag managed by other endpoints, not by the assessment
+    runner that drives this insert. Without an explicit value the column landed
+    ``NULL``, which then 500'd ``GET /alignmentscores`` because the response
+    model declares ``hide: bool`` (issue #596).
     """
     if not body:
         return InsertResponse(ids=[])
@@ -226,6 +232,7 @@ async def push_alignment_scores(
                 "source": item.source,
                 "target": item.target,
                 "note": item.note,
+                "hide": False,
                 "book": book,
                 "chapter": chapter,
                 "verse": verse,
