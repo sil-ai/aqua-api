@@ -1,37 +1,35 @@
-"""backfill and constrain alignment_top_source_scores.hide / flag
+"""set DEFAULT false on alignment_top_source_scores.hide / flag
 
 Revision ID: a4d18b5c2e91
 Revises: f8a2c3d4e5b6
 Create Date: 2026-04-27 10:00:00.000000
 
-The push endpoint did not set ``hide`` when inserting rows, so existing rows
-have ``hide IS NULL``. The read endpoint's response model
-(``models.WordAlignment``) declares ``hide: bool`` (default ``False``), and
-Pydantic v2 rejects ``None`` for that, raising a ResponseValidationError that
-surfaces as HTTP 500 from ``GET /alignmentscores`` on any assessment that has
-NULL-hide rows. Backfill, then add ``server_default`` and ``NOT NULL`` to
-prevent regression. Same treatment for ``flag`` (currently always populated
-by the push schema, but the column is loose so we tighten defensively).
+The push endpoint did not set ``hide`` when inserting rows. Existing rows
+have ``hide IS NULL``, and the read endpoint's response model
+(``models.WordAlignment``) declares ``hide: bool`` (default ``False``);
+Pydantic v2 rejects ``None`` for that, so ``GET /alignmentscores`` 500s
+on any assessment with NULL-hide rows.
 
-Only ``alignment_top_source_scores`` is touched here. The sibling
-``alignment_threshold_scores`` table has the same loose definition but no
-writer in this codebase, so changing it now would be pure operational risk
-with no bug to fix.
+Scope of this migration is intentionally tiny: just ``SET DEFAULT false``
+on ``hide`` and ``flag``. ``ALTER COLUMN ... SET DEFAULT`` is a metadata-
+only catalog update — it takes ``ACCESS EXCLUSIVE`` for milliseconds and
+does not rewrite the table.
 
-Migration safety on large tables:
+Why no backfill / NOT NULL here:
 
-* ``SET DEFAULT false`` runs *first* so that any concurrent inserts from
-  old code paths still in flight (omitting the column) land ``false``
-  instead of ``NULL``. Without this, the post-backfill validation step
-  could fail or the backfill loop could fail to converge.
-* ``UPDATE ... WHERE col IS NULL`` is executed in chunks so that row-level
-  locks aren't held on every NULL row inside a single long transaction.
-* ``SET NOT NULL`` uses the ``ADD CONSTRAINT ... NOT VALID`` /
-  ``VALIDATE CONSTRAINT`` / ``SET NOT NULL`` dance so that Postgres can
-  validate the constraint under a ``SHARE UPDATE EXCLUSIVE`` lock instead
-  of holding ``ACCESS EXCLUSIVE`` for the whole scan. The final
-  ``SET NOT NULL`` is near-instant once the check constraint is validated
-  because Postgres trusts the proven invariant.
+``alignment_top_source_scores`` is ~1.7B rows in production. ``VALIDATE
+CONSTRAINT`` would scan all of them — many hours of read I/O even though
+it only needs ``SHARE UPDATE EXCLUSIVE`` and doesn't block writers — for
+no real benefit when the application code now always supplies a value.
+
+Backfilling existing NULL rows is handled out-of-band by
+``scripts/backfill_alignment_hide_flag.py``, which iterates the primary-
+key range in small chunks and only touches rows where ``hide IS NULL`` or
+``flag IS NULL``. That script can be paused, resumed, and rate-limited as
+prod load allows. See its docstring for the recommended
+``CREATE INDEX CONCURRENTLY ... WHERE hide IS NULL OR flag IS NULL``
+partial index that should be built (manually, outside Alembic) before the
+backfill runs to keep per-batch reads cheap.
 """
 
 from typing import Sequence, Union
@@ -49,76 +47,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 _TABLE = "alignment_top_source_scores"
 _COLUMNS = ("hide", "flag")
-_CHUNK = 10_000
-
-
-def _chunked_backfill(table: str, column: str) -> None:
-    """Backfill ``NULL`` -> ``false`` in batches of ``_CHUNK`` rows."""
-    op.execute(
-        sa.text(
-            f"""
-            DO $$
-            BEGIN
-              LOOP
-                UPDATE {table}
-                SET {column} = false
-                WHERE id IN (
-                  SELECT id FROM {table} WHERE {column} IS NULL LIMIT {_CHUNK}
-                );
-                EXIT WHEN NOT FOUND;
-              END LOOP;
-            END
-            $$;
-            """
-        )
-    )
-
-
-def _set_default_false(table: str, column: str) -> None:
-    """Set ``DEFAULT false`` so concurrent old-code inserts that omit the
-    column store ``false`` instead of ``NULL``."""
-    op.execute(sa.text(f"ALTER TABLE {table} ALTER COLUMN {column} SET DEFAULT false"))
-
-
-def _set_not_null(table: str, column: str) -> None:
-    """Promote ``column`` to ``NOT NULL`` without an ``ACCESS EXCLUSIVE`` scan.
-
-    ``ADD CONSTRAINT ... NOT VALID`` is metadata-only. ``VALIDATE CONSTRAINT``
-    scans the table under ``SHARE UPDATE EXCLUSIVE``, which permits concurrent
-    reads and writes. Once validated, ``SET NOT NULL`` is near-instant.
-    """
-    constraint = f"{table}_{column}_not_null"
-    op.execute(
-        sa.text(
-            f"ALTER TABLE {table} "
-            f"ADD CONSTRAINT {constraint} CHECK ({column} IS NOT NULL) NOT VALID"
-        )
-    )
-    op.execute(sa.text(f"ALTER TABLE {table} VALIDATE CONSTRAINT {constraint}"))
-    op.execute(sa.text(f"ALTER TABLE {table} ALTER COLUMN {column} SET NOT NULL"))
-    op.execute(sa.text(f"ALTER TABLE {table} DROP CONSTRAINT {constraint}"))
 
 
 def upgrade() -> None:
-    # Set the default first so any concurrent inserts from older code paths
-    # (still omitting the column during a rolling deploy) land ``false``
-    # rather than ``NULL`` and don't break the validation step below.
     for column in _COLUMNS:
-        _set_default_false(_TABLE, column)
-    for column in _COLUMNS:
-        _chunked_backfill(_TABLE, column)
-        _set_not_null(_TABLE, column)
+        op.execute(
+            sa.text(f"ALTER TABLE {_TABLE} ALTER COLUMN {column} SET DEFAULT false")
+        )
 
 
 def downgrade() -> None:
-    # The backfilled ``false`` values are not reverted to ``NULL`` because the
-    # application now always writes ``false`` on insert; flipping them back
-    # would mix-and-match interpretations.
     for column in _COLUMNS:
-        op.alter_column(
-            _TABLE,
-            column,
-            existing_type=sa.Boolean(),
-            nullable=True,
-            server_default=None,
-        )
+        op.execute(sa.text(f"ALTER TABLE {_TABLE} ALTER COLUMN {column} DROP DEFAULT"))

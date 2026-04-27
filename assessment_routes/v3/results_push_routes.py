@@ -213,8 +213,9 @@ async def push_alignment_scores(
 
     ``hide`` is hardcoded to ``False`` and is not part of ``AlignmentScoreItem``
     — it is a UI-only flag managed by other endpoints, not by the assessment
-    runner that drives this insert. The column is ``NOT NULL`` after migration
-    ``a4d18b5c2e91``, so an explicit value is required on insert.
+    runner that drives this insert. Without an explicit value the column landed
+    ``NULL``, which then 500'd ``GET /alignmentscores`` because the response
+    model declares ``hide: bool`` (issue #596).
     """
     if not body:
         return InsertResponse(ids=[])
