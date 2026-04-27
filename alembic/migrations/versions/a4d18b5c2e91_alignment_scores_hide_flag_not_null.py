@@ -20,6 +20,10 @@ with no bug to fix.
 
 Migration safety on large tables:
 
+* ``SET DEFAULT false`` runs *first* so that any concurrent inserts from
+  old code paths still in flight (omitting the column) land ``false``
+  instead of ``NULL``. Without this, the post-backfill validation step
+  could fail or the backfill loop could fail to converge.
 * ``UPDATE ... WHERE col IS NULL`` is executed in chunks so that row-level
   locks aren't held on every NULL row inside a single long transaction.
 * ``SET NOT NULL`` uses the ``ADD CONSTRAINT ... NOT VALID`` /
@@ -70,6 +74,12 @@ def _chunked_backfill(table: str, column: str) -> None:
     )
 
 
+def _set_default_false(table: str, column: str) -> None:
+    """Set ``DEFAULT false`` so concurrent old-code inserts that omit the
+    column store ``false`` instead of ``NULL``."""
+    op.execute(sa.text(f"ALTER TABLE {table} ALTER COLUMN {column} SET DEFAULT false"))
+
+
 def _set_not_null(table: str, column: str) -> None:
     """Promote ``column`` to ``NOT NULL`` without an ``ACCESS EXCLUSIVE`` scan.
 
@@ -87,10 +97,14 @@ def _set_not_null(table: str, column: str) -> None:
     op.execute(sa.text(f"ALTER TABLE {table} VALIDATE CONSTRAINT {constraint}"))
     op.execute(sa.text(f"ALTER TABLE {table} ALTER COLUMN {column} SET NOT NULL"))
     op.execute(sa.text(f"ALTER TABLE {table} DROP CONSTRAINT {constraint}"))
-    op.execute(sa.text(f"ALTER TABLE {table} ALTER COLUMN {column} SET DEFAULT false"))
 
 
 def upgrade() -> None:
+    # Set the default first so any concurrent inserts from older code paths
+    # (still omitting the column during a rolling deploy) land ``false``
+    # rather than ``NULL`` and don't break the validation step below.
+    for column in _COLUMNS:
+        _set_default_false(_TABLE, column)
     for column in _COLUMNS:
         _chunked_backfill(_TABLE, column)
         _set_not_null(_TABLE, column)
