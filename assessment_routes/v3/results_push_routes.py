@@ -226,6 +226,7 @@ async def push_alignment_scores(
                 "source": item.source,
                 "target": item.target,
                 "note": item.note,
+                "hide": False,
                 "book": book,
                 "chapter": chapter,
                 "verse": verse,

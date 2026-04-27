@@ -132,6 +132,52 @@ def test_push_alignment_scores(client, regular_token1, push_assessment_id):
     assert len(response.json()["ids"]) == 1
 
 
+def test_push_alignment_scores_round_trips_to_get(
+    client, regular_token1, push_assessment_id
+):
+    """Regression for #596: pushed rows must be readable via GET /alignmentscores.
+
+    Before the fix the push omitted ``hide`` from the insert dict, so the column
+    landed NULL, and ``WordAlignment.hide: bool`` failed Pydantic validation on
+    read, surfacing as HTTP 500.
+    """
+    body = [
+        {
+            "vref": "GEN 1:2",
+            "score": 0.97,
+            "source": "earth",
+            "target": "tierra",
+        },
+        {
+            "vref": "GEN 1:3",
+            "score": 0.85,
+            "source": "heaven",
+            "target": "cielo",
+        },
+    ]
+    push = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-scores",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert push.status_code == 200
+
+    read = client.get(
+        f"/{prefix}/alignmentscores",
+        params={"assessment_id": push_assessment_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert read.status_code == 200, read.text
+    payload = read.json()
+    assert payload["total_count"] >= len(body)
+    pushed = {(r["source"], r["target"]) for r in body}
+    returned = {(r["source"], r["target"]) for r in payload["results"]}
+    assert pushed.issubset(returned)
+    for row in payload["results"]:
+        assert row["hide"] is False
+        assert row["flag"] is False
+
+
 # ---------------------------------------------------------------------------
 # POST /assessment/{id}/text-lengths
 # ---------------------------------------------------------------------------
