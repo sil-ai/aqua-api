@@ -163,7 +163,7 @@ def test_push_alignment_scores_round_trips_to_get(
     assert push.status_code == 200
 
     read = client.get(
-        f"/{prefix}/alignmentscores",
+        f"{prefix}/alignmentscores",
         params={"assessment_id": push_assessment_id},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )

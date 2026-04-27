@@ -210,6 +210,11 @@ async def push_alignment_scores(
     multiple requests of 5,000 items or fewer.
 
     Returns the list of inserted row IDs in the same order as the input.
+
+    ``hide`` is hardcoded to ``False`` and is not part of ``AlignmentScoreItem``
+    — it is a UI-only flag managed by other endpoints, not by the assessment
+    runner that drives this insert. The column is ``NOT NULL`` after migration
+    ``a4d18b5c2e91``, so an explicit value is required on insert.
     """
     if not body:
         return InsertResponse(ids=[])
