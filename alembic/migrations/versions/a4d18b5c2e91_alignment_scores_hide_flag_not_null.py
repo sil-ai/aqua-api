@@ -23,13 +23,11 @@ it only needs ``SHARE UPDATE EXCLUSIVE`` and doesn't block writers — for
 no real benefit when the application code now always supplies a value.
 
 Backfilling existing NULL rows is handled out-of-band by
-``scripts/backfill_alignment_hide_flag.py``, which iterates the primary-
-key range in small chunks and only touches rows where ``hide IS NULL`` or
-``flag IS NULL``. That script can be paused, resumed, and rate-limited as
-prod load allows. See its docstring for the recommended
-``CREATE INDEX CONCURRENTLY ... WHERE hide IS NULL OR flag IS NULL``
-partial index that should be built (manually, outside Alembic) before the
-backfill runs to keep per-batch reads cheap.
+``scripts/backfill_alignment_hide_flag.py``, which iterates the candidate
+word-alignment assessments since the bug landed and updates each one's
+rows via the existing ``ix_alignment_top_source_scores_assessment_id``
+index. No new index is needed; total cost is on the order of minutes
+rather than the hours a full-table scan would require.
 """
 
 from typing import Sequence, Union

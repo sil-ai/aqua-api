@@ -7,59 +7,50 @@ landed with ``hide=NULL`` because the endpoint omitted the column. Reads through
 
 The application fix in PR #597 sets ``hide=False`` on every new insert and
 ``ALTER COLUMN ... SET DEFAULT false`` covers any future caller that omits the
-column. This script heals the *existing* NULL rows without taking the
-multi-hour ``VALIDATE CONSTRAINT`` scan that a formal ``NOT NULL`` migration
-would require on a 1.7B-row table.
+column. This script heals the *existing* NULL rows.
 
 Strategy
 --------
-* Walk the primary key from ``MAX(id)`` down to ``MIN(id)`` (newest rows first
-  — the breakage started ~2026-04-01 so most NULLs are in the upper id range).
-* Each batch reads at most ``--batch-size`` rows by id range and updates only
-  those where ``hide IS NULL OR flag IS NULL``. The id-range filter uses the
-  primary key index so each batch's read cost is bounded regardless of table
-  size.
-* Each batch commits in its own transaction. Locks are released between
-  batches; concurrent inserts from the live application are unaffected.
-* ``--sleep`` adds a delay between batches to keep I/O headroom for prod
-  traffic.
-* ``--start-id`` resumes from a checkpoint if a previous run was interrupted.
-* ``--stop-after-clean N`` exits early after N consecutive batches with zero
-  updates — useful once you've passed below the broken-id range and the rest
-  of the table is known to be clean.
+The bug is per-assessment: the push endpoint writes all rows for one
+assessment atomically, so within any single assessment every row is either
+all-NULL-hide or all-False-hide. That means we never need to scan the
+1.7B-row table to find NULL rows — we iterate the (much smaller) list of
+candidate assessments and update each one's rows via the existing
+``ix_alignment_top_source_scores_assessment_id`` index.
 
-Recommended setup (do once, before running this script)
--------------------------------------------------------
-On a 1.7B-row table the per-batch ``WHERE id BETWEEN ... AND (hide IS NULL
-OR flag IS NULL)`` filter is much cheaper if there's a partial index on the
-broken rows. Build it concurrently so it doesn't block writes::
-
-    CREATE INDEX CONCURRENTLY ix_alignment_top_source_scores_null_hide_flag
-    ON alignment_top_source_scores (id)
-    WHERE hide IS NULL OR flag IS NULL;
-
-The build still does one full read of the table — schedule it for a
-low-traffic window even though it doesn't take a blocking lock. After the
-backfill finishes the predicate matches no rows, so the index self-empties
-and can be dropped::
-
-    DROP INDEX ix_alignment_top_source_scores_null_hide_flag;
+* Selects word-alignment assessments since ``--since`` (default
+  ``2026-03-25`` — a week before the push endpoint launched, with margin).
+* For each assessment, runs one UPDATE that uses the assessment_id index;
+  touched rows are bounded by that assessment's row count (typically a
+  few hundred thousand), so each UPDATE finishes in seconds.
+* Each UPDATE is its own transaction — locks released between
+  assessments. Concurrent inserts from the live application are unaffected.
+* ``--sleep`` adds a delay between assessments to keep I/O headroom for
+  prod traffic.
+* ``--start-after-id`` resumes from a checkpoint if a previous run was
+  interrupted (skips assessments with id <= that value).
+* ``--dry-run`` reports the count of broken rows per candidate assessment
+  without writing.
 
 Usage
 -----
 ::
 
     AQUA_DB="postgresql+asyncpg://..." \\
-      .venv/bin/python scripts/backfill_alignment_hide_flag.py \\
-        --batch-size 100000 --sleep 0.1 --stop-after-clean 50
+      .venv/bin/python scripts/backfill_alignment_hide_flag.py
 
-Pause with Ctrl-C; rerun with ``--start-id <last printed lo id>`` to resume.
+    # Or to inspect first without writing:
+    .venv/bin/python scripts/backfill_alignment_hide_flag.py --dry-run
+
+Pause with Ctrl-C; rerun with ``--start-after-id <last printed assessment id>``
+to resume.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as dt
 import os
 import signal
 import time
@@ -67,18 +58,33 @@ import time
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-_SQL_BOUNDS = "SELECT MIN(id), MAX(id) FROM alignment_top_source_scores"
+_SQL_CANDIDATES = """
+    SELECT id
+    FROM assessment
+    WHERE type = 'word-alignment'
+      AND requested_time >= :since
+      AND id > :start_after_id
+    ORDER BY id
+"""
+
 _SQL_UPDATE = """
     UPDATE alignment_top_source_scores
     SET hide = COALESCE(hide, false),
         flag = COALESCE(flag, false)
-    WHERE id BETWEEN :lo AND :hi
+    WHERE assessment_id = :aid
+      AND (hide IS NULL OR flag IS NULL)
+"""
+
+_SQL_COUNT_BROKEN = """
+    SELECT COUNT(*)
+    FROM alignment_top_source_scores
+    WHERE assessment_id = :aid
       AND (hide IS NULL OR flag IS NULL)
 """
 
 
 async def backfill(
-    *, batch_size: int, sleep_s: float, start_id: int | None, stop_after_clean: int
+    *, since: dt.date, sleep_s: float, start_after_id: int, dry_run: bool
 ) -> None:
     db_url = os.environ.get("AQUA_DB")
     if not db_url:
@@ -91,61 +97,75 @@ async def backfill(
     def _handle_sigint(*_):
         nonlocal stopping
         stopping = True
-        print("\nInterrupt received; finishing current batch and exiting...")
+        print("\nInterrupt received; finishing current assessment and exiting...")
 
     signal.signal(signal.SIGINT, _handle_sigint)
 
     async with engine.begin() as conn:
-        result = await conn.execute(text(_SQL_BOUNDS))
-        min_id, max_id = result.first() or (None, None)
-    if min_id is None:
-        print("Table is empty; nothing to do.")
+        result = await conn.execute(
+            text(_SQL_CANDIDATES),
+            {"since": since, "start_after_id": start_after_id},
+        )
+        candidates = [row[0] for row in result.all()]
+
+    print(
+        f"Candidate word-alignment assessments since {since}: {len(candidates)}"
+        + (f" (resuming after id {start_after_id})" if start_after_id else "")
+    )
+    if not candidates:
+        print("Nothing to do.")
+        await engine.dispose()
         return
 
-    upper = start_id if start_id is not None else max_id
-    print(f"Range: id {min_id} .. {max_id}; starting from {upper}")
-
     total_updated = 0
-    consecutive_clean = 0
+    assessments_touched = 0
     start = time.time()
-    current = upper
 
-    while current >= min_id and not stopping:
-        lo = max(current - batch_size + 1, min_id)
+    for aid in candidates:
+        if stopping:
+            break
         async with engine.begin() as conn:
-            result = await conn.execute(text(_SQL_UPDATE), {"lo": lo, "hi": current})
-            updated = result.rowcount or 0
+            if dry_run:
+                count = (
+                    await conn.execute(text(_SQL_COUNT_BROKEN), {"aid": aid})
+                ).scalar() or 0
+                updated = count
+            else:
+                result = await conn.execute(text(_SQL_UPDATE), {"aid": aid})
+                updated = result.rowcount or 0
+        if updated:
+            assessments_touched += 1
         total_updated += updated
         elapsed = time.time() - start
+        marker = "[dry-run] " if dry_run else ""
         print(
-            f"id [{lo:>12,} .. {current:>12,}]: "
-            f"updated={updated:>6,}  total={total_updated:>10,}  "
-            f"elapsed={elapsed:>7.1f}s"
+            f"{marker}assessment_id={aid:>7}  "
+            f"rows={'(would update) ' if dry_run else ''}{updated:>7,}  "
+            f"total={total_updated:>10,}  "
+            f"elapsed={elapsed:>6.1f}s"
         )
-        if updated == 0:
-            consecutive_clean += 1
-            if stop_after_clean and consecutive_clean >= stop_after_clean:
-                print(
-                    f"\nStopping early: {consecutive_clean} consecutive batches "
-                    f"with no NULL rows. Below this id the table appears clean."
-                )
-                break
-        else:
-            consecutive_clean = 0
-        current = lo - 1
-        if sleep_s:
+        if sleep_s and not dry_run:
             await asyncio.sleep(sleep_s)
 
-    print(f"\nDone. Total updated: {total_updated:,}. Last lo id: {current + 1}.")
+    verb = "would update" if dry_run else "updated"
+    print(
+        f"\nDone. {verb.capitalize()} {total_updated:,} rows across "
+        f"{assessments_touched} assessments."
+    )
     await engine.dispose()
 
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    p.add_argument("--batch-size", type=int, default=100_000)
-    p.add_argument("--sleep", type=float, default=0.1, dest="sleep_s")
-    p.add_argument("--start-id", type=int, default=None)
-    p.add_argument("--stop-after-clean", type=int, default=50)
+    p.add_argument(
+        "--since",
+        type=dt.date.fromisoformat,
+        default=dt.date(2026, 3, 25),
+        help="ISO date; only assessments requested at/after this are considered.",
+    )
+    p.add_argument("--sleep", type=float, default=0.0, dest="sleep_s")
+    p.add_argument("--start-after-id", type=int, default=0)
+    p.add_argument("--dry-run", action="store_true")
     return p.parse_args()
 
 
@@ -153,9 +173,9 @@ if __name__ == "__main__":
     args = _parse_args()
     asyncio.run(
         backfill(
-            batch_size=args.batch_size,
+            since=args.since,
             sleep_s=args.sleep_s,
-            start_id=args.start_id,
-            stop_after_clean=args.stop_after_clean,
+            start_after_id=args.start_after_id,
+            dry_run=args.dry_run,
         )
     )
