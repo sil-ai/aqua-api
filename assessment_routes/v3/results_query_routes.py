@@ -17,6 +17,7 @@ from sqlalchemy.sql import select
 
 from database.dependencies import get_db
 from database.models import (
+    AlignmentThresholdScores,
     AlignmentTopSourceScores,
     Assessment,
     AssessmentResult,
@@ -48,6 +49,17 @@ class aggType(Enum):
     chapter = "chapter"
     book = "book"
     text = "text"
+
+
+class AlignmentScoreType(str, Enum):
+    top = "top"
+    threshold = "threshold"
+
+
+_ALIGNMENT_SCORE_MODELS = {
+    AlignmentScoreType.top: AlignmentTopSourceScores,
+    AlignmentScoreType.threshold: AlignmentThresholdScores,
+}
 
 
 async def validate_parameters(
@@ -1931,6 +1943,10 @@ async def get_alignment_scores(
     verse: Optional[int] = None,
     page: Optional[int] = None,
     page_size: Optional[int] = None,
+    score_type: AlignmentScoreType = Query(
+        AlignmentScoreType.top,
+        description="Which alignment score table to read from: 'top' (top-source scores, default) or 'threshold' (threshold scores).",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -1951,6 +1967,9 @@ async def get_alignment_scores(
         The page of results to return. If set, page_size must also be set.
     page_size : int, optional
         The number of results to return per page. If set, page must also be set.
+    score_type : AlignmentScoreType, optional
+        Which alignment score table to read from. Defaults to ``top`` (top-source
+        scores). Pass ``threshold`` to read alignment threshold scores instead.
 
     Returns
     -------
@@ -1966,16 +1985,15 @@ async def get_alignment_scores(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to see this assessment",
         )
+    score_model = _ALIGNMENT_SCORE_MODELS[score_type]
     # Initialize base query with dynamic filtering based on input parameters
-    base_query = select(AlignmentTopSourceScores).where(
-        AlignmentTopSourceScores.assessment_id == assessment_id
-    )
+    base_query = select(score_model).where(score_model.assessment_id == assessment_id)
     if book is not None:
-        base_query = base_query.where(AlignmentTopSourceScores.book == book)
+        base_query = base_query.where(score_model.book == book)
         if chapter is not None:
-            base_query = base_query.where(AlignmentTopSourceScores.chapter == chapter)
+            base_query = base_query.where(score_model.chapter == chapter)
             if verse is not None:
-                base_query = base_query.where(AlignmentTopSourceScores.verse == verse)
+                base_query = base_query.where(score_model.verse == verse)
 
     # Pagination logic
     if page is not None and page_size is not None:
@@ -2005,6 +2023,7 @@ async def get_alignment_scores(
             "verse": verse,
             "page": page,
             "page_size": page_size,
+            "score_type": score_type.value,
             "total_count": total_count,
             "results_returned": len(result_data),
             "duration_s": duration,
