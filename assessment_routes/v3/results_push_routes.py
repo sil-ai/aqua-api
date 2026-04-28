@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
 from database.models import (
+    AlignmentThresholdScores,
     AlignmentTopSourceScores,
     Assessment,
     AssessmentResult,
@@ -271,6 +272,91 @@ async def push_alignment_scores(
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error inserting {len(rows)} alignment scores for assessment {assessment_id}",
+        )
+
+
+@router.post(
+    "/assessment/{assessment_id}/alignment-threshold-scores",
+    response_model=InsertResponse,
+)
+async def push_alignment_threshold_scores(
+    assessment_id: int,
+    body: List[AlignmentScoreItem],
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bulk insert alignment threshold scores.
+
+    Mirrors ``POST /assessment/{id}/alignment-scores`` but writes to
+    ``alignment_threshold_scores`` — the table that holds every link with
+    score >= threshold (possibly multiple targets per source word), not the
+    deduped per-(vref, source) top pick.
+
+    Maximum of 5,000 items per request. For larger datasets, split into
+    multiple requests of 5,000 items or fewer.
+
+    Returns the list of inserted row IDs in the same order as the input.
+
+    ``hide`` is explicitly set to ``False`` for parity with the top-source
+    endpoint, so we don't depend on the column's ``server_default`` (added
+    after the fact by migration ``c9e7b1f2d3a4``) — that's the original
+    issue #596 hazard, where omitting ``hide`` landed ``NULL`` on a schema
+    that lacked the default and 500'd ``GET /alignmentscores``.
+    """
+    if not body:
+        return InsertResponse(ids=[])
+    _check_body_size(body)
+    rows = []
+    for item in body:
+        book, chapter, verse = _parse_vref(item.vref)
+        rows.append(
+            {
+                "assessment_id": assessment_id,
+                "vref": item.vref,
+                "score": item.score,
+                "flag": item.flag,
+                "source": item.source,
+                "target": item.target,
+                "note": item.note,
+                "hide": False,
+                "book": book,
+                "chapter": chapter,
+                "verse": verse,
+            }
+        )
+    try:
+        ids = await _batch_insert(db, AlignmentThresholdScores, rows)
+        await db.commit()
+        return InsertResponse(ids=ids)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate or constraint violation inserting {len(rows)} alignment threshold scores for assessment {assessment_id}",
+        )
+    except SQLAlchemyError:
+        logger.exception(
+            "Bulk insert failed for alignment_threshold_scores, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error inserting {len(rows)} alignment threshold scores for assessment {assessment_id}",
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception(
+            "Unexpected error pushing alignment threshold scores, assessment_id=%s, item_count=%d",
+            assessment_id,
+            len(rows),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error inserting {len(rows)} alignment threshold scores for assessment {assessment_id}",
         )
 
 
@@ -564,6 +650,38 @@ async def delete_alignment_scores(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to delete {len(body.ids)} alignment scores for assessment {assessment_id}",
+        )
+
+
+@router.delete(
+    "/assessment/{assessment_id}/alignment-threshold-scores",
+    response_model=DeleteResponse,
+)
+async def delete_alignment_threshold_scores(
+    assessment_id: int,
+    body: DeleteRequest,
+    assessment: Assessment = Depends(_get_authorized_assessment),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete alignment threshold scores by ID."""
+    if not body.ids:
+        return DeleteResponse(deleted=0)
+    try:
+        deleted = await _delete_from_table(
+            AlignmentThresholdScores, assessment_id, body.ids, db
+        )
+        await db.commit()
+        return DeleteResponse(deleted=deleted)
+    except SQLAlchemyError:
+        logger.exception(
+            "Failed to delete alignment threshold scores, assessment_id=%s, id_count=%d",
+            assessment_id,
+            len(body.ids),
+        )
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to delete {len(body.ids)} alignment threshold scores for assessment {assessment_id}",
         )
 
 

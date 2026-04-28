@@ -179,6 +179,137 @@ def test_push_alignment_scores_round_trips_to_get(
 
 
 # ---------------------------------------------------------------------------
+# POST /assessment/{id}/alignment-threshold-scores
+# ---------------------------------------------------------------------------
+
+
+def test_push_alignment_threshold_scores(client, regular_token1, push_assessment_id):
+    body = [
+        {
+            "vref": "GEN 1:6",
+            "score": 1.0,
+            "source": "water.”",
+            "target": "nsɨ.”",
+        },
+        {
+            "vref": "GEN 1:6",
+            "score": 0.579,
+            "source": "water",
+            "target": "aminzi",
+        },
+    ]
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert len(response.json()["ids"]) == 2
+
+
+def test_push_alignment_threshold_scores_round_trips_to_get(
+    client, regular_token1, push_assessment_id
+):
+    """Pushed threshold rows must be readable via GET /alignmentscores?score_type=threshold."""
+    body = [
+        {
+            "vref": "GEN 1:7",
+            "score": 0.91,
+            "source": "firmament",
+            "target": "anga",
+        },
+        {
+            "vref": "GEN 1:7",
+            "score": 0.62,
+            "source": "firmament",
+            "target": "uwazi",
+        },
+    ]
+    push = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
+        json=body,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert push.status_code == 200, push.text
+
+    read = client.get(
+        f"{prefix}/alignmentscores",
+        params={"assessment_id": push_assessment_id, "score_type": "threshold"},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert read.status_code == 200, read.text
+    payload = read.json()
+    assert payload["total_count"] >= len(body)
+    pushed = {(r["source"], r["target"]) for r in body}
+    returned = {(r["source"], r["target"]) for r in payload["results"]}
+    assert pushed.issubset(returned)
+    # Multi-target survival: the whole point of the threshold table (vs the
+    # deduped top-source table) is that two rows with the same (vref, source)
+    # but different targets must both persist. Assert it directly rather than
+    # relying on the subset check alone.
+    firmament_targets = {
+        r["target"]
+        for r in payload["results"]
+        if r["vref"] == "GEN 1:7" and r["source"] == "firmament"
+    }
+    assert {"anga", "uwazi"}.issubset(firmament_targets)
+    for row in payload["results"]:
+        assert row["hide"] is False
+        assert row["flag"] is False
+
+
+def test_push_alignment_threshold_scores_empty_body(
+    client, regular_token1, push_assessment_id
+):
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
+        json=[],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["ids"] == []
+
+
+def test_push_alignment_threshold_scores_unauthorized(
+    client, regular_token2, push_assessment_id
+):
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
+        json=[{"vref": "GEN 1:1", "score": 0.5}],
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+
+
+def test_push_alignment_threshold_scores_nonexistent(client, regular_token1):
+    response = client.post(
+        f"{prefix}/assessment/999999/alignment-threshold-scores",
+        json=[{"vref": "GEN 1:1", "score": 0.5}],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_push_alignment_threshold_scores_no_auth(client, push_assessment_id):
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
+        json=[{"vref": "GEN 1:1", "score": 0.5}],
+    )
+    assert response.status_code == 401
+
+
+def test_push_alignment_threshold_scores_invalid_vref(
+    client, regular_token1, push_assessment_id
+):
+    response = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
+        json=[{"vref": "NOTAVREF", "score": 0.5}],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
 # POST /assessment/{id}/text-lengths
 # ---------------------------------------------------------------------------
 
@@ -385,6 +516,78 @@ def test_delete_alignment_scores_nonexistent(client, regular_token1):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# DELETE /assessment/{id}/alignment-threshold-scores
+# ---------------------------------------------------------------------------
+
+
+def test_delete_alignment_threshold_scores(client, regular_token1, push_assessment_id):
+    insert_resp = client.post(
+        f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
+        json=[
+            {
+                "vref": "GEN 1:8",
+                "score": 0.9,
+                "source": "heaven",
+                "target": "mbingu",
+            },
+            {
+                "vref": "GEN 1:8",
+                "score": 0.7,
+                "source": "heaven",
+                "target": "anga",
+            },
+        ],
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert insert_resp.status_code == 200
+    ids = insert_resp.json()["ids"]
+
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
+        json={"ids": ids},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 2
+
+
+def test_delete_alignment_threshold_scores_nonexistent(client, regular_token1):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/999999/alignment-threshold-scores",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_delete_alignment_threshold_scores_unauthorized(
+    client, regular_token2, push_assessment_id
+):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
+        json={"ids": [1]},
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+
+
+def test_delete_alignment_threshold_scores_empty_ids(
+    client, regular_token1, push_assessment_id
+):
+    response = client.request(
+        "DELETE",
+        f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
+        json={"ids": []},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 0
 
 
 # ---------------------------------------------------------------------------
