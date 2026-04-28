@@ -476,6 +476,149 @@ def test_words_endpoint_cross_book_boundary(client, regular_token1, db_session):
     assert len(words) > 0, "Should have words from both books"
 
 
+def test_words_endpoint_no_range_full_revision(client, regular_token1, db_session):
+    """When first_verse/last_verse are omitted, /words scopes to the full revision."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    full_response = client.get(
+        f"/{prefix}/words",
+        params={"revision_id": revision_id},
+        headers=headers,
+    )
+    assert full_response.status_code == 200
+    full_words = full_response.json()
+    assert isinstance(full_words, list)
+    assert all(isinstance(w, str) for w in full_words)
+    assert len(full_words) == len(set(full_words))
+    assert full_words == sorted(full_words)
+    # Full revision should have many more unique words than a single chapter
+    assert len(full_words) > 5000
+
+    # And it should be a superset of any sub-range
+    range_response = client.get(
+        f"/{prefix}/words",
+        params={
+            "revision_id": revision_id,
+            "first_verse": "GEN 1:1",
+            "last_verse": "GEN 1:5",
+        },
+        headers=headers,
+    )
+    assert range_response.status_code == 200
+    range_words = set(range_response.json())
+    assert range_words.issubset(set(full_words))
+
+
+def test_words_endpoint_top_n_caps_results(client, regular_token1, db_session):
+    """top_n caps the response to N words and selects them by frequency."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/words",
+        params={"revision_id": revision_id, "top_n": 10},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    words = response.json()
+    assert isinstance(words, list)
+    assert len(words) == 10
+    assert words == sorted(words)
+    # KJV's most frequent word is "the" — must be in top 10 of the full revision.
+    assert "the" in words
+
+
+def test_words_endpoint_include_counts(client, regular_token1, db_session):
+    """include_counts=true returns [{word, count}] sorted by count desc."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/words",
+        params={
+            "revision_id": revision_id,
+            "first_verse": "GEN 1:1",
+            "last_verse": "GEN 1:5",
+            "include_counts": "true",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    items = response.json()
+    assert isinstance(items, list)
+    assert all(set(item.keys()) == {"word", "count"} for item in items)
+    counts = [item["count"] for item in items]
+    assert counts == sorted(counts, reverse=True)
+    assert all(c >= 1 for c in counts)
+    # "the" appears multiple times across GEN 1:1-5 in KJV.
+    the_entry = next((it for it in items if it["word"] == "the"), None)
+    assert the_entry is not None
+    assert the_entry["count"] >= 5
+
+
+def test_words_endpoint_top_n_with_include_counts(client, regular_token1, db_session):
+    """top_n + include_counts returns N entries sorted by count desc."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/words",
+        params={
+            "revision_id": revision_id,
+            "top_n": 5,
+            "include_counts": "true",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    items = response.json()
+    assert len(items) == 5
+    counts = [item["count"] for item in items]
+    assert counts == sorted(counts, reverse=True)
+    # "the" should be #1 in a full English KJV revision
+    assert items[0]["word"] == "the"
+
+
+def test_words_endpoint_partial_range_rejected(client, regular_token1, db_session):
+    """Supplying only one of first_verse / last_verse should 400."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/words",
+        params={"revision_id": revision_id, "first_verse": "GEN 1:1"},
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "together" in response.json()["detail"].lower()
+
+
+def test_words_endpoint_top_n_invalid(client, regular_token1, db_session):
+    """top_n must be >= 1."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/words",
+        params={"revision_id": revision_id, "top_n": 0},
+        headers=headers,
+    )
+    assert response.status_code == 422
+
+
 def test_text_endpoint_basic(client, regular_token1, db_session):
     """Test /text endpoint returns verses with correct fields and ids."""
     version_id = create_bible_version(client, regular_token1, db_session)

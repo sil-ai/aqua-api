@@ -3,12 +3,14 @@ __version__ = "v3"
 import pathlib
 import random as random_module
 import unicodedata
+from collections import Counter
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,6 +56,41 @@ def _sample_items(
         return items[:limit]
     indices = sorted(random_module.Random(seed).sample(range(len(items)), limit))
     return [items[i] for i in indices]
+
+
+def _tokenize_words(text: str) -> List[str]:
+    """Lowercase token stream (with duplicates) for `text`, using the same
+    Unicode-aware splitting categories as `extract_unique_words`."""
+    words: List[str] = []
+    buf: List[str] = []
+    for ch in text:
+        cat = unicodedata.category(ch)
+        if (
+            cat.startswith("L")
+            or cat.startswith("N")
+            or cat.startswith("M")
+            or cat == "Pc"
+            or ch in "''ʼ''"
+            or ch == "‌"
+            or ch == "‍"
+        ):
+            buf.append(ch)
+        else:
+            if buf:
+                word = "".join(buf).strip()
+                if word:
+                    words.append(word.lower())
+                buf = []
+    if buf:
+        word = "".join(buf).strip()
+        if word:
+            words.append(word.lower())
+    return words
+
+
+class WordCount(BaseModel):
+    word: str
+    count: int
 
 
 def extract_unique_words(text: str) -> List[str]:
@@ -546,30 +583,43 @@ async def get_vrefs(
     return verses
 
 
-@router.get("/words", response_model=List[str])
+@router.get("/words", response_model=Union[List[str], List[WordCount]])
 async def get_words(
     revision_id: int,
-    first_verse: str,
-    last_verse: str,
+    first_verse: Optional[str] = None,
+    last_verse: Optional[str] = None,
+    top_n: Optional[int] = Query(None, ge=1),
+    include_counts: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Gets a list of unique words from verses in a given range for a revision.
+    Gets unique words from a revision, optionally restricted to a verse range
+    and/or capped to the most frequent N.
 
     Input:
     - revision_id: int
     Description: The unique identifier for the revision.
-    - first_verse: str
-    Description: The first verse reference in the range. Must be in the format "GEN 1:1".
-    - last_verse: str
-    Description: The last verse reference in the range. Must be in the format "GEN 1:1".
+    - first_verse, last_verse: Optional[str]
+    Description: Verse range bounds (e.g. "GEN 1:1"). Either both or neither
+    must be supplied. When omitted, all verses in the revision are scanned.
+    - top_n: Optional[int]
+    Description: If set, return only the N most frequent words.
+    - include_counts: bool (default false)
+    Description: When true, return List[{word, count}] sorted by count desc
+    (ties broken alphabetically). When false (default), return List[str]
+    sorted alphabetically.
 
     Returns:
-    - List[str]
-    Description: A list of unique words found across all verses in the range.
-    Uses sophisticated Unicode-aware word splitting for international scripts.
+    - List[str] or List[WordCount]
+    Description: Words extracted with sophisticated Unicode-aware splitting.
     """
+
+    if (first_verse is None) != (last_verse is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="first_verse and last_verse must be supplied together.",
+        )
 
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
@@ -577,6 +627,36 @@ async def get_words(
             detail="User not authorized to access this revision.",
         )
 
+    if first_verse is None:
+        verses_in_range = await _fetch_revision_verses(db, revision_id)
+    else:
+        verses_in_range = await _fetch_verses_in_range(
+            db, revision_id, first_verse, last_verse
+        )
+
+    counts: Counter = Counter()
+    for verse in verses_in_range:
+        if verse.text:
+            counts.update(_tokenize_words(verse.text))
+
+    ranked = sorted(counts.items(), key=lambda wc: (-wc[1], wc[0]))
+    if top_n is not None:
+        ranked = ranked[:top_n]
+
+    if include_counts:
+        return [WordCount(word=w, count=c) for w, c in ranked]
+    return sorted(w for w, _ in ranked)
+
+
+async def _fetch_revision_verses(db: AsyncSession, revision_id: int):
+    stmt = select(VerseModel).where(VerseModel.revision_id == revision_id)
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def _fetch_verses_in_range(
+    db: AsyncSession, revision_id: int, first_verse: str, last_verse: str
+):
     # First, get the ordering information for the first and last verses
     first_verse_query = (
         select(
@@ -708,27 +788,8 @@ async def get_words(
         )
     )
 
-    # Execute query to get only verses in the range
     result = await db.execute(stmt)
-    verses_in_range = result.scalars().all()
-
-    # Extract unique words using sophisticated Unicode-aware splitting
-    all_words = []
-    for verse in verses_in_range:
-        if verse.text:
-            words = extract_unique_words(verse.text)
-            all_words.extend(words)
-
-    # Deduplicate across all verses while preserving order
-    seen = set()
-    unique_words = []
-    for word in all_words:
-        if word not in seen:
-            seen.add(word)
-            unique_words.append(word)
-
-    # Return sorted list for consistent output
-    return sorted(unique_words)
+    return result.scalars().all()
 
 
 def format_verse_range(first_vref: str, last_vref: str) -> str:
