@@ -1515,3 +1515,48 @@ def test_use_eflomal_dedup_separate_from_regular(
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
         assert regular_dup.status_code == 409
+
+
+def test_kwargs_returned_in_assessment_response(
+    client, regular_token1, db_session, test_db_session
+):
+    """AssessmentOut includes kwargs so callers can tell eflomal from regular word-alignment."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        # Eflomal assessment — kwargs should contain use_eflomal: true
+        eflomal_resp = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+                "use_eflomal": True,
+                "source_language": "eng",
+                "target_language": "swh",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert eflomal_resp.status_code == 200
+        eflomal_data = eflomal_resp.json()[0]
+        assert eflomal_data["kwargs"] == {"use_eflomal": True}
+
+        # Regular word-alignment — kwargs should be None
+        regular_resp = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert regular_resp.status_code == 200
+        regular_data = regular_resp.json()[0]
+        assert regular_data["kwargs"] is None

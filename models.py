@@ -329,6 +329,7 @@ class AssessmentOut(BaseModel):
     status_detail: Optional[str] = None
     percent_complete: Optional[float] = None
     is_training: bool = False
+    kwargs: Optional[Dict[str, Any]] = None
 
     model_config = {
         "json_schema_extra": {
@@ -342,6 +343,7 @@ class AssessmentOut(BaseModel):
                 "start_time": "2024-06-01T12:00:00",
                 "end_time": "2024-06-01T12:00:00",
                 "owner_id": 1,
+                "kwargs": None,
             }
         },
         "from_attributes": True,
