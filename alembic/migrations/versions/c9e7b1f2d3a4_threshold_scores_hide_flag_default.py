@@ -19,9 +19,12 @@ Also creates ``ix_alignment_threshold_scores_assessment_id``: the read
 endpoint (``GET /alignmentscores?score_type=threshold``) filters by
 ``assessment_id``, and unlike the top-source sibling this column had no
 index. Built with ``CREATE INDEX CONCURRENTLY`` to avoid taking a write
-lock on a populated table; ``IF NOT EXISTS`` keeps the migration
-re-runnable if a CONCURRENTLY build is interrupted (which leaves an
-INVALID index behind).
+lock on a populated table. Pattern matches
+``7f2e9a4b8c31_add_pg_trgm_index_on_verse_text.py``: ``IF NOT EXISTS``
+alone is not enough to recover from an interrupted CONCURRENTLY build,
+because Postgres leaves the index in an ``INVALID`` state and
+``IF NOT EXISTS`` would then skip the rebuild. Detect and drop any
+invalid index from Python first, then create.
 """
 
 from typing import Sequence, Union
@@ -47,7 +50,16 @@ def upgrade() -> None:
         op.execute(
             sa.text(f"ALTER TABLE {_TABLE} ALTER COLUMN {column} SET DEFAULT false")
         )
+    bind = op.get_bind()
     with op.get_context().autocommit_block():
+        is_invalid = bind.exec_driver_sql(
+            "SELECT 1 FROM pg_class c "
+            "JOIN pg_index i ON i.indexrelid = c.oid "
+            f"WHERE c.relname = '{_INDEX}' "
+            "  AND NOT i.indisvalid"
+        ).scalar()
+        if is_invalid:
+            op.execute(sa.text(f"DROP INDEX CONCURRENTLY {_INDEX}"))
         op.execute(
             sa.text(
                 f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {_INDEX} "
