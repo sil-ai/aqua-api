@@ -555,6 +555,7 @@ def test_words_endpoint_include_counts(client, regular_token1, db_session):
     assert isinstance(items, list)
     assert all(set(item.keys()) == {"word", "count"} for item in items)
     counts = [item["count"] for item in items]
+    assert all(isinstance(c, int) for c in counts)
     assert counts == sorted(counts, reverse=True)
     assert all(c >= 1 for c in counts)
     # "the" appears multiple times across GEN 1:1-5 in KJV.
@@ -602,6 +603,67 @@ def test_words_endpoint_partial_range_rejected(client, regular_token1, db_sessio
     )
     assert response.status_code == 400
     assert "together" in response.json()["detail"].lower()
+
+
+def test_words_endpoint_top_n_with_range(client, regular_token1, db_session):
+    """top_n composes correctly with first_verse / last_verse."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/words",
+        params={
+            "revision_id": revision_id,
+            "first_verse": "GEN 1:1",
+            "last_verse": "GEN 1:10",
+            "top_n": 3,
+            "include_counts": "true",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    items = response.json()
+    assert len(items) == 3
+    counts = [it["count"] for it in items]
+    assert counts == sorted(counts, reverse=True)
+    assert all(isinstance(it["count"], int) for it in items)
+    # "the" should be #1 in any 10-verse English KJV span starting at GEN 1:1
+    assert items[0]["word"] == "the"
+
+
+def test_words_endpoint_skips_range_markers(client, regular_token1, db_session):
+    """Verses stored as the literal "<range>" marker must not contribute "range" to results."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    # Replace one verse text with the <range> marker. GEN 1:1-1:5 in KJV does not
+    # naturally contain the word "range", so any leak comes from the marker.
+    verse = (
+        db_session.query(VerseTextModel)
+        .filter(
+            VerseTextModel.revision_id == revision_id,
+            VerseTextModel.verse_reference == "GEN 1:2",
+        )
+        .first()
+    )
+    verse.text = "<range>"
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    response = client.get(
+        f"/{prefix}/words",
+        params={
+            "revision_id": revision_id,
+            "first_verse": "GEN 1:1",
+            "last_verse": "GEN 1:5",
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert "range" not in response.json()
 
 
 def test_words_endpoint_top_n_invalid(client, regular_token1, db_session):

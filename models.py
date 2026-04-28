@@ -171,6 +171,11 @@ class RevisionOut_v3(BaseModel):
     }
 
 
+class WordCount(BaseModel):
+    word: str
+    count: int
+
+
 class VerseText(BaseModel):
     id: Optional[int] = None
     text: str

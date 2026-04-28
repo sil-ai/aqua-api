@@ -10,7 +10,6 @@ from typing import Any, Dict, List, Optional, Union
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
 from fastapi.responses import PlainTextResponse
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +19,7 @@ from database.models import ChapterReference as ChapterReferenceModel
 from database.models import UserDB as UserModel
 from database.models import VerseReference as VerseReferenceModel
 from database.models import VerseText as VerseModel
-from models import RevisionChapters, VerseText
+from models import RevisionChapters, VerseText, WordCount
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_revision
 from utils.verse_range_utils import merge_verse_ranges
@@ -86,11 +85,6 @@ def _tokenize_words(text: str) -> List[str]:
         if word:
             words.append(word.lower())
     return words
-
-
-class WordCount(BaseModel):
-    word: str
-    count: int
 
 
 def extract_unique_words(text: str) -> List[str]:
@@ -583,7 +577,7 @@ async def get_vrefs(
     return verses
 
 
-@router.get("/words", response_model=Union[List[str], List[WordCount]])
+@router.get("/words", response_model=Union[List[WordCount], List[str]])
 async def get_words(
     revision_id: int,
     first_verse: Optional[str] = None,
@@ -634,9 +628,9 @@ async def get_words(
             db, revision_id, first_verse, last_verse
         )
 
-    counts: Counter = Counter()
+    counts = Counter()
     for verse in verses_in_range:
-        if verse.text:
+        if verse.text and verse.text != "<range>":
             counts.update(_tokenize_words(verse.text))
 
     ranked = sorted(counts.items(), key=lambda wc: (-wc[1], wc[0]))
