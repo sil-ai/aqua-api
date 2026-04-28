@@ -494,9 +494,7 @@ def test_delete_alignment_scores_nonexistent(client, regular_token1):
 # ---------------------------------------------------------------------------
 
 
-def test_delete_alignment_threshold_scores(
-    client, regular_token1, push_assessment_id
-):
+def test_delete_alignment_threshold_scores(client, regular_token1, push_assessment_id):
     insert_resp = client.post(
         f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
         json=[
