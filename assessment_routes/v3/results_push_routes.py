@@ -297,9 +297,11 @@ async def push_alignment_threshold_scores(
 
     Returns the list of inserted row IDs in the same order as the input.
 
-    ``hide`` is hardcoded to ``False`` for the same reason as the top-source
-    endpoint (issue #596): without it the column lands ``NULL`` and 500s
-    ``GET /alignmentscores?score_type=threshold``.
+    ``hide`` is explicitly set to ``False`` for parity with the top-source
+    endpoint, so we don't depend on the column's ``server_default`` (added
+    after the fact by migration ``c9e7b1f2d3a4``) — that's the original
+    issue #596 hazard, where omitting ``hide`` landed ``NULL`` on a schema
+    that lacked the default and 500'd ``GET /alignmentscores``.
     """
     if not body:
         return InsertResponse(ids=[])
