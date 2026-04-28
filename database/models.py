@@ -28,14 +28,14 @@ class AlignmentThresholdScores(Base):
     __tablename__ = "alignment_threshold_scores"
 
     id = Column(Integer, primary_key=True)
-    assessment_id = Column(Integer, ForeignKey("assessment.id"))
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
     score = Column(Numeric)
-    flag = Column(Boolean)
+    flag = Column(Boolean, default=False, server_default="false")
     note = Column(Text)
     vref = Column(Text, ForeignKey("verse_reference.full_verse_id"))
     source = Column(Text)
     target = Column(Text)
-    hide = Column(Boolean)
+    hide = Column(Boolean, default=False, server_default="false")
     book = Column(Text)
     chapter = Column(Integer)
     verse = Column(Integer)
