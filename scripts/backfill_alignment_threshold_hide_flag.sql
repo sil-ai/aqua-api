@@ -15,8 +15,12 @@
 -- date for the bug on this table -- nothing in aqua-api writes here, so
 -- the producer is external and has likely always written NULL. We
 -- therefore do NOT date-bound the scan; we walk every word-alignment
--- assessment via the assessment_id index. If the table is large and
--- step 3a feels too big as one transaction, use step 3b.
+-- assessment. The accompanying migration adds
+-- ix_alignment_threshold_scores_assessment_id, which is what makes the
+-- per-assessment loop in step 3b cheap (index seek per assessment); if
+-- you are running this on a database that has not yet picked up that
+-- migration, prefer step 3a -- step 3b will seq-scan the threshold
+-- table once per assessment without the index.
 --
 -- Run each step separately in psql with autocommit (default).
 

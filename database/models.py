@@ -28,7 +28,7 @@ class AlignmentThresholdScores(Base):
     __tablename__ = "alignment_threshold_scores"
 
     id = Column(Integer, primary_key=True)
-    assessment_id = Column(Integer, ForeignKey("assessment.id"))
+    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
     score = Column(Numeric)
     flag = Column(Boolean, default=False, server_default="false")
     note = Column(Text)

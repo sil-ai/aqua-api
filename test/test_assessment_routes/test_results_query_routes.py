@@ -721,7 +721,7 @@ def setup_threshold_score_data(db_session, assessment_id):
         .first()
     )
     if existing:
-        return
+        return  # Data already set up
 
     threshold_rows = [
         {
@@ -756,9 +756,12 @@ def setup_threshold_score_data(db_session, assessment_id):
     db_session.commit()
 
 
-def test_alignmentscores_score_type(client, regular_token1, test_db_session):
+def test_alignmentscores_score_type(
+    client, regular_token1, regular_token2, test_db_session
+):
     """`/v3/alignmentscores` returns top-source rows by default and threshold rows
-    when score_type=threshold."""
+    when score_type=threshold; book/chapter/verse filters, pagination, and auth
+    apply uniformly to both tables."""
     first_assessment_id = setup_assessments_results(test_db_session)
     setup_alignment_data(test_db_session, first_assessment_id)
     setup_threshold_score_data(test_db_session, first_assessment_id)
@@ -775,7 +778,7 @@ def test_alignmentscores_score_type(client, regular_token1, test_db_session):
     )
     # Sanity check that the two tables have distinct row counts so we can tell
     # which one the route read from.
-    assert top_count != threshold_count
+    assert top_count > threshold_count
     assert threshold_count == 2
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
@@ -809,6 +812,61 @@ def test_alignmentscores_score_type(client, regular_token1, test_db_session):
     assert body["total_count"] == threshold_count
     sources = sorted(r["source"] for r in body["results"])
     assert sources == ["earth", "god"]
+
+    # score_type=threshold + book/chapter filter → both threshold rows are GEN 1
+    response = client.get(
+        "/v3/alignmentscores",
+        params={
+            "assessment_id": first_assessment_id,
+            "score_type": "threshold",
+            "book": "GEN",
+            "chapter": 1,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["total_count"] == 2
+
+    # score_type=threshold + book/chapter/verse filter → only the verse-1 row
+    response = client.get(
+        "/v3/alignmentscores",
+        params={
+            "assessment_id": first_assessment_id,
+            "score_type": "threshold",
+            "book": "GEN",
+            "chapter": 1,
+            "verse": 1,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == 1
+    assert body["results"][0]["source"] == "god"
+
+    # score_type=threshold + pagination → page_size=1 returns 1 row, total still 2
+    response = client.get(
+        "/v3/alignmentscores",
+        params={
+            "assessment_id": first_assessment_id,
+            "score_type": "threshold",
+            "page": 1,
+            "page_size": 1,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["total_count"] == threshold_count
+    assert len(body["results"]) == 1
+
+    # score_type=threshold + unauthorized user → 403 (same as default path)
+    response = client.get(
+        "/v3/alignmentscores",
+        params={"assessment_id": first_assessment_id, "score_type": "threshold"},
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
 
     # Invalid score_type → 422
     response = client.get(
