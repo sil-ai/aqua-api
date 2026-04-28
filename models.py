@@ -173,7 +173,7 @@ class RevisionOut_v3(BaseModel):
 
 class WordCount(BaseModel):
     word: str
-    count: int
+    count: int = Field(ge=1)
 
 
 class VerseText(BaseModel):

@@ -37,6 +37,12 @@ class IncludeVerses(str, Enum):
 _VREF_PATH = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "vref.txt"
 _VREF_LIST = _VREF_PATH.read_text(encoding="utf-8").splitlines()
 
+# Characters treated as part of a word during tokenization.
+_WORD_APOSTROPHES = frozenset(
+    "''ʼ''"
+)  # ASCII apostrophe + U+02BC modifier letter apostrophe
+_ZERO_WIDTH_JOINERS = frozenset(["‌", "‍"])  # ZWNJ + ZWJ for complex scripts
+
 
 def _is_range_marker(x):
     return x == "<range>"
@@ -58,8 +64,9 @@ def _sample_items(
 
 
 def _tokenize_words(text: str) -> List[str]:
-    """Lowercase token stream (with duplicates) for `text`, using the same
-    Unicode-aware splitting categories as `extract_unique_words`."""
+    """Lowercase token stream (with duplicates) for `text`, using
+    Unicode-aware splitting that handles letters/numbers/marks across scripts,
+    connector punctuation, apostrophes, and ZWNJ/ZWJ."""
     words: List[str] = []
     buf: List[str] = []
     for ch in text:
@@ -69,9 +76,8 @@ def _tokenize_words(text: str) -> List[str]:
             or cat.startswith("N")
             or cat.startswith("M")
             or cat == "Pc"
-            or ch in "''ʼ''"
-            or ch == "‌"
-            or ch == "‍"
+            or ch in _WORD_APOSTROPHES
+            or ch in _ZERO_WIDTH_JOINERS
         ):
             buf.append(ch)
         else:
@@ -111,53 +117,12 @@ def extract_unique_words(text: str) -> List[str]:
     List[str]
         List of unique words (lowercase) in order of first appearance
     """
-    words: List[str] = []
-    buf: List[str] = []
-
-    for ch in text:
-        cat = unicodedata.category(ch)
-
-        # Include all characters that can be part of words across different scripts:
-        # - Letters: Lu, Ll, Lt, Lm, Lo (all letter categories)
-        # - Numbers: Nd, Nl, No (can be part of words in some contexts)
-        # - Marks: Mn, Mc, Me (combining marks - essential for many scripts)
-        # - Connectors: Pc (underscore and similar)
-        # - Format characters that are part of words: Cf (but only specific ones)
-        # - Apostrophes and similar punctuation used in contractions
-        if (
-            cat.startswith("L")
-            or cat.startswith("N")  # All letters
-            or cat.startswith("M")  # All numbers (contextual)
-            or cat == "Pc"  # All marks (combining, spacing, enclosing)
-            or ch in "''ʼ''"  # Connector punctuation (underscore, etc.)
-            or ch == "\u200c"  # Apostrophes (various Unicode forms)
-            or ch  # Zero Width Non-Joiner (ZWNJ) - important for many scripts
-            == "\u200d"
-        ):  # Zero Width Joiner (ZWJ) - important for many scripts
-            buf.append(ch)
-        else:
-            # End of word - save if we have content
-            if buf:
-                word = "".join(buf).strip()
-                if word:  # Only add non-empty words
-                    words.append(word)
-                buf = []
-
-    # Don't forget the last word if text doesn't end with a separator
-    if buf:
-        word = "".join(buf).strip()
-        if word:
-            words.append(word)
-
-    # Normalize and deduplicate (preserve order for consistency)
-    out = []
+    out: List[str] = []
     seen = set()
-    for w in words:
-        wl = w.lower()
-        if wl and wl not in seen:
-            seen.add(wl)
-            out.append(wl)
-
+    for w in _tokenize_words(text):
+        if w not in seen:
+            seen.add(w)
+            out.append(w)
     return out
 
 
@@ -630,7 +595,7 @@ async def get_words(
 
     counts = Counter()
     for verse in verses_in_range:
-        if verse.text and verse.text != "<range>":
+        if verse.text and not _is_range_marker(verse.text):
             counts.update(_tokenize_words(verse.text))
 
     ranked = sorted(counts.items(), key=lambda wc: (-wc[1], wc[0]))

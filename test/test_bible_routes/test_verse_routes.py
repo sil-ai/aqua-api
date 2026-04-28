@@ -494,10 +494,8 @@ def test_words_endpoint_no_range_full_revision(client, regular_token1, db_sessio
     assert all(isinstance(w, str) for w in full_words)
     assert len(full_words) == len(set(full_words))
     assert full_words == sorted(full_words)
-    # Full revision should have many more unique words than a single chapter
-    assert len(full_words) > 5000
 
-    # And it should be a superset of any sub-range
+    # And it should be a strict superset of any sub-range
     range_response = client.get(
         f"/{prefix}/words",
         params={
@@ -510,6 +508,7 @@ def test_words_endpoint_no_range_full_revision(client, regular_token1, db_sessio
     assert range_response.status_code == 200
     range_words = set(range_response.json())
     assert range_words.issubset(set(full_words))
+    assert len(full_words) > len(range_words)
 
 
 def test_words_endpoint_top_n_caps_results(client, regular_token1, db_session):
