@@ -358,7 +358,9 @@ async def push_eflomal_dictionary(
     ]
     try:
         await db.execute(
-            delete(EflomalDictionary).where(EflomalDictionary.assessment_id == eflomal.id)
+            delete(EflomalDictionary).where(
+                EflomalDictionary.assessment_id == eflomal.id
+            )
         )
         ids = await _batch_insert(db, EflomalDictionary, rows)
         await db.commit()
@@ -434,7 +436,9 @@ async def push_eflomal_cooccurrences(
     ]
     try:
         await db.execute(
-            delete(EflomalCooccurrence).where(EflomalCooccurrence.assessment_id == eflomal.id)
+            delete(EflomalCooccurrence).where(
+                EflomalCooccurrence.assessment_id == eflomal.id
+            )
         )
         ids = await _batch_insert(db, EflomalCooccurrence, rows)
         await db.commit()
@@ -508,7 +512,9 @@ async def push_eflomal_target_word_counts(
     ]
     try:
         await db.execute(
-            delete(EflomalTargetWordCount).where(EflomalTargetWordCount.assessment_id == eflomal.id)
+            delete(EflomalTargetWordCount).where(
+                EflomalTargetWordCount.assessment_id == eflomal.id
+            )
         )
         ids = await _batch_insert(db, EflomalTargetWordCount, rows)
         await db.commit()
