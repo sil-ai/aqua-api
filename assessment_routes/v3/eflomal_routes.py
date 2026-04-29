@@ -329,10 +329,11 @@ async def push_eflomal_dictionary(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert dictionary entries for an eflomal assessment.
+    """Replace all dictionary entries for an eflomal assessment.
 
-    Maximum of 5,000 items per request. For larger datasets, split into
-    multiple requests of 5,000 items or fewer.
+    Sends the complete dictionary in a single request (max 5,000 items).
+    Existing rows for this assessment are deleted before inserting, so
+    retrying the full payload after a failure is safe.
 
     Returns the list of inserted row IDs in the same order as the input.
     """
@@ -407,10 +408,11 @@ async def push_eflomal_cooccurrences(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert cooccurrence entries for an eflomal assessment.
+    """Replace all cooccurrence entries for an eflomal assessment.
 
-    Maximum of 5,000 items per request. For larger datasets, split into
-    multiple requests of 5,000 items or fewer.
+    Sends the complete cooccurrence table in a single request (max 5,000
+    items). Existing rows for this assessment are deleted before inserting,
+    so retrying the full payload after a failure is safe.
 
     Returns the list of inserted row IDs in the same order as the input.
     """
@@ -485,10 +487,11 @@ async def push_eflomal_target_word_counts(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert target word count entries for an eflomal assessment.
+    """Replace all target word count entries for an eflomal assessment.
 
-    Maximum of 5,000 items per request. For larger datasets, split into
-    multiple requests of 5,000 items or fewer.
+    Sends the complete target word count table in a single request (max
+    5,000 items). Existing rows for this assessment are deleted before
+    inserting, so retrying the full payload after a failure is safe.
 
     Returns the list of inserted row IDs in the same order as the input.
     """
@@ -561,13 +564,11 @@ async def push_eflomal_priors(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert LEX-format priors for an eflomal assessment.
+    """Replace all LEX-format priors for an eflomal assessment.
 
-    Maximum of 5,000 items per request. For larger datasets, split into
-    multiple requests of 5,000 items or fewer.
-
-    Idempotent: existing priors for this assessment are deleted before
-    inserting, so retries are safe.
+    Sends the complete priors table in a single request (max 5,000 items).
+    Existing rows for this assessment are deleted before inserting, so
+    retrying the full payload after a failure is safe.
 
     Returns the list of inserted row IDs in the same order as the input.
     """

@@ -269,16 +269,18 @@ def test_push_eflomal_dictionary(
 def test_push_eflomal_dictionary_idempotent(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
-    """Second push replaces existing dictionary rows (delete-then-insert)."""
+    """Retrying the same dictionary payload succeeds without a 400."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
     url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-dictionary"
+    batch = _dictionary_items(7)
 
-    first = client.post(url, json=_dictionary_items(3), headers=headers)
+    first = client.post(url, json=batch, headers=headers)
     assert first.status_code == 200
+    assert len(first.json()["ids"]) == 7
 
-    second = client.post(url, json=_dictionary_items(7), headers=headers)
-    assert second.status_code == 200
-    assert len(second.json()["ids"]) == 7
+    retry = client.post(url, json=batch, headers=headers)
+    assert retry.status_code == 200
+    assert len(retry.json()["ids"]) == 7
 
 
 def test_push_eflomal_dictionary_body_too_large(
@@ -316,16 +318,18 @@ def test_push_eflomal_cooccurrences(
 def test_push_eflomal_cooccurrences_idempotent(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
-    """Second push replaces existing cooccurrence rows (delete-then-insert)."""
+    """Retrying the same cooccurrence payload succeeds without a 400."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
     url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-cooccurrences"
+    batch = _cooccurrence_items(6)
 
-    first = client.post(url, json=_cooccurrence_items(4), headers=headers)
+    first = client.post(url, json=batch, headers=headers)
     assert first.status_code == 200
+    assert len(first.json()["ids"]) == 6
 
-    second = client.post(url, json=_cooccurrence_items(6), headers=headers)
-    assert second.status_code == 200
-    assert len(second.json()["ids"]) == 6
+    retry = client.post(url, json=batch, headers=headers)
+    assert retry.status_code == 200
+    assert len(retry.json()["ids"]) == 6
 
 
 def test_push_eflomal_target_word_counts(
@@ -345,16 +349,18 @@ def test_push_eflomal_target_word_counts(
 def test_push_eflomal_target_word_counts_idempotent(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
-    """Second push replaces existing target word count rows (delete-then-insert)."""
+    """Retrying the same target word count payload succeeds without a 400."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
     url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-target-word-counts"
+    batch = _target_word_count_items(4)
 
-    first = client.post(url, json=_target_word_count_items(4), headers=headers)
+    first = client.post(url, json=batch, headers=headers)
     assert first.status_code == 200
+    assert len(first.json()["ids"]) == 4
 
-    second = client.post(url, json=_target_word_count_items(2), headers=headers)
-    assert second.status_code == 200
-    assert len(second.json()["ids"]) == 2
+    retry = client.post(url, json=batch, headers=headers)
+    assert retry.status_code == 200
+    assert len(retry.json()["ids"]) == 4
 
 
 def test_push_eflomal_data_no_metadata(
@@ -709,17 +715,18 @@ def test_push_eflomal_priors_unauthorized(
 def test_push_eflomal_priors_idempotent(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
-    """Second push replaces existing priors (delete-then-insert)."""
+    """Retrying the same priors payload succeeds without a 400."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
     url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors"
+    batch = _prior_items(3)
 
-    payload = [{"source_bpe": "▁retry_src", "target_bpe": "▁retry_tgt", "alpha": 0.7}]
-    first = client.post(url, json=payload, headers=headers)
+    first = client.post(url, json=batch, headers=headers)
     assert first.status_code == 200
+    assert len(first.json()["ids"]) == 3
 
-    second = client.post(url, json=payload, headers=headers)
-    assert second.status_code == 200
-    assert len(second.json()["ids"]) == 1
+    retry = client.post(url, json=batch, headers=headers)
+    assert retry.status_code == 200
+    assert len(retry.json()["ids"]) == 3
 
 
 def test_push_eflomal_priors_alpha_out_of_range(
