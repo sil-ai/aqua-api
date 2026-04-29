@@ -266,6 +266,21 @@ def test_push_eflomal_dictionary(
     assert len(response.json()["ids"]) == 5
 
 
+def test_push_eflomal_dictionary_idempotent(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Second push replaces existing dictionary rows (delete-then-insert)."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-dictionary"
+
+    first = client.post(url, json=_dictionary_items(3), headers=headers)
+    assert first.status_code == 200
+
+    second = client.post(url, json=_dictionary_items(7), headers=headers)
+    assert second.status_code == 200
+    assert len(second.json()["ids"]) == 7
+
+
 def test_push_eflomal_dictionary_body_too_large(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
@@ -298,6 +313,21 @@ def test_push_eflomal_cooccurrences(
     assert len(response.json()["ids"]) == 8
 
 
+def test_push_eflomal_cooccurrences_idempotent(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Second push replaces existing cooccurrence rows (delete-then-insert)."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-cooccurrences"
+
+    first = client.post(url, json=_cooccurrence_items(4), headers=headers)
+    assert first.status_code == 200
+
+    second = client.post(url, json=_cooccurrence_items(6), headers=headers)
+    assert second.status_code == 200
+    assert len(second.json()["ids"]) == 6
+
+
 def test_push_eflomal_target_word_counts(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
@@ -310,6 +340,21 @@ def test_push_eflomal_target_word_counts(
     )
     assert response.status_code == 200
     assert len(response.json()["ids"]) == 3
+
+
+def test_push_eflomal_target_word_counts_idempotent(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Second push replaces existing target word count rows (delete-then-insert)."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-target-word-counts"
+
+    first = client.post(url, json=_target_word_count_items(4), headers=headers)
+    assert first.status_code == 200
+
+    second = client.post(url, json=_target_word_count_items(2), headers=headers)
+    assert second.status_code == 200
+    assert len(second.json()["ids"]) == 2
 
 
 def test_push_eflomal_data_no_metadata(
@@ -661,6 +706,22 @@ def test_push_eflomal_priors_unauthorized(
     assert response.status_code == 403
 
 
+def test_push_eflomal_priors_idempotent(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Second push replaces existing priors (delete-then-insert)."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors"
+
+    payload = [{"source_bpe": "▁retry_src", "target_bpe": "▁retry_tgt", "alpha": 0.7}]
+    first = client.post(url, json=payload, headers=headers)
+    assert first.status_code == 200
+
+    second = client.post(url, json=payload, headers=headers)
+    assert second.status_code == 200
+    assert len(second.json()["ids"]) == 1
+
+
 def test_push_eflomal_priors_alpha_out_of_range(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
@@ -780,12 +841,11 @@ def test_push_eflomal_bpe_models_too_large(
     assert "source" in response.json()["detail"]
 
 
-def test_push_eflomal_priors_duplicate_rejected(
+def test_push_eflomal_priors_retry_succeeds(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
-    """Re-pushing a prior that already exists should fail the unique constraint."""
+    """Re-pushing the same priors clears existing rows and re-inserts (200, not 400)."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
-    # Use a fixed, unique payload that won't collide with other tests' priors
     payload = [{"source_bpe": "▁dupe_probe", "target_bpe": "▁dupe_probe", "alpha": 0.7}]
     first = client.post(
         f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors",
@@ -799,8 +859,8 @@ def test_push_eflomal_priors_duplicate_rejected(
         json=payload,
         headers=headers,
     )
-    assert second.status_code == 400
-    assert "Duplicate" in second.json()["detail"]
+    assert second.status_code == 200
+    assert len(second.json()["ids"]) == 1
 
 
 # ---------------------------------------------------------------------------

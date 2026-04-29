@@ -357,6 +357,9 @@ async def push_eflomal_dictionary(
         for item in body
     ]
     try:
+        await db.execute(
+            delete(EflomalDictionary).where(EflomalDictionary.assessment_id == eflomal.id)
+        )
         ids = await _batch_insert(db, EflomalDictionary, rows)
         await db.commit()
         return InsertResponse(ids=ids)
@@ -430,6 +433,9 @@ async def push_eflomal_cooccurrences(
         for item in body
     ]
     try:
+        await db.execute(
+            delete(EflomalCooccurrence).where(EflomalCooccurrence.assessment_id == eflomal.id)
+        )
         ids = await _batch_insert(db, EflomalCooccurrence, rows)
         await db.commit()
         return InsertResponse(ids=ids)
@@ -501,6 +507,9 @@ async def push_eflomal_target_word_counts(
         for item in body
     ]
     try:
+        await db.execute(
+            delete(EflomalTargetWordCount).where(EflomalTargetWordCount.assessment_id == eflomal.id)
+        )
         ids = await _batch_insert(db, EflomalTargetWordCount, rows)
         await db.commit()
         return InsertResponse(ids=ids)
@@ -551,10 +560,8 @@ async def push_eflomal_priors(
     Maximum of 5,000 items per request. For larger datasets, split into
     multiple requests of 5,000 items or fewer.
 
-    Not idempotent: enforced by a unique index on (assessment_id, source_bpe,
-    target_bpe). Re-pushing a batch that overlaps previously-inserted rows
-    fails with 400. Callers should push each prior exactly once per
-    assessment.
+    Idempotent: existing priors for this assessment are deleted before
+    inserting, so retries are safe.
 
     Returns the list of inserted row IDs in the same order as the input.
     """
@@ -578,6 +585,9 @@ async def push_eflomal_priors(
         for item in body
     ]
     try:
+        await db.execute(
+            delete(EflomalPrior).where(EflomalPrior.assessment_id == eflomal.id)
+        )
         ids = await _batch_insert(db, EflomalPrior, rows)
         await db.commit()
         return InsertResponse(ids=ids)
