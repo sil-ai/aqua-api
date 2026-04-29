@@ -274,58 +274,39 @@ def test_predict_forwards_payload_to_modal(client, regular_token1):
     assert payload["target_language"] == "swh"
 
 
-def test_predict_forwards_include_critique_to_modal(client, regular_token1):
-    """`include_critique` is forwarded to Modal so the agent runs the critique pass."""
+@pytest.mark.parametrize(
+    "extra,expected",
+    [
+        ({"include_critique": True}, True),
+        ({"include_critique": False}, False),
+        ({}, False),
+    ],
+    ids=["explicit_true", "explicit_false", "omitted_defaults_false"],
+)
+def test_predict_forwards_include_critique_to_modal(
+    client, regular_token1, extra, expected
+):
+    """`include_critique` survives `model_dump(exclude={"apps"})` and reaches Modal —
+    regression guard for the bug where the missing field was silently stripped."""
     captured = {}
 
-    def from_name(app_name, fn_name, environment_name=None):
-        mock_fn = AsyncMock()
+    async def capture(payload):
+        captured["payload"] = payload
+        return {"ok": True}
 
-        async def capture(payload):
-            captured["payload"] = payload
-            return {"ok": True}
-
-        mock_fn.remote.aio = AsyncMock(side_effect=capture)
-        return mock_fn
-
-    mock_cls = AsyncMock()
-    mock_cls.from_name = from_name
-    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock({"ngrams": capture}),
+    ):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["ngrams"], include_critique=True),
+            json=_body(apps=["ngrams"], **extra),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
     assert response.status_code == 200, response.text
-    assert captured["payload"]["include_critique"] is True
-
-
-def test_predict_include_critique_defaults_false(client, regular_token1):
-    """When omitted, `include_critique` is forwarded as False."""
-    captured = {}
-
-    def from_name(app_name, fn_name, environment_name=None):
-        mock_fn = AsyncMock()
-
-        async def capture(payload):
-            captured["payload"] = payload
-            return {"ok": True}
-
-        mock_fn.remote.aio = AsyncMock(side_effect=capture)
-        return mock_fn
-
-    mock_cls = AsyncMock()
-    mock_cls.from_name = from_name
-    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
-        response = client.post(
-            f"/{prefix}/predict",
-            json=_body(apps=["ngrams"]),
-            headers={"Authorization": f"Bearer {regular_token1}"},
-        )
-
-    assert response.status_code == 200, response.text
-    assert captured["payload"]["include_critique"] is False
+    assert "include_critique" in captured["payload"]
+    assert captured["payload"]["include_critique"] is expected
 
 
 def test_predict_duplicate_apps_deduplicated(client, regular_token1):

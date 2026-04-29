@@ -414,6 +414,7 @@ class PredictInput(BaseModel):
                 "source_language": "eng",
                 "target_language": "swh",
                 "apps": ["ngrams", "tfidf"],
+                "include_critique": False,
             }
         }
     }
