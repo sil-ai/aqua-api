@@ -729,6 +729,49 @@ def test_push_eflomal_priors_idempotent(
     assert len(retry.json()["ids"]) == 3
 
 
+def test_push_eflomal_priors_two_chunks_preserved(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Two POSTs with disjoint items (a chunked upload) must keep both chunks.
+
+    The eflomal worker chunks payloads larger than ~4500 items into multiple
+    POSTs to the same endpoint. Each chunk carries different items. After all
+    chunks are sent, every item from every chunk must be persisted — a chunk
+    must not delete data from an earlier chunk of the same upload.
+    """
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors"
+
+    chunk_a = [
+        {"source_bpe": f"▁chunk_a_{i}", "target_bpe": f"▁chunk_a_{i}", "alpha": 0.6}
+        for i in range(3)
+    ]
+    chunk_b = [
+        {"source_bpe": f"▁chunk_b_{i}", "target_bpe": f"▁chunk_b_{i}", "alpha": 0.6}
+        for i in range(3)
+    ]
+
+    first = client.post(url, json=chunk_a, headers=headers)
+    assert first.status_code == 200
+    second = client.post(url, json=chunk_b, headers=headers)
+    assert second.status_code == 200
+
+    pulled = client.get(
+        f"{prefix}/assessment/eflomal/results",
+        params={"assessment_id": test_eflomal_assessment_id},
+        headers=headers,
+    )
+    assert pulled.status_code == 200
+    persisted = {p["source_bpe"] for p in pulled.json()["priors"]}
+
+    expected = {item["source_bpe"] for item in chunk_a + chunk_b}
+    missing = expected - persisted
+    assert not missing, (
+        f"Chunk-a items were deleted by the chunk-b POST — "
+        f"{len(missing)} items lost: {sorted(missing)}"
+    )
+
+
 def test_push_eflomal_priors_alpha_out_of_range(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
