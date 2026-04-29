@@ -397,6 +397,7 @@ class PredictInput(BaseModel):
     target_language: Optional[str] = Field(default=None, max_length=10)
     limit: Optional[int] = Field(default=None, ge=1, le=10000)
     apps: Optional[List[str]] = None
+    include_critique: bool = False
 
     model_config = {
         "json_schema_extra": {
