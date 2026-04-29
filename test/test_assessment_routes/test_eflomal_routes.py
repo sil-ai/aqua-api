@@ -298,7 +298,7 @@ def test_push_eflomal_dictionary_body_too_large(
     detail = response.json()["detail"]
     assert "5001" in detail
     assert "5000" in detail
-    assert "split into batches" in detail
+    assert "reduce the payload" in detail
 
 
 def test_push_eflomal_cooccurrences(

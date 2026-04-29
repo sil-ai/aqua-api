@@ -76,7 +76,7 @@ def _check_body_size(body):
             detail=(
                 f"Request body too large: {len(body)} items "
                 f"(max {_MAX_BODY_ITEMS}). "
-                f"Please split into batches of {_MAX_BODY_ITEMS} or fewer."
+                f"Please reduce the payload to {_MAX_BODY_ITEMS} items or fewer."
             ),
         )
 
