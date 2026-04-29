@@ -274,6 +274,41 @@ def test_predict_forwards_payload_to_modal(client, regular_token1):
     assert payload["target_language"] == "swh"
 
 
+@pytest.mark.parametrize(
+    "extra,expected",
+    [
+        ({"include_critique": True}, True),
+        ({"include_critique": False}, False),
+        ({}, False),
+    ],
+    ids=["explicit_true", "explicit_false", "omitted_defaults_false"],
+)
+def test_predict_forwards_include_critique_to_modal(
+    client, regular_token1, extra, expected
+):
+    """`include_critique` survives `model_dump(exclude={"apps"})` and reaches Modal —
+    regression guard for the bug where the missing field was silently stripped."""
+    captured = {}
+
+    async def capture(payload):
+        captured["payload"] = payload
+        return {"ok": True}
+
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock({"ngrams": capture}),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams"], **extra),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert "include_critique" in captured["payload"]
+    assert captured["payload"]["include_critique"] is expected
+
+
 def test_predict_duplicate_apps_deduplicated(client, regular_token1):
     """Duplicate entries in `apps` are deduplicated; Modal is called once per app."""
     call_count = {"ngrams": 0}
