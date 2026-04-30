@@ -1509,3 +1509,178 @@ def test_session_results_ngrams_top_level(
     # the existing /v3/ngrams_result shape).
     in_the = next(n for n in gen_only["ngrams"] if n["ngram"] == "in the")
     assert sorted(in_the["vrefs"]) == ["GEN 1:1", "GEN 1:2"]
+
+
+def test_session_results_unknown_book_returns_400(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """Unknown book abbreviations are rejected up front. Also closes a
+    LIKE-injection vector — `_` and `%` are SQL wildcards that would
+    otherwise broaden the ngram filter."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_unknown_book"},
+        apps=["semantic-similarity"],
+    )
+    session_id = create_resp.json()["session_id"]
+
+    for bad in ("ZZZ", "GE_", "%", "GE%"):
+        resp = client.get(
+            f"{prefix}/train/status/{session_id}/results",
+            params={"book": bad},
+            headers=_auth_headers(regular_token1),
+        )
+        assert resp.status_code == 400, f"book={bad!r} should be rejected"
+
+
+def test_session_results_failed_assessment_does_not_leak(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """A `failed` Assessment is terminal but not finished — any rows that
+    happen to be in the result tables for that assessment must NOT appear
+    in the per-vref bucket."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_failed_no_leak"},
+        apps=["semantic-similarity"],
+    )
+    sem_sim_job = create_resp.json()["training_jobs"][0]
+    session_id = create_resp.json()["session_id"]
+
+    _set_assessment_status(db_session, sem_sim_job["assessment_id"], "failed")
+    # Seed a stray row under the failed assessment_id — could happen if the
+    # runner pushed partial results before failing.
+    _seed_sem_sim_results(db_session, sem_sim_job["assessment_id"], [("GEN 1:1", 0.5)])
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    assert data["results"]["items"] == []
+    assert data["results"]["total_count"] == 0
+
+
+def test_session_results_word_alignment_only_completed(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Word-alignment alone finished, sem-sim still in-flight: results
+    bucket carries word_alignment rows for each vref and
+    semantic_similarity is null (sem-sim doesn't gate the response)."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_wa_only"},
+        apps=["semantic-similarity", "word-alignment"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    jobs_by_type = {j["type"]: j for j in payload["training_jobs"]}
+    wa_job = jobs_by_type["word-alignment"]
+
+    _advance_assessment_to_finished(client, regular_token1, wa_job["assessment_id"])
+    _seed_word_alignment(
+        db_session,
+        wa_job["assessment_id"],
+        [("GEN 1:1", "beginning", "principio", 0.91)],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    assert data["results"]["total_count"] == 1
+    only = data["results"]["items"][0]
+    assert only["vref"] == "GEN 1:1"
+    assert only["semantic_similarity"] is None
+    assert len(only["word_alignment"]) == 1
+
+
+def test_session_results_admin_can_read_other_owner_session(
+    client,
+    regular_token1,
+    admin_token,
+    test_revision_id,
+    test_revision_id_2,
+    db_session,
+):
+    """Admin auth path bypasses the version-access scoping in
+    _load_session_jobs — verify that path actually returns the session
+    (not 404 / 403) when admin queries someone else's session."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_admin_access"},
+        apps=["semantic-similarity"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    sem_sim_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, sem_sim_job["assessment_id"]
+    )
+    _seed_sem_sim_results(db_session, sem_sim_job["assessment_id"], [("GEN 1:1", 0.7)])
+
+    resp = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(admin_token),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["session_id"] == session_id
+    assert data["results"]["total_count"] == 1
+
+
+def test_repost_after_assessment_terminates_succeeds(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """The whole point of #593: an orphan/terminal Assessment must not
+    block a re-POST for the same revision pair + type + options."""
+    opts = {"tag": "repost_after_terminate"}
+    first = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options=opts,
+        apps=["tfidf"],
+    )
+    assert first.status_code == 200
+    job = first.json()["training_jobs"][0]
+
+    # While the linked Assessment is still queued, re-POST is rejected.
+    blocked = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options=opts,
+        apps=["tfidf"],
+    )
+    assert blocked.status_code == 409
+
+    # Terminate the Assessment — duplicate-detection should now see no
+    # active job and let the re-POST through with a new TrainingJob.
+    _set_assessment_status(db_session, job["assessment_id"], "failed")
+
+    second = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options=opts,
+        apps=["tfidf"],
+    )
+    assert second.status_code == 200, second.json()
+    new_job = second.json()["training_jobs"][0]
+    assert new_job["id"] != job["id"]
+    assert new_job["assessment_id"] != job["assessment_id"]

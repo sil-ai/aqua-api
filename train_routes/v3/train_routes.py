@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
+from assessment_routes.v3.results_query_routes import validate_parameters
 from database.dependencies import get_db
 from database.models import (
     AlignmentTopSourceScores,
@@ -65,7 +66,6 @@ router = fastapi.APIRouter()
 # downloading → uploading → finished sequence; failures land as `failed`.
 ASSESSMENT_TERMINAL_VALUES = {s.value for s in ASSESSMENT_TERMINAL_STATUSES}
 ASSESSMENT_FINISHED_VALUE = AssessmentStatus.finished.value
-ASSESSMENT_FAILED_VALUE = AssessmentStatus.failed.value
 
 # Training types that have a corresponding aqua-assessments Assessment row.
 # Every type listed here must also appear in AssessmentType in models.py so
@@ -164,6 +164,17 @@ def _job_out(job: TrainingJob, assessment: Optional[Assessment]) -> TrainingJobO
         start_time=assessment.start_time if assessment is not None else None,
         end_time=assessment.end_time if assessment is not None else None,
     )
+
+
+async def _load_assessments_for(
+    jobs: List[TrainingJob], db: AsyncSession
+) -> dict[int, Assessment]:
+    """Bulk-fetch the Assessment rows linked from a set of TrainingJobs."""
+    assessment_ids = [j.assessment_id for j in jobs if j.assessment_id is not None]
+    if not assessment_ids:
+        return {}
+    rows = await db.execute(select(Assessment).where(Assessment.id.in_(assessment_ids)))
+    return {a.id: a for a in rows.scalars().all()}
 
 
 async def _compute_inference_readiness(
@@ -284,7 +295,7 @@ async def create_training_job(
         if training_type.value not in selected_types:
             continue
         # Duplicate check per type — "active" means linked Assessment is
-        # not in a terminal state.
+        # live (not soft-deleted) and not in a terminal state.
         dup_stmt = (
             select(TrainingJob)
             .join(Assessment, Assessment.id == TrainingJob.assessment_id)
@@ -293,6 +304,7 @@ async def create_training_job(
                 TrainingJob.target_revision_id == job_in.target_revision_id,
                 TrainingJob.type == training_type.value,
                 TrainingJob.deleted.is_not(True),
+                Assessment.deleted.is_not(True),
                 Assessment.status.notin_(list(ASSESSMENT_TERMINAL_VALUES)),
             )
         )
@@ -392,13 +404,16 @@ async def create_training_job(
     }
     if failure_assessment_ids:
         # Direct write — Assessment.status is the source of truth and the
-        # runner never got a chance to advance it past `queued`.
+        # runner never got a chance to advance it past `queued`. Skip
+        # soft-deleted rows defensively even though they can't appear in
+        # this code path today (assessments are freshly created above).
         now = datetime.utcnow()
         failed_assessments = (
             (
                 await db.execute(
                     select(Assessment).where(
-                        Assessment.id.in_(list(failure_assessment_ids.keys()))
+                        Assessment.id.in_(list(failure_assessment_ids.keys())),
+                        Assessment.deleted.is_not(True),
                     )
                 )
             )
@@ -406,7 +421,7 @@ async def create_training_job(
             .all()
         )
         for a in failed_assessments:
-            a.status = ASSESSMENT_FAILED_VALUE
+            a.status = AssessmentStatus.failed.value
             a.status_detail = failure_assessment_ids[a.id]
             a.start_time = a.start_time or now
             a.end_time = now
@@ -425,17 +440,6 @@ async def create_training_job(
         ],
         inference_readiness=readiness,
     )
-
-
-async def _load_assessments_for(
-    jobs: List[TrainingJob], db: AsyncSession
-) -> dict[int, Assessment]:
-    """Bulk-fetch the Assessment rows linked from a set of TrainingJobs."""
-    assessment_ids = [j.assessment_id for j in jobs if j.assessment_id is not None]
-    if not assessment_ids:
-        return {}
-    rows = await db.execute(select(Assessment).where(Assessment.id.in_(assessment_ids)))
-    return {a.id: a for a in rows.scalars().all()}
 
 
 @router.get("/train", response_model=List[TrainingJobOut])
@@ -574,22 +578,20 @@ async def get_training_session_results(
     across every verse it appears in. Tfidf and agent_critique training
     runs produce nothing the client wants here (vector-only / no vrefs).
     """
-    # Filter validation mirrors validate_parameters() from results_query_routes.
-    if chapter is not None and book is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="chapter requires book",
+    await validate_parameters(book, chapter, verse, None, page, page_size)
+    if book is not None:
+        # Pin `book` to a known abbreviation up front. Both safety (the
+        # ngram path interpolates `book` into a LIKE pattern, where `_`
+        # and `%` would otherwise broaden the match) and ergonomics (a
+        # 400 with a clear message beats an empty result for a typo).
+        known = await db.scalar(
+            select(BookReference.abbreviation).where(BookReference.abbreviation == book)
         )
-    if verse is not None and (book is None or chapter is None):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="verse requires book and chapter",
-        )
-    if (page is None) != (page_size is None):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="page and page_size must be set together",
-        )
+        if known is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown book abbreviation: {book}",
+            )
 
     jobs = await _load_session_jobs(session_id, current_user, db)
     if not jobs:
@@ -606,12 +608,12 @@ async def get_training_session_results(
     # surface via the training_jobs status block; their type just won't
     # appear in any vref bucket yet. "Finished" is read off the linked
     # Assessment.status — TrainingJob is metadata only after #584.
+    # (j.assessment present already implies j.assessment_id present —
+    # the FK is SET NULL on delete.)
     completed_assessment_id_by_type: dict[str, int] = {
         j.type: j.assessment_id
         for j in jobs
-        if j.assessment is not None
-        and j.assessment.status == ASSESSMENT_FINISHED_VALUE
-        and j.assessment_id is not None
+        if j.assessment is not None and j.assessment.status == ASSESSMENT_FINISHED_VALUE
     }
     sem_sim_id = completed_assessment_id_by_type.get(
         TrainingType.semantic_similarity.value
@@ -665,18 +667,26 @@ async def get_training_session_results(
     total_count = 0
     if per_vref_subqueries:
         union_subq = per_vref_subqueries[0].union(*per_vref_subqueries[1:]).subquery()
-        # UNION already deduplicates, so a plain select counts distinct vrefs.
-        count_result = await db.execute(select(func.count()).select_from(union_subq))
-        total_count = count_result.scalar() or 0
-
-        ordered_q = (
-            select(union_subq.c.vref)
-            .join(BookReference, BookReference.abbreviation == union_subq.c.book)
-            .order_by(
-                BookReference.number,
+        # Apply the BookReference join up front so total_count and the page
+        # both see the same row set — without it, vrefs whose `book` doesn't
+        # match a BookReference row would be counted but never paginated.
+        joined_subq = (
+            select(
+                union_subq.c.vref,
+                BookReference.number.label("book_number"),
                 union_subq.c.chapter,
                 union_subq.c.verse,
             )
+            .join(BookReference, BookReference.abbreviation == union_subq.c.book)
+            .subquery()
+        )
+        count_result = await db.execute(select(func.count()).select_from(joined_subq))
+        total_count = count_result.scalar() or 0
+
+        ordered_q = select(joined_subq.c.vref).order_by(
+            joined_subq.c.book_number,
+            joined_subq.c.chapter,
+            joined_subq.c.verse,
         )
         if page is not None and page_size is not None:
             ordered_q = ordered_q.offset((page - 1) * page_size).limit(page_size)
@@ -693,16 +703,23 @@ async def get_training_session_results(
             )
         )
         for r in rows.scalars().all():
+            # First-write-wins: the (assessment_id, vref) pair has no DB
+            # uniqueness constraint, so duplicates are theoretically
+            # possible. Mirror the word-alignment helper's pattern of
+            # collecting deterministically rather than silently
+            # last-write-overwriting.
+            if r.vref in sem_sim_by_vref:
+                continue
             sem_sim_by_vref[r.vref] = Result_v2(
                 id=r.id,
                 assessment_id=r.assessment_id,
                 vref=r.vref,
                 score=float(r.score) if r.score is not None else 0.0,
-                flag=bool(r.flag),
+                flag=r.flag or False,
                 note=r.note,
                 source=r.source,
                 target=r.target,
-                hide=bool(r.hide),
+                hide=r.hide or False,
             )
 
     word_align_by_vref: dict[str, List[WordAlignment]] = {}
@@ -722,9 +739,9 @@ async def get_training_session_results(
                     source=r.source,
                     target=r.target,
                     score=float(r.score) if r.score is not None else 0.0,
-                    flag=bool(r.flag),
+                    flag=r.flag or False,
                     note=r.note,
-                    hide=bool(r.hide),
+                    hide=r.hide or False,
                 )
             )
 
@@ -741,6 +758,8 @@ async def get_training_session_results(
     # in the requested book/chapter/verse window (or all ngrams when no
     # filter). Returns each ngram's full vrefs list, not just the matching
     # ones, so the client sees the same shape as /v3/ngrams_result.
+    # `book` was validated against BookReference above, so the LIKE
+    # patterns can't smuggle SQL wildcards.
     ngrams_list: List[NgramResult] = []
     if ngrams_id is not None:
         matching_q = (
@@ -969,13 +988,21 @@ async def delete_training_job(
             detail="Not authorized to delete this training job",
         )
 
-    assessment_status = job.assessment.status if job.assessment is not None else None
-    if assessment_status not in ASSESSMENT_TERMINAL_VALUES:
+    if job.assessment is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                f"Cannot delete job whose assessment is in '{assessment_status}' "
-                "status. Only terminal jobs can be deleted."
+                "Cannot delete training job: linked assessment is missing, "
+                "so terminal status cannot be verified."
+            ),
+        )
+    if job.assessment.status not in ASSESSMENT_TERMINAL_VALUES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Cannot delete job whose assessment is in "
+                f"'{job.assessment.status}' status. "
+                "Only terminal jobs can be deleted."
             ),
         )
 

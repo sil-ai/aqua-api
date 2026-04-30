@@ -26,14 +26,32 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.drop_index("ix_training_job_status", table_name="training_job")
-    op.drop_index("ix_training_job_type_status", table_name="training_job")
-    op.drop_index("ix_training_job_revisions_type_status", table_name="training_job")
-    op.create_index(
-        "ix_training_job_revisions_type",
-        "training_job",
-        ["source_revision_id", "target_revision_id", "type"],
-    )
+    # Index changes use CONCURRENTLY so they don't take ACCESS EXCLUSIVE on
+    # training_job during a rolling deploy. CONCURRENTLY can't run inside a
+    # transaction, so wrap the index ops in an autocommit block; the column
+    # drops below stay in the regular transactional block.
+    with op.get_context().autocommit_block():
+        op.drop_index(
+            "ix_training_job_status",
+            table_name="training_job",
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
+            "ix_training_job_type_status",
+            table_name="training_job",
+            postgresql_concurrently=True,
+        )
+        op.drop_index(
+            "ix_training_job_revisions_type_status",
+            table_name="training_job",
+            postgresql_concurrently=True,
+        )
+        op.create_index(
+            "ix_training_job_revisions_type",
+            "training_job",
+            ["source_revision_id", "target_revision_id", "type"],
+            postgresql_concurrently=True,
+        )
     op.drop_column("training_job", "status")
     op.drop_column("training_job", "status_detail")
     op.drop_column("training_job", "percent_complete")
@@ -90,11 +108,27 @@ def downgrade() -> None:
             server_default="queued",
         ),
     )
-    op.drop_index("ix_training_job_revisions_type", table_name="training_job")
-    op.create_index(
-        "ix_training_job_revisions_type_status",
-        "training_job",
-        ["source_revision_id", "target_revision_id", "type", "status"],
-    )
-    op.create_index("ix_training_job_type_status", "training_job", ["type", "status"])
-    op.create_index("ix_training_job_status", "training_job", ["status"])
+    with op.get_context().autocommit_block():
+        op.drop_index(
+            "ix_training_job_revisions_type",
+            table_name="training_job",
+            postgresql_concurrently=True,
+        )
+        op.create_index(
+            "ix_training_job_revisions_type_status",
+            "training_job",
+            ["source_revision_id", "target_revision_id", "type", "status"],
+            postgresql_concurrently=True,
+        )
+        op.create_index(
+            "ix_training_job_type_status",
+            "training_job",
+            ["type", "status"],
+            postgresql_concurrently=True,
+        )
+        op.create_index(
+            "ix_training_job_status",
+            "training_job",
+            ["status"],
+            postgresql_concurrently=True,
+        )
