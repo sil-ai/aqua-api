@@ -181,22 +181,16 @@ class TrainingJob(Base):
         String(3), ForeignKey("iso_language.iso639"), nullable=False
     )
 
-    status = Column(Text, nullable=False, default="queued")
-    status_detail = Column(Text, nullable=True)
-    percent_complete = Column(Float, nullable=True)
-
-    external_ids = Column(JSONB, nullable=True)
-    result_url = Column(Text, nullable=True)
-    result_metadata = Column(JSONB, nullable=True)
     options = Column(JSONB, nullable=True)
 
     requested_time = Column(TIMESTAMP, default=func.now())
-    start_time = Column(TIMESTAMP, nullable=True)
-    end_time = Column(TIMESTAMP, nullable=True)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     session_id = Column(Text, nullable=True)
 
+    # Status / timing / progress live on the linked Assessment row.
+    # See aqua-api#584/#593: aqua-assessments runner writes only to
+    # /v3/assessment/{id}/status; TrainingJob is metadata only.
     assessment_id = Column(
         Integer,
         ForeignKey("assessment.id", ondelete="SET NULL"),
@@ -212,15 +206,12 @@ class TrainingJob(Base):
     assessment = relationship("Assessment", foreign_keys=[assessment_id])
 
     __table_args__ = (
-        Index("ix_training_job_status", "status"),
-        Index("ix_training_job_type_status", "type", "status"),
         Index("ix_training_job_lang_pair", "source_language", "target_language"),
         Index(
-            "ix_training_job_revisions_type_status",
+            "ix_training_job_revisions_type",
             "source_revision_id",
             "target_revision_id",
             "type",
-            "status",
         ),
         Index("ix_training_job_session_id", "session_id"),
         Index("ix_training_job_assessment_id", "assessment_id"),
