@@ -330,9 +330,7 @@ def test_push_alignment_threshold_scores_invalid_vref(
 # ---------------------------------------------------------------------------
 
 
-def test_push_text_lengths(
-    client, regular_token1, push_assessment_id, test_db_session
-):
+def test_push_text_lengths(client, regular_token1, push_assessment_id, test_db_session):
     body = [
         {
             "vref": "GEN 1:1",
