@@ -1,7 +1,15 @@
 # test_train_routes.py
 from unittest.mock import AsyncMock, patch
 
-from database.models import Assessment, TrainingJob, VerseText
+from database.models import (
+    AlignmentTopSourceScores,
+    Assessment,
+    AssessmentResult,
+    NgramsTable,
+    NgramVrefTable,
+    TrainingJob,
+    VerseText,
+)
 from models import TrainingType
 
 prefix = "v3"
@@ -274,14 +282,13 @@ def test_training_job_full_lifecycle_via_runner(
     test_revision_id_2,
     db_session,
 ):
-    """End-to-end lifecycle via the runner (acceptance item for #582).
+    """End-to-end lifecycle via the runner.
 
-    (1) POST /train dispatches to ("runner", "run_assessment_runner") with
-        an AssessmentIn-shaped config carrying is_training=True.
-    (2) PATCH /train/{id}/status accepts the full phase sequence the
-        runner emits: preparing → training → downloading → uploading →
-        completed.
-    (3) The paired Assessment row mirrors to finished at the end.
+    Status, percent_complete, and timing live on the linked Assessment row
+    (aqua-api#584). The aqua-assessments runner pushes the phased sequence
+    queued → preparing → training → downloading → uploading → finished
+    against PATCH /v3/assessment/{id}/status; aqua-api just exposes the
+    result via /v3/train reads.
     """
     payloads = []
     calls = []
@@ -313,23 +320,24 @@ def test_training_job_full_lifecycle_via_runner(
     assert config.get("is_training") is True
     assert "train_job_id" not in kwargs
 
-    # (2) Simulate the runner's phase callbacks on the status endpoint.
+    # (2) Simulate the runner's phase callbacks against the assessment-status
+    # endpoint — the only channel that exists post #584 / aqua-assessments#202.
     last_percent = {
         "preparing": 5.0,
         "training": 40.0,
         "downloading": 75.0,
         "uploading": 90.0,
-        "completed": 100.0,
+        "finished": 100.0,
     }
     for next_status in [
         "preparing",
         "training",
         "downloading",
         "uploading",
-        "completed",
+        "finished",
     ]:
         resp = client.patch(
-            f"{prefix}/train/{job['id']}/status",
+            f"{prefix}/assessment/{job['assessment_id']}/status",
             json={
                 "status": next_status,
                 "percent_complete": last_percent[next_status],
@@ -339,12 +347,17 @@ def test_training_job_full_lifecycle_via_runner(
         assert (
             resp.status_code == 200
         ), f"phase {next_status} rejected: {resp.status_code} {resp.text}"
-        assert resp.json()["status"] == next_status
 
-    # (3) Assessment mirrored to finished.
-    assessment = _get_assessment(db_session, job["assessment_id"])
-    assert assessment.status == "finished"
-    assert assessment.end_time is not None
+    # (3) /v3/train reads now reflect the assessment-driven status.
+    job_resp = client.get(
+        f"{prefix}/train/{job['id']}",
+        headers=_auth_headers(regular_token1),
+    )
+    assert job_resp.status_code == 200
+    job_view = job_resp.json()
+    assert job_view["status"] == "finished"
+    assert job_view["percent_complete"] == 100.0
+    assert job_view["end_time"] is not None
 
 
 def test_duplicate_detection_scoped_to_apps_filter(
@@ -387,10 +400,14 @@ def test_duplicate_detection_scoped_to_apps_filter(
     types = {job["type"] for job in r3.json()["training_jobs"]}
     assert types == {"ngrams"}
 
-    # Clean up so these jobs don't pollute later tests.
-    jobs = db_session.query(TrainingJob).filter_by(status="queued").all()
-    for j in jobs:
-        j.status = "failed"
+    # Clean up so these jobs don't pollute later tests — TrainingJob no
+    # longer carries status, so terminate the linked Assessments instead.
+    db_session.expire_all()
+    queued_assessments = (
+        db_session.query(Assessment).filter_by(status="queued", is_training=True).all()
+    )
+    for a in queued_assessments:
+        a.status = "failed"
     db_session.commit()
 
 
@@ -451,11 +468,16 @@ def test_create_training_job_duplicate_detection(
     )
     assert response3.status_code == 200
 
-    # Clean up: mark all as failed so they don't interfere with other tests
-    jobs = db_session.query(TrainingJob).all()
-    for job in jobs:
-        if job.status == "queued":
-            job.status = "failed"
+    # Clean up: mark all queued training assessments as failed so they don't
+    # interfere with other tests (TrainingJob has no status column post-#584).
+    db_session.expire_all()
+    queued = (
+        db_session.query(Assessment)
+        .filter(Assessment.is_training.is_(True), Assessment.status == "queued")
+        .all()
+    )
+    for a in queued:
+        a.status = "failed"
     db_session.commit()
 
 
@@ -531,213 +553,6 @@ def test_get_training_job_not_found(client, regular_token1):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 404
-
-
-def test_patch_status_valid_transitions(
-    client, regular_token1, test_revision_id, test_revision_id_2, db_session
-):
-    """PATCH /train/{job_id}/status updates fields and enforces state machine."""
-    create_resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "status_test"},
-        apps=["tfidf"],
-    )
-    job_id = _get_first_job_id(create_resp)
-
-    # queued -> preparing
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={
-            "status": "preparing",
-            "external_ids": {"engine_id": "eng123"},
-        },
-        headers=_auth_headers(regular_token1),
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "preparing"
-    assert data["start_time"] is not None
-    assert data["external_ids"] == {"engine_id": "eng123"}
-
-    # preparing -> training
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "training", "percent_complete": 10.0},
-        headers=_auth_headers(regular_token1),
-    )
-    assert resp.status_code == 200
-    assert resp.json()["percent_complete"] == 10.0
-
-    # training -> downloading
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "downloading"},
-        headers=_auth_headers(regular_token1),
-    )
-    assert resp.status_code == 200
-
-    # downloading -> uploading
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "uploading"},
-        headers=_auth_headers(regular_token1),
-    )
-    assert resp.status_code == 200
-
-    # uploading -> completed
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={
-            "status": "completed",
-            "result_url": "https://huggingface.co/sil-ai/test-model",
-            "result_metadata": {"bleu": 32.5},
-        },
-        headers=_auth_headers(regular_token1),
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "completed"
-    assert data["end_time"] is not None
-    assert data["result_url"] == "https://huggingface.co/sil-ai/test-model"
-
-
-def test_patch_status_invalid_transition(
-    client, regular_token1, test_revision_id, test_revision_id_2
-):
-    """PATCH /train/{job_id}/status rejects invalid state transitions."""
-    create_resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "invalid_transition_test"},
-    )
-    job_id = _get_first_job_id(create_resp)
-
-    # queued -> training (skipping preparing) should fail
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "training"},
-        headers=_auth_headers(regular_token1),
-    )
-    assert resp.status_code == 422
-
-    # queued -> completed should fail
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "completed"},
-        headers=_auth_headers(regular_token1),
-    )
-    assert resp.status_code == 422
-
-
-def test_patch_status_terminal_rejected(
-    client, regular_token1, test_revision_id, test_revision_id_2
-):
-    """PATCH /train/{job_id}/status rejects updates to terminal jobs."""
-    create_resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "terminal_test"},
-    )
-    job_id = _get_first_job_id(create_resp)
-
-    # Move to failed
-    client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "failed", "status_detail": "test failure"},
-        headers=_auth_headers(regular_token1),
-    )
-
-    # Try to update again
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "preparing"},
-        headers=_auth_headers(regular_token1),
-    )
-    assert resp.status_code == 409
-
-
-def test_patch_status_failed_from_any(
-    client, regular_token1, test_revision_id, test_revision_id_2
-):
-    """Any non-terminal status can transition to failed."""
-    create_resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "failed_any_test"},
-    )
-    job_id = _get_first_job_id(create_resp)
-
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "failed", "status_detail": "queued_to_failed"},
-        headers=_auth_headers(regular_token1),
-    )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "failed"
-
-
-def test_patch_status_completed_with_errors(
-    client, regular_token1, test_revision_id, test_revision_id_2
-):
-    """uploading -> completed_with_errors is valid."""
-    create_resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "completed_errors_test"},
-        apps=["tfidf"],
-    )
-    job_id = _get_first_job_id(create_resp)
-
-    # Walk to uploading
-    for next_status in ["preparing", "training", "downloading", "uploading"]:
-        client.patch(
-            f"{prefix}/train/{job_id}/status",
-            json={"status": next_status},
-            headers=_auth_headers(regular_token1),
-        )
-
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={
-            "status": "completed_with_errors",
-            "status_detail": "completed_with_errors: huggingface upload failed",
-        },
-        headers=_auth_headers(regular_token1),
-    )
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "completed_with_errors"
-
-
-def test_patch_status_unauthenticated(
-    client, regular_token1, test_revision_id, test_revision_id_2
-):
-    """PATCH /train/{job_id}/status rejects unauthenticated requests."""
-    create_resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "bad_token_test"},
-        apps=["tfidf"],
-    )
-    job_id = _get_first_job_id(create_resp)
-
-    resp = client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "preparing"},
-    )
-    assert resp.status_code == 401
 
 
 def test_get_training_data_filter(
@@ -880,7 +695,7 @@ def test_get_training_data_empty(
 
 
 def test_delete_training_job_terminal(
-    client, regular_token1, test_revision_id, test_revision_id_2
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):
     """DELETE /train/{job_id} soft deletes terminal jobs."""
     create_resp = _create_training_jobs_via_api(
@@ -890,25 +705,18 @@ def test_delete_training_job_terminal(
         test_revision_id_2,
         options={"tag": "delete_test"},
     )
-    job_id = _get_first_job_id(create_resp)
+    job = create_resp.json()["training_jobs"][0]
 
-    # Move to failed (terminal)
-    client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "failed"},
-        headers=_auth_headers(regular_token1),
-    )
+    _set_assessment_status(db_session, job["assessment_id"], "failed")
 
-    # Now delete
     resp = client.delete(
-        f"{prefix}/train/{job_id}",
+        f"{prefix}/train/{job['id']}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 200
 
-    # Should be 404 now
     resp = client.get(
-        f"{prefix}/train/{job_id}",
+        f"{prefix}/train/{job['id']}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 404
@@ -936,7 +744,12 @@ def test_delete_training_job_active_rejected(
 
 
 def test_delete_training_job_unauthorized(
-    client, regular_token1, regular_token2, test_revision_id, test_revision_id_2
+    client,
+    regular_token1,
+    regular_token2,
+    test_revision_id,
+    test_revision_id_2,
+    db_session,
 ):
     """DELETE /train/{job_id} rejects non-owner non-admin."""
     create_resp = _create_training_jobs_via_api(
@@ -946,18 +759,12 @@ def test_delete_training_job_unauthorized(
         test_revision_id_2,
         options={"tag": "delete_unauth_test"},
     )
-    job_id = _get_first_job_id(create_resp)
-
-    # Move to failed
-    client.patch(
-        f"{prefix}/train/{job_id}/status",
-        json={"status": "failed"},
-        headers=_auth_headers(regular_token1),
-    )
+    job = create_resp.json()["training_jobs"][0]
+    _set_assessment_status(db_session, job["assessment_id"], "failed")
 
     # testuser2 is not owner
     resp = client.delete(
-        f"{prefix}/train/{job_id}",
+        f"{prefix}/train/{job['id']}",
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
     assert resp.status_code == 403
@@ -1131,115 +938,6 @@ def test_trainable_types_route_through_runner_with_is_training(
         assert "train_job_id" not in kwargs
 
 
-def test_completed_mirrors_to_assessment_finished(
-    client, regular_token1, test_revision_id, test_revision_id_2, db_session
-):
-    """TrainingJob completed -> Assessment finished; stale status_detail cleared."""
-    resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "mirror_completed_test"},
-        apps=["tfidf"],
-    )
-    assert resp.status_code == 200
-    job = resp.json()["training_jobs"][0]
-    assessment_id = job["assessment_id"]
-    assert assessment_id is not None
-
-    # Drop a progress detail during uploading. On completed, this stale detail
-    # must not leak onto the Assessment.
-    for next_status, detail in [
-        ("preparing", None),
-        ("training", None),
-        ("downloading", None),
-        ("uploading", "uploading artifact 3/4"),
-    ]:
-        body = {"status": next_status}
-        if detail is not None:
-            body["status_detail"] = detail
-        client.patch(
-            f"{prefix}/train/{job['id']}/status",
-            json=body,
-            headers=_auth_headers(regular_token1),
-        )
-    # Assessment should still be queued through non-terminal transitions
-    assert _get_assessment(db_session, assessment_id).status == "queued"
-
-    client.patch(
-        f"{prefix}/train/{job['id']}/status",
-        json={"status": "completed"},
-        headers=_auth_headers(regular_token1),
-    )
-    assessment = _get_assessment(db_session, assessment_id)
-    assert assessment.status == "finished"
-    assert assessment.status_detail is None
-    assert assessment.end_time is not None
-
-
-def test_failed_mirrors_to_assessment_failed(
-    client, regular_token1, test_revision_id, test_revision_id_2, db_session
-):
-    """TrainingJob failed -> Assessment failed with status_detail copied."""
-    resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "mirror_failed_test"},
-        apps=["ngrams"],
-    )
-    assert resp.status_code == 200
-    job = resp.json()["training_jobs"][0]
-    assessment_id = job["assessment_id"]
-
-    client.patch(
-        f"{prefix}/train/{job['id']}/status",
-        json={"status": "failed", "status_detail": "oom on worker"},
-        headers=_auth_headers(regular_token1),
-    )
-    assessment = _get_assessment(db_session, assessment_id)
-    assert assessment.status == "failed"
-    assert assessment.status_detail == "oom on worker"
-    assert assessment.end_time is not None
-
-
-def test_completed_with_errors_mirrors_to_assessment_failed(
-    client, regular_token1, test_revision_id, test_revision_id_2, db_session
-):
-    """TrainingJob completed_with_errors -> Assessment failed (no cwe in AssessmentStatus)."""
-    resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "mirror_cwe_test"},
-        apps=["word-alignment"],
-    )
-    assert resp.status_code == 200
-    job = resp.json()["training_jobs"][0]
-    assessment_id = job["assessment_id"]
-
-    for next_status in ["preparing", "training", "downloading", "uploading"]:
-        client.patch(
-            f"{prefix}/train/{job['id']}/status",
-            json={"status": next_status},
-            headers=_auth_headers(regular_token1),
-        )
-    client.patch(
-        f"{prefix}/train/{job['id']}/status",
-        json={
-            "status": "completed_with_errors",
-            "status_detail": "hf upload failed",
-        },
-        headers=_auth_headers(regular_token1),
-    )
-    assessment = _get_assessment(db_session, assessment_id)
-    assert assessment.status == "failed"
-    assert assessment.status_detail == "hf upload failed"
-
-
 def test_assessment_id_reaches_sem_sim_runner_config(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):
@@ -1280,34 +978,6 @@ def test_assessment_id_reaches_sem_sim_runner_config(
     _, args, _kwargs = runner_calls[0]
     config = args[0]
     assert config["id"] == job["assessment_id"]
-
-
-def test_non_terminal_transition_does_not_mirror_to_assessment(
-    client, regular_token1, test_revision_id, test_revision_id_2, db_session
-):
-    """PATCH to training/preparing/etc. must leave the Assessment in queued."""
-    resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "non_terminal_mirror_test"},
-        apps=["tfidf"],
-    )
-    job = resp.json()["training_jobs"][0]
-    assessment_id = job["assessment_id"]
-
-    for next_status in ["preparing", "training"]:
-        client.patch(
-            f"{prefix}/train/{job['id']}/status",
-            json={"status": next_status},
-            headers=_auth_headers(regular_token1),
-        )
-        assessment = _get_assessment(db_session, assessment_id)
-        assert (
-            assessment.status == "queued"
-        ), f"Assessment mirrored on non-terminal '{next_status}'"
-        assert assessment.end_time is None
 
 
 def test_apps_filter_creates_assessments_only_for_selected_types(
@@ -1368,87 +1038,18 @@ def test_duplicate_post_does_not_create_duplicate_assessment(
     )
     assert len(assessments) == 1
 
-    # Clean up so queued jobs don't pollute later tests.
-    jobs = (
-        db_session.query(TrainingJob)
-        .filter_by(status="queued")
-        .filter(TrainingJob.options.op("@>")(opts))
+    # Clean up so queued jobs don't pollute later tests — TrainingJob has
+    # no status column post-#584; mark each job's linked Assessment failed.
+    db_session.expire_all()
+    queued = (
+        db_session.query(Assessment)
+        .join(TrainingJob, TrainingJob.assessment_id == Assessment.id)
+        .filter(TrainingJob.options.op("@>")(opts), Assessment.status == "queued")
         .all()
     )
-    for j in jobs:
-        j.status = "failed"
+    for a in queued:
+        a.status = "failed"
     db_session.commit()
-
-
-def test_mirror_respects_soft_deleted_assessment(
-    client, regular_token1, test_revision_id, test_revision_id_2, db_session
-):
-    """A soft-deleted Assessment must not be touched by the mirror helper."""
-    resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "mirror_deleted_test"},
-        apps=["ngrams"],
-    )
-    job = resp.json()["training_jobs"][0]
-    assessment_id = job["assessment_id"]
-
-    assessment = db_session.query(Assessment).filter_by(id=assessment_id).one()
-    assessment.deleted = True
-    db_session.commit()
-
-    client.patch(
-        f"{prefix}/train/{job['id']}/status",
-        json={"status": "failed", "status_detail": "after-delete"},
-        headers=_auth_headers(regular_token1),
-    )
-    db_session.expire_all()
-    assessment = db_session.query(Assessment).filter_by(id=assessment_id).one()
-    assert assessment.status == "queued"
-    assert assessment.status_detail is None
-    assert assessment.end_time is None
-
-
-def test_mirror_does_not_clobber_already_terminal_assessment(
-    client, regular_token1, test_revision_id, test_revision_id_2, db_session
-):
-    """If aqua-assessments already PATCHed Assessment to finished, mirror must not overwrite."""
-    resp = _create_training_jobs_via_api(
-        client,
-        regular_token1,
-        test_revision_id,
-        test_revision_id_2,
-        options={"tag": "mirror_no_clobber_test"},
-        apps=["agent-critique"],
-    )
-    job = resp.json()["training_jobs"][0]
-    assessment_id = job["assessment_id"]
-
-    assessment = db_session.query(Assessment).filter_by(id=assessment_id).one()
-    assessment.status = "finished"
-    assessment.status_detail = "posted-by-aqua-assessments"
-    db_session.commit()
-
-    for next_status in ["preparing", "training", "downloading", "uploading"]:
-        client.patch(
-            f"{prefix}/train/{job['id']}/status",
-            json={"status": next_status},
-            headers=_auth_headers(regular_token1),
-        )
-    client.patch(
-        f"{prefix}/train/{job['id']}/status",
-        json={
-            "status": "completed_with_errors",
-            "status_detail": "post-terminal mirror should be ignored",
-        },
-        headers=_auth_headers(regular_token1),
-    )
-    db_session.expire_all()
-    assessment = db_session.query(Assessment).filter_by(id=assessment_id).one()
-    assert assessment.status == "finished"
-    assert assessment.status_detail == "posted-by-aqua-assessments"
 
 
 def test_training_job_options_validator_rejects_non_scalar(
@@ -1469,22 +1070,25 @@ def test_training_job_options_validator_rejects_non_scalar(
     assert resp.status_code == 422
 
 
-def test_dispatch_failure_mirrors_to_assessment_failed(
+def test_dispatch_failure_marks_assessment_failed(
     client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):
-    """A Modal spawn failure marks both the TrainingJob and the Assessment failed."""
+    """A Modal spawn failure writes failed + dispatch_failed detail directly
+    onto the linked Assessment (the runner never got a chance to advance
+    Assessment.status past `queued`)."""
     resp = _create_training_jobs_via_api(
         client,
         regular_token1,
         test_revision_id,
         test_revision_id_2,
-        options={"tag": "mirror_dispatch_fail_test"},
+        options={"tag": "dispatch_fail_assessment_test"},
         apps=["tfidf"],
         spawn_by_type={"tfidf": RuntimeError("boom")},
     )
     assert resp.status_code == 200
     job = resp.json()["training_jobs"][0]
     assert job["status"] == "failed"
+    assert "dispatch_failed" in (job["status_detail"] or "")
     assessment = _get_assessment(db_session, job["assessment_id"])
     assert assessment.status == "failed"
     assert "dispatch_failed" in (assessment.status_detail or "")
@@ -1515,22 +1119,14 @@ def test_get_training_status_readiness_updates(
         is False
     )
 
-    # Mark the semantic-similarity job as completed
+    # Mark the semantic-similarity assessment as finished — readiness is
+    # computed from Assessment.status, the single source of truth.
     sem_sim_job = [
         j for j in data["training_jobs"] if j["type"] == "semantic-similarity"
     ][0]
-    for next_status in [
-        "preparing",
-        "training",
-        "downloading",
-        "uploading",
-        "completed",
-    ]:
-        client.patch(
-            f"{prefix}/train/{sem_sim_job['id']}/status",
-            json={"status": next_status},
-            headers=_auth_headers(regular_token1),
-        )
+    _advance_assessment_to_finished(
+        client, regular_token1, sem_sim_job["assessment_id"]
+    )
 
     # Now check readiness again
     status_resp = client.get(
@@ -1542,3 +1138,374 @@ def test_get_training_status_readiness_updates(
         status_resp.json()["inference_readiness"]["semantic-similarity"]["ready"]
         is True
     )
+
+
+# -- Session results endpoint tests --
+
+
+def _advance_assessment_to_finished(client, token, assessment_id):
+    """Walk an Assessment through the phased training sequence to finished
+    via PATCH /v3/assessment/{id}/status — the single status channel."""
+    for next_status in (
+        "preparing",
+        "training",
+        "downloading",
+        "uploading",
+        "finished",
+    ):
+        client.patch(
+            f"{prefix}/assessment/{assessment_id}/status",
+            json={"status": next_status},
+            headers=_auth_headers(token),
+        )
+
+
+def _set_assessment_status(db_session, assessment_id, status):
+    """Direct-write helper for tests that just need an Assessment in a
+    specific terminal state (bypasses the validated transition path)."""
+    db_session.expire_all()
+    assessment = (
+        db_session.query(Assessment).filter(Assessment.id == assessment_id).one()
+    )
+    assessment.status = status
+    db_session.commit()
+
+
+def _seed_sem_sim_results(db_session, assessment_id, vrefs_with_scores):
+    for vref, score in vrefs_with_scores:
+        book, rest = vref.split(" ")
+        chap, vs = rest.split(":")
+        db_session.add(
+            AssessmentResult(
+                assessment_id=assessment_id,
+                vref=vref,
+                book=book,
+                chapter=int(chap),
+                verse=int(vs),
+                score=score,
+            )
+        )
+    db_session.commit()
+
+
+def _seed_word_alignment(db_session, assessment_id, rows):
+    """rows: list of (vref, source, target, score)."""
+    for vref, source, target, score in rows:
+        book, rest = vref.split(" ")
+        chap, vs = rest.split(":")
+        db_session.add(
+            AlignmentTopSourceScores(
+                assessment_id=assessment_id,
+                vref=vref,
+                book=book,
+                chapter=int(chap),
+                verse=int(vs),
+                source=source,
+                target=target,
+                score=score,
+            )
+        )
+    db_session.commit()
+
+
+def _seed_ngrams(db_session, assessment_id, ngrams_with_vrefs):
+    """ngrams_with_vrefs: list of (ngram, ngram_size, [vrefs])."""
+    for ngram, size, vrefs in ngrams_with_vrefs:
+        ng = NgramsTable(assessment_id=assessment_id, ngram=ngram, ngram_size=size)
+        db_session.add(ng)
+        db_session.flush()
+        for v in vrefs:
+            db_session.add(NgramVrefTable(ngram_id=ng.id, vref=v))
+    db_session.commit()
+
+
+def test_session_results_no_auth(client):
+    response = client.get(f"{prefix}/train/status/some-uuid/results")
+    assert response.status_code == 401
+
+
+def test_session_results_unknown_session(client, regular_token1):
+    response = client.get(
+        f"{prefix}/train/status/nonexistent-uuid/results",
+        headers=_auth_headers(regular_token1),
+    )
+    assert response.status_code == 404
+
+
+def test_session_results_in_flight_returns_status_only(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """No completed jobs yet → results=[], total_count=0, but training_jobs
+    surfaces status for every queued job."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_in_flight"},
+        apps=["semantic-similarity", "word-alignment"],
+    )
+    session_id = create_resp.json()["session_id"]
+
+    response = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["session_id"] == session_id
+    assert data["results"]["items"] == []
+    assert data["results"]["total_count"] == 0
+    assert data["ngrams"] == []
+    types_returned = {j["type"] for j in data["training_jobs"]}
+    assert types_returned == {"semantic-similarity", "word-alignment"}
+
+
+def test_session_results_interleaves_completed_apps(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """sem-sim score and word-alignment per-word rows for the same vref
+    appear under one bucket; an in-flight type just doesn't contribute."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_interleave"},
+        apps=["semantic-similarity", "word-alignment", "ngrams"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    jobs_by_type = {j["type"]: j for j in payload["training_jobs"]}
+
+    sem_sim_job = jobs_by_type["semantic-similarity"]
+    wa_job = jobs_by_type["word-alignment"]
+    # ngrams left in-flight on purpose: must not appear in `results`.
+
+    _advance_assessment_to_finished(
+        client, regular_token1, sem_sim_job["assessment_id"]
+    )
+    _advance_assessment_to_finished(client, regular_token1, wa_job["assessment_id"])
+
+    _seed_sem_sim_results(
+        db_session,
+        sem_sim_job["assessment_id"],
+        [("GEN 1:1", 0.83), ("GEN 1:2", 0.42)],
+    )
+    _seed_word_alignment(
+        db_session,
+        wa_job["assessment_id"],
+        [
+            ("GEN 1:1", "beginning", "principio", 0.91),
+            ("GEN 1:1", "god", "dios", 0.88),
+            ("GEN 1:2", "earth", "tierra", 0.77),
+        ],
+    )
+
+    response = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"]["total_count"] == 2
+    assert data["ngrams"] == []  # ngrams job still in-flight
+
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+    assert set(by_vref) == {"GEN 1:1", "GEN 1:2"}
+    assert by_vref["GEN 1:1"]["semantic_similarity"]["score"] == 0.83
+    assert len(by_vref["GEN 1:1"]["word_alignment"]) == 2
+    assert {wa["source"] for wa in by_vref["GEN 1:1"]["word_alignment"]} == {
+        "beginning",
+        "god",
+    }
+    assert by_vref["GEN 1:2"]["semantic_similarity"]["score"] == 0.42
+    assert len(by_vref["GEN 1:2"]["word_alignment"]) == 1
+
+
+def test_session_results_filter_by_book_chapter(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_filter"},
+        apps=["semantic-similarity"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    sem_sim_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, sem_sim_job["assessment_id"]
+    )
+    _seed_sem_sim_results(
+        db_session,
+        sem_sim_job["assessment_id"],
+        [
+            ("GEN 1:1", 0.10),
+            ("GEN 1:2", 0.20),
+            ("GEN 2:1", 0.30),
+            ("EXO 1:1", 0.40),
+        ],
+    )
+
+    # book scope
+    resp_book = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        params={"book": "GEN"},
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp_book.status_code == 200
+    assert resp_book.json()["results"]["total_count"] == 3
+
+    # chapter scope (within book)
+    resp_chap = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        params={"book": "GEN", "chapter": 1},
+        headers=_auth_headers(regular_token1),
+    )
+    assert resp_chap.status_code == 200
+    chap_results = resp_chap.json()["results"]
+    assert chap_results["total_count"] == 2
+    assert {b["vref"] for b in chap_results["items"]} == {"GEN 1:1", "GEN 1:2"}
+
+    # verse scope
+    verse_results = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        params={"book": "GEN", "chapter": 1, "verse": 2},
+        headers=_auth_headers(regular_token1),
+    ).json()["results"]
+    assert verse_results["total_count"] == 1
+    assert verse_results["items"][0]["vref"] == "GEN 1:2"
+
+
+def test_session_results_pagination_canonical_order(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Pagination is by vref in canonical bible order (BookReference.number,
+    chapter, verse) — not lexicographic on the vref string."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_paging"},
+        apps=["semantic-similarity"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    sem_sim_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, sem_sim_job["assessment_id"]
+    )
+    # Verses chosen so that lexicographic sort would be wrong:
+    #   "GEN 1:10" < "GEN 1:2" alphabetically, but 2 comes first canonically.
+    _seed_sem_sim_results(
+        db_session,
+        sem_sim_job["assessment_id"],
+        [
+            ("GEN 1:1", 0.1),
+            ("GEN 1:2", 0.2),
+            ("GEN 1:10", 0.3),
+            ("GEN 2:1", 0.4),
+        ],
+    )
+
+    page1 = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        params={"page": 1, "page_size": 2},
+        headers=_auth_headers(regular_token1),
+    ).json()["results"]
+    page2 = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        params={"page": 2, "page_size": 2},
+        headers=_auth_headers(regular_token1),
+    ).json()["results"]
+    assert page1["total_count"] == 4
+    assert page1["page"] == 1
+    assert page1["page_size"] == 2
+    assert [b["vref"] for b in page1["items"]] == ["GEN 1:1", "GEN 1:2"]
+    assert [b["vref"] for b in page2["items"]] == ["GEN 1:10", "GEN 2:1"]
+
+
+def test_session_results_filter_validation(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_validation"},
+        apps=["semantic-similarity"],
+    )
+    session_id = create_resp.json()["session_id"]
+    base = f"{prefix}/train/status/{session_id}/results"
+    headers = _auth_headers(regular_token1)
+
+    assert client.get(base, params={"chapter": 1}, headers=headers).status_code == 400
+    assert (
+        client.get(
+            base, params={"verse": 1, "book": "GEN"}, headers=headers
+        ).status_code
+        == 400
+    )
+    assert client.get(base, params={"page": 1}, headers=headers).status_code == 400
+    assert (
+        client.get(base, params={"page_size": 10}, headers=headers).status_code == 400
+    )
+
+
+def test_session_results_ngrams_top_level(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Ngrams come back at the top level (not nested per vref) and are
+    filtered to ones whose vrefs intersect the requested window."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_ngrams"},
+        apps=["ngrams"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    ng_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(client, regular_token1, ng_job["assessment_id"])
+    _seed_ngrams(
+        db_session,
+        ng_job["assessment_id"],
+        [
+            ("in the", 2, ["GEN 1:1", "GEN 1:2"]),
+            ("god created", 2, ["GEN 1:1"]),
+            ("the people", 2, ["EXO 1:1"]),
+        ],
+    )
+
+    # No filter: all ngrams come back.
+    full = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    assert full["results"]["items"] == []  # ngrams don't contribute to per-vref bucket
+    assert full["results"]["total_count"] == 0
+    assert {n["ngram"] for n in full["ngrams"]} == {
+        "in the",
+        "god created",
+        "the people",
+    }
+
+    # GEN scope: only ngrams with at least one GEN vref.
+    gen_only = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        params={"book": "GEN"},
+        headers=_auth_headers(regular_token1),
+    ).json()
+    assert {n["ngram"] for n in gen_only["ngrams"]} == {"in the", "god created"}
+    # Even when filtered, each ngram carries its full vrefs list (matches
+    # the existing /v3/ngrams_result shape).
+    in_the = next(n for n in gen_only["ngrams"] if n["ngram"] == "in the")
+    assert sorted(in_the["vrefs"]) == ["GEN 1:1", "GEN 1:2"]

@@ -11,16 +11,21 @@ import fastapi
 import modal
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
+from sqlalchemy.orm import aliased, selectinload
 
 from database.dependencies import get_db
 from database.models import (
+    AlignmentTopSourceScores,
     Assessment,
+    AssessmentResult,
     BibleRevision,
     BibleVersion,
     BibleVersionAccess,
+    BookReference,
+    NgramsTable,
+    NgramVrefTable,
     TrainingJob,
 )
 from database.models import UserDB as UserModel
@@ -30,12 +35,18 @@ from database.models import (
 )
 from models import (
     ASSESSMENT_TERMINAL_STATUSES,
+    AssessmentStatus,
     InferenceReadiness,
+    NgramResult,
+    Result_v2,
     TrainingJobIn,
     TrainingJobOut,
-    TrainingJobStatusUpdate,
     TrainingResponse,
+    TrainingSessionResultsPage,
+    TrainingSessionResultsResponse,
+    TrainingSessionVrefResults,
     TrainingType,
+    WordAlignment,
 )
 from security_routes.auth_routes import get_current_user
 from utils.logging_config import setup_logger
@@ -48,17 +59,13 @@ logger = setup_logger(__name__, container_id=container_id)
 
 router = fastapi.APIRouter()
 
-# Valid state transitions: current_status -> set of allowed next statuses
-VALID_TRANSITIONS = {
-    "queued": {"preparing", "failed"},
-    "preparing": {"training", "failed"},
-    "training": {"training", "downloading", "failed"},
-    "downloading": {"uploading", "failed"},
-    "uploading": {"completed", "completed_with_errors", "failed"},
-}
-
-TERMINAL_STATUSES = {"completed", "completed_with_errors", "failed"}
-COMPLETED_STATUSES = {"completed", "completed_with_errors"}
+# Status, transitions, and progress live on the linked Assessment row
+# (aqua-api#584). The aqua-assessments runner PATCHes
+# /v3/assessment/{id}/status with the phased queued → preparing → training →
+# downloading → uploading → finished sequence; failures land as `failed`.
+ASSESSMENT_TERMINAL_VALUES = {s.value for s in ASSESSMENT_TERMINAL_STATUSES}
+ASSESSMENT_FINISHED_VALUE = AssessmentStatus.finished.value
+ASSESSMENT_FAILED_VALUE = AssessmentStatus.failed.value
 
 # Training types that have a corresponding aqua-assessments Assessment row.
 # Every type listed here must also appear in AssessmentType in models.py so
@@ -134,59 +141,46 @@ def _build_runner_train_config(
     return config
 
 
-async def _mirror_terminal_status_to_assessment(
-    job: TrainingJob, db: AsyncSession
-) -> None:
-    """Fallback reconciliation: reflect a TrainingJob terminal status onto its
-    linked Assessment when aqua-assessments' own PATCH /v3/assessment/status
-    flow didn't land (dispatch failure, worker died before posting, legacy
-    sem-sim path).
-
-    Mapping: completed → finished; failed / completed_with_errors → failed.
-    completed_with_errors flattens to failed because AssessmentStatus has no
-    cwe value; the TrainingJob detail is copied onto Assessment.status_detail
-    only for the failure paths (carrying an uploading-phase progress detail
-    onto a successful Assessment would be misleading).
-
-    Because this is reconciliation, it deliberately bypasses
-    ASSESSMENT_VALID_TRANSITIONS (queued → terminal is not a valid transition
-    there). To avoid clobbering aqua-assessments' own terminal post, this
-    helper is a no-op if the Assessment is already in a terminal state.
-    Also a no-op if the Assessment row has been soft-deleted.
-    """
-    if job.assessment_id is None:
-        return
-    assessment = await db.get(Assessment, job.assessment_id)
-    if assessment is None or assessment.deleted:
-        return
-    if assessment.status in ASSESSMENT_TERMINAL_STATUSES:
-        return
-
-    if job.status == "completed":
-        assessment.status = "finished"
-        assessment.status_detail = None
-    elif job.status in ("failed", "completed_with_errors"):
-        assessment.status = "failed"
-        if job.status_detail is not None:
-            assessment.status_detail = job.status_detail
-    else:
-        return
-
-    now = datetime.utcnow()
-    assessment.start_time = job.start_time or assessment.start_time or now
-    assessment.end_time = job.end_time or now
+def _job_out(job: TrainingJob, assessment: Optional[Assessment]) -> TrainingJobOut:
+    """Build a TrainingJobOut, sourcing status fields from the linked
+    Assessment row (the single channel of truth after #584)."""
+    return TrainingJobOut(
+        id=job.id,
+        type=job.type,
+        source_revision_id=job.source_revision_id,
+        target_revision_id=job.target_revision_id,
+        source_language=job.source_language,
+        target_language=job.target_language,
+        options=job.options,
+        requested_time=job.requested_time,
+        owner_id=job.owner_id,
+        session_id=job.session_id,
+        assessment_id=job.assessment_id,
+        status=assessment.status if assessment is not None else None,
+        status_detail=assessment.status_detail if assessment is not None else None,
+        percent_complete=(
+            assessment.percent_complete if assessment is not None else None
+        ),
+        start_time=assessment.start_time if assessment is not None else None,
+        end_time=assessment.end_time if assessment is not None else None,
+    )
 
 
 async def _compute_inference_readiness(
     source_revision_id: int, target_revision_id: int, db: AsyncSession
 ) -> dict:
-    """Check which inference types are ready based on completed training jobs."""
-    # Find all completed training jobs for this revision pair
-    stmt = select(TrainingJob.type).where(
-        TrainingJob.source_revision_id == source_revision_id,
-        TrainingJob.target_revision_id == target_revision_id,
-        TrainingJob.deleted.is_not(True),
-        TrainingJob.status.in_(list(COMPLETED_STATUSES)),
+    """Check which inference types are ready by looking at the Assessment row
+    linked from each TrainingJob — `finished` means results are pushed and
+    inference can proceed."""
+    stmt = (
+        select(TrainingJob.type)
+        .join(Assessment, Assessment.id == TrainingJob.assessment_id)
+        .where(
+            TrainingJob.source_revision_id == source_revision_id,
+            TrainingJob.target_revision_id == target_revision_id,
+            TrainingJob.deleted.is_not(True),
+            Assessment.status == ASSESSMENT_FINISHED_VALUE,
+        )
     )
     result = await db.execute(stmt)
     completed_types = {row[0] for row in result.all()}
@@ -289,13 +283,18 @@ async def create_training_job(
     for training_type in TrainingType:
         if training_type.value not in selected_types:
             continue
-        # Duplicate check per type
-        dup_stmt = select(TrainingJob).where(
-            TrainingJob.source_revision_id == job_in.source_revision_id,
-            TrainingJob.target_revision_id == job_in.target_revision_id,
-            TrainingJob.type == training_type.value,
-            TrainingJob.deleted.is_not(True),
-            TrainingJob.status.notin_(list(TERMINAL_STATUSES)),
+        # Duplicate check per type — "active" means linked Assessment is
+        # not in a terminal state.
+        dup_stmt = (
+            select(TrainingJob)
+            .join(Assessment, Assessment.id == TrainingJob.assessment_id)
+            .where(
+                TrainingJob.source_revision_id == job_in.source_revision_id,
+                TrainingJob.target_revision_id == job_in.target_revision_id,
+                TrainingJob.type == training_type.value,
+                TrainingJob.deleted.is_not(True),
+                Assessment.status.notin_(list(ASSESSMENT_TERMINAL_VALUES)),
+            )
         )
         dup_result = await db.execute(dup_stmt)
         duplicate = False
@@ -310,7 +309,8 @@ async def create_training_job(
 
         # Create a paired Assessment row so aqua-assessments can write
         # artifacts under the same assessment_id pattern used by the assess()
-        # path.
+        # path. Assessment.status is the single channel of training-run
+        # status — runner PATCHes it through the phased sequence.
         assessment = Assessment(
             revision_id=job_in.source_revision_id,
             reference_id=job_in.target_revision_id,
@@ -325,14 +325,12 @@ async def create_training_job(
         await db.flush()
         assessment_id = assessment.id
 
-        # Create training job record
         training_job = TrainingJob(
             type=training_type.value,
             source_revision_id=job_in.source_revision_id,
             target_revision_id=job_in.target_revision_id,
             source_language=source_language,
             target_language=target_language,
-            status="queued",
             options=job_in.options,
             requested_time=datetime.utcnow(),
             owner_id=current_user.id,
@@ -387,25 +385,57 @@ async def create_training_job(
             return job, e
 
     results = await asyncio.gather(*(dispatch_job(j) for j in training_jobs))
-    for job, exc in results:
-        if exc:
-            job.status = "failed"
-            job.status_detail = f"dispatch_failed: {type(exc).__name__}: {exc}"
-            job.end_time = datetime.utcnow()
-            await _mirror_terminal_status_to_assessment(job, db)
-    await db.commit()
-    for job in training_jobs:
-        await db.refresh(job)
+    failure_assessment_ids = {
+        job.assessment_id: f"dispatch_failed: {type(exc).__name__}: {exc}"
+        for job, exc in results
+        if exc and job.assessment_id is not None
+    }
+    if failure_assessment_ids:
+        # Direct write — Assessment.status is the source of truth and the
+        # runner never got a chance to advance it past `queued`.
+        now = datetime.utcnow()
+        failed_assessments = (
+            (
+                await db.execute(
+                    select(Assessment).where(
+                        Assessment.id.in_(list(failure_assessment_ids.keys()))
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for a in failed_assessments:
+            a.status = ASSESSMENT_FAILED_VALUE
+            a.status_detail = failure_assessment_ids[a.id]
+            a.start_time = a.start_time or now
+            a.end_time = now
+        await db.commit()
 
+    assessments_by_id = await _load_assessments_for(training_jobs, db)
     readiness = await _compute_inference_readiness(
         job_in.source_revision_id, job_in.target_revision_id, db
     )
 
     return TrainingResponse(
         session_id=session_id,
-        training_jobs=[TrainingJobOut.model_validate(job) for job in training_jobs],
+        training_jobs=[
+            _job_out(job, assessments_by_id.get(job.assessment_id))
+            for job in training_jobs
+        ],
         inference_readiness=readiness,
     )
+
+
+async def _load_assessments_for(
+    jobs: List[TrainingJob], db: AsyncSession
+) -> dict[int, Assessment]:
+    """Bulk-fetch the Assessment rows linked from a set of TrainingJobs."""
+    assessment_ids = [j.assessment_id for j in jobs if j.assessment_id is not None]
+    if not assessment_ids:
+        return {}
+    rows = await db.execute(select(Assessment).where(Assessment.id.in_(assessment_ids)))
+    return {a.id: a for a in rows.scalars().all()}
 
 
 @router.get("/train", response_model=List[TrainingJobOut])
@@ -417,11 +447,18 @@ async def list_training_jobs(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """List training jobs accessible to the current user."""
-    stmt = select(TrainingJob).where(TrainingJob.deleted.is_not(True))
+    """List training jobs accessible to the current user. The ?status filter
+    matches the linked Assessment.status."""
+    stmt = (
+        select(TrainingJob)
+        .options(selectinload(TrainingJob.assessment))
+        .where(TrainingJob.deleted.is_not(True))
+    )
 
     if status_filter:
-        stmt = stmt.where(TrainingJob.status == status_filter)
+        stmt = stmt.join(Assessment, Assessment.id == TrainingJob.assessment_id).where(
+            Assessment.status == status_filter
+        )
     if type_filter:
         stmt = stmt.where(TrainingJob.type == type_filter)
     if source_language:
@@ -449,22 +486,24 @@ async def list_training_jobs(
         )
 
     result = await db.execute(stmt)
-    jobs = result.scalars().all()
-    return [TrainingJobOut.model_validate(j) for j in jobs]
+    jobs = result.scalars().unique().all()
+    return [_job_out(j, j.assessment) for j in jobs]
 
 
-@router.get("/train/status", response_model=TrainingResponse)
-async def get_training_status(
-    session_id: str = Query(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
-):
-    """Get the status of a training session by session_id."""
-    stmt = select(TrainingJob).where(
-        TrainingJob.session_id == session_id,
-        TrainingJob.deleted.is_not(True),
+async def _load_session_jobs(
+    session_id: str, current_user: UserModel, db: AsyncSession
+) -> List[TrainingJob]:
+    """Shared loader: returns jobs for session_id with the same auth scoping
+    used by /train/status. Eager-loads each job's linked Assessment so
+    callers can read status fields without N+1 lookups."""
+    stmt = (
+        select(TrainingJob)
+        .options(selectinload(TrainingJob.assessment))
+        .where(
+            TrainingJob.session_id == session_id,
+            TrainingJob.deleted.is_not(True),
+        )
     )
-
     if not current_user.is_admin:
         version_ids = await _get_accessible_version_ids(current_user, db)
         SourceRevision = aliased(BibleRevision)
@@ -483,10 +522,18 @@ async def get_training_status(
                 TargetRevision.bible_version_id.in_(version_ids),
             )
         )
-
     result = await db.execute(stmt)
-    jobs = result.scalars().all()
+    return list(result.scalars().unique().all())
 
+
+@router.get("/train/status", response_model=TrainingResponse)
+async def get_training_status(
+    session_id: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Get the status of a training session by session_id."""
+    jobs = await _load_session_jobs(session_id, current_user, db)
     if not jobs:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -499,8 +546,261 @@ async def get_training_status(
 
     return TrainingResponse(
         session_id=session_id,
-        training_jobs=[TrainingJobOut.model_validate(j) for j in jobs],
+        training_jobs=[_job_out(j, j.assessment) for j in jobs],
         inference_readiness=readiness,
+    )
+
+
+@router.get(
+    "/train/status/{session_id}/results",
+    response_model=TrainingSessionResultsResponse,
+)
+async def get_training_session_results(
+    session_id: str,
+    book: Optional[str] = None,
+    chapter: Optional[int] = None,
+    verse: Optional[int] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Single read endpoint that returns training-job status + interleaved
+    per-vref results for every completed job in the session.
+
+    Per vref: semantic_similarity score (one row), word_alignment per-word
+    rows (multiple). Ngrams are returned at the top level — each ngram has
+    many vrefs, so nesting them per verse would duplicate the same ngram
+    across every verse it appears in. Tfidf and agent_critique training
+    runs produce nothing the client wants here (vector-only / no vrefs).
+    """
+    # Filter validation mirrors validate_parameters() from results_query_routes.
+    if chapter is not None and book is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="chapter requires book",
+        )
+    if verse is not None and (book is None or chapter is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="verse requires book and chapter",
+        )
+    if (page is None) != (page_size is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="page and page_size must be set together",
+        )
+
+    jobs = await _load_session_jobs(session_id, current_user, db)
+    if not jobs:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No training jobs found for session_id={session_id}",
+        )
+
+    readiness = await _compute_inference_readiness(
+        jobs[0].source_revision_id, jobs[0].target_revision_id, db
+    )
+
+    # Only finished jobs contribute results. In-flight (or failed) jobs
+    # surface via the training_jobs status block; their type just won't
+    # appear in any vref bucket yet. "Finished" is read off the linked
+    # Assessment.status — TrainingJob is metadata only after #584.
+    completed_assessment_id_by_type: dict[str, int] = {
+        j.type: j.assessment_id
+        for j in jobs
+        if j.assessment is not None
+        and j.assessment.status == ASSESSMENT_FINISHED_VALUE
+        and j.assessment_id is not None
+    }
+    sem_sim_id = completed_assessment_id_by_type.get(
+        TrainingType.semantic_similarity.value
+    )
+    word_align_id = completed_assessment_id_by_type.get(
+        TrainingType.word_alignment.value
+    )
+    ngrams_id = completed_assessment_id_by_type.get(TrainingType.ngrams.value)
+
+    # vref universe = distinct vrefs across the per-vref result tables for
+    # all completed types in the session, with optional book/chapter/verse
+    # scoping. Carries (book, chapter, verse) so we can canonical-sort via
+    # BookReference.number after the union.
+    per_vref_subqueries = []
+
+    def _scope(q, model):
+        if book is not None:
+            q = q.where(model.book == book)
+        if chapter is not None:
+            q = q.where(model.chapter == chapter)
+        if verse is not None:
+            q = q.where(model.verse == verse)
+        return q
+
+    if sem_sim_id is not None:
+        per_vref_subqueries.append(
+            _scope(
+                select(
+                    AssessmentResult.vref,
+                    AssessmentResult.book,
+                    AssessmentResult.chapter,
+                    AssessmentResult.verse,
+                ).where(AssessmentResult.assessment_id == sem_sim_id),
+                AssessmentResult,
+            )
+        )
+    if word_align_id is not None:
+        per_vref_subqueries.append(
+            _scope(
+                select(
+                    AlignmentTopSourceScores.vref,
+                    AlignmentTopSourceScores.book,
+                    AlignmentTopSourceScores.chapter,
+                    AlignmentTopSourceScores.verse,
+                ).where(AlignmentTopSourceScores.assessment_id == word_align_id),
+                AlignmentTopSourceScores,
+            )
+        )
+
+    page_vrefs: List[str] = []
+    total_count = 0
+    if per_vref_subqueries:
+        union_subq = per_vref_subqueries[0].union(*per_vref_subqueries[1:]).subquery()
+        # UNION already deduplicates, so a plain select counts distinct vrefs.
+        count_result = await db.execute(select(func.count()).select_from(union_subq))
+        total_count = count_result.scalar() or 0
+
+        ordered_q = (
+            select(union_subq.c.vref)
+            .join(BookReference, BookReference.abbreviation == union_subq.c.book)
+            .order_by(
+                BookReference.number,
+                union_subq.c.chapter,
+                union_subq.c.verse,
+            )
+        )
+        if page is not None and page_size is not None:
+            ordered_q = ordered_q.offset((page - 1) * page_size).limit(page_size)
+
+        page_vrefs = [row[0] for row in (await db.execute(ordered_q)).all()]
+
+    # Per-vref data fetches (only the page's vrefs).
+    sem_sim_by_vref: dict[str, Result_v2] = {}
+    if sem_sim_id is not None and page_vrefs:
+        rows = await db.execute(
+            select(AssessmentResult).where(
+                AssessmentResult.assessment_id == sem_sim_id,
+                AssessmentResult.vref.in_(page_vrefs),
+            )
+        )
+        for r in rows.scalars().all():
+            sem_sim_by_vref[r.vref] = Result_v2(
+                id=r.id,
+                assessment_id=r.assessment_id,
+                vref=r.vref,
+                score=float(r.score) if r.score is not None else 0.0,
+                flag=bool(r.flag),
+                note=r.note,
+                source=r.source,
+                target=r.target,
+                hide=bool(r.hide),
+            )
+
+    word_align_by_vref: dict[str, List[WordAlignment]] = {}
+    if word_align_id is not None and page_vrefs:
+        rows = await db.execute(
+            select(AlignmentTopSourceScores).where(
+                AlignmentTopSourceScores.assessment_id == word_align_id,
+                AlignmentTopSourceScores.vref.in_(page_vrefs),
+            )
+        )
+        for r in rows.scalars().all():
+            word_align_by_vref.setdefault(r.vref, []).append(
+                WordAlignment(
+                    id=r.id,
+                    assessment_id=r.assessment_id,
+                    vref=r.vref,
+                    source=r.source,
+                    target=r.target,
+                    score=float(r.score) if r.score is not None else 0.0,
+                    flag=bool(r.flag),
+                    note=r.note,
+                    hide=bool(r.hide),
+                )
+            )
+
+    results_list = [
+        TrainingSessionVrefResults(
+            vref=v,
+            semantic_similarity=sem_sim_by_vref.get(v),
+            word_alignment=word_align_by_vref.get(v, []),
+        )
+        for v in page_vrefs
+    ]
+
+    # Ngrams: top-level, filtered to ngrams that appear in at least one vref
+    # in the requested book/chapter/verse window (or all ngrams when no
+    # filter). Returns each ngram's full vrefs list, not just the matching
+    # ones, so the client sees the same shape as /v3/ngrams_result.
+    ngrams_list: List[NgramResult] = []
+    if ngrams_id is not None:
+        matching_q = (
+            select(NgramsTable.id)
+            .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
+            .where(NgramsTable.assessment_id == ngrams_id)
+            .distinct()
+        )
+        if verse is not None:
+            matching_q = matching_q.where(
+                NgramVrefTable.vref == f"{book} {chapter}:{verse}"
+            )
+        elif chapter is not None:
+            matching_q = matching_q.where(
+                NgramVrefTable.vref.like(f"{book} {chapter}:%")
+            )
+        elif book is not None:
+            matching_q = matching_q.where(NgramVrefTable.vref.like(f"{book} %"))
+
+        matching_ids = [row[0] for row in (await db.execute(matching_q)).all()]
+        if matching_ids:
+            full_q = (
+                select(
+                    NgramsTable.id,
+                    NgramsTable.ngram,
+                    NgramsTable.ngram_size,
+                    NgramVrefTable.vref,
+                )
+                .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
+                .where(NgramsTable.id.in_(matching_ids))
+            )
+            buckets: dict[int, dict] = {}
+            for nid, ngram, size, ngram_vref in (await db.execute(full_q)).all():
+                b = buckets.setdefault(
+                    nid,
+                    {"ngram": ngram, "ngram_size": size, "vrefs": []},
+                )
+                b["vrefs"].append(ngram_vref)
+            ngrams_list = [
+                NgramResult(
+                    id=nid,
+                    assessment_id=ngrams_id,
+                    ngram=b["ngram"],
+                    ngram_size=b["ngram_size"],
+                    vrefs=b["vrefs"],
+                )
+                for nid, b in buckets.items()
+            ]
+
+    return TrainingSessionResultsResponse(
+        session_id=session_id,
+        training_jobs=[_job_out(j, j.assessment) for j in jobs],
+        inference_readiness=readiness,
+        results=TrainingSessionResultsPage(
+            items=results_list,
+            total_count=total_count,
+            page=page,
+            page_size=page_size,
+        ),
+        ngrams=ngrams_list,
     )
 
 
@@ -511,7 +811,12 @@ async def get_training_job(
     current_user: UserModel = Depends(get_current_user),
 ):
     """Get a single training job by ID."""
-    job = await db.get(TrainingJob, job_id)
+    stmt = (
+        select(TrainingJob)
+        .options(selectinload(TrainingJob.assessment))
+        .where(TrainingJob.id == job_id)
+    )
+    job = (await db.execute(stmt)).scalars().first()
     if not job or job.deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -532,77 +837,7 @@ async def get_training_job(
                 detail="Not authorized to access this training job",
             )
 
-    return TrainingJobOut.model_validate(job)
-
-
-@router.patch("/train/{job_id}/status", response_model=TrainingJobOut)
-async def update_training_job_status(
-    job_id: int,
-    update: TrainingJobStatusUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: UserModel = Depends(get_current_user),
-):
-    """Runner callback to update training job status."""
-    job = await db.get(TrainingJob, job_id)
-    if not job or job.deleted:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Training job not found",
-        )
-
-    # Auth: admin, owner, or group access to both revisions
-    if not current_user.is_admin and job.owner_id != current_user.id:
-        version_ids = await _get_accessible_version_ids(current_user, db)
-        source_rev = await db.get(BibleRevision, job.source_revision_id)
-        target_rev = await db.get(BibleRevision, job.target_revision_id)
-        if (
-            source_rev.bible_version_id not in version_ids
-            or target_rev.bible_version_id not in version_ids
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to update this training job",
-            )
-
-    if job.status in TERMINAL_STATUSES:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Job is already in terminal status '{job.status}'",
-        )
-
-    # Validate state transition
-    allowed_next = VALID_TRANSITIONS.get(job.status, set())
-    if update.status not in allowed_next:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Invalid transition from '{job.status}' to '{update.status}'",
-        )
-
-    # Update fields
-    job.status = update.status
-    if update.status_detail is not None:
-        job.status_detail = update.status_detail
-    if update.percent_complete is not None:
-        job.percent_complete = update.percent_complete
-    if update.external_ids is not None:
-        job.external_ids = update.external_ids
-    if update.result_url is not None:
-        job.result_url = update.result_url
-    if update.result_metadata is not None:
-        job.result_metadata = update.result_metadata
-
-    # Set start_time on first non-queued status
-    if job.start_time is None and update.status != "queued":
-        job.start_time = datetime.utcnow()
-
-    # Set end_time on terminal status
-    if update.status in TERMINAL_STATUSES:
-        job.end_time = datetime.utcnow()
-        await _mirror_terminal_status_to_assessment(job, db)
-
-    await db.commit()
-    await db.refresh(job)
-    return TrainingJobOut.model_validate(job)
+    return _job_out(job, job.assessment)
 
 
 @router.get("/train/{job_id}/data")
@@ -715,7 +950,12 @@ async def delete_training_job(
     current_user: UserModel = Depends(get_current_user),
 ):
     """Soft delete a training job (terminal jobs only)."""
-    job = await db.get(TrainingJob, job_id)
+    stmt = (
+        select(TrainingJob)
+        .options(selectinload(TrainingJob.assessment))
+        .where(TrainingJob.id == job_id)
+    )
+    job = (await db.execute(stmt)).scalars().first()
     if not job or job.deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -729,11 +969,14 @@ async def delete_training_job(
             detail="Not authorized to delete this training job",
         )
 
-    # Only allow deletion of terminal jobs
-    if job.status not in TERMINAL_STATUSES:
+    assessment_status = job.assessment.status if job.assessment is not None else None
+    if assessment_status not in ASSESSMENT_TERMINAL_VALUES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Cannot delete job in '{job.status}' status. Only terminal jobs can be deleted.",
+            detail=(
+                f"Cannot delete job whose assessment is in '{assessment_status}' "
+                "status. Only terminal jobs can be deleted."
+            ),
         )
 
     job.deleted = True

@@ -1107,17 +1107,6 @@ class TrainingType(str, Enum):
     agent_critique = "agent-critique"
 
 
-class TrainingStatus(str, Enum):
-    queued = "queued"
-    preparing = "preparing"
-    training = "training"
-    downloading = "downloading"
-    uploading = "uploading"
-    completed = "completed"
-    completed_with_errors = "completed_with_errors"
-    failed = "failed"
-
-
 class TrainingJobIn(BaseModel):
     source_revision_id: int
     target_revision_id: int
@@ -1131,27 +1120,29 @@ class TrainingJobIn(BaseModel):
 
 
 class TrainingJobOut(BaseModel):
+    """TrainingJob is metadata only after aqua-api#584 — status, timing, and
+    progress are sourced from the linked Assessment row when serializing."""
+
     id: int
     type: str
     source_revision_id: int
     target_revision_id: int
     source_language: str
     target_language: str
-    status: str
-    status_detail: Optional[str] = None
-    percent_complete: Optional[float] = None
-    external_ids: Optional[Dict[str, Any]] = None
-    result_url: Optional[str] = None
-    result_metadata: Optional[Dict[str, Any]] = None
     options: Optional[Dict[str, Any]] = None
     requested_time: Optional[datetime.datetime] = None
-    start_time: Optional[datetime.datetime] = None
-    end_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
     session_id: Optional[str] = None
     assessment_id: Optional[int] = None
 
-    model_config = {"from_attributes": True, "use_enum_values": True}
+    # Mirrored from the linked Assessment row.
+    status: Optional[str] = None
+    status_detail: Optional[str] = None
+    percent_complete: Optional[float] = None
+    start_time: Optional[datetime.datetime] = None
+    end_time: Optional[datetime.datetime] = None
+
+    model_config = {"use_enum_values": True}
 
 
 class InferenceReadiness(BaseModel):
@@ -1165,15 +1156,25 @@ class TrainingResponse(BaseModel):
     inference_readiness: Dict[str, InferenceReadiness]
 
 
-class TrainingJobStatusUpdate(BaseModel):
-    status: TrainingStatus
-    status_detail: Optional[str] = None
-    percent_complete: Optional[float] = Field(None, ge=0.0, le=100.0)
-    external_ids: Optional[Dict[str, Any]] = None
-    result_url: Optional[str] = None
-    result_metadata: Optional[Dict[str, Any]] = None
+class TrainingSessionVrefResults(BaseModel):
+    vref: str
+    semantic_similarity: Optional[Result_v2] = None
+    word_alignment: List[WordAlignment] = Field(default_factory=list)
 
-    model_config = {"use_enum_values": True}
+
+class TrainingSessionResultsPage(BaseModel):
+    items: List[TrainingSessionVrefResults]
+    total_count: int
+    page: Optional[int] = None
+    page_size: Optional[int] = None
+
+
+class TrainingSessionResultsResponse(BaseModel):
+    session_id: str
+    training_jobs: List[TrainingJobOut]
+    inference_readiness: Dict[str, InferenceReadiness]
+    results: TrainingSessionResultsPage
+    ngrams: List[NgramResult] = Field(default_factory=list)
 
 
 class EflomalDictionaryItem(BaseModel):
