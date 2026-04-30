@@ -122,8 +122,9 @@ def _build_runner_train_config(
     on Assessment.id.
 
     `is_training=True` tells the runner to dispatch to the app's training
-    path (rather than its inference path); status reporting itself is the
-    same queued → running → finished sequence used by every assessment.
+    path (rather than its inference path); status reporting itself uses
+    the same queued → running → finished|failed lifecycle as every
+    assessment.
     Per-app behaviour toggles (e.g. sem-sim's `finetune`) flow through the
     caller's `options` → `config["kwargs"]` — aqua-api doesn't hard-code
     them.
