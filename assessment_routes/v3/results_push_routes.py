@@ -80,9 +80,8 @@ async def _get_authorized_assessment(
 
 
 async def _batch_insert(db, model_cls, rows):
-    """Batch-insert rows and return their auto-generated IDs.
+    """Batch-insert rows without projecting generated IDs back to the client.
 
-    IDs are returned in the same positional order as the input rows.
     PostgreSQL/asyncpg limits queries to 32,767 parameters, so the batch
     size is computed from the number of columns per row.
     """
@@ -91,13 +90,9 @@ async def _batch_insert(db, model_cls, rows):
     # SQLAlchemy may add columns with server defaults (e.g. 'hide').
     cols_per_row = len(model_cls.__table__.columns)
     batch_size = min(_BATCH_SIZE, _PG_MAX_PARAMS // cols_per_row)
-    inserted_ids = []
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]
-        stmt = insert(model_cls).values(batch).returning(model_cls.id)
-        result = await db.execute(stmt)
-        inserted_ids.extend(r[0] for r in result.fetchall())
-    return inserted_ids
+        await db.execute(insert(model_cls).values(batch))
 
 
 def _build_score_rows(assessment_id: int, items: List[AssessmentResultItem]):
@@ -153,16 +148,17 @@ async def push_results(
     Maximum of 5,000 items per request. For larger datasets, split into
     multiple requests of 5,000 items or fewer.
 
-    Returns the list of inserted row IDs in the same order as the input.
+    Returns an empty ``ids`` list; generated IDs are intentionally not fetched
+    during bulk inserts.
     """
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
     rows = _build_score_rows(assessment_id, body)
     try:
-        ids = await _batch_insert(db, AssessmentResult, rows)
+        await _batch_insert(db, AssessmentResult, rows)
         await db.commit()
-        return InsertResponse(ids=ids)
+        return InsertResponse(ids=[])
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
@@ -210,7 +206,8 @@ async def push_alignment_scores(
     Maximum of 5,000 items per request. For larger datasets, split into
     multiple requests of 5,000 items or fewer.
 
-    Returns the list of inserted row IDs in the same order as the input.
+    Returns an empty ``ids`` list; generated IDs are intentionally not fetched
+    during bulk inserts.
 
     ``hide`` is hardcoded to ``False`` and is not part of ``AlignmentScoreItem``
     — it is a UI-only flag managed by other endpoints, not by the assessment
@@ -240,9 +237,9 @@ async def push_alignment_scores(
             }
         )
     try:
-        ids = await _batch_insert(db, AlignmentTopSourceScores, rows)
+        await _batch_insert(db, AlignmentTopSourceScores, rows)
         await db.commit()
-        return InsertResponse(ids=ids)
+        return InsertResponse(ids=[])
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
@@ -295,7 +292,8 @@ async def push_alignment_threshold_scores(
     Maximum of 5,000 items per request. For larger datasets, split into
     multiple requests of 5,000 items or fewer.
 
-    Returns the list of inserted row IDs in the same order as the input.
+    Returns an empty ``ids`` list; generated IDs are intentionally not fetched
+    during bulk inserts.
 
     ``hide`` is explicitly set to ``False`` for parity with the top-source
     endpoint, so we don't depend on the column's ``server_default`` (added
@@ -325,9 +323,9 @@ async def push_alignment_threshold_scores(
             }
         )
     try:
-        ids = await _batch_insert(db, AlignmentThresholdScores, rows)
+        await _batch_insert(db, AlignmentThresholdScores, rows)
         await db.commit()
-        return InsertResponse(ids=ids)
+        return InsertResponse(ids=[])
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
@@ -375,42 +373,43 @@ async def push_text_lengths(
     Maximum of 5,000 items per request. For larger datasets, split into
     multiple requests of 5,000 items or fewer.
 
-    Returns the list of inserted row IDs in the same order as the input.
+    Returns an empty ``ids`` list; generated IDs are intentionally not fetched
+    during bulk inserts.
     """
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
+    rows = [
+        {
+            "assessment_id": assessment_id,
+            "vref": item.vref,
+            "word_lengths": item.word_lengths,
+            "char_lengths": item.char_lengths,
+            "word_lengths_z": item.word_lengths_z,
+            "char_lengths_z": item.char_lengths_z,
+        }
+        for item in body
+    ]
     try:
-        rows = [
-            {
-                "assessment_id": assessment_id,
-                "vref": item.vref,
-                "word_lengths": item.word_lengths,
-                "char_lengths": item.char_lengths,
-                "word_lengths_z": item.word_lengths_z,
-                "char_lengths_z": item.char_lengths_z,
-            }
-            for item in body
-        ]
-        ids = await _batch_insert(db, TextLengthsTable, rows)
+        await _batch_insert(db, TextLengthsTable, rows)
         await db.commit()
-        return InsertResponse(ids=ids)
+        return InsertResponse(ids=[])
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(body)} text lengths for assessment {assessment_id}",
+            detail=f"Duplicate or constraint violation inserting {len(rows)} text lengths for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for text_lengths_table, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(body),
+            len(rows),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(body)} text lengths for assessment {assessment_id}",
+            detail=f"Database error inserting {len(rows)} text lengths for assessment {assessment_id}",
         )
     except HTTPException:
         raise
@@ -418,12 +417,12 @@ async def push_text_lengths(
         logger.exception(
             "Unexpected error pushing text lengths, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(body),
+            len(rows),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(body)} text lengths for assessment {assessment_id}",
+            detail=f"Unexpected error inserting {len(rows)} text lengths for assessment {assessment_id}",
         )
 
 
@@ -442,39 +441,40 @@ async def push_tfidf_vectors(
     Maximum of 5,000 items per request. For larger datasets, split into
     multiple requests of 5,000 items or fewer.
 
-    Returns the list of inserted row IDs in the same order as the input.
+    Returns an empty ``ids`` list; generated IDs are intentionally not fetched
+    during bulk inserts.
     """
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
+    rows = [
+        {
+            "assessment_id": assessment_id,
+            "vref": item.vref,
+            "vector": item.vector,
+        }
+        for item in body
+    ]
     try:
-        rows = [
-            {
-                "assessment_id": assessment_id,
-                "vref": item.vref,
-                "vector": item.vector,
-            }
-            for item in body
-        ]
-        ids = await _batch_insert(db, TfidfPcaVector, rows)
+        await _batch_insert(db, TfidfPcaVector, rows)
         await db.commit()
-        return InsertResponse(ids=ids)
+        return InsertResponse(ids=[])
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(body)} tfidf vectors for assessment {assessment_id}",
+            detail=f"Duplicate or constraint violation inserting {len(rows)} tfidf vectors for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for tfidf_pca_vector, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(body),
+            len(rows),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(body)} tfidf vectors for assessment {assessment_id}",
+            detail=f"Database error inserting {len(rows)} tfidf vectors for assessment {assessment_id}",
         )
     except HTTPException:
         raise
@@ -482,12 +482,12 @@ async def push_tfidf_vectors(
         logger.exception(
             "Unexpected error pushing tfidf vectors, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(body),
+            len(rows),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(body)} tfidf vectors for assessment {assessment_id}",
+            detail=f"Unexpected error inserting {len(rows)} tfidf vectors for assessment {assessment_id}",
         )
 
 

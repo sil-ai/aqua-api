@@ -1,6 +1,13 @@
 import pytest
 
-from database.models import Assessment
+from database.models import (
+    AlignmentThresholdScores,
+    AlignmentTopSourceScores,
+    Assessment,
+    AssessmentResult,
+    TextLengthsTable,
+    TfidfPcaVector,
+)
 
 prefix = "v3"
 
@@ -25,7 +32,7 @@ def push_assessment_id(test_db_session, test_revision_id, test_revision_id_2):
 # ---------------------------------------------------------------------------
 
 
-def test_push_results(client, regular_token1, push_assessment_id):
+def test_push_results(client, regular_token1, push_assessment_id, test_db_session):
     body = [
         {
             "vref": "GEN 1:1",
@@ -45,9 +52,18 @@ def test_push_results(client, regular_token1, push_assessment_id):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
-    data = response.json()
-    assert len(data["ids"]) == 2
-    assert all(isinstance(i, int) for i in data["ids"])
+    assert response.json()["ids"] == []
+    # Response no longer carries IDs, so confirm rows landed via the DB.
+    test_db_session.expire_all()
+    persisted = (
+        test_db_session.query(AssessmentResult)
+        .filter(
+            AssessmentResult.assessment_id == push_assessment_id,
+            AssessmentResult.vref.in_(["GEN 1:1", "GEN 1:2"]),
+        )
+        .count()
+    )
+    assert persisted == 2
 
 
 def test_push_results_empty_body(client, regular_token1, push_assessment_id):
@@ -129,7 +145,7 @@ def test_push_alignment_scores(client, regular_token1, push_assessment_id):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
-    assert len(response.json()["ids"]) == 1
+    assert response.json()["ids"] == []
 
 
 def test_push_alignment_scores_round_trips_to_get(
@@ -204,7 +220,7 @@ def test_push_alignment_threshold_scores(client, regular_token1, push_assessment
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
-    assert len(response.json()["ids"]) == 2
+    assert response.json()["ids"] == []
 
 
 def test_push_alignment_threshold_scores_round_trips_to_get(
@@ -314,7 +330,7 @@ def test_push_alignment_threshold_scores_invalid_vref(
 # ---------------------------------------------------------------------------
 
 
-def test_push_text_lengths(client, regular_token1, push_assessment_id):
+def test_push_text_lengths(client, regular_token1, push_assessment_id, test_db_session):
     body = [
         {
             "vref": "GEN 1:1",
@@ -337,7 +353,18 @@ def test_push_text_lengths(client, regular_token1, push_assessment_id):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
-    assert len(response.json()["ids"]) == 2
+    assert response.json()["ids"] == []
+    # Response no longer carries IDs, so confirm rows landed via the DB.
+    test_db_session.expire_all()
+    persisted = (
+        test_db_session.query(TextLengthsTable)
+        .filter(
+            TextLengthsTable.assessment_id == push_assessment_id,
+            TextLengthsTable.vref.in_(["GEN 1:1", "GEN 1:2"]),
+        )
+        .count()
+    )
+    assert persisted == 2
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +372,9 @@ def test_push_text_lengths(client, regular_token1, push_assessment_id):
 # ---------------------------------------------------------------------------
 
 
-def test_push_tfidf_vectors(client, regular_token1, push_assessment_id):
+def test_push_tfidf_vectors(
+    client, regular_token1, push_assessment_id, test_db_session
+):
     body = [
         {
             "vref": "GEN 1:1",
@@ -358,7 +387,18 @@ def test_push_tfidf_vectors(client, regular_token1, push_assessment_id):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
-    assert len(response.json()["ids"]) == 1
+    assert response.json()["ids"] == []
+    # Response no longer carries IDs, so confirm rows landed via the DB.
+    test_db_session.expire_all()
+    persisted = (
+        test_db_session.query(TfidfPcaVector)
+        .filter(
+            TfidfPcaVector.assessment_id == push_assessment_id,
+            TfidfPcaVector.vref == "GEN 1:1",
+        )
+        .count()
+    )
+    assert persisted == 1
 
 
 # ---------------------------------------------------------------------------
@@ -422,7 +462,7 @@ def test_push_ngrams_unauthorized(client, regular_token2, push_assessment_id):
 # ---------------------------------------------------------------------------
 
 
-def test_delete_results(client, regular_token1, push_assessment_id):
+def test_delete_results(client, regular_token1, push_assessment_id, test_db_session):
     # First insert some results to delete
     insert_resp = client.post(
         f"{prefix}/assessment/{push_assessment_id}/results",
@@ -433,7 +473,16 @@ def test_delete_results(client, regular_token1, push_assessment_id):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert insert_resp.status_code == 200
-    ids = insert_resp.json()["ids"]
+    test_db_session.expire_all()
+    ids = [
+        row.id
+        for row in test_db_session.query(AssessmentResult)
+        .filter(
+            AssessmentResult.assessment_id == push_assessment_id,
+            AssessmentResult.vref.in_(["GEN 1:3", "GEN 1:4"]),
+        )
+        .all()
+    ]
 
     response = client.request(
         "DELETE",
@@ -481,22 +530,38 @@ def test_delete_results_unauthorized(client, regular_token2, push_assessment_id)
 # ---------------------------------------------------------------------------
 
 
-def test_delete_alignment_scores(client, regular_token1, push_assessment_id):
+def test_delete_alignment_scores(
+    client, regular_token1, push_assessment_id, test_db_session
+):
     insert_resp = client.post(
         f"{prefix}/assessment/{push_assessment_id}/alignment-scores",
         json=[
             {
                 "vref": "GEN 1:1",
                 "score": 0.9,
-                "source": "beginning",
-                "target": "mwanzo",
+                "source": "delete-beginning",
+                "target": "delete-mwanzo",
             },
-            {"vref": "GEN 1:2", "score": 0.85, "source": "earth", "target": "dunia"},
+            {
+                "vref": "GEN 1:2",
+                "score": 0.85,
+                "source": "delete-earth",
+                "target": "delete-dunia",
+            },
         ],
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert insert_resp.status_code == 200
-    ids = insert_resp.json()["ids"]
+    test_db_session.expire_all()
+    ids = [
+        row.id
+        for row in test_db_session.query(AlignmentTopSourceScores)
+        .filter(
+            AlignmentTopSourceScores.assessment_id == push_assessment_id,
+            AlignmentTopSourceScores.source.in_(["delete-beginning", "delete-earth"]),
+        )
+        .all()
+    ]
 
     response = client.request(
         "DELETE",
@@ -523,7 +588,9 @@ def test_delete_alignment_scores_nonexistent(client, regular_token1):
 # ---------------------------------------------------------------------------
 
 
-def test_delete_alignment_threshold_scores(client, regular_token1, push_assessment_id):
+def test_delete_alignment_threshold_scores(
+    client, regular_token1, push_assessment_id, test_db_session
+):
     insert_resp = client.post(
         f"{prefix}/assessment/{push_assessment_id}/alignment-threshold-scores",
         json=[
@@ -543,7 +610,17 @@ def test_delete_alignment_threshold_scores(client, regular_token1, push_assessme
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert insert_resp.status_code == 200
-    ids = insert_resp.json()["ids"]
+    test_db_session.expire_all()
+    ids = [
+        row.id
+        for row in test_db_session.query(AlignmentThresholdScores)
+        .filter(
+            AlignmentThresholdScores.assessment_id == push_assessment_id,
+            AlignmentThresholdScores.vref == "GEN 1:8",
+            AlignmentThresholdScores.source == "heaven",
+        )
+        .all()
+    ]
 
     response = client.request(
         "DELETE",
@@ -595,12 +672,17 @@ def test_delete_alignment_threshold_scores_empty_ids(
 # ---------------------------------------------------------------------------
 
 
-def test_delete_text_lengths(client, regular_token1, push_assessment_id):
+def test_delete_text_lengths(
+    client, regular_token1, push_assessment_id, test_db_session
+):
+    # Use a vref unique to this test so the lookup can't pick up rows
+    # inserted by other tests sharing the module-scoped assessment.
+    delete_vref = "GEN 1:30"
     insert_resp = client.post(
         f"{prefix}/assessment/{push_assessment_id}/text-lengths",
         json=[
             {
-                "vref": "GEN 1:3",
+                "vref": delete_vref,
                 "word_lengths": 5.0,
                 "char_lengths": 25.0,
                 "word_lengths_z": 0.3,
@@ -610,7 +692,16 @@ def test_delete_text_lengths(client, regular_token1, push_assessment_id):
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert insert_resp.status_code == 200
-    ids = insert_resp.json()["ids"]
+    test_db_session.expire_all()
+    ids = [
+        row.id
+        for row in test_db_session.query(TextLengthsTable)
+        .filter(
+            TextLengthsTable.assessment_id == push_assessment_id,
+            TextLengthsTable.vref == delete_vref,
+        )
+        .all()
+    ]
 
     response = client.request(
         "DELETE",
@@ -637,14 +728,28 @@ def test_delete_text_lengths_nonexistent(client, regular_token1):
 # ---------------------------------------------------------------------------
 
 
-def test_delete_tfidf_vectors(client, regular_token1, push_assessment_id):
+def test_delete_tfidf_vectors(
+    client, regular_token1, push_assessment_id, test_db_session
+):
+    # Use a vref unique to this test so the lookup can't pick up rows
+    # inserted by other tests sharing the module-scoped assessment.
+    delete_vref = "GEN 1:31"
     insert_resp = client.post(
         f"{prefix}/assessment/{push_assessment_id}/tfidf-vectors",
-        json=[{"vref": "GEN 1:3", "vector": [0.1] * 300}],
+        json=[{"vref": delete_vref, "vector": [0.1] * 300}],
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert insert_resp.status_code == 200
-    ids = insert_resp.json()["ids"]
+    test_db_session.expire_all()
+    ids = [
+        row.id
+        for row in test_db_session.query(TfidfPcaVector)
+        .filter(
+            TfidfPcaVector.assessment_id == push_assessment_id,
+            TfidfPcaVector.vref == delete_vref,
+        )
+        .all()
+    ]
 
     response = client.request(
         "DELETE",
