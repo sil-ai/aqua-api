@@ -22,6 +22,9 @@ from database.models import (
     Assessment,
     AssessmentResult,
     BibleRevision,
+    EflomalAssessment,
+    EflomalDictionary,
+    EflomalTargetWordCount,
     NgramsTable,
     NgramVrefTable,
     TextLengthsTable,
@@ -36,6 +39,13 @@ from models import Result_v2 as Result
 from models import TextLengthsResult, TfidfResult, WordAlignment
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
+from utils.eflomal_missing_words import (
+    DEFAULT_MIN_FREQUENCY,
+    build_directional_dicts,
+    compute_word_counts,
+    detect_orphans,
+    greedy_align,
+)
 from utils.logging_config import setup_logger
 from utils.verse_range_utils import merge_verse_ranges
 
@@ -2033,6 +2043,162 @@ async def get_alignment_scores(
     return {"results": result_data, "total_count": total_count}
 
 
+async def _get_missing_words_eflomal(
+    revision_id: int,
+    reference_id: int,
+    direction: str,
+    threshold: Optional[float],
+    book: Optional[str],
+    chapter: Optional[int],
+    verse: Optional[int],
+    db: AsyncSession,
+) -> Tuple[List[Result], int, Optional[int]]:
+    """Compute eflomal-style orphan/missing words on the API side.
+
+    Finds the most recent finished Assessment with a matching EflomalAssessment
+    for (revision_id, reference_id), pulls the dictionary + target word counts,
+    optionally tallies source word counts on the fly, then runs the per-verse
+    greedy alignment + orphan detector for each verse pair in the requested
+    book/chapter/verse scope.
+    """
+    main = (
+        await db.execute(
+            select(EflomalAssessment, Assessment.id.label("parent_id"))
+            .join(Assessment, Assessment.id == EflomalAssessment.assessment_id)
+            .where(
+                Assessment.revision_id == revision_id,
+                Assessment.reference_id == reference_id,
+                Assessment.status == "finished",
+            )
+            .order_by(Assessment.end_time.desc())
+        )
+    ).first()
+    if not main:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "No completed eflomal assessment found for the given "
+                "revision_id and reference_id"
+            ),
+        )
+    eflomal_assessment, parent_assessment_id = main
+
+    dict_rows = (
+        await db.execute(
+            select(
+                EflomalDictionary.source_word,
+                EflomalDictionary.target_word,
+                EflomalDictionary.count,
+            ).where(EflomalDictionary.assessment_id == eflomal_assessment.id)
+        )
+    ).all()
+    forward_dict, reverse_dict = build_directional_dicts(dict_rows)
+
+    tgt_count_rows = (
+        await db.execute(
+            select(EflomalTargetWordCount.word, EflomalTargetWordCount.count).where(
+                EflomalTargetWordCount.assessment_id == eflomal_assessment.id
+            )
+        )
+    ).all()
+    tgt_word_counts: Dict[str, int] = {r.word: r.count for r in tgt_count_rows}
+
+    src_word_counts: Dict[str, int] = {}
+    if direction in ("source", "both"):
+        # Source-direction scan needs corpus-wide source word frequencies.
+        # We don't store an eflomal_source_word_count table, so tally on the
+        # fly from the reference revision text.
+        ref_text_blobs = (
+            (
+                await db.execute(
+                    select(VerseText.text).where(VerseText.revision_id == reference_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        src_word_counts = compute_word_counts(ref_text_blobs)
+
+    ref_query = select(VerseText.verse_reference, VerseText.text).where(
+        VerseText.revision_id == reference_id
+    )
+    if book is not None:
+        ref_query = ref_query.where(VerseText.book == book)
+    if chapter is not None:
+        ref_query = ref_query.where(VerseText.chapter == chapter)
+    if verse is not None:
+        ref_query = ref_query.where(VerseText.verse == verse)
+    reference_texts: Dict[str, str] = {
+        r.verse_reference: r.text for r in (await db.execute(ref_query)).all()
+    }
+    if not reference_texts:
+        return [], 0, parent_assessment_id
+
+    revision_text_rows = (
+        await db.execute(
+            select(VerseText.verse_reference, VerseText.text).where(
+                VerseText.revision_id == revision_id,
+                VerseText.verse_reference.in_(list(reference_texts)),
+            )
+        )
+    ).all()
+    revision_texts: Dict[str, str] = {
+        r.verse_reference: r.text for r in revision_text_rows
+    }
+
+    min_frequency = float(threshold) if threshold is not None else DEFAULT_MIN_FREQUENCY
+
+    results: List[Result] = []
+    for vref, ref_text in reference_texts.items():
+        rev_text = revision_texts.get(vref)
+        if not ref_text or not rev_text:
+            continue
+        src_words = ref_text.split()
+        tgt_words = rev_text.split()
+        if not src_words or not tgt_words:
+            continue
+        aligned_src, aligned_tgt = greedy_align(src_words, tgt_words, forward_dict)
+        orphans = detect_orphans(
+            src_words=src_words,
+            tgt_words=tgt_words,
+            aligned_src=aligned_src,
+            aligned_tgt=aligned_tgt,
+            direction=direction,
+            forward_dict=forward_dict,
+            reverse_dict=reverse_dict,
+            src_word_counts=src_word_counts,
+            tgt_word_counts=tgt_word_counts,
+            min_frequency=min_frequency,
+        )
+        for o in orphans:
+            if o["missing_side"] == "target":
+                results.append(
+                    Result(
+                        assessment_id=parent_assessment_id,
+                        vref=vref,
+                        source=o["known_counterparts"],
+                        target=[{"word": o["missing_word"]}],
+                        score=o["score"],
+                        flag=False,
+                        note="orphan_target",
+                    )
+                )
+            else:
+                results.append(
+                    Result(
+                        assessment_id=parent_assessment_id,
+                        vref=vref,
+                        source=o["missing_word"],
+                        target=[{"word": o["known_counterparts"]}],
+                        score=o["score"],
+                        flag=False,
+                        note="orphan_source",
+                    )
+                )
+
+    return results, len(results), parent_assessment_id
+
+
 @router.get("/missingwords", response_model=Dict[str, Union[List[Result], int]])
 async def get_missing_words(
     revision_id: int,
@@ -2042,6 +2208,23 @@ async def get_missing_words(
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
+    use_eflomal: bool = Query(
+        False,
+        description=(
+            "Use eflomal-derived orphan/missing-word detection over the corpus "
+            "dictionary instead of the legacy alignment-score path."
+        ),
+    ),
+    direction: str = Query(
+        "target",
+        pattern="^(source|target|both)$",
+        description=(
+            "Side(s) to detect orphans on. Only used when use_eflomal=True. "
+            "'target' finds unaligned revision words with no source counterpart; "
+            "'source' is the symmetric reference-side variant; 'both' returns "
+            "both kinds, distinguished by the response's note field."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -2073,6 +2256,39 @@ async def get_missing_words(
     request_start = time.perf_counter()
 
     await validate_parameters(book, chapter, verse)
+
+    if use_eflomal:
+        result_list, total_count, assessment_id = await _get_missing_words_eflomal(
+            revision_id=revision_id,
+            reference_id=reference_id,
+            direction=direction,
+            threshold=threshold,
+            book=book,
+            chapter=chapter,
+            verse=verse,
+            db=db,
+        )
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"get_missing_words (eflomal) completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/missingwords",
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "use_eflomal": True,
+                "direction": direction,
+                "threshold": threshold,
+                "book": book,
+                "chapter": chapter,
+                "verse": verse,
+                "assessment_id": assessment_id,
+                "total_count": total_count,
+                "results_returned": len(result_list),
+                "duration_s": duration,
+            },
+        )
+        return {"results": result_list, "total_count": total_count}
 
     if baseline_ids is None:
         baseline_ids = []
