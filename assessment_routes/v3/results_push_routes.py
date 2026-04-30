@@ -379,18 +379,18 @@ async def push_text_lengths(
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
+    rows = [
+        {
+            "assessment_id": assessment_id,
+            "vref": item.vref,
+            "word_lengths": item.word_lengths,
+            "char_lengths": item.char_lengths,
+            "word_lengths_z": item.word_lengths_z,
+            "char_lengths_z": item.char_lengths_z,
+        }
+        for item in body
+    ]
     try:
-        rows = [
-            {
-                "assessment_id": assessment_id,
-                "vref": item.vref,
-                "word_lengths": item.word_lengths,
-                "char_lengths": item.char_lengths,
-                "word_lengths_z": item.word_lengths_z,
-                "char_lengths_z": item.char_lengths_z,
-            }
-            for item in body
-        ]
         await _batch_insert(db, TextLengthsTable, rows)
         await db.commit()
         return InsertResponse(ids=[])
@@ -398,18 +398,18 @@ async def push_text_lengths(
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(body)} text lengths for assessment {assessment_id}",
+            detail=f"Duplicate or constraint violation inserting {len(rows)} text lengths for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for text_lengths_table, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(body),
+            len(rows),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(body)} text lengths for assessment {assessment_id}",
+            detail=f"Database error inserting {len(rows)} text lengths for assessment {assessment_id}",
         )
     except HTTPException:
         raise
@@ -417,12 +417,12 @@ async def push_text_lengths(
         logger.exception(
             "Unexpected error pushing text lengths, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(body),
+            len(rows),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(body)} text lengths for assessment {assessment_id}",
+            detail=f"Unexpected error inserting {len(rows)} text lengths for assessment {assessment_id}",
         )
 
 
@@ -447,15 +447,15 @@ async def push_tfidf_vectors(
     if not body:
         return InsertResponse(ids=[])
     _check_body_size(body)
+    rows = [
+        {
+            "assessment_id": assessment_id,
+            "vref": item.vref,
+            "vector": item.vector,
+        }
+        for item in body
+    ]
     try:
-        rows = [
-            {
-                "assessment_id": assessment_id,
-                "vref": item.vref,
-                "vector": item.vector,
-            }
-            for item in body
-        ]
         await _batch_insert(db, TfidfPcaVector, rows)
         await db.commit()
         return InsertResponse(ids=[])
@@ -463,18 +463,18 @@ async def push_tfidf_vectors(
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(body)} tfidf vectors for assessment {assessment_id}",
+            detail=f"Duplicate or constraint violation inserting {len(rows)} tfidf vectors for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(
             "Bulk insert failed for tfidf_pca_vector, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(body),
+            len(rows),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Database error inserting {len(body)} tfidf vectors for assessment {assessment_id}",
+            detail=f"Database error inserting {len(rows)} tfidf vectors for assessment {assessment_id}",
         )
     except HTTPException:
         raise
@@ -482,12 +482,12 @@ async def push_tfidf_vectors(
         logger.exception(
             "Unexpected error pushing tfidf vectors, assessment_id=%s, item_count=%d",
             assessment_id,
-            len(body),
+            len(rows),
         )
         await db.rollback()
         raise HTTPException(
             status_code=500,
-            detail=f"Unexpected error inserting {len(body)} tfidf vectors for assessment {assessment_id}",
+            detail=f"Unexpected error inserting {len(rows)} tfidf vectors for assessment {assessment_id}",
         )
 
 

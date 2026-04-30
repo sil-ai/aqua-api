@@ -32,7 +32,7 @@ def push_assessment_id(test_db_session, test_revision_id, test_revision_id_2):
 # ---------------------------------------------------------------------------
 
 
-def test_push_results(client, regular_token1, push_assessment_id):
+def test_push_results(client, regular_token1, push_assessment_id, test_db_session):
     body = [
         {
             "vref": "GEN 1:1",
@@ -53,6 +53,17 @@ def test_push_results(client, regular_token1, push_assessment_id):
     )
     assert response.status_code == 200
     assert response.json()["ids"] == []
+    # Response no longer carries IDs, so confirm rows landed via the DB.
+    test_db_session.expire_all()
+    persisted = (
+        test_db_session.query(AssessmentResult)
+        .filter(
+            AssessmentResult.assessment_id == push_assessment_id,
+            AssessmentResult.vref.in_(["GEN 1:1", "GEN 1:2"]),
+        )
+        .count()
+    )
+    assert persisted == 2
 
 
 def test_push_results_empty_body(client, regular_token1, push_assessment_id):
@@ -319,7 +330,9 @@ def test_push_alignment_threshold_scores_invalid_vref(
 # ---------------------------------------------------------------------------
 
 
-def test_push_text_lengths(client, regular_token1, push_assessment_id):
+def test_push_text_lengths(
+    client, regular_token1, push_assessment_id, test_db_session
+):
     body = [
         {
             "vref": "GEN 1:1",
@@ -343,6 +356,17 @@ def test_push_text_lengths(client, regular_token1, push_assessment_id):
     )
     assert response.status_code == 200
     assert response.json()["ids"] == []
+    # Response no longer carries IDs, so confirm rows landed via the DB.
+    test_db_session.expire_all()
+    persisted = (
+        test_db_session.query(TextLengthsTable)
+        .filter(
+            TextLengthsTable.assessment_id == push_assessment_id,
+            TextLengthsTable.vref.in_(["GEN 1:1", "GEN 1:2"]),
+        )
+        .count()
+    )
+    assert persisted == 2
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +374,9 @@ def test_push_text_lengths(client, regular_token1, push_assessment_id):
 # ---------------------------------------------------------------------------
 
 
-def test_push_tfidf_vectors(client, regular_token1, push_assessment_id):
+def test_push_tfidf_vectors(
+    client, regular_token1, push_assessment_id, test_db_session
+):
     body = [
         {
             "vref": "GEN 1:1",
@@ -364,6 +390,17 @@ def test_push_tfidf_vectors(client, regular_token1, push_assessment_id):
     )
     assert response.status_code == 200
     assert response.json()["ids"] == []
+    # Response no longer carries IDs, so confirm rows landed via the DB.
+    test_db_session.expire_all()
+    persisted = (
+        test_db_session.query(TfidfPcaVector)
+        .filter(
+            TfidfPcaVector.assessment_id == push_assessment_id,
+            TfidfPcaVector.vref == "GEN 1:1",
+        )
+        .count()
+    )
+    assert persisted == 1
 
 
 # ---------------------------------------------------------------------------
@@ -640,11 +677,14 @@ def test_delete_alignment_threshold_scores_empty_ids(
 def test_delete_text_lengths(
     client, regular_token1, push_assessment_id, test_db_session
 ):
+    # Use a vref unique to this test so the lookup can't pick up rows
+    # inserted by other tests sharing the module-scoped assessment.
+    delete_vref = "GEN 1:30"
     insert_resp = client.post(
         f"{prefix}/assessment/{push_assessment_id}/text-lengths",
         json=[
             {
-                "vref": "GEN 1:3",
+                "vref": delete_vref,
                 "word_lengths": 5.0,
                 "char_lengths": 25.0,
                 "word_lengths_z": 0.3,
@@ -660,7 +700,7 @@ def test_delete_text_lengths(
         for row in test_db_session.query(TextLengthsTable)
         .filter(
             TextLengthsTable.assessment_id == push_assessment_id,
-            TextLengthsTable.vref == "GEN 1:3",
+            TextLengthsTable.vref == delete_vref,
         )
         .all()
     ]
@@ -693,9 +733,12 @@ def test_delete_text_lengths_nonexistent(client, regular_token1):
 def test_delete_tfidf_vectors(
     client, regular_token1, push_assessment_id, test_db_session
 ):
+    # Use a vref unique to this test so the lookup can't pick up rows
+    # inserted by other tests sharing the module-scoped assessment.
+    delete_vref = "GEN 1:31"
     insert_resp = client.post(
         f"{prefix}/assessment/{push_assessment_id}/tfidf-vectors",
-        json=[{"vref": "GEN 1:3", "vector": [0.1] * 300}],
+        json=[{"vref": delete_vref, "vector": [0.1] * 300}],
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert insert_resp.status_code == 200
@@ -705,7 +748,7 @@ def test_delete_tfidf_vectors(
         for row in test_db_session.query(TfidfPcaVector)
         .filter(
             TfidfPcaVector.assessment_id == push_assessment_id,
-            TfidfPcaVector.vref == "GEN 1:3",
+            TfidfPcaVector.vref == delete_vref,
         )
         .all()
     ]
