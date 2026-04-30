@@ -205,39 +205,17 @@ class VerseText(BaseModel):
 
 class AssessmentStatus(str, Enum):
     queued = "queued"
-    preparing = "preparing"
     running = "running"
-    training = "training"
-    downloading = "downloading"
-    uploading = "uploading"
     finished = "finished"
     failed = "failed"
 
 
-# Training-job runs use the phased path queued → preparing → training →
-# downloading → uploading → finished. Plain assessments use queued →
-# running → finished. failed is reachable from any non-terminal state.
+# All assessment runs (training and non-training) follow queued → running →
+# finished. Progress within `running` is reported via percent_complete on
+# self-loop PATCHes. `failed` is reachable from any non-terminal state.
 ASSESSMENT_VALID_TRANSITIONS = {
     AssessmentStatus.queued: {
-        AssessmentStatus.preparing,
         AssessmentStatus.running,
-        AssessmentStatus.failed,
-    },
-    AssessmentStatus.preparing: {
-        AssessmentStatus.training,
-        AssessmentStatus.failed,
-    },
-    AssessmentStatus.training: {
-        AssessmentStatus.training,
-        AssessmentStatus.downloading,
-        AssessmentStatus.failed,
-    },
-    AssessmentStatus.downloading: {
-        AssessmentStatus.uploading,
-        AssessmentStatus.failed,
-    },
-    AssessmentStatus.uploading: {
-        AssessmentStatus.finished,
         AssessmentStatus.failed,
     },
     # running → running is intentional: allows runners to send progress updates

@@ -1190,19 +1190,17 @@ def test_patch_assessment_status_admin_can_update(
     assert resp.json()["status"] == "running"
 
 
-def test_patch_assessment_status_phased_sequence(
+def test_patch_assessment_status_running_progress_then_finished(
     client, regular_token1, db_session, test_db_session
 ):
-    """PATCH /assessment/{id}/status walks the training-phase sequence and
-    persists percent_complete on each step."""
+    """PATCH /assessment/{id}/status reports progress via running self-loops
+    and persists percent_complete on each step before finishing."""
     aid = _create_assessment(client, regular_token1, db_session)
 
     steps = [
-        ("preparing", 5.0),
-        ("training", 30.0),
-        ("training", 75.0),
-        ("downloading", 90.0),
-        ("uploading", 95.0),
+        ("running", 5.0),
+        ("running", 40.0),
+        ("running", 90.0),
         ("finished", 100.0),
     ]
     for next_status, pct in steps:
@@ -1251,19 +1249,6 @@ def test_patch_assessment_status_percent_complete_out_of_range(
     assert resp.status_code == 422
 
 
-def test_patch_assessment_status_phased_invalid_skip(
-    client, regular_token1, db_session, test_db_session
-):
-    """Skipping phases (preparing → uploading) is rejected."""
-    aid = _create_assessment(client, regular_token1, db_session)
-
-    resp = _patch_status(client, regular_token1, aid, {"status": "preparing"})
-    assert resp.status_code == 200
-
-    resp = _patch_status(client, regular_token1, aid, {"status": "uploading"})
-    assert resp.status_code == 422
-
-
 def test_assessment_via_assess_route_is_not_training(
     client, regular_token1, db_session, test_db_session
 ):
@@ -1275,35 +1260,19 @@ def test_assessment_via_assess_route_is_not_training(
     assert resp.json()["is_training"] is False
 
 
-def test_patch_assessment_status_failed_from_each_phase(
+def test_patch_assessment_status_failed_from_each_non_terminal_state(
     client, regular_token1, db_session, test_db_session
 ):
-    """failed must be reachable from each non-terminal phased status."""
-    walk = ["preparing", "training", "downloading", "uploading"]
-    for stop_at in walk:
+    """failed must be reachable from each non-terminal status."""
+    for stop_at in ("queued", "running"):
         aid = _create_assessment(client, regular_token1, db_session)
-        for next_status in walk:
-            resp = _patch_status(client, regular_token1, aid, {"status": next_status})
-            assert resp.status_code == 200, f"{next_status}: {resp.text}"
-            if next_status == stop_at:
-                break
+        if stop_at == "running":
+            resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+            assert resp.status_code == 200, resp.text
 
         resp = _patch_status(client, regular_token1, aid, {"status": "failed"})
         assert resp.status_code == 200, f"failed from {stop_at}: {resp.text}"
         assert resp.json()["status"] == "failed"
-
-
-def test_patch_assessment_status_cross_path_preparing_to_running_rejected(
-    client, regular_token1, db_session, test_db_session
-):
-    """Once on the phased path, the plain `running` status is not reachable."""
-    aid = _create_assessment(client, regular_token1, db_session)
-
-    resp = _patch_status(client, regular_token1, aid, {"status": "preparing"})
-    assert resp.status_code == 200
-
-    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
-    assert resp.status_code == 422
 
 
 def test_patch_assessment_status_percent_complete_persists_when_omitted(
@@ -1331,23 +1300,22 @@ def test_patch_assessment_status_percent_complete_persists_when_omitted(
     assert resp.json()["percent_complete"] == 75.0
 
 
-def test_patch_assessment_status_start_time_set_on_preparing(
+def test_patch_assessment_status_start_time_set_on_running(
     client, regular_token1, db_session, test_db_session
 ):
-    """The first non-queued transition (preparing) stamps start_time."""
+    """The first non-queued transition (running) stamps start_time."""
     aid = _create_assessment(client, regular_token1, db_session)
 
-    resp = _patch_status(client, regular_token1, aid, {"status": "preparing"})
+    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
     assert resp.status_code == 200
     assert resp.json()["start_time"] is not None
 
 
-def test_create_assessment_blocked_while_in_phased_status(
+def test_create_assessment_blocked_while_running(
     client, regular_token1, db_session, test_db_session
 ):
-    """A plain POST /assessment must 409 while a duplicate row is in any
-    in-progress phased status (preparing/training/downloading/uploading),
-    not just queued/running."""
+    """A plain POST /assessment must 409 while a duplicate row is still
+    running (i.e. has not reached a terminal status)."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
     reference_id = upload_revision(client, regular_token1, version_id)
@@ -1368,10 +1336,9 @@ def test_create_assessment_blocked_while_in_phased_status(
         assert first.status_code == 200
         aid = first.json()[0]["id"]
 
-    # Drive the existing row deep into the phased path.
-    for next_status in ["preparing", "training"]:
-        resp = _patch_status(client, regular_token1, aid, {"status": next_status})
-        assert resp.status_code == 200
+    # Drive the existing row to running.
+    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+    assert resp.status_code == 200
 
     # Second POST for the same revision/type must be blocked.
     with patch(

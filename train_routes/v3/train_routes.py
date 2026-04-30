@@ -62,8 +62,9 @@ router = fastapi.APIRouter()
 
 # Status, transitions, and progress live on the linked Assessment row
 # (aqua-api#584). The aqua-assessments runner PATCHes
-# /v3/assessment/{id}/status with the phased queued → preparing → training →
-# downloading → uploading → finished sequence; failures land as `failed`.
+# /v3/assessment/{id}/status with the queued → running → finished sequence,
+# reporting progress via percent_complete on running self-loops; failures
+# land as `failed`.
 ASSESSMENT_TERMINAL_VALUES = {s.value for s in ASSESSMENT_TERMINAL_STATUSES}
 ASSESSMENT_FINISHED_VALUE = AssessmentStatus.finished.value
 
@@ -120,10 +121,10 @@ def _build_runner_train_config(
     artifact-push URLs like `/v3/assessment/{id}/results`, which are keyed
     on Assessment.id.
 
-    `is_training=True` is the single signal the runner keys on to emit the
-    phased status sequence (preparing → training → downloading → uploading
-    → finished) against PATCH /v3/assessment/{id}/status. Per-app
-    behaviour toggles (e.g. sem-sim's `finetune`) flow through the
+    `is_training=True` tells the runner to dispatch to the app's training
+    path (rather than its inference path); status reporting itself is the
+    same queued → running → finished sequence used by every assessment.
+    Per-app behaviour toggles (e.g. sem-sim's `finetune`) flow through the
     caller's `options` → `config["kwargs"]` — aqua-api doesn't hard-code
     them.
     """
@@ -375,10 +376,9 @@ async def create_training_job(
                     f"No dispatch configured for training type '{job.type}'"
                 )
             # Runner dispatches to the right app's assess() based on
-            # config.type and, because config["is_training"] is True,
-            # emits the phased status sequence (preparing → training →
-            # downloading → uploading → finished/failed) against
-            # PATCH /v3/assessment/{id}/status.
+            # config.type and config["is_training"], and reports progress
+            # via PATCH /v3/assessment/{id}/status (queued → running →
+            # finished/failed).
             f = modal.Function.from_name(
                 "runner", "run_assessment_runner", environment_name=modal_env
             )

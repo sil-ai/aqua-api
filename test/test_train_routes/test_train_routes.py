@@ -285,10 +285,10 @@ def test_training_job_full_lifecycle_via_runner(
     """End-to-end lifecycle via the runner.
 
     Status, percent_complete, and timing live on the linked Assessment row
-    (aqua-api#584). The aqua-assessments runner pushes the phased sequence
-    queued → preparing → training → downloading → uploading → finished
-    against PATCH /v3/assessment/{id}/status; aqua-api just exposes the
-    result via /v3/train reads.
+    (aqua-api#584). The aqua-assessments runner reports progress as
+    queued → running (with percent_complete self-loops) → finished against
+    PATCH /v3/assessment/{id}/status; aqua-api just exposes the result via
+    /v3/train reads.
     """
     payloads = []
     calls = []
@@ -320,33 +320,27 @@ def test_training_job_full_lifecycle_via_runner(
     assert config.get("is_training") is True
     assert "train_job_id" not in kwargs
 
-    # (2) Simulate the runner's phase callbacks against the assessment-status
-    # endpoint — the only channel that exists post #584 / aqua-assessments#202.
-    last_percent = {
-        "preparing": 5.0,
-        "training": 40.0,
-        "downloading": 75.0,
-        "uploading": 90.0,
-        "finished": 100.0,
-    }
-    for next_status in [
-        "preparing",
-        "training",
-        "downloading",
-        "uploading",
-        "finished",
-    ]:
+    # (2) Simulate the runner's progress callbacks against the
+    # assessment-status endpoint — the only channel that exists post
+    # #584 / aqua-assessments#202.
+    progress_steps = [
+        ("running", 5.0),
+        ("running", 40.0),
+        ("running", 90.0),
+        ("finished", 100.0),
+    ]
+    for next_status, pct in progress_steps:
         resp = client.patch(
             f"{prefix}/assessment/{job['assessment_id']}/status",
             json={
                 "status": next_status,
-                "percent_complete": last_percent[next_status],
+                "percent_complete": pct,
             },
             headers=_auth_headers(regular_token1),
         )
         assert (
             resp.status_code == 200
-        ), f"phase {next_status} rejected: {resp.status_code} {resp.text}"
+        ), f"step {next_status}@{pct} rejected: {resp.status_code} {resp.text}"
 
     # (3) /v3/train reads now reflect the assessment-driven status.
     job_resp = client.get(
@@ -1144,15 +1138,9 @@ def test_get_training_status_readiness_updates(
 
 
 def _advance_assessment_to_finished(client, token, assessment_id):
-    """Walk an Assessment through the phased training sequence to finished
-    via PATCH /v3/assessment/{id}/status — the single status channel."""
-    for next_status in (
-        "preparing",
-        "training",
-        "downloading",
-        "uploading",
-        "finished",
-    ):
+    """Walk an Assessment through queued → running → finished via PATCH
+    /v3/assessment/{id}/status — the single status channel."""
+    for next_status in ("running", "finished"):
         client.patch(
             f"{prefix}/assessment/{assessment_id}/status",
             json={"status": next_status},
