@@ -266,6 +266,23 @@ def test_push_eflomal_dictionary(
     assert len(response.json()["ids"]) == 5
 
 
+def test_push_eflomal_dictionary_idempotent(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Retrying the same dictionary payload succeeds without a 400."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-dictionary"
+    batch = _dictionary_items(7)
+
+    first = client.post(url, json=batch, headers=headers)
+    assert first.status_code == 200
+    assert len(first.json()["ids"]) == 7
+
+    retry = client.post(url, json=batch, headers=headers)
+    assert retry.status_code == 200
+    assert len(retry.json()["ids"]) == 7
+
+
 def test_push_eflomal_dictionary_body_too_large(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
@@ -281,7 +298,7 @@ def test_push_eflomal_dictionary_body_too_large(
     detail = response.json()["detail"]
     assert "5001" in detail
     assert "5000" in detail
-    assert "split into batches" in detail
+    assert "reduce the payload" in detail
 
 
 def test_push_eflomal_cooccurrences(
@@ -298,6 +315,23 @@ def test_push_eflomal_cooccurrences(
     assert len(response.json()["ids"]) == 8
 
 
+def test_push_eflomal_cooccurrences_idempotent(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Retrying the same cooccurrence payload succeeds without a 400."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-cooccurrences"
+    batch = _cooccurrence_items(6)
+
+    first = client.post(url, json=batch, headers=headers)
+    assert first.status_code == 200
+    assert len(first.json()["ids"]) == 6
+
+    retry = client.post(url, json=batch, headers=headers)
+    assert retry.status_code == 200
+    assert len(retry.json()["ids"]) == 6
+
+
 def test_push_eflomal_target_word_counts(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
@@ -310,6 +344,23 @@ def test_push_eflomal_target_word_counts(
     )
     assert response.status_code == 200
     assert len(response.json()["ids"]) == 3
+
+
+def test_push_eflomal_target_word_counts_idempotent(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Retrying the same target word count payload succeeds without a 400."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-target-word-counts"
+    batch = _target_word_count_items(4)
+
+    first = client.post(url, json=batch, headers=headers)
+    assert first.status_code == 200
+    assert len(first.json()["ids"]) == 4
+
+    retry = client.post(url, json=batch, headers=headers)
+    assert retry.status_code == 200
+    assert len(retry.json()["ids"]) == 4
 
 
 def test_push_eflomal_data_no_metadata(
@@ -661,6 +712,66 @@ def test_push_eflomal_priors_unauthorized(
     assert response.status_code == 403
 
 
+def test_push_eflomal_priors_idempotent(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Retrying the same priors payload succeeds without a 400."""
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors"
+    batch = _prior_items(3)
+
+    first = client.post(url, json=batch, headers=headers)
+    assert first.status_code == 200
+    assert len(first.json()["ids"]) == 3
+
+    retry = client.post(url, json=batch, headers=headers)
+    assert retry.status_code == 200
+    assert len(retry.json()["ids"]) == 3
+
+
+def test_push_eflomal_priors_two_chunks_preserved(
+    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+):
+    """Two POSTs with disjoint items (a chunked upload) must keep both chunks.
+
+    The eflomal worker chunks payloads larger than ~4500 items into multiple
+    POSTs to the same endpoint. Each chunk carries different items. After all
+    chunks are sent, every item from every chunk must be persisted — a chunk
+    must not delete data from an earlier chunk of the same upload.
+    """
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors"
+
+    chunk_a = [
+        {"source_bpe": f"▁chunk_a_{i}", "target_bpe": f"▁chunk_a_{i}", "alpha": 0.6}
+        for i in range(3)
+    ]
+    chunk_b = [
+        {"source_bpe": f"▁chunk_b_{i}", "target_bpe": f"▁chunk_b_{i}", "alpha": 0.6}
+        for i in range(3)
+    ]
+
+    first = client.post(url, json=chunk_a, headers=headers)
+    assert first.status_code == 200
+    second = client.post(url, json=chunk_b, headers=headers)
+    assert second.status_code == 200
+
+    pulled = client.get(
+        f"{prefix}/assessment/eflomal/results",
+        params={"assessment_id": test_eflomal_assessment_id},
+        headers=headers,
+    )
+    assert pulled.status_code == 200
+    persisted = {p["source_bpe"] for p in pulled.json()["priors"]}
+
+    expected = {item["source_bpe"] for item in chunk_a + chunk_b}
+    missing = expected - persisted
+    assert not missing, (
+        f"Chunk-a items were deleted by the chunk-b POST — "
+        f"{len(missing)} items lost: {sorted(missing)}"
+    )
+
+
 def test_push_eflomal_priors_alpha_out_of_range(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
@@ -780,12 +891,11 @@ def test_push_eflomal_bpe_models_too_large(
     assert "source" in response.json()["detail"]
 
 
-def test_push_eflomal_priors_duplicate_rejected(
+def test_push_eflomal_priors_retry_succeeds(
     client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
 ):
-    """Re-pushing a prior that already exists should fail the unique constraint."""
+    """Re-pushing the same priors clears existing rows and re-inserts (200, not 400)."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
-    # Use a fixed, unique payload that won't collide with other tests' priors
     payload = [{"source_bpe": "▁dupe_probe", "target_bpe": "▁dupe_probe", "alpha": 0.7}]
     first = client.post(
         f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-priors",
@@ -799,8 +909,8 @@ def test_push_eflomal_priors_duplicate_rejected(
         json=payload,
         headers=headers,
     )
-    assert second.status_code == 400
-    assert "Duplicate" in second.json()["detail"]
+    assert second.status_code == 200
+    assert len(second.json()["ids"]) == 1
 
 
 # ---------------------------------------------------------------------------

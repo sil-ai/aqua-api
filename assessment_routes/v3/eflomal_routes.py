@@ -10,6 +10,7 @@ from typing import List
 import fastapi
 from fastapi import Depends, HTTPException
 from sqlalchemy import delete, desc, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,7 +77,7 @@ def _check_body_size(body):
             detail=(
                 f"Request body too large: {len(body)} items "
                 f"(max {_MAX_BODY_ITEMS}). "
-                f"Please split into batches of {_MAX_BODY_ITEMS} or fewer."
+                f"Please reduce the payload to {_MAX_BODY_ITEMS} items or fewer."
             ),
         )
 
@@ -110,6 +111,26 @@ async def _batch_insert(db, model_cls, rows):
         result = await db.execute(stmt)
         inserted_ids.extend(r[0] for r in result.fetchall())
     return inserted_ids
+
+
+async def _batch_upsert(db, model_cls, rows, conflict_cols, update_cols):
+    # Per-row idempotency on `conflict_cols`: re-pushing the same row updates
+    # in place, and disjoint chunks of the same upload coexist (each chunk
+    # only touches its own keys).
+    _PG_MAX_PARAMS = 32_767
+    cols_per_row = len(model_cls.__table__.columns)
+    batch_size = min(_BATCH_SIZE, _PG_MAX_PARAMS // cols_per_row)
+    affected_ids = []
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
+        stmt = pg_insert(model_cls).values(batch)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=conflict_cols,
+            set_={col: stmt.excluded[col] for col in update_cols},
+        ).returning(model_cls.id)
+        result = await db.execute(stmt)
+        affected_ids.extend(r[0] for r in result.fetchall())
+    return affected_ids
 
 
 def _build_reverse_dict(
@@ -329,12 +350,15 @@ async def push_eflomal_dictionary(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert dictionary entries for an eflomal assessment.
+    """Upsert dictionary entries for an eflomal assessment.
 
-    Maximum of 5,000 items per request. For larger datasets, split into
-    multiple requests of 5,000 items or fewer.
+    Maximum of 5,000 items per request. Each row is keyed by
+    (assessment_id, source_word, target_word); re-pushing a row updates
+    `count` and `probability` in place. Disjoint chunks of a larger upload
+    coexist — the worker may safely chunk a >5,000-row dictionary across
+    multiple requests, and retries replay the full sequence safely.
 
-    Returns the list of inserted row IDs in the same order as the input.
+    Returns the list of affected row IDs in the same order as the input.
     """
     eflomal = await _get_eflomal_assessment(assessment_id, db)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
@@ -357,14 +381,20 @@ async def push_eflomal_dictionary(
         for item in body
     ]
     try:
-        ids = await _batch_insert(db, EflomalDictionary, rows)
+        ids = await _batch_upsert(
+            db,
+            EflomalDictionary,
+            rows,
+            conflict_cols=["assessment_id", "source_word", "target_word"],
+            update_cols=["count", "probability"],
+        )
         await db.commit()
         return InsertResponse(ids=ids)
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} dictionary entries for assessment {assessment_id}",
+            detail=f"Constraint violation inserting {len(rows)} dictionary entries for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(
@@ -404,8 +434,12 @@ async def push_eflomal_cooccurrences(
 ):
     """Bulk insert cooccurrence entries for an eflomal assessment.
 
-    Maximum of 5,000 items per request. For larger datasets, split into
-    multiple requests of 5,000 items or fewer.
+    Maximum of 5,000 items per request. The eflomal_cooccurrence table has
+    no unique constraint on (assessment_id, source_word, target_word), so
+    inserts cannot conflict and a 400 from a retry is not possible — the
+    cost is that retrying the full sequence after a partial failure can
+    accumulate duplicate rows (a separate cleanup needs a unique-constraint
+    migration before upsert can be used here).
 
     Returns the list of inserted row IDs in the same order as the input.
     """
@@ -475,12 +509,15 @@ async def push_eflomal_target_word_counts(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert target word count entries for an eflomal assessment.
+    """Upsert target word count entries for an eflomal assessment.
 
-    Maximum of 5,000 items per request. For larger datasets, split into
-    multiple requests of 5,000 items or fewer.
+    Maximum of 5,000 items per request. Each row is keyed by
+    (assessment_id, word); re-pushing a row updates `count` in place.
+    Disjoint chunks of a larger upload coexist — the worker may safely
+    chunk a >5,000-row payload across multiple requests, and retries
+    replay the full sequence safely.
 
-    Returns the list of inserted row IDs in the same order as the input.
+    Returns the list of affected row IDs in the same order as the input.
     """
     eflomal = await _get_eflomal_assessment(assessment_id, db)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
@@ -501,14 +538,20 @@ async def push_eflomal_target_word_counts(
         for item in body
     ]
     try:
-        ids = await _batch_insert(db, EflomalTargetWordCount, rows)
+        ids = await _batch_upsert(
+            db,
+            EflomalTargetWordCount,
+            rows,
+            conflict_cols=["assessment_id", "word"],
+            update_cols=["count"],
+        )
         await db.commit()
         return InsertResponse(ids=ids)
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} target word counts for assessment {assessment_id}",
+            detail=f"Constraint violation inserting {len(rows)} target word counts for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(
@@ -546,17 +589,15 @@ async def push_eflomal_priors(
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Bulk insert LEX-format priors for an eflomal assessment.
+    """Upsert LEX-format priors for an eflomal assessment.
 
-    Maximum of 5,000 items per request. For larger datasets, split into
-    multiple requests of 5,000 items or fewer.
+    Maximum of 5,000 items per request. Each row is keyed by
+    (assessment_id, source_bpe, target_bpe); re-pushing a row updates
+    `alpha` in place. Disjoint chunks of a larger upload coexist — the
+    worker may safely chunk a >5,000-row payload across multiple requests,
+    and retries replay the full sequence safely.
 
-    Not idempotent: enforced by a unique index on (assessment_id, source_bpe,
-    target_bpe). Re-pushing a batch that overlaps previously-inserted rows
-    fails with 400. Callers should push each prior exactly once per
-    assessment.
-
-    Returns the list of inserted row IDs in the same order as the input.
+    Returns the list of affected row IDs in the same order as the input.
     """
     eflomal = await _get_eflomal_assessment(assessment_id, db)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
@@ -578,14 +619,20 @@ async def push_eflomal_priors(
         for item in body
     ]
     try:
-        ids = await _batch_insert(db, EflomalPrior, rows)
+        ids = await _batch_upsert(
+            db,
+            EflomalPrior,
+            rows,
+            conflict_cols=["assessment_id", "source_bpe", "target_bpe"],
+            update_cols=["alpha"],
+        )
         await db.commit()
         return InsertResponse(ids=ids)
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} priors for assessment {assessment_id}",
+            detail=f"Constraint violation inserting {len(rows)} priors for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(
