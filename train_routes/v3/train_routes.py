@@ -578,7 +578,9 @@ async def get_training_session_results(
     across every verse it appears in. Tfidf and agent_critique training
     runs produce nothing the client wants here (vector-only / no vrefs).
     """
-    await validate_parameters(book, chapter, verse, None, page, page_size)
+    await validate_parameters(
+        book, chapter, verse, aggregate=None, page=page, page_size=page_size
+    )
     if book is not None:
         # Pin `book` to a known abbreviation up front. Both safety (the
         # ngram path interpolates `book` into a LIKE pattern, where `_`
