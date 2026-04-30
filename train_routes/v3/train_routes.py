@@ -564,8 +564,8 @@ async def get_training_session_results(
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
-    page: Optional[int] = None,
-    page_size: Optional[int] = None,
+    page: Optional[int] = Query(None, ge=1),
+    page_size: Optional[int] = Query(None, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -781,35 +781,38 @@ async def get_training_session_results(
         elif book is not None:
             matching_q = matching_q.where(NgramVrefTable.vref.like(f"{book} %"))
 
-        matching_ids = [row[0] for row in (await db.execute(matching_q)).all()]
-        if matching_ids:
-            full_q = (
-                select(
-                    NgramsTable.id,
-                    NgramsTable.ngram,
-                    NgramsTable.ngram_size,
-                    NgramVrefTable.vref,
-                )
-                .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
-                .where(NgramsTable.id.in_(matching_ids))
+        # Keep matching_q as a subquery and join in SQL rather than
+        # materializing IDs into a Python list and re-binding via IN(...).
+        # For large filter windows the IN list could blow past Postgres'
+        # parameter limit and doubles the round-trip count.
+        matching_subq = matching_q.subquery()
+        full_q = (
+            select(
+                NgramsTable.id,
+                NgramsTable.ngram,
+                NgramsTable.ngram_size,
+                NgramVrefTable.vref,
             )
-            buckets: dict[int, dict] = {}
-            for nid, ngram, size, ngram_vref in (await db.execute(full_q)).all():
-                b = buckets.setdefault(
-                    nid,
-                    {"ngram": ngram, "ngram_size": size, "vrefs": []},
-                )
-                b["vrefs"].append(ngram_vref)
-            ngrams_list = [
-                NgramResult(
-                    id=nid,
-                    assessment_id=ngrams_id,
-                    ngram=b["ngram"],
-                    ngram_size=b["ngram_size"],
-                    vrefs=b["vrefs"],
-                )
-                for nid, b in buckets.items()
-            ]
+            .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
+            .join(matching_subq, matching_subq.c.id == NgramsTable.id)
+        )
+        buckets: dict[int, dict] = {}
+        for nid, ngram, size, ngram_vref in (await db.execute(full_q)).all():
+            b = buckets.setdefault(
+                nid,
+                {"ngram": ngram, "ngram_size": size, "vrefs": []},
+            )
+            b["vrefs"].append(ngram_vref)
+        ngrams_list = [
+            NgramResult(
+                id=nid,
+                assessment_id=ngrams_id,
+                ngram=b["ngram"],
+                ngram_size=b["ngram_size"],
+                vrefs=b["vrefs"],
+            )
+            for nid, b in buckets.items()
+        ]
 
     return TrainingSessionResultsResponse(
         session_id=session_id,

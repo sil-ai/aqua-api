@@ -25,32 +25,43 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _drop_invalid_index(bind, name: str) -> None:
+    """If a previous CONCURRENTLY build was interrupted Postgres leaves the
+    index in an INVALID state — IF NOT EXISTS will then skip the rebuild
+    and the planner could still try to use the broken one. Detect and drop
+    so this migration is safely retryable. Mirrors the pattern in
+    7f2e9a4b8c31_add_pg_trgm_index_on_verse_text.py."""
+    is_invalid = bind.exec_driver_sql(
+        f"SELECT 1 FROM pg_class c "
+        f"JOIN pg_index i ON i.indexrelid = c.oid "
+        f"WHERE c.relname = '{name}' AND NOT i.indisvalid"
+    ).scalar()
+    if is_invalid:
+        op.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
+
+
 def upgrade() -> None:
     # Index changes use CONCURRENTLY so they don't take ACCESS EXCLUSIVE on
     # training_job during a rolling deploy. CONCURRENTLY can't run inside a
     # transaction, so wrap the index ops in an autocommit block; the column
     # drops below stay in the regular transactional block.
+    #
+    # IF EXISTS / IF NOT EXISTS make the autocommit block safely retryable
+    # if a deploy is interrupted between index ops (each CONCURRENTLY op
+    # commits independently). Mirrors the pattern in
+    # 7f2e9a4b8c31_add_pg_trgm_index_on_verse_text.py.
+    bind = op.get_bind()
     with op.get_context().autocommit_block():
-        op.drop_index(
-            "ix_training_job_status",
-            table_name="training_job",
-            postgresql_concurrently=True,
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_training_job_status")
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_training_job_type_status")
+        op.execute(
+            "DROP INDEX CONCURRENTLY IF EXISTS " "ix_training_job_revisions_type_status"
         )
-        op.drop_index(
-            "ix_training_job_type_status",
-            table_name="training_job",
-            postgresql_concurrently=True,
-        )
-        op.drop_index(
-            "ix_training_job_revisions_type_status",
-            table_name="training_job",
-            postgresql_concurrently=True,
-        )
-        op.create_index(
-            "ix_training_job_revisions_type",
-            "training_job",
-            ["source_revision_id", "target_revision_id", "type"],
-            postgresql_concurrently=True,
+        _drop_invalid_index(bind, "ix_training_job_revisions_type")
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+            "ix_training_job_revisions_type "
+            "ON training_job (source_revision_id, target_revision_id, type)"
         )
     op.drop_column("training_job", "status")
     op.drop_column("training_job", "status_detail")
@@ -108,27 +119,19 @@ def downgrade() -> None:
             server_default="queued",
         ),
     )
+    bind = op.get_bind()
     with op.get_context().autocommit_block():
-        op.drop_index(
-            "ix_training_job_revisions_type",
-            table_name="training_job",
-            postgresql_concurrently=True,
-        )
-        op.create_index(
-            "ix_training_job_revisions_type_status",
-            "training_job",
-            ["source_revision_id", "target_revision_id", "type", "status"],
-            postgresql_concurrently=True,
-        )
-        op.create_index(
-            "ix_training_job_type_status",
-            "training_job",
-            ["type", "status"],
-            postgresql_concurrently=True,
-        )
-        op.create_index(
-            "ix_training_job_status",
-            "training_job",
-            ["status"],
-            postgresql_concurrently=True,
-        )
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_training_job_revisions_type")
+        for name, cols in (
+            (
+                "ix_training_job_revisions_type_status",
+                "source_revision_id, target_revision_id, type, status",
+            ),
+            ("ix_training_job_type_status", "type, status"),
+            ("ix_training_job_status", "status"),
+        ):
+            _drop_invalid_index(bind, name)
+            op.execute(
+                f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} "
+                f"ON training_job ({cols})"
+            )
