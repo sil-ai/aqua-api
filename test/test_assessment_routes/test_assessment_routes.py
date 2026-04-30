@@ -2,6 +2,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from database.models import Assessment, BibleVersionAccess
 from database.models import UserDB
 from database.models import UserDB as UserModel
@@ -1134,19 +1136,34 @@ def test_patch_assessment_status_invalid_transition(
     assert resp.status_code == 422
 
 
+@pytest.mark.parametrize(
+    "retired_status", ["preparing", "training", "downloading", "uploading"]
+)
+def test_patch_assessment_status_retired_phased_value_rejected(
+    client, regular_token1, db_session, test_db_session, retired_status
+):
+    """Retired phased status values are rejected at the schema layer (422)."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _patch_status(client, regular_token1, aid, {"status": retired_status})
+    assert resp.status_code == 422
+
+
 def test_patch_assessment_status_terminal_rejected(
     client, regular_token1, db_session, test_db_session
 ):
-    """PATCH /assessment/{id}/status rejects updates to terminal assessments."""
-    aid = _create_assessment(client, regular_token1, db_session)
+    """PATCH /assessment/{id}/status rejects updates to terminal assessments
+    from both `failed` and `finished`, against any next status."""
+    for terminal in ("failed", "finished"):
+        aid = _create_assessment(client, regular_token1, db_session)
+        resp = _patch_status(client, regular_token1, aid, {"status": "running"})
+        assert resp.status_code == 200
+        resp = _patch_status(client, regular_token1, aid, {"status": terminal})
+        assert resp.status_code == 200
 
-    # Move to failed
-    resp = _patch_status(client, regular_token1, aid, {"status": "failed"})
-    assert resp.status_code == 200
-
-    # Try to update again
-    resp = _patch_status(client, regular_token1, aid, {"status": "running"})
-    assert resp.status_code == 409
+        for next_status in ("running", "failed", "finished"):
+            resp = _patch_status(client, regular_token1, aid, {"status": next_status})
+            assert resp.status_code == 409, f"{terminal} → {next_status}: {resp.text}"
 
 
 def test_patch_assessment_status_not_found(
@@ -1214,8 +1231,8 @@ def test_patch_assessment_status_running_progress_then_finished(
         data = resp.json()
         assert data["status"] == next_status
         assert data["percent_complete"] == pct
-
-    assert data["end_time"] is not None
+        if next_status == "finished":
+            assert data["end_time"] is not None
 
 
 def test_patch_assessment_status_percent_complete_on_running(
@@ -1263,7 +1280,8 @@ def test_assessment_via_assess_route_is_not_training(
 def test_patch_assessment_status_failed_from_each_non_terminal_state(
     client, regular_token1, db_session, test_db_session
 ):
-    """failed must be reachable from each non-terminal status."""
+    """failed must be reachable from each non-terminal status, and stamps
+    both start_time (if not yet set) and end_time."""
     for stop_at in ("queued", "running"):
         aid = _create_assessment(client, regular_token1, db_session)
         if stop_at == "running":
@@ -1272,7 +1290,12 @@ def test_patch_assessment_status_failed_from_each_non_terminal_state(
 
         resp = _patch_status(client, regular_token1, aid, {"status": "failed"})
         assert resp.status_code == 200, f"failed from {stop_at}: {resp.text}"
-        assert resp.json()["status"] == "failed"
+        data = resp.json()
+        assert data["status"] == "failed"
+        assert data["end_time"] is not None
+        # The route stamps start_time on any non-queued transition, so
+        # failed-from-queued sets start_time too.
+        assert data["start_time"] is not None
 
 
 def test_patch_assessment_status_percent_complete_persists_when_omitted(

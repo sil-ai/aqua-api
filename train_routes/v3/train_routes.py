@@ -323,7 +323,8 @@ async def create_training_job(
         # Create a paired Assessment row so aqua-assessments can write
         # artifacts under the same assessment_id pattern used by the assess()
         # path. Assessment.status is the single channel of training-run
-        # status — runner PATCHes it through the phased sequence.
+        # status — runner PATCHes it queued → running (with percent_complete
+        # self-loops) → finished.
         assessment = Assessment(
             revision_id=job_in.source_revision_id,
             reference_id=job_in.target_revision_id,

@@ -1141,11 +1141,14 @@ def _advance_assessment_to_finished(client, token, assessment_id):
     """Walk an Assessment through queued → running → finished via PATCH
     /v3/assessment/{id}/status — the single status channel."""
     for next_status in ("running", "finished"):
-        client.patch(
+        resp = client.patch(
             f"{prefix}/assessment/{assessment_id}/status",
             json={"status": next_status},
             headers=_auth_headers(token),
         )
+        assert (
+            resp.status_code == 200
+        ), f"advance to {next_status} failed: {resp.status_code} {resp.text}"
 
 
 def _set_assessment_status(db_session, assessment_id, status):
