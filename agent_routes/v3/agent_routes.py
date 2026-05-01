@@ -1742,7 +1742,6 @@ async def get_lexeme_cards(
 
         if card_ids:
             from database.models import (
-                BibleRevision,
                 BibleVersion,
                 BibleVersionAccess,
                 UserGroup,
@@ -2323,7 +2322,7 @@ async def add_agent_translation(
             )
 
         # Derive revision_id, reference_version_id, script from the assessment's reference
-        from database.models import BibleRevision, BibleVersion
+        from database.models import BibleVersion
 
         ref_query = (
             select(
@@ -2462,7 +2461,7 @@ async def add_agent_translations_bulk(
             )
 
         # Derive revision_id, reference_version_id, script from the assessment's reference
-        from database.models import BibleRevision, BibleVersion
+        from database.models import BibleVersion
 
         ref_query = (
             select(
@@ -2578,7 +2577,7 @@ async def get_agent_translations(
       for that revision (no authorization check).
     - reference_version_id: int (optional) - Reference Bible version ID. Required when using revision_id.
     - script: str (optional) - 4-letter ISO 15924 script code. If omitted, returns
-      translations across all scripts for the given language.
+      translations across all scripts for the given reference version.
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - first_vref: str (optional) - Start of verse range (inclusive)
     - last_vref: str (optional) - End of verse range (inclusive)
@@ -2598,7 +2597,6 @@ async def get_agent_translations(
 
         from database.models import (
             Assessment,
-            BibleRevision,
             BibleVersion,
             BookReference,
             VerseReference,

@@ -462,7 +462,7 @@ class AgentLexemeCard(Base):
 
     __table_args__ = (
         # Case-insensitive unique constraint to prevent duplicate cards
-        # Each LOWER(target_lemma) can only have one card per language pair
+        # Each LOWER(target_lemma) can only have one card per version pair
         Index(
             "ix_agent_lexeme_cards_unique_v4",
             func.lower(target_lemma),
@@ -470,7 +470,7 @@ class AgentLexemeCard(Base):
             "target_version_id",
             unique=True,
         ),
-        # Index for common query pattern: language pair + confidence ordering
+        # Index for common query pattern: version pair + confidence ordering
         Index(
             "ix_agent_lexeme_cards_version_confidence",
             "source_version_id",
@@ -572,14 +572,14 @@ class AgentWordAlignment(Base):
             "target_word",
             unique=True,
         ),
-        # Index for source word lookups by language pair
+        # Index for source word lookups by version pair
         Index(
             "ix_agent_word_alignments_version_source",
             "source_version_id",
             "target_version_id",
             "source_word",
         ),
-        # Index for target word lookups by language pair
+        # Index for target word lookups by version pair
         Index(
             "ix_agent_word_alignments_version_target",
             "source_version_id",
