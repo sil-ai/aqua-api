@@ -1164,6 +1164,11 @@ class TrainingSessionResultsResponse(BaseModel):
     inference_readiness: Dict[str, InferenceReadiness]
     results: TrainingSessionResultsPage
     ngrams: List[NgramResult] = Field(default_factory=list)
+    # True when the lexeme-card load hit the per-request cap and only
+    # the highest-confidence prefix of cards was matched against the
+    # page's vrefs. Lets a client distinguish "no card matches found"
+    # from "we didn't look at every card".
+    lexeme_cards_truncated: bool = False
 
 
 class EflomalDictionaryItem(BaseModel):

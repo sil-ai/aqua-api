@@ -244,7 +244,7 @@ async def _build_lexeme_card_matches_by_vref(
     target_version_id: int,
     user: UserModel,
     db: AsyncSession,
-) -> dict[str, List[LexemeCardOut]]:
+) -> tuple[dict[str, List[LexemeCardOut]], bool]:
     """For each vref in `page_vrefs`, return the lexeme cards (for the
     given (source_version_id, target_version_id) pair) whose lemma or any
     surface form intersects the verse text on either side.
@@ -257,6 +257,10 @@ async def _build_lexeme_card_matches_by_vref(
     Examples are loaded once for the union of matched cards and filtered
     by the user's revision access in the version pair, mirroring the
     `GET /v3/agent/lexeme-card` endpoint.
+
+    Returns `(matches_by_vref, truncated)` — the second element is True
+    when the card load hit the per-request cap, signalling that only
+    the highest-confidence prefix of cards was matched.
     """
     # Reuse the existing tokenizer from bible_routes — it's the canonical
     # word-form definition used by /verse-counts etc., so cards stay
@@ -264,7 +268,7 @@ async def _build_lexeme_card_matches_by_vref(
     from bible_routes.v3.verse_routes import _tokenize_words
 
     if not page_vrefs:
-        return {}
+        return {}, False
 
     # Bulk-load full cards for the (source, target) pair. Confidence
     # ordering mirrors the predict path so a client paging through
@@ -286,9 +290,10 @@ async def _build_lexeme_card_matches_by_vref(
         .limit(LEXEME_CARD_LIMIT)
     )
     cards = (await db.execute(cards_q)).scalars().all()
+    truncated = len(cards) >= LEXEME_CARD_LIMIT
     if not cards:
-        return {}
-    if len(cards) >= LEXEME_CARD_LIMIT:
+        return {}, truncated
+    if truncated:
         logger.warning(
             "lexeme card cap hit on /train/status results",
             extra={
@@ -445,10 +450,13 @@ async def _build_lexeme_card_matches_by_vref(
             }
         )
 
-    return {
-        v: [out_by_card_id[cid] for cid in matched_card_ids_by_vref[v]]
-        for v in page_vrefs
-    }
+    return (
+        {
+            v: [out_by_card_id[cid] for cid in matched_card_ids_by_vref[v]]
+            for v in page_vrefs
+        },
+        truncated,
+    )
 
 
 async def _get_accessible_version_ids(
@@ -1075,6 +1083,7 @@ async def get_training_session_results(
     # cards' lemma + surface forms on either side; cards without a hit
     # against this verse are dropped.
     lexeme_cards_by_vref: dict[str, List[LexemeCardOut]] = {}
+    lexeme_cards_truncated = False
     has_agent_critique = any(j.type == TrainingType.agent_critique.value for j in jobs)
     if has_agent_critique and page_vrefs:
         # source_version_id / target_version_id are denormalized onto
@@ -1082,7 +1091,10 @@ async def get_training_session_results(
         # constructs them from the same (source_revision, target_revision)
         # pair — so any session job carries the right ids.
         session_job = jobs[0]
-        lexeme_cards_by_vref = await _build_lexeme_card_matches_by_vref(
+        (
+            lexeme_cards_by_vref,
+            lexeme_cards_truncated,
+        ) = await _build_lexeme_card_matches_by_vref(
             page_vrefs=page_vrefs,
             source_revision_id=session_job.source_revision_id,
             target_revision_id=session_job.target_revision_id,
@@ -1172,6 +1184,7 @@ async def get_training_session_results(
             page_size=page_size,
         ),
         ngrams=ngrams_list,
+        lexeme_cards_truncated=lexeme_cards_truncated,
     )
 
 
