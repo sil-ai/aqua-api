@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 prefix = "v3"
 
 
-def test_inference_success(client, regular_token1):
+def test_inference_success(client, regular_token1, test_version_id, test_version_id_2):
     """POST /predict/semantic-similarity returns score."""
     with patch("predict_routes.v3.predict_routes.modal.Function") as mock_function_cls:
         mock_fn = AsyncMock()
@@ -16,8 +16,8 @@ def test_inference_success(client, regular_token1):
             json={
                 "text1": "Pakutandika Mulungu apelile kisu na si.",
                 "text2": "Hapo mwanzo Mungu aliumba mbingu na dunia.",
-                "source_language": "zga",
-                "target_language": "swh",
+                "source_version_id": test_version_id,
+                "target_version_id": test_version_id_2,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -26,7 +26,9 @@ def test_inference_success(client, regular_token1):
     assert response.json() == {"score": 0.85}
 
 
-def test_inference_modal_error_returns_503(client, regular_token1):
+def test_inference_modal_error_returns_503(
+    client, regular_token1, test_version_id, test_version_id_2
+):
     """Modal connection/dispatch errors return 503."""
     with patch("predict_routes.v3.predict_routes.modal.Function") as mock_function_cls:
         mock_fn = AsyncMock()
@@ -38,8 +40,8 @@ def test_inference_modal_error_returns_503(client, regular_token1):
             json={
                 "text1": "hello",
                 "text2": "hola",
-                "source_language": "eng",
-                "target_language": "spa",
+                "source_version_id": test_version_id,
+                "target_version_id": test_version_id_2,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -48,12 +50,14 @@ def test_inference_modal_error_returns_503(client, regular_token1):
     assert "temporarily unavailable" in response.json()["detail"]
 
 
-def test_inference_no_model_returns_422(client, regular_token1):
+def test_inference_no_model_returns_422(
+    client, regular_token1, test_version_id, test_version_id_2
+):
     """Modal returns error dict when no fine-tuned model exists."""
     with patch("predict_routes.v3.predict_routes.modal.Function") as mock_function_cls:
         mock_fn = AsyncMock()
         mock_fn.remote.aio = AsyncMock(
-            return_value={"error": "No fine-tuned model found for xyz_abc"}
+            return_value={"error": "No fine-tuned model found for 1_2"}
         )
         mock_function_cls.from_name.return_value = mock_fn
 
@@ -62,8 +66,8 @@ def test_inference_no_model_returns_422(client, regular_token1):
             json={
                 "text1": "hello",
                 "text2": "hola",
-                "source_language": "xyz",
-                "target_language": "abc",
+                "source_version_id": test_version_id,
+                "target_version_id": test_version_id_2,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -90,8 +94,8 @@ def test_inference_no_auth_returns_401(client):
         json={
             "text1": "hello",
             "text2": "hola",
-            "source_language": "eng",
-            "target_language": "spa",
+            "source_version_id": 1,
+            "target_version_id": 2,
         },
     )
 

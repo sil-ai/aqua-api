@@ -20,6 +20,7 @@ from database.models import (
     AgentLexemeCardExample,
     AgentTranslation,
     AgentWordAlignment,
+    BibleRevision,
 )
 from database.models import UserDB as UserModel
 from models import (
@@ -81,8 +82,8 @@ async def add_word_alignment(
     Input:
     - source_word: str - The source language word
     - target_word: str - The target language word
-    - source_language: str - ISO 639-3 code for source language
-    - target_language: str - ISO 639-3 code for target language
+    - source_version_id: int - Bible version ID for source
+    - target_version_id: int - Bible version ID for target
     - score: float - NLLB alignment confidence score (default: 0.0)
     - is_human_verified: bool - Whether the alignment is human-verified (default: False)
 
@@ -95,8 +96,8 @@ async def add_word_alignment(
         word_alignment = AgentWordAlignment(
             source_word=alignment.source_word,
             target_word=alignment.target_word,
-            source_language=alignment.source_language,
-            target_language=alignment.target_language,
+            source_version_id=alignment.source_version_id,
+            target_version_id=alignment.target_version_id,
             score=alignment.score,
             is_human_verified=alignment.is_human_verified,
         )
@@ -111,8 +112,8 @@ async def add_word_alignment(
             extra={
                 "method": "POST",
                 "path": "/agent/word-alignment",
-                "source_language": alignment.source_language,
-                "target_language": alignment.target_language,
+                "source_version_id": alignment.source_version_id,
+                "target_version_id": alignment.target_version_id,
                 "duration_s": duration,
             },
         )
@@ -126,8 +127,8 @@ async def add_word_alignment(
             extra={
                 "source_word": alignment.source_word,
                 "target_word": alignment.target_word,
-                "source_language": alignment.source_language,
-                "target_language": alignment.target_language,
+                "source_version_id": alignment.source_version_id,
+                "target_version_id": alignment.target_version_id,
                 "error_type": type(e).__name__,
             },
         )
@@ -147,13 +148,13 @@ async def add_word_alignments_bulk(
     Bulk upsert word alignments.
 
     For each alignment in the request:
-    - If an alignment with the same (source_word, target_word, source_language, target_language) exists,
+    - If an alignment with the same (source_word, target_word, source_version_id, target_version_id) exists,
       update its score, is_human_verified, and last_updated fields.
     - Otherwise, insert a new alignment.
 
     Input:
-    - source_language: str - ISO 639-3 code for source language
-    - target_language: str - ISO 639-3 code for target language
+    - source_version_id: int - Bible version ID for source
+    - target_version_id: int - Bible version ID for target
     - alignments: list - List of alignment items, each with:
       - source_word: str - The source language word
       - target_word: str - The target language word
@@ -177,8 +178,8 @@ async def add_word_alignments_bulk(
                 {
                     "source_word": item.source_word,
                     "target_word": item.target_word,
-                    "source_language": request.source_language,
-                    "target_language": request.target_language,
+                    "source_version_id": request.source_version_id,
+                    "target_version_id": request.target_version_id,
                     "score": item.score,
                     "is_human_verified": item.is_human_verified,
                 }
@@ -198,8 +199,8 @@ async def add_word_alignments_bulk(
 
                 upsert_stmt = insert_stmt.on_conflict_do_update(
                     index_elements=[
-                        "source_language",
-                        "target_language",
+                        "source_version_id",
+                        "target_version_id",
                         "source_word",
                         "target_word",
                     ],
@@ -247,8 +248,8 @@ async def add_word_alignments_bulk(
 
 @router.get("/agent/word-alignment/all", response_model=list[AgentWordAlignmentOut])
 async def get_all_word_alignments(
-    source_language: str,
-    target_language: str,
+    source_version_id: int,
+    target_version_id: int,
     page: int | None = None,
     page_size: int | None = None,
     db: AsyncSession = Depends(get_db),
@@ -258,8 +259,8 @@ async def get_all_word_alignments(
     Get all word alignments for a language pair.
 
     Input:
-    - source_language: str - ISO 639-3 code for source language (required)
-    - target_language: str - ISO 639-3 code for target language (required)
+    - source_version_id: int - Bible version ID for source (required)
+    - target_version_id: int - Bible version ID for target (required)
     - page: int (optional) - Page number (1-indexed)
     - page_size: int (optional) - Number of results per page
 
@@ -279,8 +280,8 @@ async def get_all_word_alignments(
             select(AgentWordAlignment)
             .where(
                 and_(
-                    AgentWordAlignment.source_language == source_language,
-                    AgentWordAlignment.target_language == target_language,
+                    AgentWordAlignment.source_version_id == source_version_id,
+                    AgentWordAlignment.target_version_id == target_version_id,
                 )
             )
             .order_by(AgentWordAlignment.score.desc())
@@ -310,8 +311,8 @@ async def get_all_word_alignments(
             extra={
                 "method": "GET",
                 "path": "/agent/word-alignment/all",
-                "source_language": source_language,
-                "target_language": target_language,
+                "source_version_id": source_version_id,
+                "target_version_id": target_version_id,
                 "page": page,
                 "page_size": page_size,
                 "duration_s": duration,
@@ -485,7 +486,7 @@ async def add_lexeme_card(
     """
     Add a new lexeme card entry or update an existing one.
 
-    Uniqueness is enforced on (target_lemma, source_language, target_language).
+    Uniqueness is enforced on (target_lemma, source_version_id, target_version_id).
     If a card with the same target_lemma and language pair already exists,
     it will be updated instead of creating a duplicate.
 
@@ -501,8 +502,8 @@ async def add_lexeme_card(
     Card fields:
     - source_lemma: str (optional) - The source language lemma for cross-reference
     - target_lemma: str (required) - The target language lemma
-    - source_language: str - ISO 639-3 code for source language
-    - target_language: str - ISO 639-3 code for target language
+    - source_version_id: int - Bible version ID for source
+    - target_version_id: int - Bible version ID for target
     - pos: str (optional) - Part of speech
     - surface_forms: list (optional) - JSON array of target language surface forms
     - source_surface_forms: list (optional) - JSON array of source language surface forms
@@ -525,6 +526,35 @@ async def add_lexeme_card(
         from sqlalchemy.dialects.postgresql import insert as pg_insert
         from sqlalchemy.sql import func
 
+        # Examples must come from a revision in either the card's source or
+        # target version. The GET endpoint relies on this invariant when it
+        # filters examples by `BibleVersion.id IN (source_version_id,
+        # target_version_id)`; without this check, examples tied to revisions
+        # outside the pair would be silently invisible to all non-admin
+        # callers.
+        revision_version_id = await db.scalar(
+            select(BibleRevision.bible_version_id).where(
+                BibleRevision.id == revision_id
+            )
+        )
+        if revision_version_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Revision {revision_id} not found",
+            )
+        if revision_version_id not in {
+            card.source_version_id,
+            card.target_version_id,
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"revision_id={revision_id} (version {revision_version_id}) "
+                    f"is not in the card's version pair "
+                    f"({card.source_version_id}, {card.target_version_id})"
+                ),
+            )
+
         # Sort alignment_scores by value in descending order (highest scores first)
         sorted_alignment_scores = None
         if card.alignment_scores:
@@ -532,12 +562,12 @@ async def add_lexeme_card(
                 sorted(card.alignment_scores.items(), key=lambda x: x[1], reverse=True)
             )
 
-        # Check if a lexeme card with the same (target_lemma, source_language, target_language) exists
+        # Check if a lexeme card with the same (target_lemma, source_version_id, target_version_id) exists
         # This enforces uniqueness on target_lemma per language pair (case-insensitive)
         query = select(AgentLexemeCard).where(
             func.lower(AgentLexemeCard.target_lemma) == card.target_lemma.lower(),
-            AgentLexemeCard.source_language == card.source_language,
-            AgentLexemeCard.target_language == card.target_language,
+            AgentLexemeCard.source_version_id == card.source_version_id,
+            AgentLexemeCard.target_version_id == card.target_version_id,
         )
         result = await db.execute(query)
         existing_card = result.scalar_one_or_none()
@@ -673,8 +703,8 @@ async def add_lexeme_card(
                 "id": existing_card.id,
                 "source_lemma": existing_card.source_lemma,
                 "target_lemma": existing_card.target_lemma,
-                "source_language": existing_card.source_language,
-                "target_language": existing_card.target_language,
+                "source_version_id": existing_card.source_version_id,
+                "target_version_id": existing_card.target_version_id,
                 "pos": existing_card.pos,
                 "surface_forms": existing_card.surface_forms,
                 "source_surface_forms": existing_card.source_surface_forms,
@@ -703,8 +733,8 @@ async def add_lexeme_card(
             lexeme_card = AgentLexemeCard(
                 source_lemma=card.source_lemma,
                 target_lemma=card.target_lemma,
-                source_language=card.source_language,
-                target_language=card.target_language,
+                source_version_id=card.source_version_id,
+                target_version_id=card.target_version_id,
                 pos=card.pos,
                 surface_forms=card.surface_forms,
                 source_surface_forms=card.source_surface_forms,
@@ -762,8 +792,8 @@ async def add_lexeme_card(
                 "id": lexeme_card.id,
                 "source_lemma": lexeme_card.source_lemma,
                 "target_lemma": lexeme_card.target_lemma,
-                "source_language": lexeme_card.source_language,
-                "target_language": lexeme_card.target_language,
+                "source_version_id": lexeme_card.source_version_id,
+                "target_version_id": lexeme_card.target_version_id,
                 "pos": lexeme_card.pos,
                 "surface_forms": lexeme_card.surface_forms,
                 "source_surface_forms": lexeme_card.source_surface_forms,
@@ -844,15 +874,15 @@ async def _apply_lexeme_card_patch(
     provided_fields = patch_data.model_fields_set
 
     # Check if changing target_lemma would create a duplicate
-    # Uniqueness is enforced on (LOWER(target_lemma), source_language, target_language)
+    # Uniqueness is enforced on (LOWER(target_lemma), source_version_id, target_version_id)
     if (
         "target_lemma" in provided_fields
         and patch_data.target_lemma.lower() != card.target_lemma.lower()
     ):
         duplicate_query = select(AgentLexemeCard).where(
             func.lower(AgentLexemeCard.target_lemma) == patch_data.target_lemma.lower(),
-            AgentLexemeCard.source_language == card.source_language,
-            AgentLexemeCard.target_language == card.target_language,
+            AgentLexemeCard.source_version_id == card.source_version_id,
+            AgentLexemeCard.target_version_id == card.target_version_id,
             AgentLexemeCard.id != card.id,  # Exclude the current card
         )
         duplicate_result = await db.execute(duplicate_query)
@@ -1007,8 +1037,8 @@ async def _apply_lexeme_card_patch(
         "id": card.id,
         "source_lemma": card.source_lemma,
         "target_lemma": card.target_lemma,
-        "source_language": card.source_language,
-        "target_language": card.target_language,
+        "source_version_id": card.source_version_id,
+        "target_version_id": card.target_version_id,
         "pos": card.pos,
         "surface_forms": card.surface_forms,
         "source_surface_forms": card.source_surface_forms,
@@ -1110,8 +1140,8 @@ async def patch_lexeme_card_by_id(
 async def patch_lexeme_card_by_lemma(
     patch_data: LexemeCardPatch,
     target_lemma: str,
-    source_language: str,
-    target_language: str,
+    source_version_id: int,
+    target_version_id: int,
     source_lemma: str = None,
     list_mode: ListMode = ListMode.append,
     is_user_edit: bool = False,
@@ -1123,8 +1153,8 @@ async def patch_lexeme_card_by_lemma(
 
     Query Parameters:
     - target_lemma: str (required) - The target language lemma
-    - source_language: str (required) - ISO 639-3 code for source language
-    - target_language: str (required) - ISO 639-3 code for target language
+    - source_version_id: int (required) - Bible version ID for source
+    - target_version_id: int (required) - Bible version ID for target
     - source_lemma: str (optional) - The source language lemma
     - list_mode: str (optional, default="append") - How to handle list fields:
       - "append": Add new items to existing lists (no deduplication)
@@ -1161,8 +1191,8 @@ async def patch_lexeme_card_by_lemma(
 
         query = select(AgentLexemeCard).where(
             sql_func.lower(AgentLexemeCard.target_lemma) == target_lemma.lower(),
-            AgentLexemeCard.source_language == source_language,
-            AgentLexemeCard.target_language == target_language,
+            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.target_version_id == target_version_id,
         )
 
         # Only filter by source_lemma if explicitly provided
@@ -1176,8 +1206,8 @@ async def patch_lexeme_card_by_lemma(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Lexeme card not found for target_lemma={target_lemma}, "
-                f"source_language={source_language}, "
-                f"target_language={target_language}"
+                f"source_version_id={source_version_id}, "
+                f"target_version_id={target_version_id}"
                 + (f", source_lemma={source_lemma}" if source_lemma else ""),
             )
 
@@ -1200,8 +1230,8 @@ async def patch_lexeme_card_by_lemma(
                 "method": "PATCH",
                 "path": "/agent/lexeme-card",
                 "target_lemma": target_lemma,
-                "source_language": source_language,
-                "target_language": target_language,
+                "source_version_id": source_version_id,
+                "target_version_id": target_version_id,
                 "duration_s": duration,
             },
         )
@@ -1264,8 +1294,8 @@ async def delete_lexeme_card(
 
 @router.post("/agent/lexeme-card/deduplicate")
 async def deduplicate_lexeme_cards(
-    source_language: str,
-    target_language: str,
+    source_version_id: int,
+    target_version_id: int,
     dry_run: bool = True,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -1274,8 +1304,8 @@ async def deduplicate_lexeme_cards(
     Find and merge duplicate lexeme cards that differ only by case in target_lemma.
 
     Query Parameters:
-    - source_language: str (required) - ISO 639-3 code for source language
-    - target_language: str (required) - ISO 639-3 code for target language
+    - source_version_id: int (required) - Bible version ID for source
+    - target_version_id: int (required) - Bible version ID for target
     - dry_run: bool (optional, default=True) - If True, only report duplicates without merging
 
     Returns:
@@ -1295,8 +1325,8 @@ async def deduplicate_lexeme_cards(
                 func.count().label("cnt"),
             )
             .where(
-                AgentLexemeCard.source_language == source_language,
-                AgentLexemeCard.target_language == target_language,
+                AgentLexemeCard.source_version_id == source_version_id,
+                AgentLexemeCard.target_version_id == target_version_id,
             )
             .group_by(func.lower(AgentLexemeCard.target_lemma))
             .having(func.count() > 1)
@@ -1325,8 +1355,8 @@ async def deduplicate_lexeme_cards(
                 select(AgentLexemeCard)
                 .where(
                     func.lower(AgentLexemeCard.target_lemma) == lower_lemma,
-                    AgentLexemeCard.source_language == source_language,
-                    AgentLexemeCard.target_language == target_language,
+                    AgentLexemeCard.source_version_id == source_version_id,
+                    AgentLexemeCard.target_version_id == target_version_id,
                 )
                 .order_by(AgentLexemeCard.id)
             )
@@ -1468,8 +1498,8 @@ async def deduplicate_lexeme_cards(
             extra={
                 "method": "POST",
                 "path": "/agent/lexeme-card/deduplicate",
-                "source_language": source_language,
-                "target_language": target_language,
+                "source_version_id": source_version_id,
+                "target_version_id": target_version_id,
                 "dry_run": dry_run,
                 "duration_s": duration,
             },
@@ -1495,8 +1525,8 @@ async def deduplicate_lexeme_cards(
 
 @router.get("/agent/word-alignment", response_model=list[AgentWordAlignmentOut])
 async def get_word_alignments(
-    source_language: str,
-    target_language: str,
+    source_version_id: int,
+    target_version_id: int,
     source_words: str = None,
     target_words: str = None,
     db: AsyncSession = Depends(get_db),
@@ -1506,8 +1536,8 @@ async def get_word_alignments(
     Get word alignments filtered by language pair and optionally by source/target words.
 
     Query Parameters:
-    - source_language: str (required) - ISO 639-3 code for source language
-    - target_language: str (required) - ISO 639-3 code for target language
+    - source_version_id: int (required) - Bible version ID for source
+    - target_version_id: int (required) - Bible version ID for target
     - source_words: str (optional) - Comma-separated list of words to match in source_word
     - target_words: str (optional) - Comma-separated list of words to match in target_word
 
@@ -1530,8 +1560,8 @@ async def get_word_alignments(
         # Start with base query filtered by languages
         query = select(AgentWordAlignment).distinct()
         conditions = [
-            AgentWordAlignment.source_language == source_language,
-            AgentWordAlignment.target_language == target_language,
+            AgentWordAlignment.source_version_id == source_version_id,
+            AgentWordAlignment.target_version_id == target_version_id,
         ]
 
         # Build word filter conditions
@@ -1568,8 +1598,8 @@ async def get_word_alignments(
             extra={
                 "method": "GET",
                 "path": "/agent/word-alignment",
-                "source_language": source_language,
-                "target_language": target_language,
+                "source_version_id": source_version_id,
+                "target_version_id": target_version_id,
                 "source_words": source_words,
                 "target_words": target_words,
                 "duration_s": duration,
@@ -1589,8 +1619,8 @@ async def get_word_alignments(
 
 @router.get("/agent/lexeme-card", response_model=list[LexemeCardOut])
 async def get_lexeme_cards(
-    source_language: str,
-    target_language: str,
+    source_version_id: int,
+    target_version_id: int,
     source_word: str = None,
     target_word: str = None,
     target_words: str = None,
@@ -1605,8 +1635,8 @@ async def get_lexeme_cards(
     the current user has access to.
 
     Query Parameters:
-    - source_language: str (required) - ISO 639-3 code for source language
-    - target_language: str (required) - ISO 639-3 code for target language
+    - source_version_id: int (required) - Bible version ID for source
+    - target_version_id: int (required) - Bible version ID for target
     - source_word: str (optional) - Filter by source_lemma or source_surface_forms
       (case-insensitive exact match)
     - target_word: str (optional) - Filter by target_lemma or surface_forms
@@ -1638,8 +1668,8 @@ async def get_lexeme_cards(
 
         # Base conditions: language pair filter
         conditions = [
-            AgentLexemeCard.source_language == source_language,
-            AgentLexemeCard.target_language == target_language,
+            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.target_version_id == target_version_id,
         ]
 
         # Add POS filter if provided
@@ -1712,7 +1742,6 @@ async def get_lexeme_cards(
 
         if card_ids:
             from database.models import (
-                BibleRevision,
                 BibleVersion,
                 BibleVersionAccess,
                 UserGroup,
@@ -1743,9 +1772,7 @@ async def get_lexeme_cards(
                     )
                     .where(
                         UserGroup.user_id == current_user.id,
-                        BibleVersion.iso_language.in_(
-                            [source_language, target_language]
-                        ),
+                        BibleVersion.id.in_([source_version_id, target_version_id]),
                     )
                 )
                 examples_conditions.append(
@@ -1776,8 +1803,8 @@ async def get_lexeme_cards(
                 "id": card.id,
                 "source_lemma": card.source_lemma,
                 "target_lemma": card.target_lemma,
-                "source_language": card.source_language,
-                "target_language": card.target_language,
+                "source_version_id": card.source_version_id,
+                "target_version_id": card.target_version_id,
                 "pos": card.pos,
                 "surface_forms": card.surface_forms,
                 "source_surface_forms": card.source_surface_forms,
@@ -1798,8 +1825,8 @@ async def get_lexeme_cards(
             extra={
                 "method": "GET",
                 "path": "/agent/lexeme-card",
-                "source_language": source_language,
-                "target_language": target_language,
+                "source_version_id": source_version_id,
+                "target_version_id": target_version_id,
                 "source_word": source_word,
                 "target_word": target_word,
                 "target_words": target_words,
@@ -1820,8 +1847,8 @@ async def get_lexeme_cards(
 @router.get("/agent/lexeme-card/check-word")
 async def check_word_in_lexeme_cards(
     word: str,
-    source_language: str,
-    target_language: str,
+    source_version_id: int,
+    target_version_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -1830,8 +1857,8 @@ async def check_word_in_lexeme_cards(
 
     Query Parameters:
     - word: str (required) - The word to search for
-    - source_language: str (required) - ISO 639-3 code for source language
-    - target_language: str (required) - ISO 639-3 code for target language
+    - source_version_id: int (required) - Bible version ID for source
+    - target_version_id: int (required) - Bible version ID for target
 
     Returns:
     - count: int - Number of lexeme cards where the word matches (case-insensitive)
@@ -1845,16 +1872,16 @@ async def check_word_in_lexeme_cards(
 
         # Query cards matching by target_lemma (case-insensitive)
         cards_by_lemma = select(AgentLexemeCard.id).where(
-            AgentLexemeCard.source_language == source_language,
-            AgentLexemeCard.target_language == target_language,
+            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.target_version_id == target_version_id,
             func.lower(AgentLexemeCard.target_lemma) == word_lower,
         )
 
         # Query cards where word exists in surface_forms JSONB array (case-insensitive)
         # Use jsonb_typeof to check if it's an array, then jsonb_array_elements_text
         cards_by_surface = select(AgentLexemeCard.id).where(
-            AgentLexemeCard.source_language == source_language,
-            AgentLexemeCard.target_language == target_language,
+            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.target_version_id == target_version_id,
             AgentLexemeCard.surface_forms.isnot(None),
             text(
                 "(jsonb_typeof(agent_lexeme_cards.surface_forms) = 'array' AND "
@@ -1878,8 +1905,8 @@ async def check_word_in_lexeme_cards(
                 "method": "GET",
                 "path": "/agent/lexeme-card/check-word",
                 "word": word,
-                "source_language": source_language,
-                "target_language": target_language,
+                "source_version_id": source_version_id,
+                "target_version_id": target_version_id,
                 "duration_s": duration,
             },
         )
@@ -2294,13 +2321,13 @@ async def add_agent_translation(
                 detail="User not authorized for this assessment",
             )
 
-        # Derive revision_id, language, script from the assessment's reference
-        from database.models import BibleRevision, BibleVersion
+        # Derive revision_id, reference_version_id, script from the assessment's reference
+        from database.models import BibleVersion
 
         ref_query = (
             select(
                 Assessment.revision_id,
-                BibleVersion.iso_language,
+                BibleVersion.id,
                 BibleVersion.iso_script,
             )
             .join(BibleRevision, BibleRevision.id == Assessment.reference_id)
@@ -2312,14 +2339,14 @@ async def add_agent_translation(
         if not ref_row:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Could not determine revision/language/script from assessment",
+                detail="Could not determine revision/reference_version_id/script from assessment",
             )
-        rev_id, lang, scrpt = ref_row
+        rev_id, ref_version_id, scrpt = ref_row
 
-        # Get the next version number scoped to (revision_id, language, script, vref)
+        # Get the next version number scoped to (revision_id, reference_version_id, script, vref)
         version_query = select(func.max(AgentTranslation.version)).where(
             AgentTranslation.revision_id == rev_id,
-            AgentTranslation.language == lang,
+            AgentTranslation.reference_version_id == ref_version_id,
             AgentTranslation.script == scrpt,
             AgentTranslation.vref == translation.vref,
         )
@@ -2337,7 +2364,7 @@ async def add_agent_translation(
         agent_translation = AgentTranslation(
             assessment_id=translation.assessment_id,
             revision_id=rev_id,
-            language=lang,
+            reference_version_id=ref_version_id,
             script=scrpt,
             vref=translation.vref,
             version=next_version,
@@ -2392,7 +2419,7 @@ async def add_agent_translations_bulk(
     Store multiple agent-generated translations in bulk.
 
     All translations in a single request get the same version number, which is
-    auto-incremented based on the max existing version for the revision+language+script.
+    auto-incremented based on the max existing version for the revision+reference version+script.
 
     Input:
     - assessment_id: int - The assessment ID
@@ -2433,13 +2460,13 @@ async def add_agent_translations_bulk(
                 detail="User not authorized for this assessment",
             )
 
-        # Derive revision_id, language, script from the assessment's reference
-        from database.models import BibleRevision, BibleVersion
+        # Derive revision_id, reference_version_id, script from the assessment's reference
+        from database.models import BibleVersion
 
         ref_query = (
             select(
                 Assessment.revision_id,
-                BibleVersion.iso_language,
+                BibleVersion.id,
                 BibleVersion.iso_script,
             )
             .join(BibleRevision, BibleRevision.id == Assessment.reference_id)
@@ -2451,14 +2478,14 @@ async def add_agent_translations_bulk(
         if not ref_row:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Could not determine revision/language/script from assessment",
+                detail="Could not determine revision/reference_version_id/script from assessment",
             )
-        rev_id, lang, scrpt = ref_row
+        rev_id, ref_version_id, scrpt = ref_row
 
-        # Get the next version number scoped to (revision_id, language, script)
+        # Get the next version number scoped to (revision_id, reference_version_id, script)
         version_query = select(func.max(AgentTranslation.version)).where(
             AgentTranslation.revision_id == rev_id,
-            AgentTranslation.language == lang,
+            AgentTranslation.reference_version_id == ref_version_id,
             AgentTranslation.script == scrpt,
         )
         version_result = await db.execute(version_query)
@@ -2470,7 +2497,7 @@ async def add_agent_translations_bulk(
             AgentTranslation(
                 assessment_id=request.assessment_id,
                 revision_id=rev_id,
-                language=lang,
+                reference_version_id=ref_version_id,
                 script=scrpt,
                 vref=trans.vref,
                 version=next_version,
@@ -2529,7 +2556,7 @@ async def add_agent_translations_bulk(
 async def get_agent_translations(
     assessment_id: int | None = None,
     revision_id: int | None = None,
-    language: str | None = Query(None, min_length=2, max_length=3),
+    reference_version_id: int | None = None,
     script: str | None = Query(None, min_length=4, max_length=4),
     vref: str | None = None,
     first_vref: str | None = None,
@@ -2548,9 +2575,9 @@ async def get_agent_translations(
     - revision_id: int (optional) - The revision ID. If provided without assessment_id,
       returns the latest translation per vref (by created_at) across all assessments
       for that revision (no authorization check).
-    - language: str (optional) - 3-letter ISO 639 language code. Required when using revision_id.
+    - reference_version_id: int (optional) - Reference Bible version ID. Required when using revision_id.
     - script: str (optional) - 4-letter ISO 15924 script code. If omitted, returns
-      translations across all scripts for the given language.
+      translations across all scripts for the given reference version.
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - first_vref: str (optional) - Start of verse range (inclusive)
     - last_vref: str (optional) - End of verse range (inclusive)
@@ -2570,7 +2597,6 @@ async def get_agent_translations(
 
         from database.models import (
             Assessment,
-            BibleRevision,
             BibleVersion,
             BookReference,
             VerseReference,
@@ -2583,11 +2609,15 @@ async def get_agent_translations(
                 detail="Either assessment_id or revision_id must be provided",
             )
 
-        # Validate language parameter
-        if revision_id is not None and assessment_id is None and language is None:
+        # Validate reference_version_id parameter
+        if (
+            revision_id is not None
+            and assessment_id is None
+            and reference_version_id is None
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="language is required when using revision_id",
+                detail="reference_version_id is required when using revision_id",
             )
 
         # If assessment_id is provided, use assessment-specific logic with auth check
@@ -2612,10 +2642,10 @@ async def get_agent_translations(
                     detail="User not authorized for this assessment",
                 )
 
-            # Validate language/script match assessment's reference if provided
-            if language is not None or script is not None:
+            # Validate reference version/script match assessment's reference if provided
+            if reference_version_id is not None or script is not None:
                 ref_query = (
-                    select(BibleVersion.iso_language, BibleVersion.iso_script)
+                    select(BibleVersion.id, BibleVersion.iso_script)
                     .join(
                         BibleRevision,
                         BibleRevision.bible_version_id == BibleVersion.id,
@@ -2625,10 +2655,13 @@ async def get_agent_translations(
                 ref_result = await db.execute(ref_query)
                 ref_row = ref_result.first()
                 if ref_row:
-                    if language is not None and ref_row.iso_language != language:
+                    if (
+                        reference_version_id is not None
+                        and ref_row.id != reference_version_id
+                    ):
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
-                            detail="language does not match assessment's reference language",
+                            detail="reference_version_id does not match assessment's reference version",
                         )
                     if script is not None and ref_row.iso_script != script:
                         raise HTTPException(
@@ -2673,7 +2706,9 @@ async def get_agent_translations(
                 query = (
                     select(AgentTranslation)
                     .where(AgentTranslation.revision_id == revision_id)
-                    .where(AgentTranslation.language == language)
+                    .where(
+                        AgentTranslation.reference_version_id == reference_version_id
+                    )
                 )
                 if script is not None:
                     query = query.where(AgentTranslation.script == script)
@@ -2681,7 +2716,7 @@ async def get_agent_translations(
                 # Return only the latest version per vref using MAX(version)
                 base_filters = [
                     AgentTranslation.revision_id == revision_id,
-                    AgentTranslation.language == language,
+                    AgentTranslation.reference_version_id == reference_version_id,
                 ]
                 if script is not None:
                     base_filters.append(AgentTranslation.script == script)
@@ -2700,7 +2735,7 @@ async def get_agent_translations(
                     AgentTranslation.vref == latest_subq.c.vref,
                     AgentTranslation.version == latest_subq.c.max_version,
                     AgentTranslation.revision_id == revision_id,
-                    AgentTranslation.language == language,
+                    AgentTranslation.reference_version_id == reference_version_id,
                 ]
                 if script is not None:
                     join_conditions.append(AgentTranslation.script == script)
@@ -2813,7 +2848,7 @@ async def get_agent_translations(
                 "path": "/agent/translations",
                 "assessment_id": assessment_id,
                 "revision_id": revision_id,
-                "language": language,
+                "reference_version_id": reference_version_id,
                 "script": script,
                 "vref": vref,
                 "duration_s": duration,

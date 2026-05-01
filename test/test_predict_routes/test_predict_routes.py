@@ -40,7 +40,12 @@ def _make_modal_mock(results_by_app: dict):
     return mock_cls
 
 
-def _body(apps=None, **overrides):
+def _body(
+    source_version_id=1,
+    target_version_id=2,
+    apps=None,
+    **overrides,
+):
     payload = {
         "pairs": [
             {
@@ -49,8 +54,8 @@ def _body(apps=None, **overrides):
                 "target_text": "Hapo mwanzo...",
             }
         ],
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": source_version_id,
+        "target_version_id": target_version_id,
     }
     if apps is not None:
         payload["apps"] = apps
@@ -223,7 +228,7 @@ def test_predict_missing_pairs_returns_422(client, regular_token1):
     """Missing required `pairs` field returns 422 from pydantic validation."""
     response = client.post(
         f"/{prefix}/predict",
-        json={"source_language": "eng"},
+        json={"source_version_id": 1},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 422
@@ -260,7 +265,7 @@ def test_predict_forwards_payload_to_modal(client, regular_token1):
     with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["ngrams"], source_language=None),
+            json=_body(apps=["ngrams"], source_version_id=None),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
@@ -270,8 +275,8 @@ def test_predict_forwards_payload_to_modal(client, regular_token1):
     payload = captured["payload"]
     assert "apps" not in payload
     assert payload["pairs"][0]["target_text"] == "Hapo mwanzo..."
-    assert payload["source_language"] is None
-    assert payload["target_language"] == "swh"
+    assert payload["source_version_id"] is None
+    assert payload["target_version_id"] == 2
 
 
 @pytest.mark.parametrize(
@@ -412,7 +417,7 @@ def test_predict_training_not_available_returns_not_trained_status(
     """
     from predict_errors import TrainingNotAvailableError
 
-    msg = "No TF-IDF artifacts found (source_language=mgq). Run tfidf assess() first."
+    msg = "No TF-IDF artifacts found (source_version_id=42). Run tfidf assess() first."
     results = {"tfidf": TrainingNotAvailableError(msg)}
     with patch(
         "predict_routes.v3.predict_routes.modal.Function",

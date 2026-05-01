@@ -1398,8 +1398,8 @@ def test_use_eflomal_wrong_type(client, regular_token1, db_session, test_db_sess
                 "revision_id": revision_id,
                 "type": "sentence-length",
                 "use_eflomal": True,
-                "source_language": "eng",
-                "target_language": "swh",
+                "source_version_id": 1,
+                "target_version_id": 2,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -1407,10 +1407,10 @@ def test_use_eflomal_wrong_type(client, regular_token1, db_session, test_db_sess
     assert "use_eflomal" in response.json()["detail"]
 
 
-def test_use_eflomal_missing_languages(
+def test_use_eflomal_missing_versions(
     client, regular_token1, db_session, test_db_session
 ):
-    """use_eflomal=true without source_language or target_language returns 400."""
+    """use_eflomal=true without source_version_id or target_version_id returns 400."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
     reference_id = upload_revision(client, regular_token1, version_id)
@@ -1420,7 +1420,7 @@ def test_use_eflomal_missing_languages(
     ) as mock_runner:
         mock_runner.return_value = None
 
-        # Missing both languages
+        # Missing both version IDs
         response = client.post(
             f"{prefix}/assessment",
             params={
@@ -1432,9 +1432,9 @@ def test_use_eflomal_missing_languages(
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
         assert response.status_code == 400
-        assert "language" in response.json()["detail"].lower()
+        assert "version_id" in response.json()["detail"].lower()
 
-        # Missing only target_language
+        # Missing only target_version_id
         response = client.post(
             f"{prefix}/assessment",
             params={
@@ -1442,7 +1442,7 @@ def test_use_eflomal_missing_languages(
                 "reference_id": reference_id,
                 "type": "word-alignment",
                 "use_eflomal": True,
-                "source_language": "eng",
+                "source_version_id": 1,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -1465,8 +1465,8 @@ def test_use_eflomal_dedup_separate_from_regular(
     eflomal_params = {
         **base_params,
         "use_eflomal": True,
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": version_id,
+        "target_version_id": version_id,
     }
 
     with patch(
@@ -1528,8 +1528,8 @@ def test_kwargs_returned_in_assessment_response(
                 "reference_id": reference_id,
                 "type": "word-alignment",
                 "use_eflomal": True,
-                "source_language": "eng",
-                "target_language": "swh",
+                "source_version_id": version_id,
+                "target_version_id": version_id,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )

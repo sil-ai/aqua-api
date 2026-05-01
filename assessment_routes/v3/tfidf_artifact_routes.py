@@ -20,6 +20,7 @@ from assessment_routes.v3.results_query_routes import build_vector_literal
 from database.dependencies import get_db
 from database.models import (
     Assessment,
+    BibleRevision,
     TfidfArtifactRun,
     TfidfPcaVector,
     TfidfSvd,
@@ -155,6 +156,22 @@ async def _score_against_corpus(
     ]
 
 
+async def _assessment_source_version_id(
+    assessment: Assessment, db: AsyncSession
+) -> int:
+    source_version_id = await db.scalar(
+        select(BibleRevision.bible_version_id).where(
+            BibleRevision.id == assessment.revision_id
+        )
+    )
+    if source_version_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not determine source_version_id from assessment",
+        )
+    return source_version_id
+
+
 # ---------------------------------------------------------------------------
 # POST — push all artifacts in one transaction (idempotent)
 # ---------------------------------------------------------------------------
@@ -188,6 +205,15 @@ async def push_tfidf_artifacts(
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=403, detail="Not authorized for this assessment"
+        )
+    source_version_id = await _assessment_source_version_id(assessment, db)
+    if (
+        body.source_version_id is not None
+        and body.source_version_id != source_version_id
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="source_version_id does not match assessment revision version",
         )
 
     try:
@@ -262,7 +288,7 @@ async def push_tfidf_artifacts(
         db.add(
             TfidfArtifactRun(
                 assessment_id=assessment_id,
-                source_language=body.source_language,
+                source_version_id=source_version_id,
                 n_components=body.n_components,
                 n_word_features=n_word_features,
                 n_char_features=n_char_features,
@@ -438,7 +464,18 @@ async def init_tfidf_artifacts_upload(
     Creates a staging row with the vectorizer and SVD metadata. Returns an
     upload_id that the caller uses to POST chunks and finally commit.
     """
-    await _load_tfidf_assessment_for_upload(assessment_id, current_user, db)
+    assessment = await _load_tfidf_assessment_for_upload(
+        assessment_id, current_user, db
+    )
+    source_version_id = await _assessment_source_version_id(assessment, db)
+    if (
+        body.source_version_id is not None
+        and body.source_version_id != source_version_id
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="source_version_id does not match assessment revision version",
+        )
     _validate_vectorizer_shapes(body)
 
     # The sweep runs before the staging insert and any rollback here drops
@@ -457,7 +494,7 @@ async def init_tfidf_artifacts_upload(
 
     staging = TfidfSvdStaging(
         assessment_id=assessment_id,
-        source_language=body.source_language,
+        source_version_id=source_version_id,
         n_components=body.n_components,
         n_corpus_vrefs=body.n_corpus_vrefs,
         sklearn_version=body.sklearn_version,
@@ -718,7 +755,7 @@ async def commit_tfidf_artifacts_upload(
         db.add(
             TfidfArtifactRun(
                 assessment_id=assessment_id,
-                source_language=staging.source_language,
+                source_version_id=staging.source_version_id,
                 n_components=staging.n_components,
                 n_word_features=n_word_features,
                 n_char_features=n_char_features,
@@ -840,18 +877,18 @@ async def abort_tfidf_artifacts_upload(
 )
 async def pull_tfidf_artifacts(
     assessment_id: int | None = None,
-    source_language: str | None = None,
+    source_version_id: int | None = None,
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Fetch TF-IDF encoder artifacts by assessment_id or latest by language.
+    """Fetch TF-IDF encoder artifacts by assessment_id or latest by source version.
 
-    Exactly one of assessment_id or source_language must be provided.
+    Exactly one of assessment_id or source_version_id must be provided.
     """
-    if (assessment_id is None) == (source_language is None):
+    if (assessment_id is None) == (source_version_id is None):
         raise HTTPException(
             status_code=422,
-            detail="Provide exactly one of assessment_id or source_language",
+            detail="Provide exactly one of assessment_id or source_version_id",
         )
 
     if assessment_id is not None:
@@ -863,7 +900,7 @@ async def pull_tfidf_artifacts(
     else:
         run = await db.scalar(
             select(TfidfArtifactRun)
-            .where(TfidfArtifactRun.source_language == source_language)
+            .where(TfidfArtifactRun.source_version_id == source_version_id)
             .order_by(desc(TfidfArtifactRun.created_at))
             .limit(1)
         )
@@ -892,7 +929,7 @@ async def pull_tfidf_artifacts(
 
     return TfidfArtifactsPullResponse(
         assessment_id=run.assessment_id,
-        source_language=run.source_language,
+        source_version_id=run.source_version_id,
         n_components=run.n_components,
         n_word_features=run.n_word_features,
         n_char_features=run.n_char_features,

@@ -177,8 +177,8 @@ async def semantic_similarity_inference(
     logger.info(
         "Semantic similarity inference request",
         extra={
-            "source_language": request.source_language,
-            "target_language": request.target_language,
+            "source_version_id": request.source_version_id,
+            "target_version_id": request.target_version_id,
             "modal_env": modal_env,
         },
     )
@@ -190,8 +190,8 @@ async def semantic_similarity_inference(
         result = await f.remote.aio(
             request.text1,
             request.text2,
-            source_language=request.source_language,
-            target_language=request.target_language,
+            source_version_id=request.source_version_id,
+            target_version_id=request.target_version_id,
         )
     except Exception as e:
         logger.error(f"Semantic similarity inference failed: {e}", exc_info=True)

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.dependencies import get_db
 from database.models import (
     Assessment,
+    BibleRevision,
 )
 from database.models import EflomalAssessment as EflomalAssessmentModel
 from database.models import (
@@ -158,6 +159,32 @@ def _build_reverse_dict(
     return result
 
 
+async def _assessment_version_pair(
+    assessment: Assessment, db: AsyncSession
+) -> tuple[int, int]:
+    if assessment.reference_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Eflomal metadata requires an assessment reference_id",
+        )
+    source_version_id = await db.scalar(
+        select(BibleRevision.bible_version_id).where(
+            BibleRevision.id == assessment.revision_id
+        )
+    )
+    target_version_id = await db.scalar(
+        select(BibleRevision.bible_version_id).where(
+            BibleRevision.id == assessment.reference_id
+        )
+    )
+    if source_version_id is None or target_version_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not determine source/target version IDs from assessment",
+        )
+    return source_version_id, target_version_id
+
+
 async def _fetch_eflomal_response(
     eflomal: EflomalAssessmentModel, db: AsyncSession
 ) -> EflomalResultsPullResponse:
@@ -210,8 +237,8 @@ async def _fetch_eflomal_response(
 
     return EflomalResultsPullResponse(
         assessment_id=eflomal.assessment_id,
-        source_language=eflomal.source_language,
-        target_language=eflomal.target_language,
+        source_version_id=eflomal.source_version_id,
+        target_version_id=eflomal.target_version_id,
         num_verse_pairs=eflomal.num_verse_pairs,
         num_alignment_links=eflomal.num_alignment_links,
         num_dictionary_entries=eflomal.num_dictionary_entries,
@@ -270,6 +297,25 @@ async def push_eflomal_metadata(
             status_code=400,
             detail=f"Assessment type must be 'word-alignment', got '{assessment.type}'",
         )
+    source_version_id, target_version_id = await _assessment_version_pair(
+        assessment, db
+    )
+    if (
+        body.source_version_id is not None
+        and body.source_version_id != source_version_id
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="source_version_id does not match assessment revision version",
+        )
+    if (
+        body.target_version_id is not None
+        and body.target_version_id != target_version_id
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="target_version_id does not match assessment reference version",
+        )
 
     # 2. Authorize
     if not await is_user_authorized_for_assessment(
@@ -292,8 +338,8 @@ async def push_eflomal_metadata(
     try:
         eflomal_assessment = EflomalAssessmentModel(
             assessment_id=body.assessment_id,
-            source_language=body.source_language,
-            target_language=body.target_language,
+            source_version_id=source_version_id,
+            target_version_id=target_version_id,
             num_verse_pairs=body.num_verse_pairs,
             num_alignment_links=body.num_alignment_links,
             num_dictionary_entries=body.num_dictionary_entries,
@@ -767,22 +813,22 @@ async def push_eflomal_bpe_models(
 )
 async def pull_eflomal_results(
     assessment_id: int | None = None,
-    source_language: str | None = None,
-    target_language: str | None = None,
+    source_version_id: int | None = None,
+    target_version_id: int | None = None,
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Pull eflomal training artifacts by assessment ID or language pair.
+    """Pull eflomal training artifacts by assessment ID or version pair.
 
-    Provide either assessment_id or both source_language and target_language.
-    When querying by language pair, returns the most recent results.
+    Provide either assessment_id or both source_version_id and target_version_id.
+    When querying by version pair, returns the most recent results.
     """
-    has_languages = source_language is not None or target_language is not None
+    has_versions = source_version_id is not None or target_version_id is not None
 
-    if assessment_id is not None and has_languages:
+    if assessment_id is not None and has_versions:
         raise HTTPException(
             status_code=400,
-            detail="Provide either assessment_id or language pair, not both",
+            detail="Provide either assessment_id or version pair, not both",
         )
 
     if assessment_id is not None:
@@ -797,12 +843,12 @@ async def pull_eflomal_results(
                 status_code=404,
                 detail="No eflomal results found for this assessment",
             )
-    elif source_language is not None and target_language is not None:
+    elif source_version_id is not None and target_version_id is not None:
         result = await db.execute(
             select(EflomalAssessmentModel)
             .where(
-                EflomalAssessmentModel.source_language == source_language,
-                EflomalAssessmentModel.target_language == target_language,
+                EflomalAssessmentModel.source_version_id == source_version_id,
+                EflomalAssessmentModel.target_version_id == target_version_id,
             )
             .order_by(desc(EflomalAssessmentModel.created_at))
             .limit(1)
@@ -811,12 +857,12 @@ async def pull_eflomal_results(
         if eflomal is None:
             raise HTTPException(
                 status_code=404,
-                detail="No eflomal results found for this language pair",
+                detail="No eflomal results found for this version pair",
             )
     else:
         raise HTTPException(
             status_code=400,
-            detail="Provide either assessment_id or both source_language and target_language",
+            detail="Provide either assessment_id or both source_version_id and target_version_id",
         )
 
     if not await is_user_authorized_for_assessment(

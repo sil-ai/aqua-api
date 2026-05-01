@@ -44,12 +44,12 @@ def _init_body(
     n_word_features: int = 3,
     n_char_features: int = 4,
     total_chunks: int = 4,
-    source_language: str = "swh",
+    source_version_id: int | None = None,
     dtype: str = "float32",
 ) -> dict:
     n_features = n_word_features + n_char_features
     return {
-        "source_language": source_language,
+        "source_version_id": source_version_id,
         "n_components": n_components,
         "n_corpus_vrefs": 42,
         "sklearn_version": "1.6.1",
@@ -537,7 +537,6 @@ def test_commit_replaces_existing_artifacts(
     init_body = _init_body(
         n_components=4, n_word_features=3, n_char_features=4, total_chunks=2
     )
-    init_body["source_language"] = "eng"
     init_body["n_corpus_vrefs"] = 999
 
     upload_id = client.post(
@@ -566,7 +565,8 @@ def test_commit_replaces_existing_artifacts(
         params={"assessment_id": chunk_tfidf_assessment_id},
         headers=headers,
     ).json()
-    assert pulled["source_language"] == "eng"
+    # source_version_id is server-derived from the assessment's revision chain
+    assert pulled["source_version_id"] is not None
     assert pulled["n_corpus_vrefs"] == 999
     assert pulled["n_components"] == 4
     round_tripped = _decode_components(pulled["svd"])
@@ -608,7 +608,7 @@ def test_abort_unauthorized(
 
 
 def _run_single_chunk_upload(
-    client, headers, assessment_id, *, arr, source_language="swh"
+    client, headers, assessment_id, *, arr, source_version_id=None
 ) -> str:
     """Helper: init + 1 chunk + commit a tiny matrix. Returns the upload_id used."""
     body = _init_body(
@@ -616,7 +616,7 @@ def _run_single_chunk_upload(
         n_word_features=3,
         n_char_features=4,
         total_chunks=1,
-        source_language=source_language,
+        source_version_id=source_version_id,
     )
     upload_id = client.post(
         f"{prefix}/assessment/{assessment_id}/tfidf-artifacts/init",
@@ -830,7 +830,12 @@ def test_chunk_oversize_rejected_with_413(
 
 
 def _insert_stale_staging(
-    session, assessment_id: int, *, age_hours: float, with_chunk: bool = True
+    session,
+    assessment_id: int,
+    *,
+    age_hours: float,
+    with_chunk: bool = True,
+    source_version_id: int,
 ) -> uuid.UUID:
     """Drop a hand-crafted staging row (and optional chunk) into the db with a
     backdated created_at, so the sweep treats it as abandoned."""
@@ -839,7 +844,7 @@ def _insert_stale_staging(
     staging = TfidfSvdStaging(
         upload_id=uuid.uuid4(),
         assessment_id=assessment_id,
-        source_language="swh",
+        source_version_id=source_version_id,
         n_components=4,
         n_corpus_vrefs=1,
         sklearn_version="1.6.1",
@@ -875,6 +880,7 @@ def test_init_sweeps_stale_staging_rows(
     chunk_tfidf_assessment_id,
     chunk_non_tfidf_assessment_id,
     test_db_session,
+    test_version_id,
     monkeypatch,
 ):
     """/init drops staging rows older than the TTL (with their chunks via cascade),
@@ -885,7 +891,10 @@ def test_init_sweeps_stale_staging_rows(
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     stale_id = _insert_stale_staging(
-        test_db_session, chunk_tfidf_assessment_id, age_hours=48
+        test_db_session,
+        chunk_tfidf_assessment_id,
+        age_hours=48,
+        source_version_id=test_version_id,
     )
     # A stale row attached to a different assessment must also be swept —
     # the cleanup is purely time-based, not assessment-scoped.
@@ -894,9 +903,14 @@ def test_init_sweeps_stale_staging_rows(
         chunk_non_tfidf_assessment_id,
         age_hours=72,
         with_chunk=False,
+        source_version_id=test_version_id,
     )
     fresh_id = _insert_stale_staging(
-        test_db_session, chunk_tfidf_assessment_id, age_hours=1, with_chunk=False
+        test_db_session,
+        chunk_tfidf_assessment_id,
+        age_hours=1,
+        with_chunk=False,
+        source_version_id=test_version_id,
     )
 
     info_calls = []

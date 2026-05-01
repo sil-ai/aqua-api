@@ -42,7 +42,9 @@ GOOD_PAIRS = [
 
 
 @pytest.mark.parametrize("pair", GOOD_PAIRS, ids=[p["vref"] for p in GOOD_PAIRS])
-def test_matched_pair_returns_score(client, regular_token1, pair):
+def test_matched_pair_returns_score(
+    client, regular_token1, pair, test_version_id, test_version_id_2
+):
     """Correctly matched verse pairs should return a valid score."""
     with patch(MOCK_MODULE) as mock_function_cls:
         mock_fn = AsyncMock()
@@ -54,8 +56,8 @@ def test_matched_pair_returns_score(client, regular_token1, pair):
             json={
                 "text1": pair["text1"],
                 "text2": pair["text2"],
-                "source_language": "zga",
-                "target_language": "swh",
+                "source_version_id": test_version_id,
+                "target_version_id": test_version_id_2,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -64,16 +66,18 @@ def test_matched_pair_returns_score(client, regular_token1, pair):
     data = response.json()
     assert data["score"] == pair["mock_score"]
 
-    # Verify Modal was called with the correct text
+    # Verify Modal was called with the correct text and version IDs
     mock_fn.remote.aio.assert_called_once_with(
         pair["text1"],
         pair["text2"],
-        source_language="zga",
-        target_language="swh",
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
     )
 
 
-def test_mismatched_pair_forwarded_correctly(client, regular_token1):
+def test_mismatched_pair_forwarded_correctly(
+    client, regular_token1, test_version_id, test_version_id_2
+):
     """Mismatched verse pair is forwarded to Modal with correct params."""
     with patch(MOCK_MODULE) as mock_function_cls:
         mock_fn = AsyncMock()
@@ -86,8 +90,8 @@ def test_mismatched_pair_forwarded_correctly(client, regular_token1):
             json={
                 "text1": GOOD_PAIRS[0]["text1"],
                 "text2": GOOD_PAIRS[1]["text2"],
-                "source_language": "zga",
-                "target_language": "swh",
+                "source_version_id": test_version_id,
+                "target_version_id": test_version_id_2,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -96,12 +100,19 @@ def test_mismatched_pair_forwarded_correctly(client, regular_token1):
     assert response.json()["score"] == 0.12
 
 
-def test_unknown_language_pair_returns_422(client, regular_token1):
-    """Unknown language pair (no trained model) returns 422."""
+def test_unknown_version_pair_returns_422(
+    client, regular_token1, test_version_id, test_version_id_2
+):
+    """Version pair with no trained model returns 422."""
     with patch(MOCK_MODULE) as mock_function_cls:
         mock_fn = AsyncMock()
         mock_fn.remote.aio = AsyncMock(
-            return_value={"error": "No fine-tuned model found for zzz_yyy"}
+            return_value={
+                "error": (
+                    f"No fine-tuned model found for "
+                    f"{test_version_id}_{test_version_id_2}"
+                )
+            }
         )
         mock_function_cls.from_name.return_value = mock_fn
 
@@ -110,35 +121,11 @@ def test_unknown_language_pair_returns_422(client, regular_token1):
             json={
                 "text1": "hello",
                 "text2": "world",
-                "source_language": "zzz",
-                "target_language": "yyy",
+                "source_version_id": test_version_id,
+                "target_version_id": test_version_id_2,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
     assert response.status_code == 422
     assert "No fine-tuned model found" in response.json()["detail"]
-
-
-def test_invalid_language_code_returns_422(client, regular_token1):
-    """Path traversal language code returns 422."""
-    with patch(MOCK_MODULE) as mock_function_cls:
-        mock_fn = AsyncMock()
-        mock_fn.remote.aio = AsyncMock(
-            return_value={"error": "Invalid language code: '../etc' / 'eng'"}
-        )
-        mock_function_cls.from_name.return_value = mock_fn
-
-        response = client.post(
-            f"/{prefix}/predict/semantic-similarity",
-            json={
-                "text1": "hello",
-                "text2": "world",
-                "source_language": "../etc",
-                "target_language": "eng",
-            },
-            headers={"Authorization": f"Bearer {regular_token1}"},
-        )
-
-    assert response.status_code == 422
-    assert "Invalid language code" in response.json()["detail"]

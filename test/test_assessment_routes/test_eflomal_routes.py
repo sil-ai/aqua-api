@@ -53,8 +53,8 @@ def _bpe_payload(
 def _metadata_payload(
     assessment_id,
     n_dict=10,
-    source_language=None,
-    target_language=None,
+    source_version_id=None,
+    target_version_id=None,
 ):
     """Build an EflomalResultsPushRequest (metadata-only) payload."""
     payload = {
@@ -64,10 +64,10 @@ def _metadata_payload(
         "num_dictionary_entries": n_dict,
         "num_missing_words": 3,
     }
-    if source_language is not None:
-        payload["source_language"] = source_language
-    if target_language is not None:
-        payload["target_language"] = target_language
+    if source_version_id is not None:
+        payload["source_version_id"] = source_version_id
+    if target_version_id is not None:
+        payload["target_version_id"] = target_version_id
     return payload
 
 
@@ -99,7 +99,9 @@ def _target_word_count_items(n=5):
     return [{"word": f"word_{i}", "count": i + 10} for i in range(n)]
 
 
-def _push_all(client, token, assessment_id, source_language=None, target_language=None):
+def _push_all(
+    client, token, assessment_id, source_version_id=None, target_version_id=None
+):
     """Push metadata + all three data types. Returns the metadata response."""
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -107,8 +109,8 @@ def _push_all(client, token, assessment_id, source_language=None, target_languag
         f"{prefix}/assessment/eflomal/results",
         json=_metadata_payload(
             assessment_id,
-            source_language=source_language,
-            target_language=target_language,
+            source_version_id=source_version_id,
+            target_version_id=target_version_id,
         ),
         headers=headers,
     )
@@ -407,14 +409,13 @@ def test_push_eflomal_data_unauthorized(
 
 
 @pytest.fixture(scope="module")
-def test_eflomal_assessment_language_id(
+def test_eflomal_assessment_version_id(
     test_db_session, test_revision_id, test_revision_id_2
 ):
-    """Dedicated word-alignment assessment for language-based pull tests.
+    """Dedicated word-alignment assessment for version-based pull tests.
 
     Kept separate from test_eflomal_assessment_id so the push tests cannot
-    pre-populate it without language fields (which would trigger idempotency
-    and leave source_language/target_language as NULL).
+    pre-populate it before version-pair pull assertions.
     """
     assessment = Assessment(
         revision_id=test_revision_id,
@@ -429,14 +430,12 @@ def test_eflomal_assessment_language_id(
 
 
 @pytest.fixture(scope="module")
-def _ensure_eflomal_pushed(client, regular_token1, test_eflomal_assessment_language_id):
+def _ensure_eflomal_pushed(client, regular_token1, test_eflomal_assessment_version_id):
     """Ensure eflomal results exist for the test assessment before pull tests run."""
     return _push_all(
         client,
         regular_token1,
-        test_eflomal_assessment_language_id,
-        source_language="eng",
-        target_language="swh",
+        test_eflomal_assessment_version_id,
     )
 
 
@@ -544,24 +543,28 @@ def test_pull_eflomal_results_no_eflomal_data(
 
 
 # ---------------------------------------------------------------------------
-# Pull by language pair (GET /assessment/eflomal/results?source_language=&target_language=)
+# Pull by version pair (GET /assessment/eflomal/results?source_version_id=&target_version_id=)
 # ---------------------------------------------------------------------------
 
 
-def test_pull_eflomal_results_by_language_success(
+def test_pull_eflomal_results_by_version_success(
     client, regular_token1, _ensure_eflomal_pushed
 ):
-    """Pull by language pair returns the same artifacts as pull by assessment_id."""
+    """Pull by version pair returns the same artifacts as pull by assessment_id."""
+    pushed = _ensure_eflomal_pushed
     response = client.get(
         f"{prefix}/assessment/eflomal/results",
-        params={"source_language": "eng", "target_language": "swh"},
+        params={
+            "source_version_id": pushed["source_version_id"],
+            "target_version_id": pushed["target_version_id"],
+        },
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
     data = response.json()
 
-    assert data["source_language"] == "eng"
-    assert data["target_language"] == "swh"
+    assert data["source_version_id"] == pushed["source_version_id"]
+    assert data["target_version_id"] == pushed["target_version_id"]
     assert data["num_verse_pairs"] == 100
     assert data["num_alignment_links"] == 500
     assert data["num_dictionary_entries"] == 10
@@ -576,33 +579,41 @@ def test_pull_eflomal_results_by_language_success(
     assert data["reference_id"] is not None
 
 
-def test_pull_eflomal_results_by_language_not_found(client, regular_token1):
-    """Language pair with no results should return 404."""
+def test_pull_eflomal_results_by_version_not_found(client, regular_token1):
+    """Version pair with no results should return 404."""
     response = client.get(
         f"{prefix}/assessment/eflomal/results",
-        params={"source_language": "eng", "target_language": "zga"},
+        params={"source_version_id": 999998, "target_version_id": 999999},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 404
 
 
-def test_pull_eflomal_results_by_language_unauthorized(
+def test_pull_eflomal_results_by_version_unauthorized(
     client, regular_token2, _ensure_eflomal_pushed
 ):
     """User without access to the underlying assessment should receive 403."""
+    pushed = _ensure_eflomal_pushed
     response = client.get(
         f"{prefix}/assessment/eflomal/results",
-        params={"source_language": "eng", "target_language": "swh"},
+        params={
+            "source_version_id": pushed["source_version_id"],
+            "target_version_id": pushed["target_version_id"],
+        },
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
     assert response.status_code == 403
 
 
-def test_pull_eflomal_results_by_language_no_auth(client):
+def test_pull_eflomal_results_by_version_no_auth(client, _ensure_eflomal_pushed):
     """Request without auth token should fail (401)."""
+    pushed = _ensure_eflomal_pushed
     response = client.get(
         f"{prefix}/assessment/eflomal/results",
-        params={"source_language": "eng", "target_language": "swh"},
+        params={
+            "source_version_id": pushed["source_version_id"],
+            "target_version_id": pushed["target_version_id"],
+        },
     )
     assert response.status_code == 401
 
@@ -615,25 +626,25 @@ def test_pull_eflomal_results_by_language_no_auth(client):
 def test_pull_eflomal_results_both_selectors(
     client, regular_token1, _ensure_eflomal_pushed
 ):
-    """Providing both assessment_id and language pair should return 400."""
+    """Providing both assessment_id and version pair should return 400."""
     pushed = _ensure_eflomal_pushed
     response = client.get(
         f"{prefix}/assessment/eflomal/results",
         params={
             "assessment_id": pushed["assessment_id"],
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": pushed["source_version_id"],
+            "target_version_id": pushed["target_version_id"],
         },
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 400
 
 
-def test_pull_eflomal_results_partial_language(client, regular_token1):
-    """Providing only one language param (no assessment_id) should return 400."""
+def test_pull_eflomal_results_partial_version(client, regular_token1):
+    """Providing only one version param (no assessment_id) should return 400."""
     response = client.get(
         f"{prefix}/assessment/eflomal/results",
-        params={"source_language": "eng"},
+        params={"source_version_id": 1},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 400
@@ -966,3 +977,99 @@ def test_pull_eflomal_results_without_priors_or_bpe(
     # Parent revision/reference IDs come from the Assessment row
     assert data["revision_id"] is not None
     assert data["reference_id"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Cross-version isolation (regression test for aqua-api#613)
+# ---------------------------------------------------------------------------
+
+
+def test_pull_by_version_pair_isolates_versions_with_same_iso_language(
+    client, admin_token, test_db_session
+):
+    """Two bible_versions with the same iso_language must NOT share eflomal artifacts.
+
+    Pre-migration, the GET endpoint matched on (source_language, target_language)
+    so a query for version pair (A, B) would return artifacts from any pair with
+    matching ISO codes — including (C, B) for a different version C in the same
+    language. After version_id keying, the lookup is by (source_version_id,
+    target_version_id) so the artifacts must be isolated.
+
+    Setup creates three eng→eng versions (A, B, C). Pushes eflomal results for
+    pair (A, B). Pulls by pair (C, B) — must 404. Sanity-pulls (A, B) — must 200.
+    """
+    from datetime import date
+
+    from database.models import (
+        Assessment,
+        BibleRevision,
+        BibleVersion,
+        UserDB,
+    )
+
+    user = test_db_session.query(UserDB).filter(UserDB.username == "admin").first()
+    versions = [
+        BibleVersion(
+            name=f"iso_isolation_eflomal_{tag}",
+            iso_language="eng",
+            iso_script="Latn",
+            abbreviation=f"IIE{tag}",
+            owner_id=user.id,
+            is_reference=False,
+        )
+        for tag in ("a", "b", "c")
+    ]
+    test_db_session.add_all(versions)
+    test_db_session.commit()
+    ver_a, ver_b, ver_c = versions
+
+    revs = [
+        BibleRevision(
+            date=date.today(),
+            bible_version_id=v.id,
+            published=False,
+            machine_translation=True,
+        )
+        for v in (ver_a, ver_b, ver_c)
+    ]
+    test_db_session.add_all(revs)
+    test_db_session.commit()
+    rev_a, rev_b, rev_c = revs
+
+    # Pre-create assessment_AB so the push has a valid target.
+    a_ab = Assessment(
+        revision_id=rev_a.id,
+        reference_id=rev_b.id,
+        type="word-alignment",
+        status="running",
+    )
+    test_db_session.add(a_ab)
+    test_db_session.commit()
+    test_db_session.refresh(a_ab)
+
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    push_resp = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json=_metadata_payload(a_ab.id),
+        headers=headers,
+    )
+    assert push_resp.status_code == 200, push_resp.text
+
+    # Pull by the WRONG version pair (C, B) — must return 404 even though
+    # all three versions share iso_language='eng'.
+    miss_resp = client.get(
+        f"{prefix}/assessment/eflomal/results",
+        params={"source_version_id": ver_c.id, "target_version_id": ver_b.id},
+        headers=headers,
+    )
+    assert miss_resp.status_code == 404, miss_resp.text
+
+    # Sanity: pulling the correct pair (A, B) returns the data we just pushed.
+    hit_resp = client.get(
+        f"{prefix}/assessment/eflomal/results",
+        params={"source_version_id": ver_a.id, "target_version_id": ver_b.id},
+        headers=headers,
+    )
+    assert hit_resp.status_code == 200, hit_resp.text
+    assert hit_resp.json()["assessment_id"] == a_ab.id
