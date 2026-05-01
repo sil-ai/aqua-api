@@ -143,6 +143,18 @@ def _build_runner_train_config(
     return config
 
 
+def _training_options_for_type(
+    training_type: str, options: Optional[dict]
+) -> Optional[dict]:
+    """Return per-app training kwargs persisted and sent to the runner."""
+    if training_type != TrainingType.semantic_similarity.value:
+        return options
+
+    sem_sim_options = dict(options or {})
+    sem_sim_options["finetune"] = True
+    return sem_sim_options
+
+
 def _job_out(job: TrainingJob, assessment: Optional[Assessment]) -> TrainingJobOut:
     """Build a TrainingJobOut, sourcing status fields from the linked
     Assessment row (the single channel of truth after #584)."""
@@ -293,6 +305,9 @@ async def create_training_job(
     for training_type in TrainingType:
         if training_type.value not in selected_types:
             continue
+        training_options = _training_options_for_type(
+            training_type.value, job_in.options
+        )
         # Duplicate check per type — "active" means linked Assessment is
         # live (not soft-deleted) and not in a terminal state.
         dup_stmt = (
@@ -310,7 +325,10 @@ async def create_training_job(
         dup_result = await db.execute(dup_stmt)
         duplicate = False
         for existing_job in dup_result.scalars().all():
-            if existing_job.options == job_in.options:
+            existing_options = _training_options_for_type(
+                training_type.value, existing_job.options
+            )
+            if existing_options == training_options:
                 duplicate = True
                 skipped_job_ids.append(existing_job.id)
                 break
@@ -330,7 +348,7 @@ async def create_training_job(
             status="queued",
             requested_time=datetime.utcnow(),
             owner_id=current_user.id,
-            kwargs=job_in.options,
+            kwargs=training_options,
             is_training=True,
         )
         db.add(assessment)
@@ -343,7 +361,7 @@ async def create_training_job(
             target_revision_id=job_in.target_revision_id,
             source_version_id=source_version.id,
             target_version_id=target_version.id,
-            options=job_in.options,
+            options=training_options,
             requested_time=datetime.utcnow(),
             owner_id=current_user.id,
             session_id=session_id,
@@ -387,7 +405,7 @@ async def create_training_job(
                 job_in.target_revision_id,
                 source_version.id,
                 target_version.id,
-                job_in.options,
+                job.options,
             )
             await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
             return job, None
