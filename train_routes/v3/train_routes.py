@@ -304,12 +304,10 @@ async def _build_lexeme_card_matches_by_vref(
 
     # Pre-tokenize each verse once; per-vref matching is a set lookup.
     target_tokens_by_vref: dict[str, set[str]] = {
-        v: set(_tokenize_words(target_text_by_vref.get(v, "")))
-        for v in page_vrefs
+        v: set(_tokenize_words(target_text_by_vref.get(v, ""))) for v in page_vrefs
     }
     source_tokens_by_vref: dict[str, set[str]] = {
-        v: set(_tokenize_words(source_text_by_vref.get(v, "")))
-        for v in page_vrefs
+        v: set(_tokenize_words(source_text_by_vref.get(v, ""))) for v in page_vrefs
     }
 
     matches_by_vref: dict[str, List[TrainingSessionLexemeCard]] = {
@@ -321,14 +319,11 @@ async def _build_lexeme_card_matches_by_vref(
         target_forms = {target_lemma} | {
             f.lower() for f in (card.surface_forms or []) if isinstance(f, str) and f
         }
-        source_forms = (
-            ({source_lemma} if source_lemma else set())
-            | {
-                f.lower()
-                for f in (card.source_surface_forms or [])
-                if isinstance(f, str) and f
-            }
-        )
+        source_forms = ({source_lemma} if source_lemma else set()) | {
+            f.lower()
+            for f in (card.source_surface_forms or [])
+            if isinstance(f, str) and f
+        }
         target_forms.discard("")
         source_forms.discard("")
         if not target_forms and not source_forms:
@@ -978,9 +973,7 @@ async def get_training_session_results(
     # cards' lemma + surface forms on either side; cards without a hit
     # against this verse are dropped.
     lexeme_cards_by_vref: dict[str, List[TrainingSessionLexemeCard]] = {}
-    has_agent_critique = any(
-        j.type == TrainingType.agent_critique.value for j in jobs
-    )
+    has_agent_critique = any(j.type == TrainingType.agent_critique.value for j in jobs)
     if has_agent_critique and page_vrefs:
         # source_version_id / target_version_id are denormalized onto
         # TrainingJob, so any session job carries the right pair —

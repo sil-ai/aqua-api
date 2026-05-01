@@ -1727,7 +1727,11 @@ def _seed_verse_text(db_session, revision_id, verses):
 
 
 def test_session_results_lexeme_cards_when_agent_critique_in_session(
-    client, regular_token1, test_revision_id, test_revision_id_2, test_version_id,
+    client,
+    regular_token1,
+    test_revision_id,
+    test_revision_id_2,
+    test_version_id,
     db_session,
 ):
     """When the session includes agent-critique, each vref in the result
@@ -1818,7 +1822,11 @@ def test_session_results_lexeme_cards_when_agent_critique_in_session(
 
 
 def test_session_results_lexeme_cards_empty_when_no_agent_critique(
-    client, regular_token1, test_revision_id, test_revision_id_2, test_version_id,
+    client,
+    regular_token1,
+    test_revision_id,
+    test_revision_id_2,
+    test_version_id,
     db_session,
 ):
     """Sessions without an agent-critique training type return
