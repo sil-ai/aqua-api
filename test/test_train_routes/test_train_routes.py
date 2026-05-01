@@ -881,8 +881,11 @@ def test_training_job_creates_assessment_for_all_types(
         assessment = _get_assessment(db_session, job["assessment_id"])
         assert assessment is not None, f"Assessment row missing for {training_type}"
         assert assessment.type == training_type
-        assert assessment.revision_id == test_revision_id
-        assert assessment.reference_id == test_revision_id_2
+        # train_routes maps target_revision_id → Assessment.revision_id
+        # (the side being assessed) and source_revision_id →
+        # Assessment.reference_id (what it's compared against).
+        assert assessment.revision_id == test_revision_id_2
+        assert assessment.reference_id == test_revision_id
         assert assessment.status == "queued"
         assert assessment.owner_id == job["owner_id"]
         expected_kwargs = {"tag": "assessment_creation_test"}
@@ -940,8 +943,10 @@ def test_trainable_types_route_through_runner_with_is_training(
         # /v3/assessment/{id}/results, which are keyed on Assessment.id. So
         # `id` MUST be the Assessment id, not the TrainingJob id.
         assert config["id"] == jobs[t]["assessment_id"]
-        assert config["revision_id"] == test_revision_id
-        assert config["reference_id"] == test_revision_id_2
+        # See _build_runner_train_config: revision_id gets the target side
+        # (what's being assessed), reference_id gets the source side.
+        assert config["revision_id"] == test_revision_id_2
+        assert config["reference_id"] == test_revision_id
         # Training mode is signaled by is_training=True on the config
         # dict, not by a config["train"] flag — that used to be required
         # by sem-sim's assess() but has been superseded by a `finetune`

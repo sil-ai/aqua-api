@@ -132,10 +132,19 @@ def _build_runner_train_config(
     caller's `options` → `config["kwargs"]` — aqua-api doesn't hard-code
     them.
     """
+    # Mapping convention: `revision_id` is the side that gets assessed/trained
+    # against (i.e. the user's translation = target), `reference_id` is what
+    # it's being compared to (i.e. the reference = source). This matches the
+    # standard linguistics convention where source = source language /
+    # reference, target = target language / draft, and aligns with how each
+    # app's assess() consumes these fields (e.g. ngrams trains its mined
+    # ngram set on revision_id and matches them against target_text in
+    # predict; sem-sim fine-tunes the "rev" side which is the target
+    # language).
     config = {
         "id": job.assessment_id,
-        "revision_id": source_revision_id,
-        "reference_id": target_revision_id,
+        "revision_id": target_revision_id,
+        "reference_id": source_revision_id,
         "type": job.type,
         "source_version_id": source_version_id,
         "target_version_id": target_version_id,
@@ -344,9 +353,12 @@ async def create_training_job(
         # path. Assessment.status is the single channel of training-run
         # status — runner PATCHes it queued → running (with percent_complete
         # self-loops) → finished.
+        # See _build_runner_train_config for the rationale: revision_id is
+        # the side being assessed (target), reference_id is what it's
+        # compared against (source).
         assessment = Assessment(
-            revision_id=job_in.source_revision_id,
-            reference_id=job_in.target_revision_id,
+            revision_id=job_in.target_revision_id,
+            reference_id=job_in.source_revision_id,
             type=training_type.value,
             status="queued",
             requested_time=datetime.utcnow(),
