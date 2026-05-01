@@ -277,8 +277,8 @@ class AssessmentIn(BaseModel):
     revision_id: int
     reference_id: Optional[int] = None
     type: AssessmentType
-    source_language: Optional[str] = None
-    target_language: Optional[str] = None
+    source_version_id: Optional[int] = None
+    target_version_id: Optional[int] = None
     kwargs: Optional[Dict[str, Any]] = None
 
     @field_validator("kwargs")
@@ -336,16 +336,16 @@ class AssessmentOut(BaseModel):
 class SemanticSimilarityRequest(BaseModel):
     text1: str = Field(..., max_length=10000)
     text2: str = Field(..., max_length=10000)
-    source_language: str = Field(..., max_length=10)
-    target_language: str = Field(..., max_length=10)
+    source_version_id: int
+    target_version_id: int
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "text1": "Hapo mwanzo Mungu aliumba mbingu na dunia.",
                 "text2": "In the beginning God created the heavens and the earth.",
-                "source_language": "swh",
-                "target_language": "eng",
+                "source_version_id": 1,
+                "target_version_id": 2,
             }
         }
     }
@@ -371,8 +371,8 @@ class PredictInput(BaseModel):
     assessment_id: Optional[int] = None
     revision_id: Optional[int] = None
     reference_id: Optional[int] = None
-    source_language: Optional[str] = Field(default=None, max_length=10)
-    target_language: Optional[str] = Field(default=None, max_length=10)
+    source_version_id: Optional[int] = None
+    target_version_id: Optional[int] = None
     limit: Optional[int] = Field(default=None, ge=1, le=10000)
     apps: Optional[List[str]] = None
     include_critique: bool = False
@@ -389,8 +389,8 @@ class PredictInput(BaseModel):
                 ],
                 "revision_id": 1,
                 "reference_id": 2,
-                "source_language": "eng",
-                "target_language": "swh",
+                "source_version_id": 1,
+                "target_version_id": 2,
                 "apps": ["ngrams", "tfidf"],
                 "include_critique": False,
             }
@@ -582,8 +582,8 @@ class TokenData(BaseModel):
 class AgentWordAlignmentIn(BaseModel):
     source_word: str
     target_word: str
-    source_language: str
-    target_language: str
+    source_version_id: int
+    target_version_id: int
     score: float = 0.0
     is_human_verified: bool = False
 
@@ -592,8 +592,8 @@ class AgentWordAlignmentIn(BaseModel):
             "example": {
                 "source_word": "love",
                 "target_word": "amor",
-                "source_language": "eng",
-                "target_language": "spa",
+                "source_version_id": 1,
+                "target_version_id": 2,
                 "score": 0.95,
                 "is_human_verified": False,
             }
@@ -605,8 +605,8 @@ class AgentWordAlignmentOut(BaseModel):
     id: int
     source_word: str
     target_word: str
-    source_language: str
-    target_language: str
+    source_version_id: int
+    target_version_id: int
     score: float
     is_human_verified: bool
     created_at: Optional[datetime.datetime] = None
@@ -618,8 +618,8 @@ class AgentWordAlignmentOut(BaseModel):
                 "id": 1,
                 "source_word": "love",
                 "target_word": "amor",
-                "source_language": "eng",
-                "target_language": "spa",
+                "source_version_id": 1,
+                "target_version_id": 2,
                 "score": 0.95,
                 "is_human_verified": False,
                 "created_at": "2024-06-01T12:00:00",
@@ -638,16 +638,16 @@ class AgentWordAlignmentBulkItem(BaseModel):
 
 
 class AgentWordAlignmentBulkRequest(BaseModel):
-    source_language: str  # ISO 639-3
-    target_language: str  # ISO 639-3
+    source_version_id: int
+    target_version_id: int
     alignments: list[AgentWordAlignmentBulkItem]
 
 
 class LexemeCardIn(BaseModel):
     source_lemma: Optional[str] = None
     target_lemma: str
-    source_language: str
-    target_language: str
+    source_version_id: int
+    target_version_id: int
 
     @field_validator("target_lemma")
     @classmethod
@@ -687,8 +687,8 @@ class LexemeCardIn(BaseModel):
             "example": {
                 "source_lemma": "love",
                 "target_lemma": "amor",
-                "source_language": "eng",
-                "target_language": "spa",
+                "source_version_id": 1,
+                "target_version_id": 2,
                 "pos": "verb",
                 "surface_forms": [
                     "amor",
@@ -727,8 +727,8 @@ class LexemeCardOut(BaseModel):
     id: int
     source_lemma: Optional[str] = None
     target_lemma: str
-    source_language: str
-    target_language: str
+    source_version_id: int
+    target_version_id: int
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
     source_surface_forms: Optional[list] = None  # Source language surface forms
@@ -1043,7 +1043,7 @@ class AgentTranslationOut(BaseModel):
     id: int
     assessment_id: int
     revision_id: int
-    language: str
+    reference_version_id: int
     script: str
     vref: str
     version: int
@@ -1059,7 +1059,7 @@ class AgentTranslationOut(BaseModel):
                 "id": 1,
                 "assessment_id": 123,
                 "revision_id": 456,
-                "language": "eng",
+                "reference_version_id": 789,
                 "script": "Latn",
                 "vref": "JHN 1:1",
                 "version": 1,
@@ -1105,8 +1105,8 @@ class TrainingJobOut(BaseModel):
     type: str
     source_revision_id: int
     target_revision_id: int
-    source_language: str
-    target_language: str
+    source_version_id: int
+    target_version_id: int
     options: Optional[Dict[str, Any]] = None
     requested_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
@@ -1189,8 +1189,8 @@ class EflomalResultsPushRequest(BaseModel):
     """
 
     assessment_id: int
-    source_language: Optional[str] = None
-    target_language: Optional[str] = None
+    source_version_id: Optional[int] = None
+    target_version_id: Optional[int] = None
     num_verse_pairs: int
     num_alignment_links: int
     num_dictionary_entries: int
@@ -1202,8 +1202,8 @@ class EflomalAssessmentOut(BaseModel):
 
     id: int
     assessment_id: int
-    source_language: Optional[str] = None
-    target_language: Optional[str] = None
+    source_version_id: int
+    target_version_id: int
     num_verse_pairs: int
     num_alignment_links: int
     num_dictionary_entries: int
@@ -1242,8 +1242,8 @@ class EflomalResultsPullResponse(BaseModel):
     """
 
     assessment_id: int
-    source_language: Optional[str] = None
-    target_language: Optional[str] = None
+    source_version_id: int
+    target_version_id: int
     num_verse_pairs: int
     num_alignment_links: int
     num_dictionary_entries: int
@@ -1281,7 +1281,7 @@ class TfidfSvdPayload(TfidfSvdMeta):
 
 
 class TfidfArtifactsPushRequest(BaseModel):
-    source_language: Optional[str] = Field(default=None, max_length=3)
+    source_version_id: Optional[int] = None
     n_components: int
     n_corpus_vrefs: int
     sklearn_version: str
@@ -1299,7 +1299,7 @@ class TfidfArtifactsPushResponse(BaseModel):
 
 class TfidfArtifactsPullResponse(BaseModel):
     assessment_id: int
-    source_language: Optional[str] = None
+    source_version_id: int
     n_components: int
     n_word_features: int
     n_char_features: int
@@ -1315,7 +1315,7 @@ class TfidfArtifactsPullResponse(BaseModel):
 
 
 class TfidfArtifactsInitRequest(BaseModel):
-    source_language: Optional[str] = Field(default=None, max_length=3)
+    source_version_id: Optional[int] = None
     n_components: int
     n_corpus_vrefs: int
     sklearn_version: str

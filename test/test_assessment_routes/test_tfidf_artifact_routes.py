@@ -36,11 +36,10 @@ def _make_artifact_body(
     n_components: int = 5,
     n_word_features: int = 3,
     n_char_features: int = 4,
-    source_language: str = "swh",
+    source_version_id: int | None = None,
 ) -> dict:
     n_features = n_word_features + n_char_features
-    return {
-        "source_language": source_language,
+    body = {
         "n_components": n_components,
         "n_corpus_vrefs": 42,
         "sklearn_version": "1.6.1",
@@ -73,6 +72,9 @@ def _make_artifact_body(
             "components_b64": _components_b64(n_components, n_features),
         },
     }
+    if source_version_id is not None:
+        body["source_version_id"] = source_version_id
+    return body
 
 
 @pytest.fixture(scope="module")
@@ -180,7 +182,7 @@ def test_tfidf_artifact_round_trip(client, regular_token1, tfidf_assessment_id):
     assert resp.status_code == 200, resp.text
     pulled = resp.json()
     assert pulled["assessment_id"] == tfidf_assessment_id
-    assert pulled["source_language"] == "swh"
+    assert pulled["source_version_id"] is not None
     assert pulled["n_components"] == 5
     assert pulled["n_word_features"] == 3
     assert pulled["n_char_features"] == 4
@@ -209,7 +211,6 @@ def test_tfidf_artifact_idempotency(client, regular_token1, tfidf_assessment_id)
     """Re-posting replaces the artifacts rather than creating duplicates."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
     body = _make_artifact_body(n_word_features=6, n_char_features=8)
-    body["source_language"] = "eng"
 
     resp = client.post(
         f"{prefix}/assessment/{tfidf_assessment_id}/tfidf-artifacts",
@@ -230,7 +231,7 @@ def test_tfidf_artifact_idempotency(client, regular_token1, tfidf_assessment_id)
         params={"assessment_id": tfidf_assessment_id},
         headers=headers,
     ).json()
-    assert pulled["source_language"] == "eng"
+    assert pulled["source_version_id"] is not None
     assert pulled["n_word_features"] == 6
     assert pulled["n_char_features"] == 8
 
@@ -386,23 +387,21 @@ def test_tfidf_artifact_pull_both_selectors(
 ):
     resp = client.get(
         f"{prefix}/assessment/tfidf/artifacts",
-        params={"assessment_id": tfidf_assessment_id, "source_language": "eng"},
+        params={"assessment_id": tfidf_assessment_id, "source_version_id": 1},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 422
 
 
-def test_tfidf_artifact_pull_latest_by_language(
+def test_tfidf_artifact_pull_latest_by_version(
     client, regular_token1, tfidf_assessment_id, tfidf_assessment_id_2
 ):
-    """Two runs with the same source_language — GET by language returns the newer one."""
+    """Two runs with the same source_version_id return the newer one."""
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
-    # First run (older) — already 'eng' from the idempotency test above.
-    # Push a second run for the same language; it must be most recent.
-    body = _make_artifact_body(
-        n_components=7, n_word_features=5, n_char_features=9, source_language="eng"
-    )
+    # First run is already present from earlier tests. Push a second run for
+    # the same source version; it must be most recent.
+    body = _make_artifact_body(n_components=7, n_word_features=5, n_char_features=9)
     body["n_corpus_vrefs"] = 17
     resp = client.post(
         f"{prefix}/assessment/{tfidf_assessment_id_2}/tfidf-artifacts",
@@ -410,10 +409,15 @@ def test_tfidf_artifact_pull_latest_by_language(
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
+    source_version_id = client.get(
+        f"{prefix}/assessment/tfidf/artifacts",
+        params={"assessment_id": tfidf_assessment_id_2},
+        headers=headers,
+    ).json()["source_version_id"]
 
     resp = client.get(
         f"{prefix}/assessment/tfidf/artifacts",
-        params={"source_language": "eng"},
+        params={"source_version_id": source_version_id},
         headers=headers,
     )
     assert resp.status_code == 200

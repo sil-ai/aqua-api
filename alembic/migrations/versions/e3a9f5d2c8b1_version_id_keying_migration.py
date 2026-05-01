@@ -218,7 +218,7 @@ def upgrade() -> None:
     # cannot be unambiguously assigned to a version pair. Confirmed
     # acceptable on aqua-api#613: cards rebuild from new agent-critique
     # training runs.
-    op.execute("DELETE FROM agent_lexeme_cards")  # cascades to examples
+    op.execute("TRUNCATE TABLE agent_lexeme_cards CASCADE")
     op.add_column(
         "agent_lexeme_cards",
         sa.Column(
@@ -241,7 +241,7 @@ def upgrade() -> None:
     op.drop_column("agent_lexeme_cards", "target_language")
 
     # --- agent_word_alignments (truncate; no dependents) ---
-    op.execute("DELETE FROM agent_word_alignments")
+    op.execute("TRUNCATE TABLE agent_word_alignments")
     op.add_column(
         "agent_word_alignments",
         sa.Column(

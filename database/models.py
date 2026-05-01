@@ -174,12 +174,8 @@ class TrainingJob(Base):
     target_revision_id = Column(
         Integer, ForeignKey("bible_revision.id"), nullable=False
     )
-    source_language = Column(
-        String(3), ForeignKey("iso_language.iso639"), nullable=False
-    )
-    target_language = Column(
-        String(3), ForeignKey("iso_language.iso639"), nullable=False
-    )
+    source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
+    target_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
 
     options = Column(JSONB, nullable=True)
 
@@ -202,11 +198,13 @@ class TrainingJob(Base):
 
     source_revision = relationship("BibleRevision", foreign_keys=[source_revision_id])
     target_revision = relationship("BibleRevision", foreign_keys=[target_revision_id])
+    source_version = relationship("BibleVersion", foreign_keys=[source_version_id])
+    target_version = relationship("BibleVersion", foreign_keys=[target_version_id])
     owner = relationship("UserDB")
     assessment = relationship("Assessment", foreign_keys=[assessment_id])
 
     __table_args__ = (
-        Index("ix_training_job_lang_pair", "source_language", "target_language"),
+        Index("ix_training_job_version_pair", "source_version_id", "target_version_id"),
         Index(
             "ix_training_job_revisions_type",
             "source_revision_id",
@@ -448,8 +446,8 @@ class AgentLexemeCard(Base):
     id = Column(Integer, primary_key=True)
     source_lemma = Column(Text)  # Source language lemma for cross-reference
     target_lemma = Column(Text, nullable=False)
-    source_language = Column(String(3), ForeignKey("iso_language.iso639"))
-    target_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
+    target_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
     pos = Column(Text)
     surface_forms = Column(JSONB)  # JSON array of target language surface forms
     source_surface_forms = Column(JSONB)  # JSON array of source language surface forms
@@ -466,17 +464,17 @@ class AgentLexemeCard(Base):
         # Case-insensitive unique constraint to prevent duplicate cards
         # Each LOWER(target_lemma) can only have one card per language pair
         Index(
-            "ix_agent_lexeme_cards_unique_v3",
+            "ix_agent_lexeme_cards_unique_v4",
             func.lower(target_lemma),
-            "source_language",
-            "target_language",
+            "source_version_id",
+            "target_version_id",
             unique=True,
         ),
         # Index for common query pattern: language pair + confidence ordering
         Index(
-            "ix_agent_lexeme_cards_lang_confidence",
-            "source_language",
-            "target_language",
+            "ix_agent_lexeme_cards_version_confidence",
+            "source_version_id",
+            "target_version_id",
             "confidence",
             postgresql_ops={"confidence": "DESC"},
         ),
@@ -557,8 +555,8 @@ class AgentWordAlignment(Base):
     id = Column(Integer, primary_key=True)
     source_word = Column(Text, nullable=False)
     target_word = Column(Text, nullable=False)
-    source_language = Column(String(3), ForeignKey("iso_language.iso639"))
-    target_language = Column(String(3), ForeignKey("iso_language.iso639"))
+    source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
+    target_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
     score = Column(Float, nullable=False, default=0.0)
     is_human_verified = Column(Boolean, default=False)  # False until human-verified
     created_at = Column(TIMESTAMP, default=func.now())
@@ -567,32 +565,32 @@ class AgentWordAlignment(Base):
     __table_args__ = (
         # Unique constraint for atomic upserts
         Index(
-            "ux_agent_word_alignments_lang_words",
-            "source_language",
-            "target_language",
+            "ux_agent_word_alignments_version_words",
+            "source_version_id",
+            "target_version_id",
             "source_word",
             "target_word",
             unique=True,
         ),
         # Index for source word lookups by language pair
         Index(
-            "ix_agent_word_alignments_lang_source",
-            "source_language",
-            "target_language",
+            "ix_agent_word_alignments_version_source",
+            "source_version_id",
+            "target_version_id",
             "source_word",
         ),
         # Index for target word lookups by language pair
         Index(
-            "ix_agent_word_alignments_lang_target",
-            "source_language",
-            "target_language",
+            "ix_agent_word_alignments_version_target",
+            "source_version_id",
+            "target_version_id",
             "target_word",
         ),
         # Index for efficient score-ordered queries
         Index(
-            "ix_agent_word_alignments_lang_score",
-            "source_language",
-            "target_language",
+            "ix_agent_word_alignments_version_score",
+            "source_version_id",
+            "target_version_id",
             score.desc(),
         ),
     )
@@ -677,8 +675,10 @@ class AgentTranslation(Base):
     )
     # revision being translated (assessment.revision_id, i.e. the target text)
     revision_id = Column(Integer, ForeignKey("bible_revision.id"), nullable=False)
-    # reference language/script (from assessment's reference BibleVersion)
-    language = Column(String(3), ForeignKey("iso_language.iso639"), nullable=False)
+    # reference version/script (from assessment's reference BibleVersion)
+    reference_version_id = Column(
+        Integer, ForeignKey("bible_version.id"), nullable=False
+    )
     script = Column(String(4), ForeignKey("iso_script.iso15924"), nullable=False)
     vref = Column(String(20), nullable=False)
     version = Column(Integer, default=1, nullable=False)
@@ -695,7 +695,7 @@ class AgentTranslation(Base):
         Index(
             "ix_agent_translations_unique",
             "revision_id",
-            "language",
+            "reference_version_id",
             "script",
             "vref",
             "version",
@@ -703,9 +703,9 @@ class AgentTranslation(Base):
         ),
         Index("ix_agent_translations_assessment_vref", "assessment_id", "vref"),
         Index(
-            "ix_agent_translations_rev_lang_script_vref",
+            "ix_agent_translations_rev_refversion_script_vref",
             "revision_id",
-            "language",
+            "reference_version_id",
             "script",
             "vref",
         ),
@@ -726,8 +726,8 @@ class EflomalAssessment(Base):
     assessment_id = Column(
         Integer, ForeignKey("assessment.id"), nullable=False, unique=True
     )
-    source_language = Column(String(3), nullable=True)
-    target_language = Column(String(3), nullable=True)
+    source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
+    target_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
     num_verse_pairs = Column(Integer)
     num_alignment_links = Column(Integer)
     num_dictionary_entries = Column(Integer)
@@ -736,9 +736,9 @@ class EflomalAssessment(Base):
 
     __table_args__ = (
         Index(
-            "ix_eflomal_assessment_language_pair",
-            "source_language",
-            "target_language",
+            "ix_eflomal_assessment_version_pair",
+            "source_version_id",
+            "target_version_id",
         ),
     )
 
@@ -1106,7 +1106,7 @@ class TfidfArtifactRun(Base):
         ForeignKey("assessment.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    source_language = Column(String(3), nullable=True)
+    source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
     n_components = Column(Integer, nullable=False)
     n_word_features = Column(Integer, nullable=False)
     n_char_features = Column(Integer, nullable=False)
@@ -1115,8 +1115,12 @@ class TfidfArtifactRun(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     __table_args__ = (
-        Index("ix_tfidf_artifact_runs_lang", "source_language"),
-        Index("ix_tfidf_artifact_runs_lang_created", "source_language", "created_at"),
+        Index("ix_tfidf_artifact_runs_version", "source_version_id"),
+        Index(
+            "ix_tfidf_artifact_runs_version_created",
+            "source_version_id",
+            "created_at",
+        ),
     )
 
 
@@ -1175,7 +1179,7 @@ class TfidfSvdStaging(Base):
         ForeignKey("assessment.id", ondelete="CASCADE"),
         nullable=False,
     )
-    source_language = Column(String(3), nullable=True)
+    source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=True)
     n_components = Column(Integer, nullable=False)
     n_corpus_vrefs = Column(Integer, nullable=False)
     sklearn_version = Column(Text, nullable=False)

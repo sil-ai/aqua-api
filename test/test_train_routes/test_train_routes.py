@@ -148,8 +148,8 @@ def test_create_training_job_success(
         assert job["target_revision_id"] == test_revision_id_2
         assert job["status"] == "queued"
         assert job["id"] is not None
-        assert job["source_language"] == "eng"
-        assert job["target_language"] == "eng"
+        assert job["source_version_id"] is not None
+        assert job["target_version_id"] is not None
 
     # Check inference readiness for each trainable assessment app
     readiness = data["inference_readiness"]

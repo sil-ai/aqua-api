@@ -216,7 +216,7 @@ async def add_assessment(
     ),
     use_eflomal: Optional[bool] = Query(
         None,
-        description="Run eflomal-based word alignment. Requires source_language and target_language.",
+        description="Run eflomal-based word alignment. Requires source_version_id and target_version_id.",
     ),
     force: bool = Query(
         False,
@@ -237,7 +237,7 @@ async def add_assessment(
     - semantic-similarity (requires reference)
     - sentence-length
     - word-alignment (requires reference; can optionally run eflomal-based alignment
-      when `use_eflomal=true` and `source_language` and `target_language` are provided)
+      when `use_eflomal=true` and `source_version_id` and `target_version_id` are provided)
     - ngrams
     - tfidf
     - text-lengths
@@ -295,7 +295,7 @@ async def add_assessment(
         a.kwargs = combined_kwargs
         parsed_kwargs = combined_kwargs
 
-    # Eflomal word-alignment requires source and target languages
+    # Eflomal word-alignment requires source and target version IDs
     is_eflomal = a.kwargs and a.kwargs.get("use_eflomal")
     if is_eflomal:
         if a.type != "word-alignment":
@@ -303,10 +303,10 @@ async def add_assessment(
                 status_code=400,
                 detail="use_eflomal is only valid for word-alignment assessments.",
             )
-        if not a.source_language or not a.target_language:
+        if not a.source_version_id or not a.target_version_id:
             raise HTTPException(
                 status_code=400,
-                detail="Eflomal word-alignment requires source_language and target_language.",
+                detail="Eflomal word-alignment requires source_version_id and target_version_id.",
             )
 
     # Check for already-completed assessment (force=true bypasses this)

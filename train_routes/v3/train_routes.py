@@ -110,8 +110,8 @@ def _build_runner_train_config(
     job: TrainingJob,
     source_revision_id: int,
     target_revision_id: int,
-    source_language: str,
-    target_language: str,
+    source_version_id: int,
+    target_version_id: int,
     options,
 ) -> dict:
     """Config passed to run_assessment_runner for a training job.
@@ -134,8 +134,8 @@ def _build_runner_train_config(
         "revision_id": source_revision_id,
         "reference_id": target_revision_id,
         "type": job.type,
-        "source_language": source_language,
-        "target_language": target_language,
+        "source_version_id": source_version_id,
+        "target_version_id": target_version_id,
         "is_training": True,
     }
     if options:
@@ -151,8 +151,8 @@ def _job_out(job: TrainingJob, assessment: Optional[Assessment]) -> TrainingJobO
         type=job.type,
         source_revision_id=job.source_revision_id,
         target_revision_id=job.target_revision_id,
-        source_language=job.source_language,
-        target_language=job.target_language,
+        source_version_id=job.source_version_id,
+        target_version_id=job.target_version_id,
         options=job.options,
         requested_time=job.requested_time,
         owner_id=job.owner_id,
@@ -258,9 +258,6 @@ async def create_training_job(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Bible version for target revision {job_in.target_revision_id} not found",
         )
-    source_language = source_version.iso_language
-    target_language = target_version.iso_language
-
     # Auth: non-admin users must have group access to both bible versions
     if not current_user.is_admin:
         version_ids = await _get_accessible_version_ids(current_user, db)
@@ -344,8 +341,8 @@ async def create_training_job(
             type=training_type.value,
             source_revision_id=job_in.source_revision_id,
             target_revision_id=job_in.target_revision_id,
-            source_language=source_language,
-            target_language=target_language,
+            source_version_id=source_version.id,
+            target_version_id=target_version.id,
             options=job_in.options,
             requested_time=datetime.utcnow(),
             owner_id=current_user.id,
@@ -388,8 +385,8 @@ async def create_training_job(
                 job,
                 job_in.source_revision_id,
                 job_in.target_revision_id,
-                source_language,
-                target_language,
+                source_version.id,
+                target_version.id,
                 job_in.options,
             )
             await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
@@ -448,8 +445,8 @@ async def create_training_job(
 async def list_training_jobs(
     status_filter: Optional[str] = Query(None, alias="status"),
     type_filter: Optional[str] = Query(None, alias="type"),
-    source_language: Optional[str] = None,
-    target_language: Optional[str] = None,
+    source_version_id: Optional[int] = None,
+    target_version_id: Optional[int] = None,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -467,10 +464,10 @@ async def list_training_jobs(
         )
     if type_filter:
         stmt = stmt.where(TrainingJob.type == type_filter)
-    if source_language:
-        stmt = stmt.where(TrainingJob.source_language == source_language)
-    if target_language:
-        stmt = stmt.where(TrainingJob.target_language == target_language)
+    if source_version_id:
+        stmt = stmt.where(TrainingJob.source_version_id == source_version_id)
+    if target_version_id:
+        stmt = stmt.where(TrainingJob.target_version_id == target_version_id)
 
     if not current_user.is_admin:
         version_ids = await _get_accessible_version_ids(current_user, db)
