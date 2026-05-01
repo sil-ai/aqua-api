@@ -3,6 +3,7 @@ __version__ = "v3"
 import asyncio
 import os
 import socket
+import unicodedata
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -268,6 +269,13 @@ async def _build_lexeme_card_matches_by_vref(
     # Bulk-load full cards for the (source, target) pair. Confidence
     # ordering mirrors the predict path so a client paging through
     # results sees the same cards an LLM would see at predict time.
+    # Hard cap keeps memory + match cost bounded for large corpora; the
+    # current scheme is in-memory intersection over the whole card set,
+    # so an unbounded load would degrade slowly as a version pair
+    # accumulates cards over multiple runs. A DB-side filter using the
+    # GIN index on `surface_forms` is the right fix if we ever blow
+    # past this — flagged in the docstring above.
+    LEXEME_CARD_LIMIT = 10_000
     cards_q = (
         select(AgentLexemeCard)
         .where(
@@ -275,10 +283,20 @@ async def _build_lexeme_card_matches_by_vref(
             AgentLexemeCard.target_version_id == target_version_id,
         )
         .order_by(AgentLexemeCard.confidence.desc().nullslast())
+        .limit(LEXEME_CARD_LIMIT)
     )
     cards = (await db.execute(cards_q)).scalars().all()
     if not cards:
         return {}
+    if len(cards) >= LEXEME_CARD_LIMIT:
+        logger.warning(
+            "lexeme card cap hit on /train/status results",
+            extra={
+                "source_version_id": source_version_id,
+                "target_version_id": target_version_id,
+                "limit": LEXEME_CARD_LIMIT,
+            },
+        )
 
     # Bulk-load source + target verse text for the page in two queries.
     # `vref` on the per-app result tables matches `verse_reference` in
@@ -299,11 +317,27 @@ async def _build_lexeme_card_matches_by_vref(
     }
 
     # Pre-tokenize each verse once; per-vref matching is a set lookup.
+    # NFC-normalise verse text before tokenising — `_tokenize_words`
+    # walks the raw codepoint stream, but `LexemeCardIn` NFC-normalises
+    # forms at write time. Without this, a verse stored as NFD
+    # (Devanagari, Arabic with full diacritics, Ethiopic with combining
+    # marks) would tokenise to NFD strings and never match the NFC
+    # forms on the card, silently producing zero matches.
     target_tokens_by_vref: dict[str, set[str]] = {
-        v: set(_tokenize_words(target_text_by_vref.get(v, ""))) for v in page_vrefs
+        v: set(
+            _tokenize_words(
+                unicodedata.normalize("NFC", target_text_by_vref.get(v, ""))
+            )
+        )
+        for v in page_vrefs
     }
     source_tokens_by_vref: dict[str, set[str]] = {
-        v: set(_tokenize_words(source_text_by_vref.get(v, ""))) for v in page_vrefs
+        v: set(
+            _tokenize_words(
+                unicodedata.normalize("NFC", source_text_by_vref.get(v, ""))
+            )
+        )
+        for v in page_vrefs
     }
 
     # First pass: which cards match which vrefs, by id, preserving the
@@ -381,8 +415,9 @@ async def _build_lexeme_card_matches_by_vref(
         )
 
     # Build LexemeCardOut once per matched card, then attach the same
-    # object to each vref it matched. Cards are read-only at this point,
-    # so sharing the Pydantic instance across vrefs is safe.
+    # object to each vref it matched. The response serializer doesn't
+    # mutate the model in place, so sharing the Pydantic instance
+    # across vrefs is safe.
     out_by_card_id: dict[int, LexemeCardOut] = {}
     for card in cards:
         if card.id not in matched_card_id_set:
@@ -1043,15 +1078,16 @@ async def get_training_session_results(
     has_agent_critique = any(j.type == TrainingType.agent_critique.value for j in jobs)
     if has_agent_critique and page_vrefs:
         # source_version_id / target_version_id are denormalized onto
-        # TrainingJob, so any session job carries the right pair —
-        # session jobs all share the same (source, target) by construction.
-        any_job = jobs[0]
+        # every TrainingJob in a session and create_training_job
+        # constructs them from the same (source_revision, target_revision)
+        # pair — so any session job carries the right ids.
+        session_job = jobs[0]
         lexeme_cards_by_vref = await _build_lexeme_card_matches_by_vref(
             page_vrefs=page_vrefs,
-            source_revision_id=any_job.source_revision_id,
-            target_revision_id=any_job.target_revision_id,
-            source_version_id=any_job.source_version_id,
-            target_version_id=any_job.target_version_id,
+            source_revision_id=session_job.source_revision_id,
+            target_revision_id=session_job.target_revision_id,
+            source_version_id=session_job.source_version_id,
+            target_version_id=session_job.target_version_id,
             user=current_user,
             db=db,
         )
