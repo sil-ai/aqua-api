@@ -503,6 +503,11 @@ class TfidfResult(BaseModel):
     }
 
 
+class TfidfNeighbour(BaseModel):
+    vref: str
+    score: float
+
+
 class WordAlignment(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -1138,6 +1143,7 @@ class TrainingSessionVrefResults(BaseModel):
     vref: str
     semantic_similarity: Optional[Result_v2] = None
     word_alignment: List[WordAlignment] = Field(default_factory=list)
+    tfidf: List[TfidfNeighbour] = Field(default_factory=list)
 
 
 class TrainingSessionResultsPage(BaseModel):

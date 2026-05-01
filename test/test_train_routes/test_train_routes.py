@@ -1,12 +1,15 @@
 # test_train_routes.py
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from database.models import (
     AlignmentTopSourceScores,
     Assessment,
     AssessmentResult,
     NgramsTable,
     NgramVrefTable,
+    TfidfPcaVector,
     TrainingJob,
     VerseText,
 )
@@ -1260,6 +1263,18 @@ def _seed_ngrams(db_session, assessment_id, ngrams_with_vrefs):
     db_session.commit()
 
 
+def _seed_tfidf_vectors(db_session, assessment_id, vrefs_with_vectors):
+    for vref, vector in vrefs_with_vectors:
+        db_session.add(
+            TfidfPcaVector(
+                assessment_id=assessment_id,
+                vref=vref,
+                vector=vector,
+            )
+        )
+    db_session.commit()
+
+
 def test_session_results_no_auth(client):
     response = client.get(f"{prefix}/train/status/some-uuid/results")
     assert response.status_code == 401
@@ -1550,6 +1565,118 @@ def test_session_results_ngrams_top_level(
     # the existing /v3/ngrams_result shape).
     in_the = next(n for n in gen_only["ngrams"] if n["ngram"] == "in the")
     assert sorted(in_the["vrefs"]) == ["GEN 1:1", "GEN 1:2"]
+
+
+def test_session_results_includes_tfidf_neighbours_when_trained(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_tfidf"},
+        apps=["tfidf"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    tfidf_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(client, regular_token1, tfidf_job["assessment_id"])
+
+    def vec(x, y):
+        return [x, y] + [0.0] * 298
+
+    _seed_tfidf_vectors(
+        db_session,
+        tfidf_job["assessment_id"],
+        [
+            ("GEN 1:1", vec(1.0, 0.0)),
+            ("GEN 1:2", vec(0.8, 0.6)),
+            ("GEN 1:3", vec(0.6, 0.8)),
+        ],
+    )
+
+    response = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"]["total_count"] == 3
+
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+    assert set(by_vref) == {"GEN 1:1", "GEN 1:2", "GEN 1:3"}
+    assert by_vref["GEN 1:1"]["semantic_similarity"] is None
+    assert by_vref["GEN 1:1"]["word_alignment"] == []
+    assert [n["vref"] for n in by_vref["GEN 1:1"]["tfidf"]] == [
+        "GEN 1:2",
+        "GEN 1:3",
+    ]
+    assert by_vref["GEN 1:1"]["tfidf"][0]["score"] == pytest.approx(0.8)
+
+
+def test_session_results_tfidf_empty_when_not_trained(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_tfidf_empty"},
+        apps=["semantic-similarity"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    sem_sim_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, sem_sim_job["assessment_id"]
+    )
+    _seed_sem_sim_results(db_session, sem_sim_job["assessment_id"], [("GEN 1:1", 0.5)])
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    assert data["results"]["items"][0]["tfidf"] == []
+
+
+def test_session_results_tfidf_top_k_param(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_tfidf_top_k"},
+        apps=["tfidf"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    tfidf_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(client, regular_token1, tfidf_job["assessment_id"])
+
+    def vec(x, y):
+        return [x, y] + [0.0] * 298
+
+    _seed_tfidf_vectors(
+        db_session,
+        tfidf_job["assessment_id"],
+        [
+            ("GEN 1:1", vec(1.0, 0.0)),
+            ("GEN 1:2", vec(0.8, 0.6)),
+            ("GEN 1:3", vec(0.6, 0.8)),
+        ],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        params={"tfidf_top_k": 1},
+        headers=_auth_headers(regular_token1),
+    ).json()
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+    assert [n["vref"] for n in by_vref["GEN 1:1"]["tfidf"]] == ["GEN 1:2"]
 
 
 def test_session_results_unknown_book_returns_400(

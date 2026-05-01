@@ -11,7 +11,7 @@ import fastapi
 import modal
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import Integer, bindparam, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -27,11 +27,13 @@ from database.models import (
     BookReference,
     NgramsTable,
     NgramVrefTable,
+    TfidfPcaVector,
     TrainingJob,
 )
 from database.models import UserDB as UserModel
 from database.models import (
     UserGroup,
+    VerseReference,
     VerseText,
 )
 from models import (
@@ -40,6 +42,7 @@ from models import (
     InferenceReadiness,
     NgramResult,
     Result_v2,
+    TfidfNeighbour,
     TrainingJobIn,
     TrainingJobOut,
     TrainingResponse,
@@ -583,6 +586,7 @@ async def get_training_session_results(
     verse: Optional[int] = None,
     page: Optional[int] = Query(None, ge=1),
     page_size: Optional[int] = Query(None, ge=1, le=1000),
+    tfidf_top_k: int = Query(5, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -590,10 +594,11 @@ async def get_training_session_results(
     per-vref results for every completed job in the session.
 
     Per vref: semantic_similarity score (one row), word_alignment per-word
-    rows (multiple). Ngrams are returned at the top level — each ngram has
-    many vrefs, so nesting them per verse would duplicate the same ngram
-    across every verse it appears in. Tfidf and agent_critique training
-    runs produce nothing the client wants here (vector-only / no vrefs).
+    rows (multiple), and tfidf nearest-neighbour vrefs from the source
+    corpus. Ngrams are returned at the top level — each ngram has many
+    vrefs, so nesting them per verse would duplicate the same ngram across
+    every verse it appears in. Agent_critique training runs produce
+    nothing the client wants here.
     """
     await validate_parameters(
         book, chapter, verse, aggregate=None, page=page, page_size=page_size
@@ -641,6 +646,7 @@ async def get_training_session_results(
         TrainingType.word_alignment.value
     )
     ngrams_id = completed_assessment_id_by_type.get(TrainingType.ngrams.value)
+    tfidf_id = completed_assessment_id_by_type.get(TrainingType.tfidf.value)
 
     # vref universe = distinct vrefs across the per-vref result tables for
     # all completed types in the session, with optional book/chapter/verse
@@ -681,6 +687,29 @@ async def get_training_session_results(
                 AlignmentTopSourceScores,
             )
         )
+
+    if tfidf_id is not None:
+        tfidf_q = (
+            select(
+                TfidfPcaVector.vref,
+                VerseReference.book_reference.label("book"),
+                func.split_part(VerseReference.chapter, " ", 2)
+                .cast(Integer)
+                .label("chapter"),
+                VerseReference.number.label("verse"),
+            )
+            .join(VerseReference, VerseReference.full_verse_id == TfidfPcaVector.vref)
+            .where(TfidfPcaVector.assessment_id == tfidf_id)
+        )
+        if book is not None:
+            tfidf_q = tfidf_q.where(VerseReference.book_reference == book)
+        if chapter is not None:
+            tfidf_q = tfidf_q.where(
+                func.split_part(VerseReference.chapter, " ", 2).cast(Integer) == chapter
+            )
+        if verse is not None:
+            tfidf_q = tfidf_q.where(VerseReference.number == verse)
+        per_vref_subqueries.append(tfidf_q)
 
     page_vrefs: List[str] = []
     total_count = 0
@@ -764,11 +793,50 @@ async def get_training_session_results(
                 )
             )
 
+    tfidf_by_vref: dict[str, List[TfidfNeighbour]] = {}
+    if tfidf_id is not None and page_vrefs:
+        nn_query = text(
+            """
+            SELECT q.vref AS query_vref,
+                   nn.vref AS neighbour_vref,
+                   nn.cosine_similarity AS score
+            FROM tfidf_pca_vector AS q
+            JOIN LATERAL (
+                SELECT c.vref,
+                       inner_product(c.vector, q.vector) AS cosine_similarity
+                FROM tfidf_pca_vector AS c
+                WHERE c.assessment_id = :assessment_id
+                  AND c.vref != q.vref
+                ORDER BY cosine_similarity DESC
+                LIMIT :limit
+            ) AS nn ON true
+            WHERE q.assessment_id = :assessment_id
+              AND q.vref IN :page_vrefs
+            ORDER BY q.vref, nn.cosine_similarity DESC
+            """
+        ).bindparams(bindparam("page_vrefs", expanding=True))
+        rows = await db.execute(
+            nn_query,
+            {
+                "assessment_id": tfidf_id,
+                "page_vrefs": page_vrefs,
+                "limit": tfidf_top_k,
+            },
+        )
+        for row in rows.all():
+            tfidf_by_vref.setdefault(row.query_vref, []).append(
+                TfidfNeighbour(
+                    vref=row.neighbour_vref,
+                    score=float(row.score) if row.score is not None else 0.0,
+                )
+            )
+
     results_list = [
         TrainingSessionVrefResults(
             vref=v,
             semantic_similarity=sem_sim_by_vref.get(v),
             word_alignment=word_align_by_vref.get(v, []),
+            tfidf=tfidf_by_vref.get(v, []),
         )
         for v in page_vrefs
     ]
