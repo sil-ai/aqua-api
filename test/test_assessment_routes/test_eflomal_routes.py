@@ -274,8 +274,8 @@ def test_push_eflomal_metadata_version_id_validator_uses_post620_mapping(
 
     # Per train_routes #620: revision_id = target side, reference_id = source side.
     assessment = Assessment(
-        revision_id=test_revision_id,    # under test_version_id (target)
-        reference_id=ref_rev.id,         # under test_version_id_2 (source)
+        revision_id=test_revision_id,  # under test_version_id (target)
+        reference_id=ref_rev.id,  # under test_version_id_2 (source)
         type="word-alignment",
         status="running",
     )
@@ -289,7 +289,7 @@ def test_push_eflomal_metadata_version_id_validator_uses_post620_mapping(
     payload = _metadata_payload(
         assessment.id,
         source_version_id=test_version_id_2,  # source ← reference_id's version
-        target_version_id=test_version_id,    # target ← revision_id's version
+        target_version_id=test_version_id,  # target ← revision_id's version
     )
     response = client.post(
         f"{prefix}/assessment/eflomal/results",
@@ -304,8 +304,8 @@ def test_push_eflomal_metadata_version_id_validator_uses_post620_mapping(
         f"{prefix}/assessment/eflomal/results",
         json=_metadata_payload(
             assessment.id,
-            source_version_id=test_version_id,    # wrong
-            target_version_id=test_version_id,    # right
+            source_version_id=test_version_id,  # wrong
+            target_version_id=test_version_id,  # right
         ),
         headers=headers,
     )
@@ -1129,8 +1129,8 @@ def test_pull_by_version_pair_isolates_versions_with_same_iso_language(
     # Pre-create assessment for the (source=A, target=B) pair using the
     # post-#620 mapping (revision_id = target side, reference_id = source side).
     a_ab = Assessment(
-        revision_id=rev_b.id,    # target → revision_id
-        reference_id=rev_a.id,   # source → reference_id
+        revision_id=rev_b.id,  # target → revision_id
+        reference_id=rev_a.id,  # source → reference_id
         type="word-alignment",
         status="running",
     )
