@@ -174,7 +174,14 @@ async def _assessment_version_pair(
     if assessment.reference_id is None:
         raise HTTPException(
             status_code=400,
-            detail="Eflomal metadata requires an assessment reference_id",
+            detail="Eflomal metadata requires an assessment reference_id "
+            "(the source-side revision)",
+        )
+    if assessment.revision_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Eflomal metadata requires an assessment revision_id "
+            "(the target-side revision)",
         )
     source_version_id = await db.scalar(
         select(BibleRevision.bible_version_id).where(
@@ -315,7 +322,8 @@ async def push_eflomal_metadata(
     ):
         raise HTTPException(
             status_code=422,
-            detail="source_version_id does not match assessment reference version",
+            detail="source_version_id does not match the assessment's "
+            "source-side version",
         )
     if (
         body.target_version_id is not None
@@ -323,7 +331,8 @@ async def push_eflomal_metadata(
     ):
         raise HTTPException(
             status_code=422,
-            detail="target_version_id does not match assessment revision version",
+            detail="target_version_id does not match the assessment's "
+            "target-side version",
         )
 
     # 2. Authorize

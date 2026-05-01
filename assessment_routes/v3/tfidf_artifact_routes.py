@@ -225,7 +225,8 @@ async def push_tfidf_artifacts(
     ):
         raise HTTPException(
             status_code=422,
-            detail="source_version_id does not match assessment reference version",
+            detail="source_version_id does not match the assessment's "
+            "source-side version",
         )
 
     try:
@@ -486,7 +487,8 @@ async def init_tfidf_artifacts_upload(
     ):
         raise HTTPException(
             status_code=422,
-            detail="source_version_id does not match assessment reference version",
+            detail="source_version_id does not match the assessment's "
+            "source-side version",
         )
     _validate_vectorizer_shapes(body)
 

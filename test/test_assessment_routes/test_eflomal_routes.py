@@ -298,21 +298,33 @@ def test_push_eflomal_metadata_version_id_validator_uses_post620_mapping(
     )
     assert response.status_code == 200, response.json()
 
-    # And confirm that swapping the two on the body now fails — proves the
-    # validator is actually distinguishing source vs. target rather than
-    # accepting any pair.
-    swapped_payload = _metadata_payload(
-        assessment.id,
-        source_version_id=test_version_id,
-        target_version_id=test_version_id_2,
-    )
-    bad = client.post(
+    # Source-side mismatch: only source_version_id is wrong, target is
+    # right. Hits the source check first and names the source side.
+    bad_source = client.post(
         f"{prefix}/assessment/eflomal/results",
-        json=swapped_payload,
+        json=_metadata_payload(
+            assessment.id,
+            source_version_id=test_version_id,    # wrong
+            target_version_id=test_version_id,    # right
+        ),
         headers=headers,
     )
-    assert bad.status_code == 422
-    assert "reference version" in bad.json()["detail"]
+    assert bad_source.status_code == 422
+    assert "source-side" in bad_source.json()["detail"]
+
+    # Target-side mismatch: source is right, only target is wrong.
+    # Exercises the second branch and its error message.
+    bad_target = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json=_metadata_payload(
+            assessment.id,
+            source_version_id=test_version_id_2,  # right
+            target_version_id=test_version_id_2,  # wrong
+        ),
+        headers=headers,
+    )
+    assert bad_target.status_code == 422
+    assert "target-side" in bad_target.json()["detail"]
 
 
 # ---------------------------------------------------------------------------

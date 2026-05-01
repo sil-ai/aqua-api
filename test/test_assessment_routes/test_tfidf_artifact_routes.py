@@ -213,7 +213,7 @@ def test_tfidf_artifact_push_validator_uses_post620_mapping(
         headers=headers,
     )
     assert bad.status_code == 422
-    assert "reference version" in bad.json()["detail"]
+    assert "source-side" in bad.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
