@@ -159,9 +159,21 @@ async def _score_against_corpus(
 async def _assessment_source_version_id(
     assessment: Assessment, db: AsyncSession
 ) -> int:
+    """Resolve `source_version_id` from an Assessment row.
+
+    train_routes (post #620) maps `source_revision_id → reference_id`
+    (source = reference language, the side we're translating *from*),
+    so the source version comes from `assessment.reference_id`.
+    """
+    if assessment.reference_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="TF-IDF push requires an assessment reference_id "
+            "(the source-side revision)",
+        )
     source_version_id = await db.scalar(
         select(BibleRevision.bible_version_id).where(
-            BibleRevision.id == assessment.revision_id
+            BibleRevision.id == assessment.reference_id
         )
     )
     if source_version_id is None:
@@ -213,7 +225,8 @@ async def push_tfidf_artifacts(
     ):
         raise HTTPException(
             status_code=422,
-            detail="source_version_id does not match assessment revision version",
+            detail="source_version_id does not match the assessment's "
+            "source-side version",
         )
 
     try:
@@ -474,7 +487,8 @@ async def init_tfidf_artifacts_upload(
     ):
         raise HTTPException(
             status_code=422,
-            detail="source_version_id does not match assessment revision version",
+            detail="source_version_id does not match the assessment's "
+            "source-side version",
         )
     _validate_vectorizer_shapes(body)
 
