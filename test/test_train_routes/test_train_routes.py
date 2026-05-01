@@ -1684,6 +1684,207 @@ def test_session_results_tfidf_top_k_param(
     assert [n["vref"] for n in by_vref["GEN 1:1"]["tfidf"]] == ["GEN 1:2"]
 
 
+def _seed_lexeme_cards(db_session, source_version_id, target_version_id, cards):
+    """Insert AgentLexemeCard rows. `cards` is a list of dicts with keys
+    target_lemma, source_lemma, surface_forms, source_surface_forms,
+    confidence."""
+    from database.models import AgentLexemeCard
+
+    for c in cards:
+        db_session.add(
+            AgentLexemeCard(
+                target_lemma=c["target_lemma"],
+                source_lemma=c.get("source_lemma"),
+                source_version_id=source_version_id,
+                target_version_id=target_version_id,
+                surface_forms=c.get("surface_forms", []),
+                source_surface_forms=c.get("source_surface_forms", []),
+                confidence=c.get("confidence", 0.9),
+            )
+        )
+    db_session.commit()
+
+
+def _seed_verse_text(db_session, revision_id, verses):
+    """Insert VerseText rows. `verses` is a list of (vref, text) tuples
+    with vref like 'GEN 1:1'."""
+    from database.models import VerseText
+
+    for vref, text in verses:
+        book, rest = vref.split(" ", 1)
+        chapter, verse = rest.split(":", 1)
+        db_session.add(
+            VerseText(
+                text=text,
+                revision_id=revision_id,
+                verse_reference=vref,
+                book=book,
+                chapter=int(chapter),
+                verse=int(verse),
+            )
+        )
+    db_session.commit()
+
+
+def test_session_results_lexeme_cards_when_agent_critique_in_session(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_revision_id_2,
+    test_version_id,
+    db_session,
+):
+    """When the session includes agent-critique, each vref in the result
+    page carries the lexeme cards whose lemma/surface forms intersect
+    that verse's text on either side. Cards without a hit are dropped.
+    """
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_lexeme_cards"},
+        apps=["semantic-similarity", "agent-critique"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    sem_sim_job = next(
+        j for j in payload["training_jobs"] if j["type"] == "semantic-similarity"
+    )
+    _advance_assessment_to_finished(
+        client, regular_token1, sem_sim_job["assessment_id"]
+    )
+    _seed_sem_sim_results(
+        db_session, sem_sim_job["assessment_id"], [("GEN 1:1", 0.9), ("GEN 1:2", 0.8)]
+    )
+    _seed_verse_text(
+        db_session,
+        sem_sim_job["target_revision_id"],
+        [("GEN 1:1", "abhantu abhinji bhasimbile"), ("GEN 1:2", "ulungu abhumbile")],
+    )
+    _seed_verse_text(
+        db_session,
+        sem_sim_job["source_revision_id"],
+        [("GEN 1:1", "many people wrote"), ("GEN 1:2", "God created")],
+    )
+    # source_version_id / target_version_id on training jobs are denormalized
+    # from the chosen revisions' bible_version_id. The test fixtures put
+    # both revisions under test_version_id, so source = target = test_version_id.
+    _seed_lexeme_cards(
+        db_session,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id,
+        cards=[
+            {
+                "target_lemma": "abhinji",
+                "source_lemma": "many",
+                "surface_forms": ["abhinji"],
+                "source_surface_forms": ["many"],
+                "confidence": 0.95,
+            },
+            {
+                "target_lemma": "ulungu",
+                "source_lemma": "god",
+                "surface_forms": ["ulungu"],
+                "source_surface_forms": ["god"],
+                "confidence": 0.92,
+            },
+            {
+                # No match in either verse — must be dropped.
+                "target_lemma": "kitabu",
+                "source_lemma": "book",
+                "surface_forms": ["kitabu"],
+                "source_surface_forms": ["book"],
+                "confidence": 0.50,
+            },
+        ],
+    )
+
+    response = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    )
+    assert response.status_code == 200
+    by_vref = {b["vref"]: b for b in response.json()["results"]["items"]}
+    assert set(by_vref) == {"GEN 1:1", "GEN 1:2"}
+
+    g11_cards = by_vref["GEN 1:1"]["lexeme_cards"]
+    g11_lemmas = {c["target_lemma"] for c in g11_cards}
+    assert g11_lemmas == {"abhinji"}, g11_cards
+    abhinji = g11_cards[0]
+    # Full card shape (LexemeCardOut) — surface_forms is the card's
+    # complete list, not just the forms that matched the verse.
+    assert abhinji["target_lemma"] == "abhinji"
+    assert abhinji["source_lemma"] == "many"
+    assert abhinji["surface_forms"] == ["abhinji"]
+    assert abhinji["source_surface_forms"] == ["many"]
+    assert abhinji["confidence"] == pytest.approx(0.95)
+    assert isinstance(abhinji["id"], int)
+    assert "examples" in abhinji  # always present (possibly empty)
+
+    g12_cards = by_vref["GEN 1:2"]["lexeme_cards"]
+    assert {c["target_lemma"] for c in g12_cards} == {"ulungu"}, g12_cards
+
+
+def test_session_results_lexeme_cards_empty_when_no_agent_critique(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_revision_id_2,
+    test_version_id,
+    db_session,
+):
+    """Sessions without an agent-critique training type return
+    `lexeme_cards = []` even if cards exist for the version pair —
+    surfacing them only on agent-aware sessions keeps the response
+    minimal for callers who didn't ask for the LLM pipeline.
+    """
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_no_agent"},
+        apps=["semantic-similarity"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    sem_sim_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, sem_sim_job["assessment_id"]
+    )
+    _seed_sem_sim_results(db_session, sem_sim_job["assessment_id"], [("GEN 1:1", 0.9)])
+    _seed_verse_text(
+        db_session,
+        sem_sim_job["target_revision_id"],
+        [("GEN 1:1", "abhinji bhasimbile")],
+    )
+    # Use a target_lemma distinct from the prior test's seed — cards
+    # persist across tests in the module-scoped db_session and the
+    # unique index on (lower(target_lemma), version_pair) would
+    # otherwise raise.
+    _seed_lexeme_cards(
+        db_session,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id,
+        cards=[
+            {
+                "target_lemma": "bhasimbile",
+                "source_lemma": "wrote",
+                "surface_forms": ["bhasimbile"],
+                "source_surface_forms": ["wrote"],
+            }
+        ],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+    assert by_vref["GEN 1:1"]["lexeme_cards"] == []
+
+
 def test_session_results_unknown_book_returns_400(
     client, regular_token1, test_revision_id, test_revision_id_2
 ):

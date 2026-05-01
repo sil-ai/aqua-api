@@ -1144,6 +1144,11 @@ class TrainingSessionVrefResults(BaseModel):
     semantic_similarity: Optional[Result_v2] = None
     word_alignment: List[WordAlignment] = Field(default_factory=list)
     tfidf: List[TfidfNeighbour] = Field(default_factory=list)
+    # Full lexeme cards (same shape as `GET /v3/agent/lexeme-card`) whose
+    # lemma or any surface form intersects this verse on either side.
+    # Cards are filtered by the verse — the cards themselves are returned
+    # in full, not a subset of their fields.
+    lexeme_cards: List[LexemeCardOut] = Field(default_factory=list)
 
 
 class TrainingSessionResultsPage(BaseModel):
@@ -1159,6 +1164,11 @@ class TrainingSessionResultsResponse(BaseModel):
     inference_readiness: Dict[str, InferenceReadiness]
     results: TrainingSessionResultsPage
     ngrams: List[NgramResult] = Field(default_factory=list)
+    # True when the lexeme-card load hit the per-request cap and only
+    # the highest-confidence prefix of cards was matched against the
+    # page's vrefs. Lets a client distinguish "no card matches found"
+    # from "we didn't look at every card".
+    lexeme_cards_truncated: bool = False
 
 
 class EflomalDictionaryItem(BaseModel):

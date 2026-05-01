@@ -3,9 +3,10 @@ __version__ = "v3"
 import asyncio
 import os
 import socket
+import unicodedata
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import fastapi
 import modal
@@ -18,6 +19,8 @@ from sqlalchemy.orm import aliased, selectinload
 from assessment_routes.v3.results_query_routes import validate_parameters
 from database.dependencies import get_db
 from database.models import (
+    AgentLexemeCard,
+    AgentLexemeCardExample,
     AlignmentTopSourceScores,
     Assessment,
     AssessmentResult,
@@ -40,6 +43,7 @@ from models import (
     ASSESSMENT_TERMINAL_STATUSES,
     AssessmentStatus,
     InferenceReadiness,
+    LexemeCardOut,
     NgramResult,
     Result_v2,
     TfidfNeighbour,
@@ -230,6 +234,229 @@ async def _compute_inference_readiness(
             pending_training=pending,
         )
     return readiness
+
+
+async def _build_lexeme_card_matches_by_vref(
+    page_vrefs: List[str],
+    source_revision_id: int,
+    target_revision_id: int,
+    source_version_id: int,
+    target_version_id: int,
+    user: UserModel,
+    db: AsyncSession,
+) -> tuple[dict[str, List[LexemeCardOut]], bool]:
+    """For each vref in `page_vrefs`, return the lexeme cards (for the
+    given (source_version_id, target_version_id) pair) whose lemma or any
+    surface form intersects the verse text on either side.
+
+    Cards are filtered by the verse — only cards with at least one
+    matching form on either side are returned — but each returned card
+    is the full LexemeCardOut shape (same as `GET /v3/agent/lexeme-card`)
+    so the client gets the entire card, not just the forms that matched.
+
+    Examples are loaded once for the union of matched cards and filtered
+    by the user's revision access in the version pair, mirroring the
+    `GET /v3/agent/lexeme-card` endpoint.
+
+    Returns `(matches_by_vref, truncated)` — the second element is True
+    when the card load hit the per-request cap, signalling that only
+    the highest-confidence prefix of cards was matched.
+    """
+    # Reuse the existing tokenizer from bible_routes — it's the canonical
+    # word-form definition used by /verse-counts etc., so cards stay
+    # consistent with what shows up in the rest of the API.
+    from bible_routes.v3.verse_routes import _tokenize_words
+
+    if not page_vrefs:
+        return {}, False
+
+    # Bulk-load full cards for the (source, target) pair. Confidence
+    # ordering mirrors the predict path so a client paging through
+    # results sees the same cards an LLM would see at predict time.
+    # Hard cap keeps memory + match cost bounded for large corpora; the
+    # current scheme is in-memory intersection over the whole card set,
+    # so an unbounded load would degrade slowly as a version pair
+    # accumulates cards over multiple runs. A DB-side filter using the
+    # GIN index on `surface_forms` is the right fix if we ever blow
+    # past this — flagged in the docstring above.
+    LEXEME_CARD_LIMIT = 10_000
+    cards_q = (
+        select(AgentLexemeCard)
+        .where(
+            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.target_version_id == target_version_id,
+        )
+        .order_by(AgentLexemeCard.confidence.desc().nullslast())
+        .limit(LEXEME_CARD_LIMIT)
+    )
+    cards = (await db.execute(cards_q)).scalars().all()
+    truncated = len(cards) >= LEXEME_CARD_LIMIT
+    if not cards:
+        return {}, truncated
+    if truncated:
+        logger.warning(
+            "lexeme card cap hit on /train/status results",
+            extra={
+                "source_version_id": source_version_id,
+                "target_version_id": target_version_id,
+                "limit": LEXEME_CARD_LIMIT,
+            },
+        )
+
+    # Bulk-load source + target verse text for the page in two queries.
+    # `vref` on the per-app result tables matches `verse_reference` in
+    # verse_text (both are the canonical "BOOK C:V" string).
+    target_text_q = select(VerseText.verse_reference, VerseText.text).where(
+        VerseText.revision_id == target_revision_id,
+        VerseText.verse_reference.in_(page_vrefs),
+    )
+    source_text_q = select(VerseText.verse_reference, VerseText.text).where(
+        VerseText.revision_id == source_revision_id,
+        VerseText.verse_reference.in_(page_vrefs),
+    )
+    target_text_by_vref = {
+        row[0]: row[1] or "" for row in (await db.execute(target_text_q)).all()
+    }
+    source_text_by_vref = {
+        row[0]: row[1] or "" for row in (await db.execute(source_text_q)).all()
+    }
+
+    # Pre-tokenize each verse once; per-vref matching is a set lookup.
+    # NFC-normalise verse text before tokenising — `_tokenize_words`
+    # walks the raw codepoint stream, but `LexemeCardIn` NFC-normalises
+    # forms at write time. Without this, a verse stored as NFD
+    # (Devanagari, Arabic with full diacritics, Ethiopic with combining
+    # marks) would tokenise to NFD strings and never match the NFC
+    # forms on the card, silently producing zero matches.
+    target_tokens_by_vref: dict[str, set[str]] = {
+        v: set(
+            _tokenize_words(
+                unicodedata.normalize("NFC", target_text_by_vref.get(v, ""))
+            )
+        )
+        for v in page_vrefs
+    }
+    source_tokens_by_vref: dict[str, set[str]] = {
+        v: set(
+            _tokenize_words(
+                unicodedata.normalize("NFC", source_text_by_vref.get(v, ""))
+            )
+        )
+        for v in page_vrefs
+    }
+
+    # First pass: which cards match which vrefs, by id, preserving the
+    # confidence-DESC order from the cards query.
+    matched_card_ids_by_vref: dict[str, List[int]] = {v: [] for v in page_vrefs}
+    matched_card_id_set: set[int] = set()
+    for card in cards:
+        target_lemma = (card.target_lemma or "").lower()
+        source_lemma = (card.source_lemma or "").lower() if card.source_lemma else ""
+        target_forms = {target_lemma} | {
+            f.lower() for f in (card.surface_forms or []) if isinstance(f, str) and f
+        }
+        source_forms = ({source_lemma} if source_lemma else set()) | {
+            f.lower()
+            for f in (card.source_surface_forms or [])
+            if isinstance(f, str) and f
+        }
+        target_forms.discard("")
+        source_forms.discard("")
+        if not target_forms and not source_forms:
+            continue
+
+        for vref in page_vrefs:
+            if (target_forms & target_tokens_by_vref[vref]) or (
+                source_forms & source_tokens_by_vref[vref]
+            ):
+                matched_card_ids_by_vref[vref].append(card.id)
+                matched_card_id_set.add(card.id)
+
+    if not matched_card_id_set:
+        return {v: [] for v in page_vrefs}
+
+    # Batch-load examples for the union of matched cards. Filter to
+    # examples from revisions the user can access in the source/target
+    # version (same rule as GET /v3/agent/lexeme-card).
+    examples_by_card: dict[int, List[Dict[str, Any]]] = {
+        cid: [] for cid in matched_card_id_set
+    }
+    examples_conditions = [
+        AgentLexemeCardExample.lexeme_card_id.in_(list(matched_card_id_set)),
+    ]
+    if not user.is_admin:
+        authorized_revisions = (
+            select(BibleRevision.id)
+            .distinct()
+            .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
+            .join(
+                BibleVersionAccess,
+                BibleVersionAccess.bible_version_id == BibleVersion.id,
+            )
+            .join(UserGroup, UserGroup.group_id == BibleVersionAccess.group_id)
+            .where(
+                UserGroup.user_id == user.id,
+                BibleVersion.id.in_([source_version_id, target_version_id]),
+            )
+        )
+        examples_conditions.append(
+            AgentLexemeCardExample.revision_id.in_(authorized_revisions)
+        )
+    examples_q = (
+        select(
+            AgentLexemeCardExample.lexeme_card_id,
+            AgentLexemeCardExample.source_text,
+            AgentLexemeCardExample.target_text,
+        )
+        .where(*examples_conditions)
+        .order_by(
+            AgentLexemeCardExample.lexeme_card_id,
+            AgentLexemeCardExample.id,
+        )
+    )
+    for row in (await db.execute(examples_q)).all():
+        examples_by_card[row.lexeme_card_id].append(
+            {"source": row.source_text, "target": row.target_text}
+        )
+
+    # Build LexemeCardOut once per matched card, then attach the same
+    # object to each vref it matched. The response serializer doesn't
+    # mutate the model in place, so sharing the Pydantic instance
+    # across vrefs is safe.
+    out_by_card_id: dict[int, LexemeCardOut] = {}
+    for card in cards:
+        if card.id not in matched_card_id_set:
+            continue
+        out_by_card_id[card.id] = LexemeCardOut.model_validate(
+            {
+                "id": card.id,
+                "source_lemma": card.source_lemma,
+                "target_lemma": card.target_lemma,
+                "source_version_id": card.source_version_id,
+                "target_version_id": card.target_version_id,
+                "pos": card.pos,
+                "surface_forms": card.surface_forms,
+                "source_surface_forms": card.source_surface_forms,
+                "senses": card.senses,
+                "confidence": (
+                    float(card.confidence) if card.confidence is not None else None
+                ),
+                "english_lemma": card.english_lemma,
+                "alignment_scores": card.alignment_scores,
+                "created_at": card.created_at,
+                "last_updated": card.last_updated,
+                "last_user_edit": card.last_user_edit,
+                "examples": examples_by_card[card.id],
+            }
+        )
+
+    return (
+        {
+            v: [out_by_card_id[cid] for cid in matched_card_ids_by_vref[v]]
+            for v in page_vrefs
+        },
+        truncated,
+    )
 
 
 async def _get_accessible_version_ids(
@@ -609,8 +836,14 @@ async def get_training_session_results(
     rows (multiple), and tfidf nearest-neighbour vrefs from the source
     corpus. Ngrams are returned at the top level — each ngram has many
     vrefs, so nesting them per verse would duplicate the same ngram across
-    every verse it appears in. Agent_critique training runs produce
-    nothing the client wants here.
+    every verse it appears in.
+
+    Agent_critique adds `lexeme_cards` per vref: when the session
+    includes an agent-critique training type, each vref carries the
+    lexeme cards (filtered to those whose lemma/surface forms intersect
+    the verse text on either side) that were produced for the (source,
+    target) version pair. Sessions without agent-critique return an
+    empty list there.
     """
     await validate_parameters(
         book, chapter, verse, aggregate=None, page=page, page_size=page_size
@@ -843,12 +1076,41 @@ async def get_training_session_results(
                 )
             )
 
+    # Lexeme cards: only attach when agent-critique is part of the
+    # session (whether finished, running, or failed — cards may already
+    # exist on disk from prior runs and the user explicitly asked for
+    # them by including the type). Match each page vref against the
+    # cards' lemma + surface forms on either side; cards without a hit
+    # against this verse are dropped.
+    lexeme_cards_by_vref: dict[str, List[LexemeCardOut]] = {}
+    lexeme_cards_truncated = False
+    has_agent_critique = any(j.type == TrainingType.agent_critique.value for j in jobs)
+    if has_agent_critique and page_vrefs:
+        # source_version_id / target_version_id are denormalized onto
+        # every TrainingJob in a session and create_training_job
+        # constructs them from the same (source_revision, target_revision)
+        # pair — so any session job carries the right ids.
+        session_job = jobs[0]
+        (
+            lexeme_cards_by_vref,
+            lexeme_cards_truncated,
+        ) = await _build_lexeme_card_matches_by_vref(
+            page_vrefs=page_vrefs,
+            source_revision_id=session_job.source_revision_id,
+            target_revision_id=session_job.target_revision_id,
+            source_version_id=session_job.source_version_id,
+            target_version_id=session_job.target_version_id,
+            user=current_user,
+            db=db,
+        )
+
     results_list = [
         TrainingSessionVrefResults(
             vref=v,
             semantic_similarity=sem_sim_by_vref.get(v),
             word_alignment=word_align_by_vref.get(v, []),
             tfidf=tfidf_by_vref.get(v, []),
+            lexeme_cards=lexeme_cards_by_vref.get(v, []),
         )
         for v in page_vrefs
     ]
@@ -922,6 +1184,7 @@ async def get_training_session_results(
             page_size=page_size,
         ),
         ngrams=ngrams_list,
+        lexeme_cards_truncated=lexeme_cards_truncated,
     )
 
 
