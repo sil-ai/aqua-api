@@ -161,14 +161,19 @@ def upgrade() -> None:
     op.alter_column("tfidf_artifact_runs", "source_version_id", nullable=False)
     op.drop_column("tfidf_artifact_runs", "source_language")
 
-    # --- tfidf_svd_staging (transient; no backfill) ---
+    # --- tfidf_svd_staging (transient; truncate then add NOT NULL column) ---
+    # Staging rows are abandoned/cleaned up within 24h, so wiping in-flight
+    # uploads at migration time is acceptable. Truncating lets the new column
+    # land NOT NULL — consistent with every other version_id column on the
+    # branch.
+    op.execute("TRUNCATE TABLE tfidf_svd_staging CASCADE")
     op.add_column(
         "tfidf_svd_staging",
         sa.Column(
             "source_version_id",
             sa.Integer(),
             sa.ForeignKey("bible_version.id"),
-            nullable=True,
+            nullable=False,
         ),
     )
     op.drop_column("tfidf_svd_staging", "source_language")
@@ -423,6 +428,14 @@ def downgrade() -> None:
         WHERE bv.id = at.reference_version_id
         """
     )
+    orphans = bind.exec_driver_sql(
+        "SELECT COUNT(*) FROM agent_translations WHERE language IS NULL"
+    ).scalar()
+    if orphans:
+        raise RuntimeError(
+            f"agent_translations downgrade: {orphans} row(s) failed language "
+            "backfill — reference_version_id may point to a deleted bible_version"
+        )
     op.alter_column("agent_translations", "language", nullable=False)
     op.drop_column("agent_translations", "reference_version_id")
 
@@ -499,6 +512,14 @@ def downgrade() -> None:
           AND tgt_bv.id = tj.target_version_id
         """
     )
+    orphans = bind.exec_driver_sql(
+        "SELECT COUNT(*) FROM training_job "
+        "WHERE source_language IS NULL OR target_language IS NULL"
+    ).scalar()
+    if orphans:
+        raise RuntimeError(
+            f"training_job downgrade: {orphans} row(s) failed language backfill"
+        )
     op.alter_column("training_job", "source_language", nullable=False)
     op.alter_column("training_job", "target_language", nullable=False)
     op.drop_column("training_job", "source_version_id")

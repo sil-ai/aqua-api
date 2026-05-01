@@ -321,3 +321,81 @@ def test_single_user_multiple_revisions_same_version(
     assert card["examples"][2]["source"] == "Buy a book"
     assert card["examples"][3]["source"] == "Old book"
     assert card["examples"][4]["source"] == "Write a book"
+
+
+def test_lexeme_card_isolated_across_versions_with_same_iso_language(
+    client, admin_token, db_session
+):
+    """A lexeme card stored under (version_a, version_b) must be invisible to a
+    query for (version_c, version_b) even when all three versions share
+    iso_language='eng'. Regression test for aqua-api#613.
+    """
+    from database.models import BibleRevision, BibleVersion, UserDB
+
+    admin = db_session.query(UserDB).filter(UserDB.username == "admin").first()
+    versions = [
+        BibleVersion(
+            name=f"iso_isolation_lexeme_{tag}",
+            iso_language="eng",
+            iso_script="Latn",
+            abbreviation=f"IIL{tag}",
+            owner_id=admin.id,
+            is_reference=False,
+        )
+        for tag in ("a", "b", "c")
+    ]
+    db_session.add_all(versions)
+    db_session.commit()
+    ver_a, ver_b, ver_c = versions
+
+    rev_a = BibleRevision(
+        date=date.today(),
+        bible_version_id=ver_a.id,
+        published=False,
+        machine_translation=True,
+    )
+    db_session.add(rev_a)
+    db_session.commit()
+
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # POST a card under (ver_a, ver_b)
+    target_lemma = "iso_isolation_lex_card"
+    create = client.post(
+        f"/v3/agent/lexeme-card?revision_id={rev_a.id}",
+        headers=headers,
+        json={
+            "source_lemma": "iso_isolation_src",
+            "target_lemma": target_lemma,
+            "source_version_id": ver_a.id,
+            "target_version_id": ver_b.id,
+        },
+    )
+    assert create.status_code == 200, create.text
+
+    # Query under the WRONG source pair (ver_c, ver_b) — must NOT find the card
+    miss = client.get(
+        "/v3/agent/lexeme-card",
+        params={
+            "source_version_id": ver_c.id,
+            "target_version_id": ver_b.id,
+            "target_word": target_lemma,
+        },
+        headers=headers,
+    )
+    assert miss.status_code == 200
+    assert miss.json() == []
+
+    # Sanity: under the correct pair the card is found
+    hit = client.get(
+        "/v3/agent/lexeme-card",
+        params={
+            "source_version_id": ver_a.id,
+            "target_version_id": ver_b.id,
+            "target_word": target_lemma,
+        },
+        headers=headers,
+    )
+    assert hit.status_code == 200
+    assert len(hit.json()) == 1
+    assert hit.json()[0]["target_lemma"] == target_lemma

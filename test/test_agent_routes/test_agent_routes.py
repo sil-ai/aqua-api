@@ -946,10 +946,10 @@ def test_add_lexeme_card_missing_required_fields(
     assert response.status_code == 422  # Validation error
 
 
-def test_add_lexeme_card_invalid_version_id(
+def test_add_lexeme_card_revision_not_in_version_pair(
     client, regular_token1, db_session, test_revision_id
 ):
-    """Lexeme card with non-existent version_id values returns 500 (FK violation)."""
+    """Lexeme card whose revision_id isn't in (source_version_id, target_version_id) returns 422."""
     response = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -960,8 +960,10 @@ def test_add_lexeme_card_invalid_version_id(
         },
     )
 
-    # FK constraint violation surfaces as 500 — bible_version 999999 doesn't exist.
-    assert response.status_code == 500
+    # The revision-pair invariant check rejects the request before it reaches
+    # the FK constraint — explicit 422 with a clear error beats a 500 from PG.
+    assert response.status_code == 422
+    assert "version pair" in response.json()["detail"].lower()
 
 
 def test_add_lexeme_card_different_languages(
@@ -3438,15 +3440,17 @@ def test_get_lexeme_cards_word_filter_respects_language_pair(
     # Should only return the eng->swh card, NOT the swh->eng card
     for card in data:
         assert card["source_version_id"] == test_version_id, (
-            f"Expected source_version_id='eng', got '{card['source_version_id']}' "
+            f"Expected source_version_id={test_version_id}, "
+            f"got {card['source_version_id']} "
             f"(target_lemma='{card['target_lemma']}')"
         )
         assert card["target_version_id"] == test_version_id_2, (
-            f"Expected target_version_id='swh', got '{card['target_version_id']}' "
+            f"Expected target_version_id={test_version_id_2}, "
+            f"got {card['target_version_id']} "
             f"(target_lemma='{card['target_lemma']}')"
         )
 
-    # Query swh->eng with source_word matching the shared word
+    # Query the reversed pair with source_word matching the shared word
     response2 = client.get(
         f"/v3/agent/lexeme-card?source_version_id={test_version_id_2}&target_version_id={test_version_id}&source_word={shared_word}",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -3454,18 +3458,20 @@ def test_get_lexeme_cards_word_filter_respects_language_pair(
     assert response2.status_code == 200
     data2 = response2.json()
     # Verify the correct card IS present (guards against false pass on empty results)
-    assert len(data2) >= 1, "Expected at least one swh->eng card to be returned"
+    assert len(data2) >= 1, "Expected at least one reversed-pair card to be returned"
     assert any(
         c["source_lemma"] == "cross_src_swh" for c in data2
-    ), "Expected to find card with source_lemma='cross_src_swh' in swh->eng results"
-    # Should only return the swh->eng card, NOT the eng->swh card
+    ), "Expected to find card with source_lemma='cross_src_swh' in reversed-pair results"
+    # Should only return the reversed-pair card, NOT the original-direction card
     for card in data2:
         assert card["source_version_id"] == test_version_id_2, (
-            f"Expected source_version_id='swh', got '{card['source_version_id']}' "
+            f"Expected source_version_id={test_version_id_2}, "
+            f"got {card['source_version_id']} "
             f"(target_lemma='{card['target_lemma']}')"
         )
         assert card["target_version_id"] == test_version_id, (
-            f"Expected target_version_id='eng', got '{card['target_version_id']}' "
+            f"Expected target_version_id={test_version_id}, "
+            f"got {card['target_version_id']} "
             f"(target_lemma='{card['target_lemma']}')"
         )
 

@@ -842,3 +842,94 @@ def test_existing_tfidf_result_by_vref_still_works(
     vrefs = [r["vref"] for r in data["results"]]
     assert "GEN 1:2" not in vrefs
     assert set(vrefs) <= {"GEN 1:1", "GEN 1:3"}
+
+
+# ---------------------------------------------------------------------------
+# Cross-version isolation (regression test for aqua-api#613)
+# ---------------------------------------------------------------------------
+
+
+def test_pull_by_source_version_isolates_versions_with_same_iso_language(
+    client, admin_token, test_db_session
+):
+    """Two bible_versions with the same iso_language must NOT share TF-IDF artifacts.
+
+    Pre-migration the GET endpoint matched on source_language. Two different
+    versions that happened to be in the same ISO language would conflate
+    artifacts. After version_id keying, the lookup is by source_version_id and
+    must isolate them.
+    """
+    from datetime import date
+
+    from database.models import (
+        Assessment,
+        BibleRevision,
+        BibleVersion,
+        UserDB,
+    )
+
+    user = test_db_session.query(UserDB).filter(UserDB.username == "admin").first()
+    versions = [
+        BibleVersion(
+            name=f"iso_isolation_tfidf_{tag}",
+            iso_language="eng",
+            iso_script="Latn",
+            abbreviation=f"IIT{tag}",
+            owner_id=user.id,
+            is_reference=False,
+        )
+        for tag in ("a", "c")
+    ]
+    test_db_session.add_all(versions)
+    test_db_session.commit()
+    ver_a, ver_c = versions
+
+    revs = [
+        BibleRevision(
+            date=date.today(),
+            bible_version_id=v.id,
+            published=False,
+            machine_translation=True,
+        )
+        for v in (ver_a, ver_c)
+    ]
+    test_db_session.add_all(revs)
+    test_db_session.commit()
+    rev_a, rev_c = revs
+
+    a_a = Assessment(
+        revision_id=rev_a.id,
+        reference_id=rev_a.id,
+        type="tfidf",
+        status="running",
+    )
+    test_db_session.add(a_a)
+    test_db_session.commit()
+    test_db_session.refresh(a_a)
+
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Push artifacts under version A
+    push = client.post(
+        f"{prefix}/assessment/{a_a.id}/tfidf-artifacts",
+        json=_make_artifact_body(),
+        headers=headers,
+    )
+    assert push.status_code == 200, push.text
+
+    # Pull by version C (same iso_language) — must 404, not return version A's data
+    miss = client.get(
+        f"{prefix}/assessment/tfidf/artifacts",
+        params={"source_version_id": ver_c.id},
+        headers=headers,
+    )
+    assert miss.status_code == 404, miss.text
+
+    # Sanity: pull by version A returns the artifacts
+    hit = client.get(
+        f"{prefix}/assessment/tfidf/artifacts",
+        params={"source_version_id": ver_a.id},
+        headers=headers,
+    )
+    assert hit.status_code == 200, hit.text
+    assert hit.json()["assessment_id"] == a_a.id

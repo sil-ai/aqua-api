@@ -977,3 +977,99 @@ def test_pull_eflomal_results_without_priors_or_bpe(
     # Parent revision/reference IDs come from the Assessment row
     assert data["revision_id"] is not None
     assert data["reference_id"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Cross-version isolation (regression test for aqua-api#613)
+# ---------------------------------------------------------------------------
+
+
+def test_pull_by_version_pair_isolates_versions_with_same_iso_language(
+    client, admin_token, test_db_session
+):
+    """Two bible_versions with the same iso_language must NOT share eflomal artifacts.
+
+    Pre-migration, the GET endpoint matched on (source_language, target_language)
+    so a query for version pair (A, B) would return artifacts from any pair with
+    matching ISO codes — including (C, B) for a different version C in the same
+    language. After version_id keying, the lookup is by (source_version_id,
+    target_version_id) so the artifacts must be isolated.
+
+    Setup creates three eng→eng versions (A, B, C). Pushes eflomal results for
+    pair (A, B). Pulls by pair (C, B) — must 404. Sanity-pulls (A, B) — must 200.
+    """
+    from datetime import date
+
+    from database.models import (
+        Assessment,
+        BibleRevision,
+        BibleVersion,
+        UserDB,
+    )
+
+    user = test_db_session.query(UserDB).filter(UserDB.username == "admin").first()
+    versions = [
+        BibleVersion(
+            name=f"iso_isolation_eflomal_{tag}",
+            iso_language="eng",
+            iso_script="Latn",
+            abbreviation=f"IIE{tag}",
+            owner_id=user.id,
+            is_reference=False,
+        )
+        for tag in ("a", "b", "c")
+    ]
+    test_db_session.add_all(versions)
+    test_db_session.commit()
+    ver_a, ver_b, ver_c = versions
+
+    revs = [
+        BibleRevision(
+            date=date.today(),
+            bible_version_id=v.id,
+            published=False,
+            machine_translation=True,
+        )
+        for v in (ver_a, ver_b, ver_c)
+    ]
+    test_db_session.add_all(revs)
+    test_db_session.commit()
+    rev_a, rev_b, rev_c = revs
+
+    # Pre-create assessment_AB so the push has a valid target.
+    a_ab = Assessment(
+        revision_id=rev_a.id,
+        reference_id=rev_b.id,
+        type="word-alignment",
+        status="running",
+    )
+    test_db_session.add(a_ab)
+    test_db_session.commit()
+    test_db_session.refresh(a_ab)
+
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    push_resp = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json=_metadata_payload(a_ab.id),
+        headers=headers,
+    )
+    assert push_resp.status_code == 200, push_resp.text
+
+    # Pull by the WRONG version pair (C, B) — must return 404 even though
+    # all three versions share iso_language='eng'.
+    miss_resp = client.get(
+        f"{prefix}/assessment/eflomal/results",
+        params={"source_version_id": ver_c.id, "target_version_id": ver_b.id},
+        headers=headers,
+    )
+    assert miss_resp.status_code == 404, miss_resp.text
+
+    # Sanity: pulling the correct pair (A, B) returns the data we just pushed.
+    hit_resp = client.get(
+        f"{prefix}/assessment/eflomal/results",
+        params={"source_version_id": ver_a.id, "target_version_id": ver_b.id},
+        headers=headers,
+    )
+    assert hit_resp.status_code == 200, hit_resp.text
+    assert hit_resp.json()["assessment_id"] == a_ab.id

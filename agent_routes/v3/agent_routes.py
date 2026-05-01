@@ -20,6 +20,7 @@ from database.models import (
     AgentLexemeCardExample,
     AgentTranslation,
     AgentWordAlignment,
+    BibleRevision,
 )
 from database.models import UserDB as UserModel
 from models import (
@@ -524,6 +525,35 @@ async def add_lexeme_card(
         from sqlalchemy import delete, select
         from sqlalchemy.dialects.postgresql import insert as pg_insert
         from sqlalchemy.sql import func
+
+        # Examples must come from a revision in either the card's source or
+        # target version. The GET endpoint relies on this invariant when it
+        # filters examples by `BibleVersion.id IN (source_version_id,
+        # target_version_id)`; without this check, examples tied to revisions
+        # outside the pair would be silently invisible to all non-admin
+        # callers.
+        revision_version_id = await db.scalar(
+            select(BibleRevision.bible_version_id).where(
+                BibleRevision.id == revision_id
+            )
+        )
+        if revision_version_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Revision {revision_id} not found",
+            )
+        if revision_version_id not in {
+            card.source_version_id,
+            card.target_version_id,
+        }:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"revision_id={revision_id} (version {revision_version_id}) "
+                    f"is not in the card's version pair "
+                    f"({card.source_version_id}, {card.target_version_id})"
+                ),
+            )
 
         # Sort alignment_scores by value in descending order (highest scores first)
         sorted_alignment_scores = None

@@ -303,7 +303,7 @@ async def add_assessment(
                 status_code=400,
                 detail="use_eflomal is only valid for word-alignment assessments.",
             )
-        if not a.source_version_id or not a.target_version_id:
+        if a.source_version_id is None or a.target_version_id is None:
             raise HTTPException(
                 status_code=400,
                 detail="Eflomal word-alignment requires source_version_id and target_version_id.",

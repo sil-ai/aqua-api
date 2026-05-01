@@ -830,7 +830,12 @@ def test_chunk_oversize_rejected_with_413(
 
 
 def _insert_stale_staging(
-    session, assessment_id: int, *, age_hours: float, with_chunk: bool = True
+    session,
+    assessment_id: int,
+    *,
+    age_hours: float,
+    with_chunk: bool = True,
+    source_version_id: int,
 ) -> uuid.UUID:
     """Drop a hand-crafted staging row (and optional chunk) into the db with a
     backdated created_at, so the sweep treats it as abandoned."""
@@ -839,7 +844,7 @@ def _insert_stale_staging(
     staging = TfidfSvdStaging(
         upload_id=uuid.uuid4(),
         assessment_id=assessment_id,
-        source_version_id=None,
+        source_version_id=source_version_id,
         n_components=4,
         n_corpus_vrefs=1,
         sklearn_version="1.6.1",
@@ -875,6 +880,7 @@ def test_init_sweeps_stale_staging_rows(
     chunk_tfidf_assessment_id,
     chunk_non_tfidf_assessment_id,
     test_db_session,
+    test_version_id,
     monkeypatch,
 ):
     """/init drops staging rows older than the TTL (with their chunks via cascade),
@@ -885,7 +891,10 @@ def test_init_sweeps_stale_staging_rows(
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     stale_id = _insert_stale_staging(
-        test_db_session, chunk_tfidf_assessment_id, age_hours=48
+        test_db_session,
+        chunk_tfidf_assessment_id,
+        age_hours=48,
+        source_version_id=test_version_id,
     )
     # A stale row attached to a different assessment must also be swept —
     # the cleanup is purely time-based, not assessment-scoped.
@@ -894,9 +903,14 @@ def test_init_sweeps_stale_staging_rows(
         chunk_non_tfidf_assessment_id,
         age_hours=72,
         with_chunk=False,
+        source_version_id=test_version_id,
     )
     fresh_id = _insert_stale_staging(
-        test_db_session, chunk_tfidf_assessment_id, age_hours=1, with_chunk=False
+        test_db_session,
+        chunk_tfidf_assessment_id,
+        age_hours=1,
+        with_chunk=False,
+        source_version_id=test_version_id,
     )
 
     info_calls = []

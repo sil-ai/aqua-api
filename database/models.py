@@ -1179,7 +1179,7 @@ class TfidfSvdStaging(Base):
         ForeignKey("assessment.id", ondelete="CASCADE"),
         nullable=False,
     )
-    source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=True)
+    source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
     n_components = Column(Integer, nullable=False)
     n_corpus_vrefs = Column(Integer, nullable=False)
     sklearn_version = Column(Text, nullable=False)

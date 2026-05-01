@@ -464,9 +464,9 @@ async def list_training_jobs(
         )
     if type_filter:
         stmt = stmt.where(TrainingJob.type == type_filter)
-    if source_version_id:
+    if source_version_id is not None:
         stmt = stmt.where(TrainingJob.source_version_id == source_version_id)
-    if target_version_id:
+    if target_version_id is not None:
         stmt = stmt.where(TrainingJob.target_version_id == target_version_id)
 
     if not current_user.is_admin:
