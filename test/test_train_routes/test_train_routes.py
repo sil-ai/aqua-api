@@ -258,6 +258,7 @@ def test_semantic_similarity_routes_through_runner(
 ):
     """sem-sim must dispatch to ("runner", "run_assessment_runner")."""
     calls = []
+    payloads = []
     response = _create_training_jobs_via_api(
         client,
         regular_token1,
@@ -267,12 +268,24 @@ def test_semantic_similarity_routes_through_runner(
         apps=["semantic-similarity"],
         spawn_by_app={"runner": RuntimeError("runner down")},
         calls=calls,
+        payloads=payloads,
     )
     assert response.status_code == 200
     jobs = response.json()["training_jobs"]
     assert len(jobs) == 1 and jobs[0]["type"] == "semantic-similarity"
     assert jobs[0]["status"] == "failed"
     assert ("runner", "run_assessment_runner") in calls
+    assert jobs[0]["options"] == {
+        "tag": "sem_sim_routing_test",
+        "finetune": True,
+    }
+    runner_spawns = [p for p in payloads if p[0] == "runner"]
+    assert len(runner_spawns) == 1
+    config = runner_spawns[0][1][0]
+    assert config["kwargs"] == {
+        "tag": "sem_sim_routing_test",
+        "finetune": True,
+    }
 
 
 def test_training_job_full_lifecycle_via_runner(
@@ -869,7 +882,10 @@ def test_training_job_creates_assessment_for_all_types(
         assert assessment.reference_id == test_revision_id_2
         assert assessment.status == "queued"
         assert assessment.owner_id == job["owner_id"]
-        assert assessment.kwargs == {"tag": "assessment_creation_test"}
+        expected_kwargs = {"tag": "assessment_creation_test"}
+        if training_type == "semantic-similarity":
+            expected_kwargs["finetune"] = True
+        assert assessment.kwargs == expected_kwargs
         assert assessment.is_training is True
 
 
@@ -1043,6 +1059,40 @@ def test_duplicate_post_does_not_create_duplicate_assessment(
     )
     for a in queued:
         a.status = "failed"
+    db_session.commit()
+
+
+def test_semantic_similarity_duplicate_detection_normalizes_legacy_options(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Active sem-sim jobs created before finetune injection still de-dupe."""
+    r1 = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        apps=["semantic-similarity"],
+    )
+    assert r1.status_code == 200
+    job = r1.json()["training_jobs"][0]
+
+    db_session.expire_all()
+    legacy_job = db_session.query(TrainingJob).get(job["id"])
+    legacy_assessment = db_session.query(Assessment).get(job["assessment_id"])
+    legacy_job.options = None
+    legacy_assessment.kwargs = None
+    db_session.commit()
+
+    r2 = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        apps=["semantic-similarity"],
+    )
+    assert r2.status_code == 409
+
+    legacy_assessment.status = "failed"
     db_session.commit()
 
 
