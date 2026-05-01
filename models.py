@@ -1139,30 +1139,16 @@ class TrainingResponse(BaseModel):
     inference_readiness: Dict[str, InferenceReadiness]
 
 
-class TrainingSessionLexemeCard(BaseModel):
-    """Compact lexeme-card view returned alongside per-vref training results.
-
-    Carries just the fields a client needs to surface the card next to the
-    verse — id (for follow-up `/v3/agent/lexeme-card/{id}` lookups), the
-    lemma pair, and the surface forms that actually intersected the
-    verse text. The full list of every form on the card is available via
-    the dedicated lexeme-card endpoints.
-    """
-
-    id: int
-    target_lemma: str
-    source_lemma: Optional[str] = None
-    matched_target_forms: List[str] = Field(default_factory=list)
-    matched_source_forms: List[str] = Field(default_factory=list)
-    confidence: Optional[float] = None
-
-
 class TrainingSessionVrefResults(BaseModel):
     vref: str
     semantic_similarity: Optional[Result_v2] = None
     word_alignment: List[WordAlignment] = Field(default_factory=list)
     tfidf: List[TfidfNeighbour] = Field(default_factory=list)
-    lexeme_cards: List[TrainingSessionLexemeCard] = Field(default_factory=list)
+    # Full lexeme cards (same shape as `GET /v3/agent/lexeme-card`) whose
+    # lemma or any surface form intersects this verse on either side.
+    # Cards are filtered by the verse — the cards themselves are returned
+    # in full, not a subset of their fields.
+    lexeme_cards: List[LexemeCardOut] = Field(default_factory=list)
 
 
 class TrainingSessionResultsPage(BaseModel):

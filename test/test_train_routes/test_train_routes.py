@@ -1812,10 +1812,15 @@ def test_session_results_lexeme_cards_when_agent_critique_in_session(
     g11_lemmas = {c["target_lemma"] for c in g11_cards}
     assert g11_lemmas == {"abhinji"}, g11_cards
     abhinji = g11_cards[0]
-    assert abhinji["matched_target_forms"] == ["abhinji"]
-    assert abhinji["matched_source_forms"] == ["many"]
+    # Full card shape (LexemeCardOut) — surface_forms is the card's
+    # complete list, not just the forms that matched the verse.
+    assert abhinji["target_lemma"] == "abhinji"
     assert abhinji["source_lemma"] == "many"
+    assert abhinji["surface_forms"] == ["abhinji"]
+    assert abhinji["source_surface_forms"] == ["many"]
     assert abhinji["confidence"] == pytest.approx(0.95)
+    assert isinstance(abhinji["id"], int)
+    assert "examples" in abhinji  # always present (possibly empty)
 
     g12_cards = by_vref["GEN 1:2"]["lexeme_cards"]
     assert {c["target_lemma"] for c in g12_cards} == {"ulungu"}, g12_cards
