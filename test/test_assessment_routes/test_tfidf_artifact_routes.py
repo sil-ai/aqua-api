@@ -153,6 +153,69 @@ def non_tfidf_assessment_id(test_db_session, test_revision_id, test_revision_id_
     return assessment.id
 
 
+def test_tfidf_artifact_push_validator_uses_post620_mapping(
+    client,
+    admin_token,
+    test_db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Regression for the bug uncovered after train_routes #620.
+
+    Workers send `source_version_id` = source-side version. The push
+    validator must derive that from `assessment.reference_id` (post #620
+    that's the source revision), not from `assessment.revision_id`.
+
+    Built with two distinct versions so a regression that reads from the
+    wrong assessment field surfaces as a 422 instead of silently passing.
+    Uses admin_token because test_version_id_2 has no group access wired
+    up in the fixtures.
+    """
+    from database.models import BibleRevision
+
+    ref_rev = BibleRevision(
+        bible_version_id=test_version_id_2,
+        name="tfidf-validator-regression-ref",
+        published=False,
+    )
+    test_db_session.add(ref_rev)
+    test_db_session.commit()
+    test_db_session.refresh(ref_rev)
+
+    # Per train_routes #620: revision_id = target side, reference_id = source side.
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=ref_rev.id,
+        type="tfidf",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    body = _make_artifact_body(source_version_id=test_version_id_2)
+    response = client.post(
+        f"{prefix}/assessment/{assessment.id}/tfidf-artifacts",
+        json=body,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.json()
+
+    # And the wrong source version must now fail — proves the validator
+    # is actually distinguishing source vs. target.
+    swapped = _make_artifact_body(source_version_id=test_version_id)
+    bad = client.post(
+        f"{prefix}/assessment/{assessment.id}/tfidf-artifacts",
+        json=swapped,
+        headers=headers,
+    )
+    assert bad.status_code == 422
+    assert "reference version" in bad.json()["detail"]
+
+
 # ---------------------------------------------------------------------------
 # POST /assessment/{id}/tfidf-artifacts + GET /assessment/tfidf/artifacts
 # ---------------------------------------------------------------------------

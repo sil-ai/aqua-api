@@ -237,6 +237,84 @@ def test_push_eflomal_metadata_wrong_type(client, regular_token1, test_assessmen
     assert response.status_code == 400
 
 
+def test_push_eflomal_metadata_version_id_validator_uses_post620_mapping(
+    client,
+    admin_token,
+    test_db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Regression for the bug uncovered after train_routes #620.
+
+    Workers send `source_version_id` = source-side version,
+    `target_version_id` = target-side version. The push validator must
+    derive those by the same mapping train_routes uses:
+
+        source_version_id ← bible_version_id of assessment.reference_id
+        target_version_id ← bible_version_id of assessment.revision_id
+
+    Constructed with two distinct versions so a regression that swaps
+    source/target inside the validator surfaces as a 422 instead of
+    silently passing. Uses admin_token because test_version_id_2 has no
+    group access wired up in the fixtures.
+    """
+    from database.models import BibleRevision
+
+    # Build a revision under test_version_id_2 so source/target resolve
+    # to two genuinely different versions.
+    ref_rev = BibleRevision(
+        bible_version_id=test_version_id_2,
+        name="eflomal-validator-regression-ref",
+        published=False,
+    )
+    test_db_session.add(ref_rev)
+    test_db_session.commit()
+    test_db_session.refresh(ref_rev)
+
+    # Per train_routes #620: revision_id = target side, reference_id = source side.
+    assessment = Assessment(
+        revision_id=test_revision_id,    # under test_version_id (target)
+        reference_id=ref_rev.id,         # under test_version_id_2 (source)
+        type="word-alignment",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+
+    headers = {"Authorization": f"Bearer {admin_token}"}
+
+    # Worker sends linguistically-correct source/target version IDs.
+    payload = _metadata_payload(
+        assessment.id,
+        source_version_id=test_version_id_2,  # source ← reference_id's version
+        target_version_id=test_version_id,    # target ← revision_id's version
+    )
+    response = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json=payload,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.json()
+
+    # And confirm that swapping the two on the body now fails — proves the
+    # validator is actually distinguishing source vs. target rather than
+    # accepting any pair.
+    swapped_payload = _metadata_payload(
+        assessment.id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+    bad = client.post(
+        f"{prefix}/assessment/eflomal/results",
+        json=swapped_payload,
+        headers=headers,
+    )
+    assert bad.status_code == 422
+    assert "reference version" in bad.json()["detail"]
+
+
 # ---------------------------------------------------------------------------
 # Push data tests (dictionary, cooccurrences, target-word-counts)
 # ---------------------------------------------------------------------------
@@ -1036,10 +1114,11 @@ def test_pull_by_version_pair_isolates_versions_with_same_iso_language(
     test_db_session.commit()
     rev_a, rev_b, rev_c = revs
 
-    # Pre-create assessment_AB so the push has a valid target.
+    # Pre-create assessment for the (source=A, target=B) pair using the
+    # post-#620 mapping (revision_id = target side, reference_id = source side).
     a_ab = Assessment(
-        revision_id=rev_a.id,
-        reference_id=rev_b.id,
+        revision_id=rev_b.id,    # target → revision_id
+        reference_id=rev_a.id,   # source → reference_id
         type="word-alignment",
         status="running",
     )
