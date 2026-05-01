@@ -37,7 +37,12 @@ def test_lexeme_card_access_control_by_user(
     group1 = db_session.query(Group).filter(Group.name == "Group1").first()
     group2 = db_session.query(Group).filter(Group.name == "Group2").first()
 
-    # Create version3 for Group1
+    # Two versions: one per user. The lexeme card lives at the version pair
+    # (version3, version4) so both users can write to it from their own side
+    # — examples must be tied to a revision in either the source or the
+    # target version of the card. The route's example filter restricts each
+    # user's visible examples to revisions whose version they have access to,
+    # which is the access control we're verifying here.
     version3 = BibleVersion(
         name="test_version_user1",
         iso_language="eng",
@@ -46,10 +51,6 @@ def test_lexeme_card_access_control_by_user(
         owner_id=user1.id,
         is_reference=False,
     )
-    db_session.add(version3)
-    db_session.commit()
-
-    # Create version4 for Group2
     version4 = BibleVersion(
         name="test_version_user2",
         iso_language="eng",
@@ -58,45 +59,36 @@ def test_lexeme_card_access_control_by_user(
         owner_id=user2.id,
         is_reference=False,
     )
-    db_session.add(version4)
+    db_session.add_all([version3, version4])
     db_session.commit()
 
-    # Create revision3 for version3
     revision3 = BibleRevision(
         date=date.today(),
         bible_version_id=version3.id,
         published=False,
         machine_translation=True,
     )
-    db_session.add(revision3)
-    db_session.commit()
-    revision3_id = revision3.id
-
-    # Create revision4 for version4
     revision4 = BibleRevision(
         date=date.today(),
         bible_version_id=version4.id,
         published=False,
         machine_translation=True,
     )
-    db_session.add(revision4)
+    db_session.add_all([revision3, revision4])
     db_session.commit()
+    revision3_id = revision3.id
     revision4_id = revision4.id
 
-    # Give Group1 access to version3
-    access1 = BibleVersionAccess(
-        bible_version_id=version3.id,
-        group_id=group1.id,
+    db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=version3.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=version4.id, group_id=group2.id),
+        ]
     )
-    db_session.add(access1)
-
-    # Give Group2 access to version4
-    access2 = BibleVersionAccess(
-        bible_version_id=version4.id,
-        group_id=group2.id,
-    )
-    db_session.add(access2)
     db_session.commit()
+
+    source_card_version_id = version3.id
+    target_card_version_id = version4.id
 
     # User 1 adds a lexeme card with examples from revision3
     response1 = client.post(
@@ -105,8 +97,8 @@ def test_lexeme_card_access_control_by_user(
         json={
             "source_lemma": "water",
             "target_lemma": "maji",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": source_card_version_id,
+            "target_version_id": target_card_version_id,
             "pos": "noun",
             "surface_forms": ["maji"],
             "senses": [{"definition": "liquid H2O"}],
@@ -134,8 +126,8 @@ def test_lexeme_card_access_control_by_user(
         json={
             "source_lemma": "water",
             "target_lemma": "maji",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": source_card_version_id,
+            "target_version_id": target_card_version_id,
             "examples": [
                 {"source": "Clean water", "target": "Maji safi"},
                 {"source": "Hot water", "target": "Maji moto"},
@@ -158,7 +150,7 @@ def test_lexeme_card_access_control_by_user(
 
     # Now query as user1 - should only see examples from revision3
     response3 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=maji",
+        f"/v3/agent/lexeme-card?source_version_id={source_card_version_id}&target_version_id={target_card_version_id}&target_word=maji",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -175,7 +167,7 @@ def test_lexeme_card_access_control_by_user(
 
     # Now query as user2 - should only see examples from revision4
     response4 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=maji",
+        f"/v3/agent/lexeme-card?source_version_id={source_card_version_id}&target_version_id={target_card_version_id}&target_word=maji",
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
 
@@ -194,7 +186,7 @@ def test_lexeme_card_access_control_by_user(
     # Now query as admin - should see ALL examples from both revisions (5 total)
     # Admin has access to all revisions in the system
     response5 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=maji",
+        f"/v3/agent/lexeme-card?source_version_id={source_card_version_id}&target_version_id={target_card_version_id}&target_word=maji",
         headers={"Authorization": f"Bearer {admin_token}"},
     )
 
@@ -246,6 +238,7 @@ def test_single_user_multiple_revisions_same_version(
     )
     revision1_id = revisions[0].id
     revision2_id = revisions[1].id
+    card_version_id = version.id
 
     # User1 adds a lexeme card with examples from revision 1
     response1 = client.post(
@@ -254,8 +247,8 @@ def test_single_user_multiple_revisions_same_version(
         json={
             "source_lemma": "book",
             "target_lemma": "kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": card_version_id,
+            "target_version_id": card_version_id,
             "pos": "noun",
             "surface_forms": ["kitabu"],
             "examples": [
@@ -282,8 +275,8 @@ def test_single_user_multiple_revisions_same_version(
         json={
             "source_lemma": "book",
             "target_lemma": "kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": card_version_id,
+            "target_version_id": card_version_id,
             "examples": [
                 {"source": "Buy a book", "target": "Nunua kitabu"},
                 {"source": "Old book", "target": "Kitabu cha zamani"},
@@ -306,7 +299,7 @@ def test_single_user_multiple_revisions_same_version(
 
     # Now query the lexeme card - user1 should see ALL 5 examples from both revisions
     response3 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=kitabu",
+        f"/v3/agent/lexeme-card?source_version_id={card_version_id}&target_version_id={card_version_id}&target_word=kitabu",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
