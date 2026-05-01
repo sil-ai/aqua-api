@@ -161,19 +161,30 @@ async def _assessment_source_version_id(
 ) -> int:
     """Resolve `source_version_id` from an Assessment row.
 
-    train_routes (post #620) maps `source_revision_id → reference_id`
-    (source = reference language, the side we're translating *from*),
-    so the source version comes from `assessment.reference_id`.
+    TF-IDF is a single-corpus assessment: `assessment.revision_id` *is*
+    the corpus the vectors are computed over. The `source_version_id`
+    stored on TfidfArtifactRun therefore needs to match the language
+    of `revision_id`, not `reference_id` — predict-time clients look
+    up artifacts by the version of the corpus they want neighbours
+    from, which is whatever `revision_id` was at training time.
+
+    The train route after aqua-api#620 puts the user's translation
+    (target side) on `revision_id` — exactly what tfidf vectorises in
+    that flow — and standalone `POST /assessment` callers also pass
+    the corpus revision as `revision_id`. Both flows therefore agree:
+    derive from `revision_id`.
+
+    aqua-api#622 briefly switched this to `reference_id` to match a
+    perceived eflomal-style source/target split. That was wrong for
+    tfidf — it broke the standalone path (no `reference_id` required
+    by AssessmentIn) and stored the wrong `source_version_id` on
+    train-flow artifacts (the source side's version, not the
+    vectorised corpus's version), so predict-time lookups by the
+    corpus version returned 404. This restores the pre-#622 derivation.
     """
-    if assessment.reference_id is None:
-        raise HTTPException(
-            status_code=400,
-            detail="TF-IDF push requires an assessment reference_id "
-            "(the source-side revision)",
-        )
     source_version_id = await db.scalar(
         select(BibleRevision.bible_version_id).where(
-            BibleRevision.id == assessment.reference_id
+            BibleRevision.id == assessment.revision_id
         )
     )
     if source_version_id is None:
@@ -225,8 +236,8 @@ async def push_tfidf_artifacts(
     ):
         raise HTTPException(
             status_code=422,
-            detail="source_version_id does not match the assessment's "
-            "source-side version",
+            detail="source_version_id does not match the version of "
+            "the assessment's corpus revision",
         )
 
     try:
@@ -487,8 +498,8 @@ async def init_tfidf_artifacts_upload(
     ):
         raise HTTPException(
             status_code=422,
-            detail="source_version_id does not match the assessment's "
-            "source-side version",
+            detail="source_version_id does not match the version of "
+            "the assessment's corpus revision",
         )
     _validate_vectorizer_shapes(body)
 

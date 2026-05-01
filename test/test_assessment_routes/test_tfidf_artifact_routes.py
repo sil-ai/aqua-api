@@ -153,7 +153,7 @@ def non_tfidf_assessment_id(test_db_session, test_revision_id, test_revision_id_
     return assessment.id
 
 
-def test_tfidf_artifact_push_validator_uses_post620_mapping(
+def test_tfidf_artifact_push_validator_derives_source_from_revision(
     client,
     admin_token,
     test_db_session,
@@ -161,32 +161,38 @@ def test_tfidf_artifact_push_validator_uses_post620_mapping(
     test_version_id,
     test_version_id_2,
 ):
-    """Regression for the bug uncovered after train_routes #620.
+    """TF-IDF is single-corpus: the artifact's `source_version_id` must
+    match the version of `assessment.revision_id` (the corpus the
+    vectors were trained on), regardless of `assessment.reference_id`.
 
-    Workers send `source_version_id` = source-side version. The push
-    validator must derive that from `assessment.reference_id` (post #620
-    that's the source revision), not from `assessment.revision_id`.
+    Built with two distinct versions and a `reference_id` that points
+    at the *other* version so a regression that reverts to deriving
+    from `reference_id` (the brief #622 behaviour) would let the wrong
+    version slip through silently. The canonical body must pass; a
+    body whose `source_version_id` matches `reference_id`'s version
+    instead of `revision_id`'s version must fail.
 
-    Built with two distinct versions so a regression that reads from the
-    wrong assessment field surfaces as a 422 instead of silently passing.
-    Uses admin_token because test_version_id_2 has no group access wired
-    up in the fixtures.
+    Uses admin_token because test_version_id_2 has no group access
+    wired up in the fixtures.
     """
     from database.models import BibleRevision
 
-    ref_rev = BibleRevision(
+    other_rev = BibleRevision(
         bible_version_id=test_version_id_2,
-        name="tfidf-validator-regression-ref",
+        name="tfidf-validator-regression-other",
         published=False,
     )
-    test_db_session.add(ref_rev)
+    test_db_session.add(other_rev)
     test_db_session.commit()
-    test_db_session.refresh(ref_rev)
+    test_db_session.refresh(other_rev)
 
-    # Per train_routes #620: revision_id = target side, reference_id = source side.
+    # revision_id is the corpus → its version (test_version_id) is what
+    # the validator must derive. reference_id deliberately points at a
+    # different version so a "derive from reference_id" regression is
+    # visible.
     assessment = Assessment(
         revision_id=test_revision_id,
-        reference_id=ref_rev.id,
+        reference_id=other_rev.id,
         type="tfidf",
         status="running",
     )
@@ -196,7 +202,7 @@ def test_tfidf_artifact_push_validator_uses_post620_mapping(
 
     headers = {"Authorization": f"Bearer {admin_token}"}
 
-    body = _make_artifact_body(source_version_id=test_version_id_2)
+    body = _make_artifact_body(source_version_id=test_version_id)
     response = client.post(
         f"{prefix}/assessment/{assessment.id}/tfidf-artifacts",
         json=body,
@@ -204,16 +210,52 @@ def test_tfidf_artifact_push_validator_uses_post620_mapping(
     )
     assert response.status_code == 200, response.json()
 
-    # And the wrong source version must now fail — proves the validator
-    # is actually distinguishing source vs. target.
-    swapped = _make_artifact_body(source_version_id=test_version_id)
+    # Sending reference_id's version instead of revision_id's version
+    # must 422 — proves the validator is reading the right side.
+    swapped = _make_artifact_body(source_version_id=test_version_id_2)
     bad = client.post(
         f"{prefix}/assessment/{assessment.id}/tfidf-artifacts",
         json=swapped,
         headers=headers,
     )
     assert bad.status_code == 422
-    assert "source-side" in bad.json()["detail"]
+    assert "corpus revision" in bad.json()["detail"]
+
+
+def test_tfidf_artifact_push_works_without_reference_id(
+    client,
+    admin_token,
+    test_db_session,
+    test_revision_id,
+    test_version_id,
+):
+    """Standalone `POST /assessment?revision_id=…&type=tfidf` doesn't
+    require `reference_id` (TF-IDF is single-corpus). The artifact push
+    that follows must succeed even when `assessment.reference_id is
+    None`, with `source_version_id` resolved from `revision_id`.
+
+    Regression for the user-visible breakage where the demo notebook's
+    standalone TF-IDF POST died at push time with
+    "TF-IDF push requires an assessment reference_id".
+    """
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=None,
+        type="tfidf",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+
+    headers = {"Authorization": f"Bearer {admin_token}"}
+    body = _make_artifact_body(source_version_id=test_version_id)
+    response = client.post(
+        f"{prefix}/assessment/{assessment.id}/tfidf-artifacts",
+        json=body,
+        headers=headers,
+    )
+    assert response.status_code == 200, response.json()
 
 
 # ---------------------------------------------------------------------------
