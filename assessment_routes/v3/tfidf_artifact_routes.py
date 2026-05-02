@@ -1,16 +1,17 @@
 __version__ = "v3"
 
+import asyncio
 import base64
 import binascii
 import io
 import socket
 import time
 import uuid
-from typing import Dict, List, Union
+from typing import Dict, List, Literal, Union
 
 import fastapi
 import numpy as np
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from sqlalchemy import Float, cast, delete, desc, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -49,7 +50,7 @@ from models import (
     TfidfByVectorsRequest,
     TfidfByVectorsResponse,
     TfidfResult,
-    TfidfSvdPayload,
+    TfidfSvdPullPayload,
     TfidfVectorizerPayload,
 )
 from security_routes.auth_routes import get_current_user
@@ -73,6 +74,12 @@ _MAX_CHUNK_BYTES = 100 * 1024 * 1024
 # Age at which an unfinished staging row is considered abandoned and gets
 # swept opportunistically on the next /init. Cascaded chunk rows go with it.
 _STAGING_TTL_HOURS = 24
+
+# Caps in-flight downcast jobs so peak memory stays bounded. Each downcast
+# materialises the decoded float32/float64 matrix plus the narrowed copy in
+# RAM (~3-4× the stored blob); 2 lets a busy worker overlap one decode with
+# the next request's network send without OOMing on the ~200MB upper bound.
+_DOWNCAST_SEMAPHORE = asyncio.Semaphore(2)
 
 # TfidfPcaVector.vector is declared Vector(300); queries against the corpus
 # must always be 300-dim regardless of what artifact metadata claims.
@@ -896,6 +903,65 @@ async def abort_tfidf_artifacts_upload(
 # ---------------------------------------------------------------------------
 
 
+def _encode_components_for_response(
+    stored_bytes: bytes, stored_dtype: str, requested_dtype: str
+) -> tuple[bytes, str, str, float | None]:
+    """Build the response components blob in the requested wire dtype.
+
+    Returns (components_npy, components_b64, out_dtype, int8_scale). Pure
+    CPU/memory work; call via ``asyncio.to_thread`` so the ~200MB numpy and
+    base64 passes don't block the event loop. Stored matrix is float32 or
+    float64 (per the push contract); the int8 path quantizes from float32
+    precision, so a stored float64 matrix loses ~9 decimal digits before
+    quantization — fine for cosine-sim workloads. The DB row is untouched.
+
+    int8 returns the global ``max(|arr|)`` as ``int8_scale`` — clients
+    rehydrate via ``arr.astype(float32) * int8_scale / 127`` (i.e. clients
+    are responsible for the /127 step). See issue #625 for the error
+    analysis on why a single global scale is sufficient for the predict-
+    time cosine-similarity use-case.
+    """
+    if requested_dtype == "float32" and stored_dtype == "float32":
+        # Fast path: stored already matches requested wire dtype, no decode
+        # needed — just base64 the stored bytes.
+        components_npy = stored_bytes
+        components_b64 = base64.b64encode(components_npy).decode("ascii")
+        return components_npy, components_b64, "float32", None
+
+    arr = np.load(io.BytesIO(stored_bytes), allow_pickle=False)
+    int8_scale: float | None = None
+
+    if requested_dtype == "float32":
+        narrowed = arr.astype(np.float32)
+        out_dtype = "float32"
+    elif requested_dtype == "float16":
+        narrowed = arr.astype(np.float16)
+        out_dtype = "float16"
+    elif requested_dtype == "int8":
+        # Sanitize non-finite values before quantization. SVD output should
+        # be all-finite, but a corrupted stored matrix would otherwise cast
+        # NaN/Inf to implementation-defined int8 values (and a NaN abs-max
+        # would silently emit a NaN scale).
+        sane = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+        abs_max = float(np.max(np.abs(sane))) if sane.size else 0.0
+        scale = abs_max if np.isfinite(abs_max) and abs_max > 0 else 1.0
+        narrowed = (
+            np.round(sane.astype(np.float32) / scale * 127)
+            .clip(-127, 127)
+            .astype(np.int8)
+        )
+        out_dtype = "int8"
+        int8_scale = scale
+    else:
+        raise ValueError(f"Unsupported dtype: {requested_dtype}")
+
+    buf = io.BytesIO()
+    np.save(buf, narrowed, allow_pickle=False)
+    components_npy = buf.getvalue()
+    components_b64 = base64.b64encode(components_npy).decode("ascii")
+    return components_npy, components_b64, out_dtype, int8_scale
+
+
 @router.get(
     "/assessment/tfidf/artifacts",
     response_model=TfidfArtifactsPullResponse,
@@ -903,6 +969,15 @@ async def abort_tfidf_artifacts_upload(
 async def pull_tfidf_artifacts(
     assessment_id: int | None = None,
     source_version_id: int | None = None,
+    dtype: Literal["float32", "float16", "int8"] = Query(
+        "float32",
+        description=(
+            "Wire format for the SVD components matrix. float32 (default) "
+            "preserves stored precision; float16 halves the response, int8 "
+            "quarters it (with an `int8_scale` for client-side rehydration). "
+            "Stored DB row is unchanged regardless."
+        ),
+    ),
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -910,6 +985,8 @@ async def pull_tfidf_artifacts(
 
     Exactly one of assessment_id or source_version_id must be provided.
     """
+    request_start = time.perf_counter()
+
     if (assessment_id is None) == (source_version_id is None):
         raise HTTPException(
             status_code=422,
@@ -948,11 +1025,33 @@ async def pull_tfidf_artifacts(
     ).all()
     by_kind = {v.kind: v for v in vectorizer_rows}
 
+    svd_read_start = time.perf_counter()
     svd = await db.scalar(
         select(TfidfSvd).where(TfidfSvd.assessment_id == run.assessment_id)
     )
+    svd_read_s = time.perf_counter() - svd_read_start
+    if svd is None:
+        raise HTTPException(
+            status_code=404, detail="No TF-IDF SVD artifact found for this run"
+        )
 
-    return TfidfArtifactsPullResponse(
+    # Bound concurrent encode jobs and run the numpy + base64 work off the
+    # event loop. A single ~200MB blob takes seconds of CPU through both
+    # the numpy decode/re-encode and the base64 pass; either one would
+    # otherwise stall other coroutines on this worker.
+    encode_start = time.perf_counter()
+    async with _DOWNCAST_SEMAPHORE:
+        (
+            components_npy,
+            components_b64,
+            out_dtype,
+            int8_scale,
+        ) = await asyncio.to_thread(
+            _encode_components_for_response, svd.components_npy, svd.dtype, dtype
+        )
+    encode_s = time.perf_counter() - encode_start
+
+    response = TfidfArtifactsPullResponse(
         assessment_id=run.assessment_id,
         source_version_id=run.source_version_id,
         n_components=run.n_components,
@@ -971,13 +1070,38 @@ async def pull_tfidf_artifacts(
             idf=by_kind["char"].idf,
             params=by_kind["char"].params,
         ),
-        svd=TfidfSvdPayload(
+        svd=TfidfSvdPullPayload(
             n_components=svd.n_components,
             n_features=svd.n_features,
-            dtype=svd.dtype,
-            components_b64=base64.b64encode(svd.components_npy).decode("ascii"),
+            dtype=out_dtype,
+            components_b64=components_b64,
+            int8_scale=int8_scale,
         ),
     )
+
+    duration_s = round(time.perf_counter() - request_start, 3)
+    logger.info(
+        "pull_tfidf_artifacts completed in %.3fs (svd_read=%.3fs, encode=%.3fs, "
+        "components_bytes=%d, dtype=%s)",
+        duration_s,
+        svd_read_s,
+        encode_s,
+        len(components_npy),
+        out_dtype,
+        extra={
+            "method": "GET",
+            "path": "/assessment/tfidf/artifacts",
+            "assessment_id": run.assessment_id,
+            "source_version_id": run.source_version_id,
+            "dtype": out_dtype,
+            "components_bytes": len(components_npy),
+            "svd_read_s": round(svd_read_s, 3),
+            "encode_s": round(encode_s, 3),
+            "duration_s": duration_s,
+        },
+    )
+
+    return response
 
 
 # ---------------------------------------------------------------------------

@@ -5,7 +5,14 @@ import unicodedata
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class VersionUpdate(BaseModel):
@@ -1296,6 +1303,26 @@ class TfidfSvdPayload(TfidfSvdMeta):
     components_b64: str
 
 
+# Pull responses can downcast the components matrix to float16 or int8 to
+# halve/quarter wire size. int8 carries a scale factor so clients can
+# rehydrate via `arr.astype(float32) * int8_scale / 127`. Stays separate from
+# TfidfSvdPayload so the push validator's float32/float64-only contract is
+# unaffected by widening the response dtype set; only the dtype field is
+# overridden to widen the Literal.
+class TfidfSvdPullPayload(TfidfSvdMeta):
+    dtype: Literal["float32", "float64", "float16", "int8"] = "float32"
+    components_b64: str
+    int8_scale: Optional[float] = None
+
+    @model_validator(mode="after")
+    def _int8_requires_scale(self) -> "TfidfSvdPullPayload":
+        if self.dtype == "int8" and self.int8_scale is None:
+            raise ValueError("int8_scale is required when dtype='int8'")
+        if self.dtype != "int8" and self.int8_scale is not None:
+            raise ValueError("int8_scale is only valid when dtype='int8'")
+        return self
+
+
 class TfidfArtifactsPushRequest(BaseModel):
     source_version_id: Optional[int] = None
     n_components: int
@@ -1324,7 +1351,7 @@ class TfidfArtifactsPullResponse(BaseModel):
     created_at: Optional[datetime.datetime] = None
     word_vectorizer: TfidfVectorizerPayload
     char_vectorizer: TfidfVectorizerPayload
-    svd: TfidfSvdPayload
+    svd: TfidfSvdPullPayload
 
 
 # --- Chunked TF-IDF artifact upload (for components_ arrays over the single-POST cap) ---
