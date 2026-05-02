@@ -520,10 +520,10 @@ def test_duplicate_assessment_different_type_allowed(
         assert second.status_code == 200
 
 
-def test_duplicate_assessment_different_kwargs_blocked(
+def test_duplicate_assessment_different_kwargs_allowed(
     client, regular_token1, db_session, test_db_session
 ):
-    """Different kwargs on same assessment type should still trigger 409."""
+    """Different kwargs on same assessment type should not trigger 409."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
@@ -552,7 +552,19 @@ def test_duplicate_assessment_different_kwargs_blocked(
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
-        assert second.status_code == 409
+        assert second.status_code == 200
+
+        # Same kwargs as first should still be blocked.
+        third = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"top_k": 5}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert third.status_code == 409
 
 
 def test_duplicate_assessment_stale_allowed(

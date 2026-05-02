@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 # Third party imports
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import JSON, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -296,6 +296,14 @@ async def add_assessment(
             stmt = stmt.where(Assessment.reference_id == a.reference_id)
         else:
             stmt = stmt.where(Assessment.reference_id.is_(None))
+        # SQLAlchemy stores Python None in JSONB columns as the JSON null literal
+        # (not SQL NULL), so match both forms when no kwargs were provided.
+        if parsed_kwargs is not None:
+            stmt = stmt.where(Assessment.kwargs == parsed_kwargs)
+        else:
+            stmt = stmt.where(
+                or_(Assessment.kwargs.is_(None), Assessment.kwargs == JSON.NULL)
+            )
         result = await db.execute(stmt)
         existing_id = result.scalars().first()
         if existing_id is not None:
