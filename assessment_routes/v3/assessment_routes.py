@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 # Third party imports
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import JSON, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -276,6 +276,9 @@ async def add_assessment(
             parsed_kwargs = AssessmentIn.validate_kwargs(parsed_kwargs)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        # Treat an empty kwargs object the same as no kwargs supplied
+        if not parsed_kwargs:
+            parsed_kwargs = None
         a.kwargs = parsed_kwargs
 
     # Check for duplicate in-progress assessment (admins can bypass)
@@ -296,6 +299,21 @@ async def add_assessment(
             stmt = stmt.where(Assessment.reference_id == a.reference_id)
         else:
             stmt = stmt.where(Assessment.reference_id.is_(None))
+        if parsed_kwargs is not None:
+            stmt = stmt.where(Assessment.kwargs == parsed_kwargs)
+        else:
+            # New rows persist Python None as the JSON null literal (matched
+            # by `== JSON.NULL`). The `is_(None)` arm catches legacy rows
+            # stored as SQL NULL, and `== {}` catches legacy rows where an
+            # empty `extra_kwargs` was persisted as a JSONB empty object
+            # (we now normalize that to None on the request side).
+            stmt = stmt.where(
+                or_(
+                    Assessment.kwargs.is_(None),
+                    Assessment.kwargs == JSON.NULL,
+                    Assessment.kwargs == {},
+                )
+            )
         result = await db.execute(stmt)
         existing_id = result.scalars().first()
         if existing_id is not None:
