@@ -372,7 +372,14 @@ def test_tfidf_artifact_pull_float16_downcast(
 
 
 def test_tfidf_artifact_pull_int8_downcast(client, regular_token1, tfidf_assessment_id):
-    """?dtype=int8 returns a quantized matrix + global scale; cosine sim ≈ float32."""
+    """?dtype=int8 returns a quantized matrix + global scale; cosine sim ≈ float32.
+
+    Random-normal data (seed in `_components_b64`) is the right sanity case
+    for this endpoint — the predict-time use-case feeds dense L2-normalised
+    SVD components, not sparse vectors. Sparse / near-constant matrices
+    where global-scale int8 granularity hurts more are an explicit out-of-
+    scope concern in the original issue.
+    """
     headers = {"Authorization": f"Bearer {regular_token1}"}
     body = _make_artifact_body(n_components=8, n_word_features=20, n_char_features=20)
     client.post(
@@ -412,6 +419,44 @@ def test_tfidf_artifact_pull_int8_downcast(client, regular_token1, tfidf_assessm
     assert min(cos_per_row) > 0.99
 
     assert len(i8["svd"]["components_b64"]) < len(f32["svd"]["components_b64"]) / 2
+
+
+def test_tfidf_artifact_pull_downcast_from_float64_stored(
+    client, regular_token1, tfidf_assessment_id
+):
+    """A float64-stored matrix can still be pulled as float16/int8.
+
+    The push contract accepts both float32 and float64. The int8 path
+    documents that float64 → float32 truncation happens before quantization;
+    this test exercises that path so the documented behaviour stays wired up.
+    """
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    body = _make_artifact_body(n_components=5, n_word_features=10, n_char_features=10)
+    body["svd"]["dtype"] = "float64"
+    body["svd"]["components_b64"] = _components_b64(5, 20, dtype="float64")
+    resp = client.post(
+        f"{prefix}/assessment/{tfidf_assessment_id}/tfidf-artifacts",
+        json=body,
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    f16 = client.get(
+        f"{prefix}/assessment/tfidf/artifacts",
+        params={"assessment_id": tfidf_assessment_id, "dtype": "float16"},
+        headers=headers,
+    ).json()
+    assert f16["svd"]["dtype"] == "float16"
+    assert _decode_components(f16["svd"]).dtype == np.float16
+
+    i8 = client.get(
+        f"{prefix}/assessment/tfidf/artifacts",
+        params={"assessment_id": tfidf_assessment_id, "dtype": "int8"},
+        headers=headers,
+    ).json()
+    assert i8["svd"]["dtype"] == "int8"
+    assert i8["svd"]["int8_scale"] is not None
+    assert _decode_components(i8["svd"]).dtype == np.int8
 
 
 def test_tfidf_artifact_pull_unknown_dtype_rejected(

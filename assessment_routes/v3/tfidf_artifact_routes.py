@@ -1,5 +1,6 @@
 __version__ = "v3"
 
+import asyncio
 import base64
 import binascii
 import io
@@ -73,6 +74,12 @@ _MAX_CHUNK_BYTES = 100 * 1024 * 1024
 # Age at which an unfinished staging row is considered abandoned and gets
 # swept opportunistically on the next /init. Cascaded chunk rows go with it.
 _STAGING_TTL_HOURS = 24
+
+# Caps in-flight downcast jobs so peak memory stays bounded. Each downcast
+# materialises the decoded float32/float64 matrix plus the narrowed copy in
+# RAM (~3-4× the stored blob); 2 lets a busy worker overlap one decode with
+# the next request's network send without OOMing on the ~200MB upper bound.
+_DOWNCAST_SEMAPHORE = asyncio.Semaphore(2)
 
 # TfidfPcaVector.vector is declared Vector(300); queries against the corpus
 # must always be 300-dim regardless of what artifact metadata claims.
@@ -901,24 +908,29 @@ def _downcast_components(
 ) -> tuple[bytes, str, float | None]:
     """Re-encode the stored .npy components blob at a smaller dtype.
 
-    Returns (components_npy, dtype, int8_scale). Stored matrix is float32; we
-    only narrow on the way out, so the DB row is untouched. int8 uses a single
-    global scale (max-abs / 127) — sufficient for the predict-time cosine-sim
-    use-case (see issue #625 for the error analysis).
+    Returns (components_npy, dtype, int8_scale). Stored matrix is float32 or
+    float64 (per the push contract); the int8 path quantizes from float32
+    precision, so a stored float64 matrix loses ~9 decimal digits before
+    quantization — fine for cosine-sim workloads. The DB row is untouched.
+    int8 uses a single global scale (max-abs / 127) — sufficient for the
+    predict-time cosine-sim use-case (see issue #625 for the error analysis).
     """
     arr = np.load(io.BytesIO(components_npy), allow_pickle=False)
 
     if requested_dtype == "float16":
-        narrowed = arr.astype(np.float16, copy=False)
+        narrowed = arr.astype(np.float16)
         buf = io.BytesIO()
         np.save(buf, narrowed, allow_pickle=False)
         return buf.getvalue(), "float16", None
 
     if requested_dtype == "int8":
-        # max-abs scale; fall back to 1.0 if the matrix is entirely zero so we
-        # never divide by zero. Clients rehydrate via:
+        # Global scale = max(|arr|). Fall back to 1.0 if the matrix is all
+        # zero, all-NaN, or otherwise non-finite so we never divide by zero
+        # or by NaN (which would silently produce all-zero quantized output
+        # and a NaN scale). Clients rehydrate via:
         #   arr.astype(float32) * int8_scale / 127
-        scale = float(np.max(np.abs(arr))) or 1.0
+        abs_max = float(np.max(np.abs(arr))) if arr.size else 0.0
+        scale = abs_max if np.isfinite(abs_max) and abs_max > 0 else 1.0
         quantized = (
             np.round(arr.astype(np.float32) / scale * 127)
             .clip(-127, 127)
@@ -994,11 +1006,15 @@ async def pull_tfidf_artifacts(
     ).all()
     by_kind = {v.kind: v for v in vectorizer_rows}
 
-    db_read_start = time.perf_counter()
+    svd_read_start = time.perf_counter()
     svd = await db.scalar(
         select(TfidfSvd).where(TfidfSvd.assessment_id == run.assessment_id)
     )
-    db_read_s = time.perf_counter() - db_read_start
+    svd_read_s = time.perf_counter() - svd_read_start
+    if svd is None:
+        raise HTTPException(
+            status_code=404, detail="No TF-IDF SVD artifact found for this run"
+        )
 
     encode_start = time.perf_counter()
     if dtype == "float32":
@@ -1006,9 +1022,13 @@ async def pull_tfidf_artifacts(
         out_dtype = svd.dtype
         int8_scale: float | None = None
     else:
-        components_npy, out_dtype, int8_scale = _downcast_components(
-            svd.components_npy, dtype
-        )
+        # Bound concurrent downcasts and run the numpy work off the event
+        # loop so a single ~200MB blob can't both stall other coroutines and
+        # blow up peak memory under load.
+        async with _DOWNCAST_SEMAPHORE:
+            components_npy, out_dtype, int8_scale = await asyncio.to_thread(
+                _downcast_components, svd.components_npy, dtype
+            )
     components_b64 = base64.b64encode(components_npy).decode("ascii")
     encode_s = time.perf_counter() - encode_start
 
@@ -1042,10 +1062,10 @@ async def pull_tfidf_artifacts(
 
     duration_s = round(time.perf_counter() - request_start, 3)
     logger.info(
-        "pull_tfidf_artifacts completed in %.3fs (db_read=%.3fs, encode=%.3fs, "
+        "pull_tfidf_artifacts completed in %.3fs (svd_read=%.3fs, encode=%.3fs, "
         "components_bytes=%d, dtype=%s)",
         duration_s,
-        db_read_s,
+        svd_read_s,
         encode_s,
         len(components_npy),
         out_dtype,
@@ -1056,7 +1076,7 @@ async def pull_tfidf_artifacts(
             "source_version_id": run.source_version_id,
             "dtype": out_dtype,
             "components_bytes": len(components_npy),
-            "db_read_s": round(db_read_s, 3),
+            "svd_read_s": round(svd_read_s, 3),
             "encode_s": round(encode_s, 3),
             "duration_s": duration_s,
         },
