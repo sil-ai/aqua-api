@@ -903,44 +903,63 @@ async def abort_tfidf_artifacts_upload(
 # ---------------------------------------------------------------------------
 
 
-def _downcast_components(
-    components_npy: bytes, requested_dtype: str
-) -> tuple[bytes, str, float | None]:
-    """Re-encode the stored .npy components blob at a smaller dtype.
+def _encode_components_for_response(
+    stored_bytes: bytes, stored_dtype: str, requested_dtype: str
+) -> tuple[bytes, str, str, float | None]:
+    """Build the response components blob in the requested wire dtype.
 
-    Returns (components_npy, dtype, int8_scale). Stored matrix is float32 or
+    Returns (components_npy, components_b64, out_dtype, int8_scale). Pure
+    CPU/memory work; call via ``asyncio.to_thread`` so the ~200MB numpy and
+    base64 passes don't block the event loop. Stored matrix is float32 or
     float64 (per the push contract); the int8 path quantizes from float32
     precision, so a stored float64 matrix loses ~9 decimal digits before
     quantization — fine for cosine-sim workloads. The DB row is untouched.
-    int8 uses a single global scale (max-abs / 127) — sufficient for the
-    predict-time cosine-sim use-case (see issue #625 for the error analysis).
+
+    int8 returns the global ``max(|arr|)`` as ``int8_scale`` — clients
+    rehydrate via ``arr.astype(float32) * int8_scale / 127`` (i.e. clients
+    are responsible for the /127 step). See issue #625 for the error
+    analysis on why a single global scale is sufficient for the predict-
+    time cosine-similarity use-case.
     """
-    arr = np.load(io.BytesIO(components_npy), allow_pickle=False)
+    if requested_dtype == "float32" and stored_dtype == "float32":
+        # Fast path: stored already matches requested wire dtype, no decode
+        # needed — just base64 the stored bytes.
+        components_npy = stored_bytes
+        components_b64 = base64.b64encode(components_npy).decode("ascii")
+        return components_npy, components_b64, "float32", None
 
-    if requested_dtype == "float16":
+    arr = np.load(io.BytesIO(stored_bytes), allow_pickle=False)
+    int8_scale: float | None = None
+
+    if requested_dtype == "float32":
+        narrowed = arr.astype(np.float32)
+        out_dtype = "float32"
+    elif requested_dtype == "float16":
         narrowed = arr.astype(np.float16)
-        buf = io.BytesIO()
-        np.save(buf, narrowed, allow_pickle=False)
-        return buf.getvalue(), "float16", None
-
-    if requested_dtype == "int8":
-        # Global scale = max(|arr|). Fall back to 1.0 if the matrix is all
-        # zero, all-NaN, or otherwise non-finite so we never divide by zero
-        # or by NaN (which would silently produce all-zero quantized output
-        # and a NaN scale). Clients rehydrate via:
-        #   arr.astype(float32) * int8_scale / 127
-        abs_max = float(np.max(np.abs(arr))) if arr.size else 0.0
+        out_dtype = "float16"
+    elif requested_dtype == "int8":
+        # Sanitize non-finite values before quantization. SVD output should
+        # be all-finite, but a corrupted stored matrix would otherwise cast
+        # NaN/Inf to implementation-defined int8 values (and a NaN abs-max
+        # would silently emit a NaN scale).
+        sane = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+        abs_max = float(np.max(np.abs(sane))) if sane.size else 0.0
         scale = abs_max if np.isfinite(abs_max) and abs_max > 0 else 1.0
-        quantized = (
-            np.round(arr.astype(np.float32) / scale * 127)
+        narrowed = (
+            np.round(sane.astype(np.float32) / scale * 127)
             .clip(-127, 127)
             .astype(np.int8)
         )
-        buf = io.BytesIO()
-        np.save(buf, quantized, allow_pickle=False)
-        return buf.getvalue(), "int8", scale
+        out_dtype = "int8"
+        int8_scale = scale
+    else:
+        raise ValueError(f"Unsupported dtype: {requested_dtype}")
 
-    raise ValueError(f"Unsupported dtype downcast: {requested_dtype}")
+    buf = io.BytesIO()
+    np.save(buf, narrowed, allow_pickle=False)
+    components_npy = buf.getvalue()
+    components_b64 = base64.b64encode(components_npy).decode("ascii")
+    return components_npy, components_b64, out_dtype, int8_scale
 
 
 @router.get(
@@ -1016,20 +1035,20 @@ async def pull_tfidf_artifacts(
             status_code=404, detail="No TF-IDF SVD artifact found for this run"
         )
 
+    # Bound concurrent encode jobs and run the numpy + base64 work off the
+    # event loop. A single ~200MB blob takes seconds of CPU through both
+    # the numpy decode/re-encode and the base64 pass; either one would
+    # otherwise stall other coroutines on this worker.
     encode_start = time.perf_counter()
-    if dtype == "float32":
-        components_npy = svd.components_npy
-        out_dtype = svd.dtype
-        int8_scale: float | None = None
-    else:
-        # Bound concurrent downcasts and run the numpy work off the event
-        # loop so a single ~200MB blob can't both stall other coroutines and
-        # blow up peak memory under load.
-        async with _DOWNCAST_SEMAPHORE:
-            components_npy, out_dtype, int8_scale = await asyncio.to_thread(
-                _downcast_components, svd.components_npy, dtype
-            )
-    components_b64 = base64.b64encode(components_npy).decode("ascii")
+    async with _DOWNCAST_SEMAPHORE:
+        (
+            components_npy,
+            components_b64,
+            out_dtype,
+            int8_scale,
+        ) = await asyncio.to_thread(
+            _encode_components_for_response, svd.components_npy, svd.dtype, dtype
+        )
     encode_s = time.perf_counter() - encode_start
 
     response = TfidfArtifactsPullResponse(

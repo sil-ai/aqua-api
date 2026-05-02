@@ -424,11 +424,12 @@ def test_tfidf_artifact_pull_int8_downcast(client, regular_token1, tfidf_assessm
 def test_tfidf_artifact_pull_downcast_from_float64_stored(
     client, regular_token1, tfidf_assessment_id
 ):
-    """A float64-stored matrix can still be pulled as float16/int8.
+    """A float64-stored matrix can be pulled as float32/float16/int8.
 
-    The push contract accepts both float32 and float64. The int8 path
-    documents that float64 → float32 truncation happens before quantization;
-    this test exercises that path so the documented behaviour stays wired up.
+    The push contract accepts both float32 and float64. ?dtype=float32 must
+    actually downcast (rather than passing through float64 bytes with a
+    mismatched dtype field), and the float16/int8 paths must work from a
+    float64 input.
     """
     headers = {"Authorization": f"Bearer {regular_token1}"}
     body = _make_artifact_body(n_components=5, n_word_features=10, n_char_features=10)
@@ -440,6 +441,16 @@ def test_tfidf_artifact_pull_downcast_from_float64_stored(
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
+
+    # ?dtype=float32 from float64 storage must actually return float32 — the
+    # query param is a contract about wire format, not stored format.
+    f32 = client.get(
+        f"{prefix}/assessment/tfidf/artifacts",
+        params={"assessment_id": tfidf_assessment_id, "dtype": "float32"},
+        headers=headers,
+    ).json()
+    assert f32["svd"]["dtype"] == "float32"
+    assert _decode_components(f32["svd"]).dtype == np.float32
 
     f16 = client.get(
         f"{prefix}/assessment/tfidf/artifacts",
