@@ -1058,14 +1058,17 @@ async def get_training_session_results(
             )
 
         score_rows = await db.execute(
-            select(AssessmentResult).where(
+            select(AssessmentResult)
+            .where(
                 AssessmentResult.assessment_id == word_align_id,
                 AssessmentResult.vref.in_(page_vrefs),
             )
+            .order_by(AssessmentResult.id.asc())
         )
         for r in score_rows.scalars().all():
             # First-write-wins on (assessment_id, vref) — same pattern as
-            # sem_sim_by_vref above.
+            # sem_sim_by_vref above. The ORDER BY id ASC pins which row
+            # wins when duplicates exist (no DB uniqueness on the pair).
             if r.vref in word_align_score_by_vref:
                 continue
             word_align_score_by_vref[r.vref] = Result_v2(

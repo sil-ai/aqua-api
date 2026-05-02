@@ -1554,7 +1554,7 @@ def test_session_results_filter_by_book_chapter(
     assert verse_results["total_count"] == 1
     assert verse_results["items"][0]["vref"] == "GEN 1:2"
     # No word-alignment job in this session, so the verse-level WA score
-    # field must be absent on every returned vref.
+    # field must be null on every returned vref.
     assert verse_results["items"][0]["word_alignment_score"] is None
 
 
