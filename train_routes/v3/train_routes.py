@@ -833,10 +833,10 @@ async def get_training_session_results(
     per-vref results for every completed job in the session.
 
     Per vref: semantic_similarity score (one row), word_alignment per-word
-    rows (multiple), and tfidf nearest-neighbour vrefs from the source
-    corpus. Ngrams are returned at the top level — each ngram has many
-    vrefs, so nesting them per verse would duplicate the same ngram across
-    every verse it appears in.
+    rows (multiple) plus a verse-level word_alignment_score, and tfidf
+    nearest-neighbour vrefs from the source corpus. Ngrams are returned at
+    the top level — each ngram has many vrefs, so nesting them per verse
+    would duplicate the same ngram across every verse it appears in.
 
     Agent_critique adds `lexeme_cards` per vref: when the session
     includes an agent-critique training type, each vref carries the
@@ -932,6 +932,20 @@ async def get_training_session_results(
                 AlignmentTopSourceScores,
             )
         )
+        # Verse-level aggregate scores live in `assessment_result` alongside
+        # the per-pair rows. Include them in the union so a verse with a
+        # verse-level score but no per-pair rows still paginates.
+        per_vref_subqueries.append(
+            _scope(
+                select(
+                    AssessmentResult.vref,
+                    AssessmentResult.book,
+                    AssessmentResult.chapter,
+                    AssessmentResult.verse,
+                ).where(AssessmentResult.assessment_id == word_align_id),
+                AssessmentResult,
+            )
+        )
 
     if tfidf_id is not None:
         tfidf_q = (
@@ -959,6 +973,10 @@ async def get_training_session_results(
     page_vrefs: List[str] = []
     total_count = 0
     if per_vref_subqueries:
+        # `.union()` (not `.union_all()`) is load-bearing: when both sem-sim
+        # and word-alignment write to `assessment_result` for the same vref,
+        # or when AlignmentTopSourceScores and AssessmentResult both surface
+        # the same word-alignment vref, we want one paginated row, not two.
         union_subq = per_vref_subqueries[0].union(*per_vref_subqueries[1:]).subquery()
         # Apply the BookReference join up front so total_count and the page
         # both see the same row set — without it, vrefs whose `book` doesn't
@@ -1016,6 +1034,7 @@ async def get_training_session_results(
             )
 
     word_align_by_vref: dict[str, List[WordAlignment]] = {}
+    word_align_score_by_vref: dict[str, Result_v2] = {}
     if word_align_id is not None and page_vrefs:
         rows = await db.execute(
             select(AlignmentTopSourceScores).where(
@@ -1036,6 +1055,32 @@ async def get_training_session_results(
                     note=r.note,
                     hide=r.hide or False,
                 )
+            )
+
+        score_rows = await db.execute(
+            select(AssessmentResult)
+            .where(
+                AssessmentResult.assessment_id == word_align_id,
+                AssessmentResult.vref.in_(page_vrefs),
+            )
+            .order_by(AssessmentResult.id.asc())
+        )
+        for r in score_rows.scalars().all():
+            # First-write-wins on (assessment_id, vref) — same pattern as
+            # sem_sim_by_vref above. The ORDER BY id ASC pins which row
+            # wins when duplicates exist (no DB uniqueness on the pair).
+            if r.vref in word_align_score_by_vref:
+                continue
+            word_align_score_by_vref[r.vref] = Result_v2(
+                id=r.id,
+                assessment_id=r.assessment_id,
+                vref=r.vref,
+                score=float(r.score) if r.score is not None else 0.0,
+                flag=r.flag or False,
+                note=r.note,
+                source=r.source,
+                target=r.target,
+                hide=r.hide or False,
             )
 
     tfidf_by_vref: dict[str, List[TfidfNeighbour]] = {}
@@ -1109,6 +1154,7 @@ async def get_training_session_results(
             vref=v,
             semantic_similarity=sem_sim_by_vref.get(v),
             word_alignment=word_align_by_vref.get(v, []),
+            word_alignment_score=word_align_score_by_vref.get(v),
             tfidf=tfidf_by_vref.get(v, []),
             lexeme_cards=lexeme_cards_by_vref.get(v, []),
         )

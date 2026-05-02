@@ -1257,6 +1257,25 @@ def _seed_word_alignment(db_session, assessment_id, rows):
     db_session.commit()
 
 
+def _seed_word_alignment_verse_scores(db_session, assessment_id, vrefs_with_scores):
+    """Verse-level word-alignment aggregate, written to assessment_result
+    by the worker alongside per-pair rows in alignment_top_source_scores."""
+    for vref, score in vrefs_with_scores:
+        book, rest = vref.split(" ")
+        chap, vs = rest.split(":")
+        db_session.add(
+            AssessmentResult(
+                assessment_id=assessment_id,
+                vref=vref,
+                book=book,
+                chapter=int(chap),
+                verse=int(vs),
+                score=score,
+            )
+        )
+    db_session.commit()
+
+
 def _seed_ngrams(db_session, assessment_id, ngrams_with_vrefs):
     """ngrams_with_vrefs: list of (ngram, ngram_size, [vrefs])."""
     for ngram, size, vrefs in ngrams_with_vrefs:
@@ -1362,6 +1381,11 @@ def test_session_results_interleaves_completed_apps(
             ("GEN 1:2", "earth", "tierra", 0.77),
         ],
     )
+    _seed_word_alignment_verse_scores(
+        db_session,
+        wa_job["assessment_id"],
+        [("GEN 1:1", 0.895), ("GEN 1:2", 0.77)],
+    )
 
     response = client.get(
         f"{prefix}/train/status/{session_id}/results",
@@ -1380,8 +1404,97 @@ def test_session_results_interleaves_completed_apps(
         "beginning",
         "god",
     }
+    assert by_vref["GEN 1:1"]["word_alignment_score"]["score"] == 0.895
     assert by_vref["GEN 1:2"]["semantic_similarity"]["score"] == 0.42
     assert len(by_vref["GEN 1:2"]["word_alignment"]) == 1
+    assert by_vref["GEN 1:2"]["word_alignment_score"]["score"] == 0.77
+
+
+def test_session_results_word_alignment_verse_score_only_vref_paginates(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """A vref with only a verse-level score (no per-pair rows) must still
+    paginate. This is the reason `assessment_result` is in the per-vref
+    union for word-alignment — without it, vrefs with empty alignments
+    would silently disappear from the page."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_wa_verse_only"},
+        apps=["word-alignment"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    wa_job = payload["training_jobs"][0]
+
+    _advance_assessment_to_finished(client, regular_token1, wa_job["assessment_id"])
+    # GEN 1:1 has both per-pair and verse-level; GEN 1:2 has only the
+    # verse-level score (e.g. an empty verse with no aligned word pairs).
+    _seed_word_alignment(
+        db_session,
+        wa_job["assessment_id"],
+        [("GEN 1:1", "beginning", "principio", 0.91)],
+    )
+    _seed_word_alignment_verse_scores(
+        db_session,
+        wa_job["assessment_id"],
+        [("GEN 1:1", 0.91), ("GEN 1:2", 0.0)],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    assert data["results"]["total_count"] == 2
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+    assert set(by_vref) == {"GEN 1:1", "GEN 1:2"}
+    assert by_vref["GEN 1:2"]["word_alignment"] == []
+    assert by_vref["GEN 1:2"]["word_alignment_score"]["score"] == 0.0
+
+
+def test_session_results_word_alignment_verse_score_respects_filter(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """book/chapter/verse filter must scope the new `assessment_result`
+    subquery for word-alignment too — not just the per-pair table."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_wa_verse_filter"},
+        apps=["word-alignment"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    wa_job = payload["training_jobs"][0]
+
+    _advance_assessment_to_finished(client, regular_token1, wa_job["assessment_id"])
+    # Verse-level scores across two books and two chapters; no per-pair
+    # rows so the filter must reach the AssessmentResult subquery.
+    _seed_word_alignment_verse_scores(
+        db_session,
+        wa_job["assessment_id"],
+        [
+            ("GEN 1:1", 0.5),
+            ("GEN 1:2", 0.6),
+            ("GEN 2:1", 0.7),
+            ("EXO 1:1", 0.8),
+        ],
+    )
+
+    chap_results = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        params={"book": "GEN", "chapter": 1},
+        headers=_auth_headers(regular_token1),
+    ).json()["results"]
+    assert chap_results["total_count"] == 2
+    assert {b["vref"] for b in chap_results["items"]} == {"GEN 1:1", "GEN 1:2"}
+    by_vref = {b["vref"]: b for b in chap_results["items"]}
+    assert by_vref["GEN 1:1"]["word_alignment_score"]["score"] == 0.5
+    assert by_vref["GEN 1:2"]["word_alignment_score"]["score"] == 0.6
 
 
 def test_session_results_filter_by_book_chapter(
@@ -1440,6 +1553,9 @@ def test_session_results_filter_by_book_chapter(
     ).json()["results"]
     assert verse_results["total_count"] == 1
     assert verse_results["items"][0]["vref"] == "GEN 1:2"
+    # No word-alignment job in this session, so the verse-level WA score
+    # field must be null on every returned vref.
+    assert verse_results["items"][0]["word_alignment_score"] is None
 
 
 def test_session_results_pagination_canonical_order(
@@ -1975,6 +2091,9 @@ def test_session_results_word_alignment_only_completed(
     assert only["vref"] == "GEN 1:1"
     assert only["semantic_similarity"] is None
     assert len(only["word_alignment"]) == 1
+    # No verse-level row was seeded — the field stays null, distinct from a
+    # zero-score AssessmentResult row.
+    assert only["word_alignment_score"] is None
 
 
 def test_session_results_admin_can_read_other_owner_session(

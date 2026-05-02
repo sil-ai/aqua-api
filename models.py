@@ -1150,6 +1150,11 @@ class TrainingSessionVrefResults(BaseModel):
     vref: str
     semantic_similarity: Optional[Result_v2] = None
     word_alignment: List[WordAlignment] = Field(default_factory=list)
+    # Verse-level aggregate score for word-alignment, written to
+    # `assessment_result` alongside the per-word-pair rows in
+    # `alignment_top_source_scores`. Mirrors the shape of
+    # `semantic_similarity` so clients can treat the two the same way.
+    word_alignment_score: Optional[Result_v2] = None
     tfidf: List[TfidfNeighbour] = Field(default_factory=list)
     # Full lexeme cards (same shape as `GET /v3/agent/lexeme-card`) whose
     # lemma or any surface form intersects this verse on either side.
