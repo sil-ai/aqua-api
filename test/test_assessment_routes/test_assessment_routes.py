@@ -1533,6 +1533,36 @@ def test_use_eflomal_word_alignment_missing_reference_returns_400(
         assert "reference_id" in response.json()["detail"]
 
 
+def test_use_eflomal_non_bool_in_extra_kwargs_returns_400(
+    client, regular_token1, db_session, test_db_session
+):
+    """A truthy-but-non-bool use_eflomal in extra_kwargs (e.g. 1, "true") must
+    be rejected with 400. Otherwise it would trigger the derivation path while
+    silently bypassing the JSONB-strict dedup filter."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        for bad_value in ('"true"', "1", "0"):
+            response = client.post(
+                f"{prefix}/assessment",
+                params={
+                    "revision_id": revision_id,
+                    "reference_id": reference_id,
+                    "type": "word-alignment",
+                    "extra_kwargs": '{"use_eflomal": ' + bad_value + "}",
+                },
+                headers={"Authorization": f"Bearer {regular_token1}"},
+            )
+            assert response.status_code == 400, (bad_value, response.text)
+            assert "use_eflomal" in response.json()["detail"]
+        assert mock_runner.await_count == 0
+
+
 def test_use_eflomal_via_extra_kwargs_derives_version_ids(
     client, regular_token1, db_session, test_db_session
 ):

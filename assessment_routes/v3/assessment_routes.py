@@ -306,7 +306,17 @@ async def add_assessment(
     # reference and revision rows. Mapping per train_routes #620:
     #   source_version_id ← bible_version_id of reference_id
     #   target_version_id ← bible_version_id of revision_id
-    is_eflomal = a.kwargs and a.kwargs.get("use_eflomal")
+    # Strict-bool check: a caller could route around the typed query param
+    # by passing `use_eflomal: 1` (or "true", etc.) via extra_kwargs. The
+    # dedup SQL uses JSONB containment which is strictly typed, so a
+    # truthy-but-non-bool value would silently bypass dedup. Reject it.
+    use_eflomal_kw = a.kwargs.get("use_eflomal") if a.kwargs else None
+    if use_eflomal_kw is not None and not isinstance(use_eflomal_kw, bool):
+        raise HTTPException(
+            status_code=400,
+            detail="use_eflomal must be a boolean.",
+        )
+    is_eflomal = use_eflomal_kw is True
     source_version_id: Optional[int] = None
     target_version_id: Optional[int] = None
     if is_eflomal:
