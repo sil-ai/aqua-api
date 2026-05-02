@@ -1803,7 +1803,7 @@ def test_session_results_tfidf_top_k_param(
 def _seed_lexeme_cards(db_session, source_version_id, target_version_id, cards):
     """Insert AgentLexemeCard rows. `cards` is a list of dicts with keys
     target_lemma, source_lemma, surface_forms, source_surface_forms,
-    confidence."""
+    confidence, alignment_scores."""
     from database.models import AgentLexemeCard
 
     for c in cards:
