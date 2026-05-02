@@ -504,7 +504,7 @@ async def _latest_revision_for_version(
 
 async def _resolve_train_pair(
     job_in: TrainingJobIn,
-    accessible_version_ids: Optional[List[int]],
+    accessible_version_ids: Optional[set[int]],
     db: AsyncSession,
 ) -> tuple[BibleRevision, BibleRevision, BibleVersion, BibleVersion]:
     """Resolve the (source, target) training pair from the request.
@@ -587,7 +587,12 @@ async def create_training_job(
     The pair is identified by version_id (latest non-deleted revision is
     resolved) or by revision_id when a specific revision is required.
     """
-    accessible_version_ids = await _get_accessible_version_ids(current_user, db)
+    accessible_list = await _get_accessible_version_ids(current_user, db)
+    # Convert once to a set: every membership check below is then O(1) and
+    # callers with access to many versions don't pay an O(n) cost per probe.
+    accessible_version_ids = (
+        set(accessible_list) if accessible_list is not None else None
+    )
     source_rev, target_rev, source_version, target_version = await _resolve_train_pair(
         job_in, accessible_version_ids, db
     )
