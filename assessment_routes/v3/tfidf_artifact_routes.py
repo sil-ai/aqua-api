@@ -6,11 +6,11 @@ import io
 import socket
 import time
 import uuid
-from typing import Dict, List, Union
+from typing import Dict, List, Literal, Union
 
 import fastapi
 import numpy as np
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 from sqlalchemy import Float, cast, delete, desc, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -49,7 +49,7 @@ from models import (
     TfidfByVectorsRequest,
     TfidfByVectorsResponse,
     TfidfResult,
-    TfidfSvdPayload,
+    TfidfSvdPullPayload,
     TfidfVectorizerPayload,
 )
 from security_routes.auth_routes import get_current_user
@@ -896,6 +896,41 @@ async def abort_tfidf_artifacts_upload(
 # ---------------------------------------------------------------------------
 
 
+def _downcast_components(
+    components_npy: bytes, requested_dtype: str
+) -> tuple[bytes, str, float | None]:
+    """Re-encode the stored .npy components blob at a smaller dtype.
+
+    Returns (components_npy, dtype, int8_scale). Stored matrix is float32; we
+    only narrow on the way out, so the DB row is untouched. int8 uses a single
+    global scale (max-abs / 127) — sufficient for the predict-time cosine-sim
+    use-case (see issue #625 for the error analysis).
+    """
+    arr = np.load(io.BytesIO(components_npy), allow_pickle=False)
+
+    if requested_dtype == "float16":
+        narrowed = arr.astype(np.float16, copy=False)
+        buf = io.BytesIO()
+        np.save(buf, narrowed, allow_pickle=False)
+        return buf.getvalue(), "float16", None
+
+    if requested_dtype == "int8":
+        # max-abs scale; fall back to 1.0 if the matrix is entirely zero so we
+        # never divide by zero. Clients rehydrate via:
+        #   arr.astype(float32) * int8_scale / 127
+        scale = float(np.max(np.abs(arr))) or 1.0
+        quantized = (
+            np.round(arr.astype(np.float32) / scale * 127)
+            .clip(-127, 127)
+            .astype(np.int8)
+        )
+        buf = io.BytesIO()
+        np.save(buf, quantized, allow_pickle=False)
+        return buf.getvalue(), "int8", scale
+
+    raise ValueError(f"Unsupported dtype downcast: {requested_dtype}")
+
+
 @router.get(
     "/assessment/tfidf/artifacts",
     response_model=TfidfArtifactsPullResponse,
@@ -903,6 +938,15 @@ async def abort_tfidf_artifacts_upload(
 async def pull_tfidf_artifacts(
     assessment_id: int | None = None,
     source_version_id: int | None = None,
+    dtype: Literal["float32", "float16", "int8"] = Query(
+        "float32",
+        description=(
+            "Wire format for the SVD components matrix. float32 (default) "
+            "preserves stored precision; float16 halves the response, int8 "
+            "quarters it (with an `int8_scale` for client-side rehydration). "
+            "Stored DB row is unchanged regardless."
+        ),
+    ),
     current_user: UserModel = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -910,6 +954,8 @@ async def pull_tfidf_artifacts(
 
     Exactly one of assessment_id or source_version_id must be provided.
     """
+    request_start = time.perf_counter()
+
     if (assessment_id is None) == (source_version_id is None):
         raise HTTPException(
             status_code=422,
@@ -948,11 +994,25 @@ async def pull_tfidf_artifacts(
     ).all()
     by_kind = {v.kind: v for v in vectorizer_rows}
 
+    db_read_start = time.perf_counter()
     svd = await db.scalar(
         select(TfidfSvd).where(TfidfSvd.assessment_id == run.assessment_id)
     )
+    db_read_s = time.perf_counter() - db_read_start
 
-    return TfidfArtifactsPullResponse(
+    encode_start = time.perf_counter()
+    if dtype == "float32":
+        components_npy = svd.components_npy
+        out_dtype = svd.dtype
+        int8_scale: float | None = None
+    else:
+        components_npy, out_dtype, int8_scale = _downcast_components(
+            svd.components_npy, dtype
+        )
+    components_b64 = base64.b64encode(components_npy).decode("ascii")
+    encode_s = time.perf_counter() - encode_start
+
+    response = TfidfArtifactsPullResponse(
         assessment_id=run.assessment_id,
         source_version_id=run.source_version_id,
         n_components=run.n_components,
@@ -971,13 +1031,38 @@ async def pull_tfidf_artifacts(
             idf=by_kind["char"].idf,
             params=by_kind["char"].params,
         ),
-        svd=TfidfSvdPayload(
+        svd=TfidfSvdPullPayload(
             n_components=svd.n_components,
             n_features=svd.n_features,
-            dtype=svd.dtype,
-            components_b64=base64.b64encode(svd.components_npy).decode("ascii"),
+            dtype=out_dtype,
+            components_b64=components_b64,
+            int8_scale=int8_scale,
         ),
     )
+
+    duration_s = round(time.perf_counter() - request_start, 3)
+    logger.info(
+        "pull_tfidf_artifacts completed in %.3fs (db_read=%.3fs, encode=%.3fs, "
+        "components_bytes=%d, dtype=%s)",
+        duration_s,
+        db_read_s,
+        encode_s,
+        len(components_npy),
+        out_dtype,
+        extra={
+            "method": "GET",
+            "path": "/assessment/tfidf/artifacts",
+            "assessment_id": run.assessment_id,
+            "source_version_id": run.source_version_id,
+            "dtype": out_dtype,
+            "components_bytes": len(components_npy),
+            "db_read_s": round(db_read_s, 3),
+            "encode_s": round(encode_s, 3),
+            "duration_s": duration_s,
+        },
+    )
+
+    return response
 
 
 # ---------------------------------------------------------------------------

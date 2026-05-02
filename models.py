@@ -1296,6 +1296,19 @@ class TfidfSvdPayload(TfidfSvdMeta):
     components_b64: str
 
 
+# Pull responses can downcast the components matrix to float16 or int8 to
+# halve/quarter wire size. int8 carries a scale factor so clients can
+# rehydrate via `arr.astype(float32) * int8_scale / 127`. Stays separate from
+# TfidfSvdPayload so the push validator's float32/float64-only contract is
+# unaffected by widening the response dtype set.
+class TfidfSvdPullPayload(BaseModel):
+    n_components: int = Field(..., ge=1, le=4096)
+    n_features: int = Field(..., ge=1, le=10_000_000)
+    dtype: Literal["float32", "float64", "float16", "int8"] = "float32"
+    components_b64: str
+    int8_scale: Optional[float] = None
+
+
 class TfidfArtifactsPushRequest(BaseModel):
     source_version_id: Optional[int] = None
     n_components: int
@@ -1324,7 +1337,7 @@ class TfidfArtifactsPullResponse(BaseModel):
     created_at: Optional[datetime.datetime] = None
     word_vectorizer: TfidfVectorizerPayload
     char_vectorizer: TfidfVectorizerPayload
-    svd: TfidfSvdPayload
+    svd: TfidfSvdPullPayload
 
 
 # --- Chunked TF-IDF artifact upload (for components_ arrays over the single-POST cap) ---
