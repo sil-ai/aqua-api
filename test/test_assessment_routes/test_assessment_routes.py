@@ -1398,8 +1398,6 @@ def test_use_eflomal_wrong_type(client, regular_token1, db_session, test_db_sess
                 "revision_id": revision_id,
                 "type": "sentence-length",
                 "use_eflomal": True,
-                "source_version_id": 1,
-                "target_version_id": 2,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -1407,20 +1405,44 @@ def test_use_eflomal_wrong_type(client, regular_token1, db_session, test_db_sess
     assert "use_eflomal" in response.json()["detail"]
 
 
-def test_use_eflomal_missing_versions(
+def test_use_eflomal_unknown_revision(
     client, regular_token1, db_session, test_db_session
 ):
-    """use_eflomal=true without source_version_id or target_version_id returns 400."""
+    """use_eflomal=true with a non-existent revision_id or reference_id returns 404."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
-    reference_id = upload_revision(client, regular_token1, version_id)
 
     with patch(
         f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
     ) as mock_runner:
         mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": 999_999_999,
+                "type": "word-alignment",
+                "use_eflomal": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert response.status_code == 404
 
-        # Missing both version IDs
+
+def test_use_eflomal_derives_version_ids(
+    client, regular_token1, db_session, test_db_session
+):
+    """use_eflomal=true derives source/target version IDs from reference_id/revision_id
+    and forwards them to the runner."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
         response = client.post(
             f"{prefix}/assessment",
             params={
@@ -1431,22 +1453,11 @@ def test_use_eflomal_missing_versions(
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
-        assert response.status_code == 400
-        assert "version_id" in response.json()["detail"].lower()
-
-        # Missing only target_version_id
-        response = client.post(
-            f"{prefix}/assessment",
-            params={
-                "revision_id": revision_id,
-                "reference_id": reference_id,
-                "type": "word-alignment",
-                "use_eflomal": True,
-                "source_version_id": 1,
-            },
-            headers={"Authorization": f"Bearer {regular_token1}"},
-        )
-        assert response.status_code == 400
+    assert response.status_code == 200, response.text
+    assert mock_runner.await_count == 1
+    kwargs = mock_runner.await_args.kwargs
+    assert kwargs["source_version_id"] == source_version_id
+    assert kwargs["target_version_id"] == target_version_id
 
 
 def test_use_eflomal_dedup_separate_from_regular(
@@ -1465,8 +1476,6 @@ def test_use_eflomal_dedup_separate_from_regular(
     eflomal_params = {
         **base_params,
         "use_eflomal": True,
-        "source_version_id": version_id,
-        "target_version_id": version_id,
     }
 
     with patch(
@@ -1528,8 +1537,6 @@ def test_kwargs_returned_in_assessment_response(
                 "reference_id": reference_id,
                 "type": "word-alignment",
                 "use_eflomal": True,
-                "source_version_id": version_id,
-                "target_version_id": version_id,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
