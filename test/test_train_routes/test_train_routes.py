@@ -1816,6 +1816,7 @@ def _seed_lexeme_cards(db_session, source_version_id, target_version_id, cards):
                 surface_forms=c.get("surface_forms", []),
                 source_surface_forms=c.get("source_surface_forms", []),
                 confidence=c.get("confidence", 0.9),
+                alignment_scores=c.get("alignment_scores"),
             )
         )
     db_session.commit()
@@ -1940,6 +1941,74 @@ def test_session_results_lexeme_cards_when_agent_critique_in_session(
 
     g12_cards = by_vref["GEN 1:2"]["lexeme_cards"]
     assert {c["target_lemma"] for c in g12_cards} == {"ulungu"}, g12_cards
+
+
+def test_session_results_lexeme_cards_alignment_scores_sorted_desc(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_revision_id_2,
+    test_version_id,
+    db_session,
+):
+    """alignment_scores in train-status results must come back ordered
+    by value descending — same contract the /predict path serves. The
+    consolidate/merge path can leave stored scores unsorted, so the
+    train-status read site sorts on the way out.
+    """
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_lexeme_cards_sorted"},
+        apps=["semantic-similarity", "agent-critique"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    sem_sim_job = next(
+        j for j in payload["training_jobs"] if j["type"] == "semantic-similarity"
+    )
+    _advance_assessment_to_finished(
+        client, regular_token1, sem_sim_job["assessment_id"]
+    )
+    _seed_sem_sim_results(db_session, sem_sim_job["assessment_id"], [("GEN 1:3", 0.7)])
+    _seed_verse_text(
+        db_session,
+        sem_sim_job["target_revision_id"],
+        [("GEN 1:3", "ihinkanyilo")],
+    )
+    _seed_verse_text(
+        db_session,
+        sem_sim_job["source_revision_id"],
+        [("GEN 1:3", "light")],
+    )
+    # Stored ascending on purpose — exercises the read-site sort.
+    unsorted_scores = {"low": 0.1, "mid": 0.5, "high": 0.9}
+    _seed_lexeme_cards(
+        db_session,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id,
+        cards=[
+            {
+                "target_lemma": "ihinkanyilo",
+                "source_lemma": "light",
+                "surface_forms": ["ihinkanyilo"],
+                "source_surface_forms": ["light"],
+                "alignment_scores": unsorted_scores,
+            },
+        ],
+    )
+
+    response = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    )
+    assert response.status_code == 200
+    by_vref = {b["vref"]: b for b in response.json()["results"]["items"]}
+    cards = by_vref["GEN 1:3"]["lexeme_cards"]
+    assert len(cards) == 1
+    assert list(cards[0]["alignment_scores"].keys()) == ["high", "mid", "low"]
 
 
 def test_session_results_lexeme_cards_empty_when_no_agent_critique(
