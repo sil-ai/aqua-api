@@ -427,6 +427,15 @@ async def _build_lexeme_card_matches_by_vref(
     for card in cards:
         if card.id not in matched_card_id_set:
             continue
+        # Sort alignment_scores by value descending so clients see the
+        # same ordering they get from the /predict path. Writes already
+        # sort on POST/PATCH, but the consolidate/merge path skips that,
+        # so enforce it on read to keep the contract consistent.
+        alignment_scores = card.alignment_scores
+        if alignment_scores:
+            alignment_scores = dict(
+                sorted(alignment_scores.items(), key=lambda x: x[1], reverse=True)
+            )
         out_by_card_id[card.id] = LexemeCardOut.model_validate(
             {
                 "id": card.id,
@@ -442,7 +451,7 @@ async def _build_lexeme_card_matches_by_vref(
                     float(card.confidence) if card.confidence is not None else None
                 ),
                 "english_lemma": card.english_lemma,
-                "alignment_scores": card.alignment_scores,
+                "alignment_scores": alignment_scores,
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
                 "last_user_edit": card.last_user_edit,
