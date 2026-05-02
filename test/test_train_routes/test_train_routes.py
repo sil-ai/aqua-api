@@ -1257,6 +1257,25 @@ def _seed_word_alignment(db_session, assessment_id, rows):
     db_session.commit()
 
 
+def _seed_word_alignment_verse_scores(db_session, assessment_id, vrefs_with_scores):
+    """Verse-level word-alignment aggregate, written to assessment_result
+    by the worker alongside per-pair rows in alignment_top_source_scores."""
+    for vref, score in vrefs_with_scores:
+        book, rest = vref.split(" ")
+        chap, vs = rest.split(":")
+        db_session.add(
+            AssessmentResult(
+                assessment_id=assessment_id,
+                vref=vref,
+                book=book,
+                chapter=int(chap),
+                verse=int(vs),
+                score=score,
+            )
+        )
+    db_session.commit()
+
+
 def _seed_ngrams(db_session, assessment_id, ngrams_with_vrefs):
     """ngrams_with_vrefs: list of (ngram, ngram_size, [vrefs])."""
     for ngram, size, vrefs in ngrams_with_vrefs:
@@ -1362,6 +1381,11 @@ def test_session_results_interleaves_completed_apps(
             ("GEN 1:2", "earth", "tierra", 0.77),
         ],
     )
+    _seed_word_alignment_verse_scores(
+        db_session,
+        wa_job["assessment_id"],
+        [("GEN 1:1", 0.895), ("GEN 1:2", 0.77)],
+    )
 
     response = client.get(
         f"{prefix}/train/status/{session_id}/results",
@@ -1380,8 +1404,10 @@ def test_session_results_interleaves_completed_apps(
         "beginning",
         "god",
     }
+    assert by_vref["GEN 1:1"]["word_alignment_score"]["score"] == 0.895
     assert by_vref["GEN 1:2"]["semantic_similarity"]["score"] == 0.42
     assert len(by_vref["GEN 1:2"]["word_alignment"]) == 1
+    assert by_vref["GEN 1:2"]["word_alignment_score"]["score"] == 0.77
 
 
 def test_session_results_filter_by_book_chapter(
