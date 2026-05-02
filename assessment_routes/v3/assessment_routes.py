@@ -302,11 +302,17 @@ async def add_assessment(
         if parsed_kwargs is not None:
             stmt = stmt.where(Assessment.kwargs == parsed_kwargs)
         else:
-            # SQLAlchemy persists Python None to JSONB as the JSON null literal,
-            # so new rows match `== JSON.NULL`. The `is_(None)` arm matches any
-            # legacy rows that were stored as SQL NULL.
+            # New rows persist Python None as the JSON null literal (matched
+            # by `== JSON.NULL`). The `is_(None)` arm catches legacy rows
+            # stored as SQL NULL, and `== {}` catches legacy rows where an
+            # empty `extra_kwargs` was persisted as a JSONB empty object
+            # (we now normalize that to None on the request side).
             stmt = stmt.where(
-                or_(Assessment.kwargs.is_(None), Assessment.kwargs == JSON.NULL)
+                or_(
+                    Assessment.kwargs.is_(None),
+                    Assessment.kwargs == JSON.NULL,
+                    Assessment.kwargs == {},
+                )
             )
         result = await db.execute(stmt)
         existing_id = result.scalars().first()

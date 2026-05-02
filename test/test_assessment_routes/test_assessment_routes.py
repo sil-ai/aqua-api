@@ -647,6 +647,45 @@ def test_duplicate_assessment_kwargs_key_order_blocked(
         assert second.status_code == 409
 
 
+def test_duplicate_assessment_legacy_empty_dict_kwargs_blocked(
+    client, regular_token1, db_session, test_db_session
+):
+    """A legacy row with kwargs={} (pre-normalization) still blocks a no-kwargs duplicate."""
+    from sqlalchemy import text
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={"revision_id": revision_id, "type": "sentence-length"},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Force the row's kwargs to a JSONB empty object, mimicking rows
+        # persisted before empty-dict normalization was introduced.
+        db_session.execute(
+            text("UPDATE assessment SET kwargs = '{}'::jsonb WHERE id = :id"),
+            {"id": first_id},
+        )
+        db_session.commit()
+
+        second = client.post(
+            f"{prefix}/assessment",
+            params={"revision_id": revision_id, "type": "sentence-length"},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409
+        assert str(first_id) in second.json()["detail"]
+
+
 def test_duplicate_assessment_legacy_sql_null_kwargs_blocked(
     client, regular_token1, db_session, test_db_session
 ):
