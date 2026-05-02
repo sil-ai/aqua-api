@@ -316,12 +316,11 @@ async def add_assessment(
                 detail="use_eflomal is only valid for word-alignment assessments.",
             )
         revision = await db.get(BibleRevision, a.revision_id)
+        if revision is None or revision.deleted:
+            raise HTTPException(status_code=404, detail="revision_id does not exist.")
         reference = await db.get(BibleRevision, a.reference_id)
-        if revision is None or reference is None:
-            raise HTTPException(
-                status_code=404,
-                detail="revision_id or reference_id does not exist.",
-            )
+        if reference is None or reference.deleted:
+            raise HTTPException(status_code=404, detail="reference_id does not exist.")
         source_version_id = reference.bible_version_id
         target_version_id = revision.bible_version_id
 

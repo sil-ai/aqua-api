@@ -1408,7 +1408,111 @@ def test_use_eflomal_wrong_type(client, regular_token1, db_session, test_db_sess
 def test_use_eflomal_unknown_revision(
     client, regular_token1, db_session, test_db_session
 ):
-    """use_eflomal=true with a non-existent revision_id or reference_id returns 404."""
+    """use_eflomal=true with a non-existent revision_id or reference_id returns 404
+    with a side-specific detail."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        # Bogus revision_id, valid reference_id
+        bad_revision = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": 999_999_999,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+                "use_eflomal": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert bad_revision.status_code == 404
+        assert bad_revision.json()["detail"] == "revision_id does not exist."
+
+        # Valid revision_id, bogus reference_id
+        bad_reference = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": 999_999_999,
+                "type": "word-alignment",
+                "use_eflomal": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert bad_reference.status_code == 404
+        assert bad_reference.json()["detail"] == "reference_id does not exist."
+
+
+def test_use_eflomal_deleted_revision_returns_404(
+    client, regular_token1, db_session, test_db_session
+):
+    """Soft-deleted revision_id or reference_id returns 404, not silently passing."""
+    from database.models import BibleRevision as BibleRevisionModel
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    # Soft-delete the revision row
+    deleted_rev = (
+        test_db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.id == revision_id)
+        .one()
+    )
+    deleted_rev.deleted = True
+    test_db_session.commit()
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+                "use_eflomal": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "revision_id does not exist."
+
+        # And the symmetric case: soft-deleted reference
+        deleted_rev.deleted = False
+        deleted_ref = (
+            test_db_session.query(BibleRevisionModel)
+            .filter(BibleRevisionModel.id == reference_id)
+            .one()
+        )
+        deleted_ref.deleted = True
+        test_db_session.commit()
+
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+                "use_eflomal": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "reference_id does not exist."
+
+
+def test_use_eflomal_word_alignment_missing_reference_returns_400(
+    client, regular_token1, db_session, test_db_session
+):
+    """word-alignment + use_eflomal=true with no reference_id hits the
+    reference-required guard (400), never the eflomal lookup (404)."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
 
@@ -1420,13 +1524,44 @@ def test_use_eflomal_unknown_revision(
             f"{prefix}/assessment",
             params={
                 "revision_id": revision_id,
-                "reference_id": 999_999_999,
                 "type": "word-alignment",
                 "use_eflomal": True,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
-    assert response.status_code == 404
+        assert response.status_code == 400
+        assert "reference_id" in response.json()["detail"]
+
+
+def test_use_eflomal_via_extra_kwargs_derives_version_ids(
+    client, regular_token1, db_session, test_db_session
+):
+    """A caller can activate eflomal by injecting use_eflomal into extra_kwargs
+    instead of the dedicated query param. The same version-ID derivation must fire."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+                "extra_kwargs": '{"use_eflomal": true}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        assert mock_runner.await_count == 1
+        kwargs = mock_runner.await_args.kwargs
+        assert kwargs["source_version_id"] == source_version_id
+        assert kwargs["target_version_id"] == target_version_id
 
 
 def test_use_eflomal_derives_version_ids(
@@ -1453,11 +1588,39 @@ def test_use_eflomal_derives_version_ids(
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
-    assert response.status_code == 200, response.text
-    assert mock_runner.await_count == 1
-    kwargs = mock_runner.await_args.kwargs
-    assert kwargs["source_version_id"] == source_version_id
-    assert kwargs["target_version_id"] == target_version_id
+        assert response.status_code == 200, response.text
+        assert mock_runner.await_count == 1
+        kwargs = mock_runner.await_args.kwargs
+        assert kwargs["source_version_id"] == source_version_id
+        assert kwargs["target_version_id"] == target_version_id
+
+
+def test_non_eflomal_word_alignment_forwards_null_version_ids(
+    client, regular_token1, db_session, test_db_session
+):
+    """Non-eflomal word-alignment must forward source/target_version_id=None to the
+    runner (not the revisions' bible_version_id) — only eflomal triggers derivation."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        kwargs = mock_runner.await_args.kwargs
+        assert kwargs["source_version_id"] is None
+        assert kwargs["target_version_id"] is None
 
 
 def test_use_eflomal_dedup_separate_from_regular(
