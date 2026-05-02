@@ -106,6 +106,30 @@ def _create_training_jobs_via_api(
     if apps is not None:
         data["apps"] = apps
 
+    return _post_train_with_payload(
+        client,
+        token,
+        data,
+        spawn_by_app=spawn_by_app,
+        spawn_by_type=spawn_by_type,
+        default_exc=default_exc,
+        calls=calls,
+        payloads=payloads,
+    )
+
+
+def _post_train_with_payload(
+    client,
+    token,
+    data: dict,
+    spawn_by_app=None,
+    spawn_by_type=None,
+    default_exc=_UNSET,
+    calls: list = None,
+    payloads: list = None,
+):
+    """POST /train with an arbitrary payload (lets tests exercise the new
+    version_id / revision_id selectors directly)."""
     mock_function_cls = _make_modal_mock(
         spawn_by_app,
         spawn_by_type,
@@ -447,6 +471,151 @@ def test_create_training_job_invalid_revision(client, regular_token1, test_revis
         client, regular_token1, test_revision_id, 999999
     )
     assert response.status_code == 404
+
+
+def test_create_training_job_with_version_ids_resolves_latest_revision(
+    client,
+    regular_token1,
+    test_version_id,
+    test_revision_id,
+    test_revision_id_2,
+    db_session,
+):
+    """POST /train with version_id (no revision_id) resolves to the latest
+    non-deleted revision for that version on each side."""
+    response = _post_train_with_payload(
+        client,
+        regular_token1,
+        {
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id,
+            "options": {"tag": "version-id-resolution"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    jobs = response.json()["training_jobs"]
+    assert jobs
+
+    # test_revision_id_2 was created after test_revision_id under the same
+    # version, so "latest" = the higher id.
+    expected_latest = max(test_revision_id, test_revision_id_2)
+    for job in jobs:
+        assert job["source_revision_id"] == expected_latest
+        assert job["target_revision_id"] == expected_latest
+        assert job["source_version_id"] == test_version_id
+        assert job["target_version_id"] == test_version_id
+
+    # Cleanup so this test doesn't poison duplicate-detection in later tests.
+    db_session.expire_all()
+    queued = (
+        db_session.query(Assessment)
+        .filter(Assessment.is_training.is_(True), Assessment.status == "queued")
+        .all()
+    )
+    for a in queued:
+        a.status = "failed"
+    db_session.commit()
+
+
+def test_create_training_job_explicit_revision_overrides_version_default(
+    client,
+    regular_token1,
+    test_version_id,
+    test_revision_id,
+    test_revision_id_2,
+    db_session,
+):
+    """A caller can mix version_id on one side and revision_id on the other —
+    the explicit revision wins regardless of what "latest" would resolve to."""
+    older_revision = min(test_revision_id, test_revision_id_2)
+    response = _post_train_with_payload(
+        client,
+        regular_token1,
+        {
+            "source_revision_id": older_revision,
+            "target_version_id": test_version_id,
+            "options": {"tag": "explicit-revision-override"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    jobs = response.json()["training_jobs"]
+    assert jobs
+
+    expected_target = max(test_revision_id, test_revision_id_2)
+    for job in jobs:
+        assert job["source_revision_id"] == older_revision
+        assert job["target_revision_id"] == expected_target
+
+    db_session.expire_all()
+    queued = (
+        db_session.query(Assessment)
+        .filter(Assessment.is_training.is_(True), Assessment.status == "queued")
+        .all()
+    )
+    for a in queued:
+        a.status = "failed"
+    db_session.commit()
+
+
+def test_create_training_job_rejects_both_ids_on_same_side(
+    client, regular_token1, test_version_id, test_revision_id, test_revision_id_2
+):
+    """Providing both version_id and revision_id on the same side is a 422."""
+    response = _post_train_with_payload(
+        client,
+        regular_token1,
+        {
+            "source_version_id": test_version_id,
+            "source_revision_id": test_revision_id,
+            "target_revision_id": test_revision_id_2,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_create_training_job_rejects_missing_ids_on_a_side(
+    client, regular_token1, test_revision_id_2
+):
+    """Providing neither version_id nor revision_id on a side is a 422."""
+    response = _post_train_with_payload(
+        client,
+        regular_token1,
+        {"target_revision_id": test_revision_id_2},
+    )
+    assert response.status_code == 422
+
+
+def test_create_training_job_unknown_version_id_returns_404(
+    client, regular_token1, test_version_id
+):
+    """A version_id that doesn't exist returns 404."""
+    response = _post_train_with_payload(
+        client,
+        regular_token1,
+        {
+            "source_version_id": test_version_id,
+            "target_version_id": 999999,
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_create_training_job_version_with_no_revisions_returns_404(
+    client, admin_token, test_version_id, test_version_id_2
+):
+    """A version that exists but has no non-deleted revisions returns 404 —
+    we have nothing to train on. Uses admin to bypass the version-access check
+    since test_version_id_2 has no group-access rows."""
+    response = _post_train_with_payload(
+        client,
+        admin_token,
+        {
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert response.status_code == 404
+    assert "no revisions" in response.json()["detail"].lower()
 
 
 def test_create_training_job_duplicate_detection(

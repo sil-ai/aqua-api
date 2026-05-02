@@ -484,40 +484,100 @@ async def _get_accessible_version_ids(
     return [row[0] for row in result.all()]
 
 
+async def _latest_revision_for_version(
+    version_id: int, db: AsyncSession
+) -> Optional[BibleRevision]:
+    """Return the most recently created non-deleted revision for a version,
+    or None if the version has none. Tie-break on `id DESC` since `date` is
+    user-supplied and may be null."""
+    stmt = (
+        select(BibleRevision)
+        .where(
+            BibleRevision.bible_version_id == version_id,
+            BibleRevision.deleted.is_not(True),
+        )
+        .order_by(BibleRevision.id.desc())
+        .limit(1)
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def _resolve_train_pair(
+    job_in: TrainingJobIn, db: AsyncSession
+) -> tuple[BibleRevision, BibleRevision, BibleVersion, BibleVersion]:
+    """Resolve the (source, target) training pair from the request.
+
+    Each side is identified by either revision_id (explicit) or version_id
+    (resolves to the latest non-deleted revision for that version). When a
+    revision_id is given, the linked version is loaded; when a version_id
+    is given, the latest revision is looked up. Raises 404 if any
+    referenced row is missing or the version has no revisions.
+    """
+
+    async def _resolve_side(
+        side: str, version_id: Optional[int], revision_id: Optional[int]
+    ) -> tuple[BibleRevision, BibleVersion]:
+        if revision_id is not None:
+            revision = await db.get(BibleRevision, revision_id)
+            if not revision or revision.deleted:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"{side.capitalize()} revision {revision_id} not found",
+                )
+            version = await db.get(BibleVersion, revision.bible_version_id)
+            if not version:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Bible version for {side} revision "
+                        f"{revision_id} not found"
+                    ),
+                )
+            return revision, version
+
+        version = await db.get(BibleVersion, version_id)
+        if not version or version.deleted:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"{side.capitalize()} version {version_id} not found",
+            )
+        revision = await _latest_revision_for_version(version_id, db)
+        if revision is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"{side.capitalize()} version {version_id} has no revisions "
+                    "to train on"
+                ),
+            )
+        return revision, version
+
+    source_rev, source_version = await _resolve_side(
+        "source", job_in.source_version_id, job_in.source_revision_id
+    )
+    target_rev, target_version = await _resolve_side(
+        "target", job_in.target_version_id, job_in.target_revision_id
+    )
+    return source_rev, target_rev, source_version, target_version
+
+
 @router.post("/train", response_model=TrainingResponse)
 async def create_training_job(
     job_in: TrainingJobIn,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Create and dispatch training jobs for all types in parallel."""
-    # Validate both revision IDs exist
-    source_rev = await db.get(BibleRevision, job_in.source_revision_id)
-    if not source_rev:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Source revision {job_in.source_revision_id} not found",
-        )
-    target_rev = await db.get(BibleRevision, job_in.target_revision_id)
-    if not target_rev:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Target revision {job_in.target_revision_id} not found",
-        )
+    """Create and dispatch training jobs for all types in parallel.
 
-    # Look up languages via BibleVersion
-    source_version = await db.get(BibleVersion, source_rev.bible_version_id)
-    if not source_version:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Bible version for source revision {job_in.source_revision_id} not found",
-        )
-    target_version = await db.get(BibleVersion, target_rev.bible_version_id)
-    if not target_version:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Bible version for target revision {job_in.target_revision_id} not found",
-        )
+    The pair is identified by version_id (latest non-deleted revision is
+    resolved) or by revision_id when a specific revision is required.
+    """
+    source_rev, target_rev, source_version, target_version = await _resolve_train_pair(
+        job_in, db
+    )
+    source_revision_id = source_rev.id
+    target_revision_id = target_rev.id
+
     # Auth: non-admin users must have group access to both bible versions
     if not current_user.is_admin:
         version_ids = await _get_accessible_version_ids(current_user, db)
@@ -562,8 +622,8 @@ async def create_training_job(
             select(TrainingJob)
             .join(Assessment, Assessment.id == TrainingJob.assessment_id)
             .where(
-                TrainingJob.source_revision_id == job_in.source_revision_id,
-                TrainingJob.target_revision_id == job_in.target_revision_id,
+                TrainingJob.source_revision_id == source_revision_id,
+                TrainingJob.target_revision_id == target_revision_id,
                 TrainingJob.type == training_type.value,
                 TrainingJob.deleted.is_not(True),
                 Assessment.deleted.is_not(True),
@@ -593,8 +653,8 @@ async def create_training_job(
         # the side being assessed (target), reference_id is what it's
         # compared against (source).
         assessment = Assessment(
-            revision_id=job_in.target_revision_id,
-            reference_id=job_in.source_revision_id,
+            revision_id=target_revision_id,
+            reference_id=source_revision_id,
             type=training_type.value,
             status="queued",
             requested_time=datetime.utcnow(),
@@ -608,8 +668,8 @@ async def create_training_job(
 
         training_job = TrainingJob(
             type=training_type.value,
-            source_revision_id=job_in.source_revision_id,
-            target_revision_id=job_in.target_revision_id,
+            source_revision_id=source_revision_id,
+            target_revision_id=target_revision_id,
             source_version_id=source_version.id,
             target_version_id=target_version.id,
             options=training_options,
@@ -652,8 +712,8 @@ async def create_training_job(
             )
             config = _build_runner_train_config(
                 job,
-                job_in.source_revision_id,
-                job_in.target_revision_id,
+                source_revision_id,
+                target_revision_id,
                 source_version.id,
                 target_version.id,
                 job.options,
@@ -697,7 +757,7 @@ async def create_training_job(
 
     assessments_by_id = await _load_assessments_for(training_jobs, db)
     readiness = await _compute_inference_readiness(
-        job_in.source_revision_id, job_in.target_revision_id, db
+        source_revision_id, target_revision_id, db
     )
 
     return TrainingResponse(
