@@ -528,10 +528,7 @@ async def _resolve_train_pair(
             if not version:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=(
-                        f"Bible version for {side} revision "
-                        f"{revision_id} not found"
-                    ),
+                    detail=f"Bible version for {side} revision {revision_id} not found",
                 )
             return revision, version
 
