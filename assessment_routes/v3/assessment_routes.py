@@ -179,7 +179,11 @@ async def get_assessments(
 
 # Helper function to call assessment runner
 async def call_assessment_runner(
-    assessment: AssessmentIn, return_all_results: bool, modal_env: str
+    assessment: AssessmentIn,
+    return_all_results: bool,
+    modal_env: str,
+    source_version_id: Optional[int] = None,
+    target_version_id: Optional[int] = None,
 ):
     logger.info(
         "Calling Modal runner",
@@ -203,6 +207,8 @@ async def call_assessment_runner(
         for key in ("first_vref", "last_vref"):
             if key in config["kwargs"]:
                 config[key] = config["kwargs"][key]
+    config["source_version_id"] = source_version_id
+    config["target_version_id"] = target_version_id
     config["return_all_results"] = return_all_results
     await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
 
@@ -216,7 +222,7 @@ async def add_assessment(
     ),
     use_eflomal: Optional[bool] = Query(
         None,
-        description="Run eflomal-based word alignment. Requires source_version_id and target_version_id.",
+        description="Run eflomal-based word alignment. Source/target version IDs are derived from reference_id/revision_id.",
     ),
     force: bool = Query(
         False,
@@ -237,7 +243,8 @@ async def add_assessment(
     - semantic-similarity (requires reference)
     - sentence-length
     - word-alignment (requires reference; can optionally run eflomal-based alignment
-      when `use_eflomal=true` and `source_version_id` and `target_version_id` are provided)
+      when `use_eflomal=true`. Source/target version IDs are derived from
+      reference_id and revision_id respectively.)
     - ngrams
     - tfidf
     - text-lengths
@@ -295,19 +302,37 @@ async def add_assessment(
         a.kwargs = combined_kwargs
         parsed_kwargs = combined_kwargs
 
-    # Eflomal word-alignment requires source and target version IDs
-    is_eflomal = a.kwargs and a.kwargs.get("use_eflomal")
+    # Eflomal word-alignment derives source/target version IDs from the
+    # reference and revision rows. Mapping per train_routes #620:
+    #   source_version_id ← bible_version_id of reference_id
+    #   target_version_id ← bible_version_id of revision_id
+    # Strict-bool check: a caller could route around the typed query param
+    # by passing `use_eflomal: 1` (or "true", etc.) via extra_kwargs. The
+    # dedup SQL uses JSONB containment which is strictly typed, so a
+    # truthy-but-non-bool value would silently bypass dedup. Reject it.
+    use_eflomal_kw = a.kwargs.get("use_eflomal") if a.kwargs else None
+    if use_eflomal_kw is not None and not isinstance(use_eflomal_kw, bool):
+        raise HTTPException(
+            status_code=400,
+            detail="use_eflomal must be a boolean.",
+        )
+    is_eflomal = use_eflomal_kw is True
+    source_version_id: Optional[int] = None
+    target_version_id: Optional[int] = None
     if is_eflomal:
         if a.type != "word-alignment":
             raise HTTPException(
                 status_code=400,
                 detail="use_eflomal is only valid for word-alignment assessments.",
             )
-        if a.source_version_id is None or a.target_version_id is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Eflomal word-alignment requires source_version_id and target_version_id.",
-            )
+        revision = await db.get(BibleRevision, a.revision_id)
+        if revision is None or revision.deleted:
+            raise HTTPException(status_code=404, detail="revision_id does not exist.")
+        reference = await db.get(BibleRevision, a.reference_id)
+        if reference is None or reference.deleted:
+            raise HTTPException(status_code=404, detail="reference_id does not exist.")
+        source_version_id = reference.bible_version_id
+        target_version_id = revision.bible_version_id
 
     # Check for already-completed assessment (force=true bypasses this)
     if not force:
@@ -461,7 +486,13 @@ async def add_assessment(
 
     # Dispatch to Modal runner (fire-and-forget via spawn)
     try:
-        await call_assessment_runner(a, return_all_results, resolved_modal_env)
+        await call_assessment_runner(
+            a,
+            return_all_results,
+            resolved_modal_env,
+            source_version_id=source_version_id,
+            target_version_id=target_version_id,
+        )
     except Exception as e:
         logger.error(
             "Modal runner dispatch failed",

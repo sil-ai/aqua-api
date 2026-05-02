@@ -284,8 +284,6 @@ class AssessmentIn(BaseModel):
     revision_id: int
     reference_id: Optional[int] = None
     type: AssessmentType
-    source_version_id: Optional[int] = None
-    target_version_id: Optional[int] = None
     kwargs: Optional[Dict[str, Any]] = None
 
     @field_validator("kwargs")
