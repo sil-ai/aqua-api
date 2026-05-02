@@ -8,6 +8,7 @@ from database.models import (
     Assessment,
     AssessmentResult,
     BibleRevision,
+    BibleVersion,
     NgramsTable,
     NgramVrefTable,
     TfidfPcaVector,
@@ -574,16 +575,55 @@ def test_create_training_job_version_id_skips_soft_deleted_revisions(
             assert job["source_revision_id"] == older_id
             assert job["target_revision_id"] == older_id
     finally:
-        # Always restore the flag so the module-scoped fixture stays valid
-        # for downstream tests.
+        # Always restore the flag and clean up queued assessments so the
+        # module-scoped fixture stays valid for downstream tests, even if
+        # an assertion above raised.
         db_session.expire_all()
         newer = (
             db_session.query(BibleRevision).filter(BibleRevision.id == newer_id).first()
         )
         newer.deleted = False
         db_session.commit()
+        _fail_queued_training_assessments(db_session)
 
-    _fail_queued_training_assessments(db_session)
+
+def test_create_training_job_revision_id_with_deleted_parent_version_returns_404(
+    client,
+    admin_token,
+    test_version_id,
+    test_revision_id,
+    db_session,
+):
+    """Mirrors the version_id branch's deleted-version check: if the caller
+    passes an explicit revision_id whose parent BibleVersion is soft-deleted,
+    we still 404. Soft-deletes the version, asserts, restores. Uses admin to
+    isolate this from the version-access path."""
+    version = (
+        db_session.query(BibleVersion)
+        .filter(BibleVersion.id == test_version_id)
+        .first()
+    )
+    version.deleted = True
+    db_session.commit()
+    try:
+        response = _post_train_with_payload(
+            client,
+            admin_token,
+            {
+                "source_revision_id": test_revision_id,
+                "target_revision_id": test_revision_id,
+            },
+        )
+        assert response.status_code == 404, response.text
+    finally:
+        db_session.expire_all()
+        version = (
+            db_session.query(BibleVersion)
+            .filter(BibleVersion.id == test_version_id)
+            .first()
+        )
+        version.deleted = False
+        db_session.commit()
 
 
 def test_create_training_job_explicit_revision_overrides_version_default(
