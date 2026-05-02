@@ -44,9 +44,13 @@ from models import (
     AssessmentStatus,
     InferenceReadiness,
     LexemeCardOut,
-    NgramResult,
+    NgramCorpusBlock,
+    NgramCorpusMatches,
+    NgramMatch,
+    NgramVerseHit,
     Result_v2,
     TfidfNeighbour,
+    TfidfNeighboursBlock,
     TrainingJobIn,
     TrainingJobOut,
     TrainingResponse,
@@ -56,6 +60,7 @@ from models import (
     TrainingType,
     WordAlignment,
 )
+
 from security_routes.auth_routes import get_current_user
 from utils.logging_config import setup_logger
 from utils.verse_range_utils import merge_verse_ranges
@@ -234,6 +239,80 @@ async def _compute_inference_readiness(
             pending_training=pending,
         )
     return readiness
+
+
+async def _resolve_source_side_assessment_id(
+    source_revision_id: int, assessment_type: str, db: AsyncSession
+) -> Optional[int]:
+    """Latest finished `assessment_type` assessment whose revision_id matches
+    the session's source_revision_id, or None when no source-side training
+    exists. Mirrors the predict-side cascade: source-side training is a
+    separate session that trained on the source revision."""
+    stmt = (
+        select(Assessment.id)
+        .where(
+            Assessment.revision_id == source_revision_id,
+            Assessment.type == assessment_type,
+            Assessment.status == ASSESSMENT_FINISHED_VALUE,
+            Assessment.deleted.is_not(True),
+        )
+        .order_by(Assessment.end_time.desc().nullslast(), Assessment.id.desc())
+        .limit(1)
+    )
+    return await db.scalar(stmt)
+
+
+async def _load_verse_text_by_vref(
+    revision_id: int, vrefs: List[str], db: AsyncSession
+) -> dict[str, str]:
+    """Bulk-fetch verse text under `revision_id` for the given vrefs."""
+    if not vrefs:
+        return {}
+    rows = await db.execute(
+        select(VerseText.verse_reference, VerseText.text).where(
+            VerseText.revision_id == revision_id,
+            VerseText.verse_reference.in_(vrefs),
+        )
+    )
+    return {row[0]: row[1] for row in rows.all() if row[1] is not None}
+
+
+async def _gather_ngram_buckets(
+    assessment_id: int, page_vrefs: List[str], db: AsyncSession
+) -> dict[int, dict]:
+    """Return {ngram_id: {ngram, ngram_size, vrefs}} for ngrams under
+    `assessment_id` that fire on at least one verse in `page_vrefs`. Each
+    bucket carries the ngram's full vrefs list (not just the page-vref
+    intersection) — same shape predict's match.verses uses."""
+    if not page_vrefs:
+        return {}
+    matching_subq = (
+        select(NgramsTable.id)
+        .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
+        .where(
+            NgramsTable.assessment_id == assessment_id,
+            NgramVrefTable.vref.in_(page_vrefs),
+        )
+        .distinct()
+        .subquery()
+    )
+    full_q = (
+        select(
+            NgramsTable.id,
+            NgramsTable.ngram,
+            NgramsTable.ngram_size,
+            NgramVrefTable.vref,
+        )
+        .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
+        .join(matching_subq, matching_subq.c.id == NgramsTable.id)
+    )
+    buckets: dict[int, dict] = {}
+    for nid, ngram, size, ngram_vref in (await db.execute(full_q)).all():
+        b = buckets.setdefault(
+            nid, {"ngram": ngram, "ngram_size": size, "vrefs": []}
+        )
+        b["vrefs"].append(ngram_vref)
+    return buckets
 
 
 async def _build_lexeme_card_matches_by_vref(
@@ -842,10 +921,23 @@ async def get_training_session_results(
     per-vref results for every completed job in the session.
 
     Per vref: semantic_similarity score (one row), word_alignment per-word
-    rows (multiple) plus a verse-level word_alignment_score, and tfidf
-    nearest-neighbour vrefs from the source corpus. Ngrams are returned at
-    the top level — each ngram has many vrefs, so nesting them per verse
-    would duplicate the same ngram across every verse it appears in.
+    rows plus a verse-level word_alignment_score, tfidf
+    `{target_neighbours, source_neighbours}` nearest-neighbour blocks
+    (one block per side, each neighbour hydrated with both revisions'
+    text), and ngrams `{target_corpus, source_corpus}` blocks listing
+    trained ngrams that fire on this verse with their full
+    cross-corpus vrefs lists. The per-vref tfidf and ngrams shapes
+    mirror the per-pair shape of `/v3/predict` so callers can share a
+    parser between the two endpoints; predict's cross-axis ngrams
+    (target ngrams in source text and vice versa) are not returned —
+    train-status reads stored corpus hits only.
+
+    Source-side ngrams/tfidf are looked up as the latest finished
+    assessment of the same type whose revision_id equals this session's
+    source_revision_id (typically created by a separate training
+    session that swapped source/target). When no source-side training
+    is available, `source_corpus` is `None` for ngrams and
+    `source_neighbours` is `[]` for tfidf.
 
     Agent_critique adds `lexeme_cards` per vref: when the session
     includes an agent-critique training type, each vref carries the
@@ -902,6 +994,23 @@ async def get_training_session_results(
     ngrams_id = completed_assessment_id_by_type.get(TrainingType.ngrams.value)
     tfidf_id = completed_assessment_id_by_type.get(TrainingType.tfidf.value)
 
+    # Source-side assessments come from a separate training session whose
+    # target was this session's source revision. Looked up only when the
+    # corresponding type is part of *this* session — otherwise the user is
+    # not asking for that type's results.
+    session_source_revision_id = jobs[0].source_revision_id
+    session_target_revision_id = jobs[0].target_revision_id
+    source_ngrams_id: Optional[int] = None
+    if ngrams_id is not None:
+        source_ngrams_id = await _resolve_source_side_assessment_id(
+            session_source_revision_id, TrainingType.ngrams.value, db
+        )
+    source_tfidf_id: Optional[int] = None
+    if tfidf_id is not None:
+        source_tfidf_id = await _resolve_source_side_assessment_id(
+            session_source_revision_id, TrainingType.tfidf.value, db
+        )
+
     # vref universe = distinct vrefs across the per-vref result tables for
     # all completed types in the session, with optional book/chapter/verse
     # scoping. Carries (book, chapter, verse) so we can canonical-sort via
@@ -956,28 +1065,62 @@ async def get_training_session_results(
             )
         )
 
-    if tfidf_id is not None:
-        tfidf_q = (
-            select(
-                TfidfPcaVector.vref,
-                VerseReference.book_reference.label("book"),
-                func.split_part(VerseReference.chapter, " ", 2)
-                .cast(Integer)
-                .label("chapter"),
-                VerseReference.number.label("verse"),
-            )
-            .join(VerseReference, VerseReference.full_verse_id == TfidfPcaVector.vref)
-            .where(TfidfPcaVector.assessment_id == tfidf_id)
-        )
+    def _scope_via_verse_reference(q):
         if book is not None:
-            tfidf_q = tfidf_q.where(VerseReference.book_reference == book)
+            q = q.where(VerseReference.book_reference == book)
         if chapter is not None:
-            tfidf_q = tfidf_q.where(
+            q = q.where(
                 func.split_part(VerseReference.chapter, " ", 2).cast(Integer) == chapter
             )
         if verse is not None:
-            tfidf_q = tfidf_q.where(VerseReference.number == verse)
-        per_vref_subqueries.append(tfidf_q)
+            q = q.where(VerseReference.number == verse)
+        return q
+
+    for assessment_id in (tfidf_id, source_tfidf_id):
+        if assessment_id is None:
+            continue
+        per_vref_subqueries.append(
+            _scope_via_verse_reference(
+                select(
+                    TfidfPcaVector.vref,
+                    VerseReference.book_reference.label("book"),
+                    func.split_part(VerseReference.chapter, " ", 2)
+                    .cast(Integer)
+                    .label("chapter"),
+                    VerseReference.number.label("verse"),
+                )
+                .join(
+                    VerseReference,
+                    VerseReference.full_verse_id == TfidfPcaVector.vref,
+                )
+                .where(TfidfPcaVector.assessment_id == assessment_id)
+            )
+        )
+
+    # Ngrams contribute to pagination too — a session with only ngrams
+    # training would otherwise have no page vrefs. Includes source-side
+    # ngrams so a verse only covered by source-side hits still paginates.
+    for assessment_id in (ngrams_id, source_ngrams_id):
+        if assessment_id is None:
+            continue
+        per_vref_subqueries.append(
+            _scope_via_verse_reference(
+                select(
+                    NgramVrefTable.vref,
+                    VerseReference.book_reference.label("book"),
+                    func.split_part(VerseReference.chapter, " ", 2)
+                    .cast(Integer)
+                    .label("chapter"),
+                    VerseReference.number.label("verse"),
+                )
+                .join(NgramsTable, NgramsTable.id == NgramVrefTable.ngram_id)
+                .join(
+                    VerseReference,
+                    VerseReference.full_verse_id == NgramVrefTable.vref,
+                )
+                .where(NgramsTable.assessment_id == assessment_id)
+            )
+        )
 
     page_vrefs: List[str] = []
     total_count = 0
@@ -990,6 +1133,10 @@ async def get_training_session_results(
         # Apply the BookReference join up front so total_count and the page
         # both see the same row set — without it, vrefs whose `book` doesn't
         # match a BookReference row would be counted but never paginated.
+        # `distinct` covers the single-subquery case: SQLAlchemy emits no
+        # UNION wrapper for a one-element set, so any internal duplicates
+        # (e.g. one ngrams subquery that emits one row per (ngram, vref))
+        # would otherwise leak into total_count and the page.
         joined_subq = (
             select(
                 union_subq.c.vref,
@@ -998,6 +1145,7 @@ async def get_training_session_results(
                 union_subq.c.verse,
             )
             .join(BookReference, BookReference.abbreviation == union_subq.c.book)
+            .distinct()
             .subquery()
         )
         count_result = await db.execute(select(func.count()).select_from(joined_subq))
@@ -1092,13 +1240,18 @@ async def get_training_session_results(
                 hide=r.hide or False,
             )
 
-    tfidf_by_vref: dict[str, List[TfidfNeighbour]] = {}
-    if tfidf_id is not None and page_vrefs:
+    # tfidf nearest-neighbour search runs once per side; rows are kept raw
+    # here so verse-text hydration can fetch a single union of neighbour
+    # vrefs against each revision afterwards (one /verse_text query per
+    # revision, regardless of how many neighbours were returned).
+    tfidf_target_raw: dict[str, list[tuple[str, float]]] = {}
+    tfidf_source_raw: dict[str, list[tuple[str, float]]] = {}
+    if (tfidf_id is not None or source_tfidf_id is not None) and page_vrefs:
         nn_query = text(
             """
             SELECT q.vref AS query_vref,
                    nn.vref AS neighbour_vref,
-                   nn.cosine_similarity AS score
+                   nn.cosine_similarity AS similarity
             FROM tfidf_pca_vector AS q
             JOIN LATERAL (
                 SELECT c.vref,
@@ -1114,20 +1267,124 @@ async def get_training_session_results(
             ORDER BY q.vref, nn.cosine_similarity DESC
             """
         ).bindparams(bindparam("page_vrefs", expanding=True))
-        rows = await db.execute(
-            nn_query,
-            {
-                "assessment_id": tfidf_id,
-                "page_vrefs": page_vrefs,
-                "limit": tfidf_top_k,
-            },
-        )
-        for row in rows.all():
-            tfidf_by_vref.setdefault(row.query_vref, []).append(
-                TfidfNeighbour(
-                    vref=row.neighbour_vref,
-                    score=float(row.score) if row.score is not None else 0.0,
+
+        async def _fetch_tfidf_raw(assessment_id: int) -> dict[str, list[tuple[str, float]]]:
+            rows = await db.execute(
+                nn_query,
+                {
+                    "assessment_id": assessment_id,
+                    "page_vrefs": page_vrefs,
+                    "limit": tfidf_top_k,
+                },
+            )
+            buckets: dict[str, list[tuple[str, float]]] = {}
+            for row in rows.all():
+                sim = float(row.similarity) if row.similarity is not None else 0.0
+                buckets.setdefault(row.query_vref, []).append(
+                    (row.neighbour_vref, sim)
                 )
+            return buckets
+
+        if tfidf_id is not None:
+            tfidf_target_raw = await _fetch_tfidf_raw(tfidf_id)
+        if source_tfidf_id is not None:
+            tfidf_source_raw = await _fetch_tfidf_raw(source_tfidf_id)
+
+    target_ngram_buckets: dict[int, dict] = {}
+    source_ngram_buckets: dict[int, dict] = {}
+    if ngrams_id is not None and page_vrefs:
+        target_ngram_buckets = await _gather_ngram_buckets(ngrams_id, page_vrefs, db)
+    if source_ngrams_id is not None and page_vrefs:
+        source_ngram_buckets = await _gather_ngram_buckets(
+            source_ngrams_id, page_vrefs, db
+        )
+
+    # Hydrate verse text once for the union of every vref the response
+    # references — page vrefs themselves, all tfidf neighbour vrefs, and
+    # every vref appearing in any ngram match's full verses list.
+    text_vrefs: set[str] = set(page_vrefs)
+    for raw in (tfidf_target_raw, tfidf_source_raw):
+        for neighbours in raw.values():
+            for nb_vref, _ in neighbours:
+                text_vrefs.add(nb_vref)
+    for buckets in (target_ngram_buckets, source_ngram_buckets):
+        for b in buckets.values():
+            text_vrefs.update(b["vrefs"])
+    text_vrefs_list = sorted(text_vrefs)
+    target_text_map = await _load_verse_text_by_vref(
+        session_target_revision_id, text_vrefs_list, db
+    )
+    source_text_map = await _load_verse_text_by_vref(
+        session_source_revision_id, text_vrefs_list, db
+    )
+
+    def _build_neighbours(
+        raw: list[tuple[str, float]],
+    ) -> List[TfidfNeighbour]:
+        return [
+            TfidfNeighbour(
+                vref=nb_vref,
+                similarity=sim,
+                target_revision_text=target_text_map.get(nb_vref),
+                source_revision_text=source_text_map.get(nb_vref),
+            )
+            for nb_vref, sim in raw
+        ]
+
+    tfidf_by_vref: dict[str, TfidfNeighboursBlock] = {}
+    if tfidf_id is not None or source_tfidf_id is not None:
+        for v in page_vrefs:
+            tgt = tfidf_target_raw.get(v, [])
+            src = tfidf_source_raw.get(v, [])
+            if not tgt and not src:
+                continue
+            tfidf_by_vref[v] = TfidfNeighboursBlock(
+                target_neighbours=_build_neighbours(tgt),
+                source_neighbours=_build_neighbours(src),
+            )
+
+    def _bucket_to_match(nid: int, b: dict) -> NgramMatch:
+        return NgramMatch(
+            id=nid,
+            ngram=b["ngram"],
+            ngram_size=b["ngram_size"],
+            verses=[
+                NgramVerseHit(
+                    vref=v,
+                    target_revision_text=target_text_map.get(v),
+                    source_revision_text=source_text_map.get(v),
+                )
+                for v in b["vrefs"]
+            ],
+        )
+
+    def _matches_per_page_vref(
+        buckets: dict[int, dict],
+    ) -> dict[str, List[NgramMatch]]:
+        page_set = set(page_vrefs)
+        per_vref: dict[str, List[NgramMatch]] = {v: [] for v in page_vrefs}
+        for nid, b in buckets.items():
+            match = _bucket_to_match(nid, b)
+            for vref in b["vrefs"]:
+                if vref in page_set:
+                    per_vref[vref].append(match)
+        return per_vref
+
+    target_ngram_matches_by_vref = _matches_per_page_vref(target_ngram_buckets)
+    source_ngram_matches_by_vref = _matches_per_page_vref(source_ngram_buckets)
+
+    ngrams_by_vref: dict[str, NgramCorpusBlock] = {}
+    if ngrams_id is not None:
+        for v in page_vrefs:
+            tgt_matches = target_ngram_matches_by_vref.get(v, [])
+            src_matches = source_ngram_matches_by_vref.get(v, [])
+            ngrams_by_vref[v] = NgramCorpusBlock(
+                target_corpus=NgramCorpusMatches(matches=tgt_matches),
+                source_corpus=(
+                    NgramCorpusMatches(matches=src_matches)
+                    if source_ngrams_id is not None
+                    else None
+                ),
             )
 
     # Lexeme cards: only attach when agent-critique is part of the
@@ -1164,69 +1421,12 @@ async def get_training_session_results(
             semantic_similarity=sem_sim_by_vref.get(v),
             word_alignment=word_align_by_vref.get(v, []),
             word_alignment_score=word_align_score_by_vref.get(v),
-            tfidf=tfidf_by_vref.get(v, []),
+            tfidf=tfidf_by_vref.get(v),
+            ngrams=ngrams_by_vref.get(v),
             lexeme_cards=lexeme_cards_by_vref.get(v, []),
         )
         for v in page_vrefs
     ]
-
-    # Ngrams: top-level, filtered to ngrams that appear in at least one vref
-    # in the requested book/chapter/verse window (or all ngrams when no
-    # filter). Returns each ngram's full vrefs list, not just the matching
-    # ones, so the client sees the same shape as /v3/ngrams_result.
-    # `book` was validated against BookReference above, so the LIKE
-    # patterns can't smuggle SQL wildcards.
-    ngrams_list: List[NgramResult] = []
-    if ngrams_id is not None:
-        matching_q = (
-            select(NgramsTable.id)
-            .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
-            .where(NgramsTable.assessment_id == ngrams_id)
-            .distinct()
-        )
-        if verse is not None:
-            matching_q = matching_q.where(
-                NgramVrefTable.vref == f"{book} {chapter}:{verse}"
-            )
-        elif chapter is not None:
-            matching_q = matching_q.where(
-                NgramVrefTable.vref.like(f"{book} {chapter}:%")
-            )
-        elif book is not None:
-            matching_q = matching_q.where(NgramVrefTable.vref.like(f"{book} %"))
-
-        # Keep matching_q as a subquery and join in SQL rather than
-        # materializing IDs into a Python list and re-binding via IN(...).
-        # For large filter windows the IN list could blow past Postgres'
-        # parameter limit and doubles the round-trip count.
-        matching_subq = matching_q.subquery()
-        full_q = (
-            select(
-                NgramsTable.id,
-                NgramsTable.ngram,
-                NgramsTable.ngram_size,
-                NgramVrefTable.vref,
-            )
-            .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
-            .join(matching_subq, matching_subq.c.id == NgramsTable.id)
-        )
-        buckets: dict[int, dict] = {}
-        for nid, ngram, size, ngram_vref in (await db.execute(full_q)).all():
-            b = buckets.setdefault(
-                nid,
-                {"ngram": ngram, "ngram_size": size, "vrefs": []},
-            )
-            b["vrefs"].append(ngram_vref)
-        ngrams_list = [
-            NgramResult(
-                id=nid,
-                assessment_id=ngrams_id,
-                ngram=b["ngram"],
-                ngram_size=b["ngram_size"],
-                vrefs=b["vrefs"],
-            )
-            for nid, b in buckets.items()
-        ]
 
     return TrainingSessionResultsResponse(
         session_id=session_id,
@@ -1238,7 +1438,6 @@ async def get_training_session_results(
             page=page,
             page_size=page_size,
         ),
-        ngrams=ngrams_list,
         lexeme_cards_truncated=lexeme_cards_truncated,
     )
 

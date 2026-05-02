@@ -1336,7 +1336,6 @@ def test_session_results_in_flight_returns_status_only(
     assert data["session_id"] == session_id
     assert data["results"]["items"] == []
     assert data["results"]["total_count"] == 0
-    assert data["ngrams"] == []
     types_returned = {j["type"] for j in data["training_jobs"]}
     assert types_returned == {"semantic-similarity", "word-alignment"}
 
@@ -1394,7 +1393,6 @@ def test_session_results_interleaves_completed_apps(
     assert response.status_code == 200
     data = response.json()
     assert data["results"]["total_count"] == 2
-    assert data["ngrams"] == []  # ngrams job still in-flight
 
     by_vref = {b["vref"]: b for b in data["results"]["items"]}
     assert set(by_vref) == {"GEN 1:1", "GEN 1:2"}
@@ -1635,11 +1633,13 @@ def test_session_results_filter_validation(
     )
 
 
-def test_session_results_ngrams_top_level(
+def test_session_results_ngrams_per_vref(
     client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):
-    """Ngrams come back at the top level (not nested per vref) and are
-    filtered to ones whose vrefs intersect the requested window."""
+    """Per-vref ngrams mirror the predict shape: each page vref carries an
+    `ngrams.target_corpus.matches` list; each match has `verses` with the
+    ngram's full vref list. `source_corpus` is None when no source-side
+    training is available."""
     create_resp = _create_training_jobs_via_api(
         client,
         regular_token1,
@@ -1662,30 +1662,40 @@ def test_session_results_ngrams_top_level(
         ],
     )
 
-    # No filter: all ngrams come back.
     full = client.get(
         f"{prefix}/train/status/{session_id}/results",
         headers=_auth_headers(regular_token1),
     ).json()
-    assert full["results"]["items"] == []  # ngrams don't contribute to per-vref bucket
-    assert full["results"]["total_count"] == 0
-    assert {n["ngram"] for n in full["ngrams"]} == {
-        "in the",
-        "god created",
-        "the people",
-    }
+    # Ngrams now contribute to pagination: each distinct vref the ngram set
+    # fires on shows up as a page row.
+    assert full["results"]["total_count"] == 3
+    by_vref = {b["vref"]: b for b in full["results"]["items"]}
+    assert set(by_vref) == {"GEN 1:1", "GEN 1:2", "EXO 1:1"}
 
-    # GEN scope: only ngrams with at least one GEN vref.
+    gen_1_1 = by_vref["GEN 1:1"]["ngrams"]
+    assert gen_1_1["source_corpus"] is None  # no source-side ngrams trained
+    matches_by_ngram = {m["ngram"]: m for m in gen_1_1["target_corpus"]["matches"]}
+    assert set(matches_by_ngram) == {"in the", "god created"}
+    in_the = matches_by_ngram["in the"]
+    assert in_the["ngram_size"] == 2
+    assert sorted(v["vref"] for v in in_the["verses"]) == ["GEN 1:1", "GEN 1:2"]
+    # No VerseText seeded → both revision text fields are None but always present.
+    assert all(
+        "target_revision_text" in v and "source_revision_text" in v
+        for v in in_the["verses"]
+    )
+
+    # GEN 1:2 sees only the "in the" ngram (the only ngram covering this verse).
+    gen_1_2_matches = by_vref["GEN 1:2"]["ngrams"]["target_corpus"]["matches"]
+    assert {m["ngram"] for m in gen_1_2_matches} == {"in the"}
+
+    # GEN scope: only verses in GEN show up; EXO drops out.
     gen_only = client.get(
         f"{prefix}/train/status/{session_id}/results",
         params={"book": "GEN"},
         headers=_auth_headers(regular_token1),
     ).json()
-    assert {n["ngram"] for n in gen_only["ngrams"]} == {"in the", "god created"}
-    # Even when filtered, each ngram carries its full vrefs list (matches
-    # the existing /v3/ngrams_result shape).
-    in_the = next(n for n in gen_only["ngrams"] if n["ngram"] == "in the")
-    assert sorted(in_the["vrefs"]) == ["GEN 1:1", "GEN 1:2"]
+    assert {b["vref"] for b in gen_only["results"]["items"]} == {"GEN 1:1", "GEN 1:2"}
 
 
 def test_session_results_includes_tfidf_neighbours_when_trained(
@@ -1729,11 +1739,14 @@ def test_session_results_includes_tfidf_neighbours_when_trained(
     assert set(by_vref) == {"GEN 1:1", "GEN 1:2", "GEN 1:3"}
     assert by_vref["GEN 1:1"]["semantic_similarity"] is None
     assert by_vref["GEN 1:1"]["word_alignment"] == []
-    assert [n["vref"] for n in by_vref["GEN 1:1"]["tfidf"]] == [
+    tfidf = by_vref["GEN 1:1"]["tfidf"]
+    assert [n["vref"] for n in tfidf["target_neighbours"]] == [
         "GEN 1:2",
         "GEN 1:3",
     ]
-    assert by_vref["GEN 1:1"]["tfidf"][0]["score"] == pytest.approx(0.8)
+    assert tfidf["target_neighbours"][0]["similarity"] == pytest.approx(0.8)
+    # No source-side tfidf training → empty source_neighbours, not None.
+    assert tfidf["source_neighbours"] == []
 
 
 def test_session_results_tfidf_empty_when_not_trained(
@@ -1759,7 +1772,9 @@ def test_session_results_tfidf_empty_when_not_trained(
         f"{prefix}/train/status/{session_id}/results",
         headers=_auth_headers(regular_token1),
     ).json()
-    assert data["results"]["items"][0]["tfidf"] == []
+    # No tfidf training in this session → tfidf is None, distinguishing
+    # "not trained" from "trained but no neighbours found".
+    assert data["results"]["items"][0]["tfidf"] is None
 
 
 def test_session_results_tfidf_top_k_param(
@@ -1797,7 +1812,179 @@ def test_session_results_tfidf_top_k_param(
         headers=_auth_headers(regular_token1),
     ).json()
     by_vref = {b["vref"]: b for b in data["results"]["items"]}
-    assert [n["vref"] for n in by_vref["GEN 1:1"]["tfidf"]] == ["GEN 1:2"]
+    assert [n["vref"] for n in by_vref["GEN 1:1"]["tfidf"]["target_neighbours"]] == [
+        "GEN 1:2"
+    ]
+
+
+def test_session_results_picks_up_source_side_ngrams_and_tfidf(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """When a separate training session has trained on the session's
+    source revision (i.e. swapped source/target), train-status enriches
+    results with a `source_corpus` ngrams block and `source_neighbours`
+    tfidf list — matching the predict shape."""
+    # Session A: source=R1, target=R2 (the session being inspected).
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_target_side"},
+        apps=["ngrams", "tfidf"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    target_jobs = {j["type"]: j for j in payload["training_jobs"]}
+    _advance_assessment_to_finished(
+        client, regular_token1, target_jobs["ngrams"]["assessment_id"]
+    )
+    _advance_assessment_to_finished(
+        client, regular_token1, target_jobs["tfidf"]["assessment_id"]
+    )
+
+    # Session B (swapped): source=R2, target=R1. Its assessments have
+    # revision_id=R1, which is exactly what _resolve_source_side_assessment_id
+    # looks up when serving session A's results.
+    swap_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id_2,
+        test_revision_id,
+        options={"tag": "results_source_side"},
+        apps=["ngrams", "tfidf"],
+    )
+    swap_jobs = {j["type"]: j for j in swap_resp.json()["training_jobs"]}
+    _advance_assessment_to_finished(
+        client, regular_token1, swap_jobs["ngrams"]["assessment_id"]
+    )
+    _advance_assessment_to_finished(
+        client, regular_token1, swap_jobs["tfidf"]["assessment_id"]
+    )
+
+    _seed_ngrams(
+        db_session,
+        target_jobs["ngrams"]["assessment_id"],
+        [("target side", 2, ["GEN 1:1"])],
+    )
+    _seed_ngrams(
+        db_session,
+        swap_jobs["ngrams"]["assessment_id"],
+        [("source side", 2, ["GEN 1:1"])],
+    )
+
+    def vec(x, y):
+        return [x, y] + [0.0] * 298
+
+    _seed_tfidf_vectors(
+        db_session,
+        target_jobs["tfidf"]["assessment_id"],
+        [
+            ("GEN 1:1", vec(1.0, 0.0)),
+            ("GEN 1:2", vec(0.8, 0.6)),
+        ],
+    )
+    _seed_tfidf_vectors(
+        db_session,
+        swap_jobs["tfidf"]["assessment_id"],
+        [
+            ("GEN 1:1", vec(0.0, 1.0)),
+            ("GEN 1:3", vec(0.6, 0.8)),
+        ],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+
+    gen_1_1_ngrams = by_vref["GEN 1:1"]["ngrams"]
+    assert {m["ngram"] for m in gen_1_1_ngrams["target_corpus"]["matches"]} == {
+        "target side"
+    }
+    # source_corpus block is populated (not None) once a source-side ngrams
+    # assessment is found — distinguishes "not trained" from "trained, no hits".
+    assert gen_1_1_ngrams["source_corpus"] is not None
+    assert {m["ngram"] for m in gen_1_1_ngrams["source_corpus"]["matches"]} == {
+        "source side"
+    }
+
+    gen_1_1_tfidf = by_vref["GEN 1:1"]["tfidf"]
+    assert {n["vref"] for n in gen_1_1_tfidf["target_neighbours"]} == {"GEN 1:2"}
+    assert {n["vref"] for n in gen_1_1_tfidf["source_neighbours"]} == {"GEN 1:3"}
+
+
+def test_session_results_hydrates_verse_text(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Per-vref ngrams and tfidf neighbours carry both revisions' verse
+    text alongside the vref — matching the per-pair shape predict returns."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_verse_text"},
+        apps=["ngrams", "tfidf"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    jobs_by_type = {j["type"]: j for j in payload["training_jobs"]}
+    _advance_assessment_to_finished(
+        client, regular_token1, jobs_by_type["ngrams"]["assessment_id"]
+    )
+    _advance_assessment_to_finished(
+        client, regular_token1, jobs_by_type["tfidf"]["assessment_id"]
+    )
+
+    _seed_ngrams(
+        db_session,
+        jobs_by_type["ngrams"]["assessment_id"],
+        [("in the", 2, ["GEN 1:1", "GEN 1:2"])],
+    )
+
+    def vec(x, y):
+        return [x, y] + [0.0] * 298
+
+    _seed_tfidf_vectors(
+        db_session,
+        jobs_by_type["tfidf"]["assessment_id"],
+        [
+            ("GEN 1:1", vec(1.0, 0.0)),
+            ("GEN 1:2", vec(0.8, 0.6)),
+        ],
+    )
+
+    # Source revision = test_revision_id, target = test_revision_id_2.
+    _seed_verse_text(
+        db_session,
+        test_revision_id,
+        [("GEN 1:1", "In the beginning"), ("GEN 1:2", "and the earth")],
+    )
+    _seed_verse_text(
+        db_session,
+        test_revision_id_2,
+        [("GEN 1:1", "Pachiyambi"), ("GEN 1:2", "ndi dziko lapansi")],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+
+    in_the_match = by_vref["GEN 1:1"]["ngrams"]["target_corpus"]["matches"][0]
+    verses_by_vref = {v["vref"]: v for v in in_the_match["verses"]}
+    assert verses_by_vref["GEN 1:1"]["target_revision_text"] == "Pachiyambi"
+    assert verses_by_vref["GEN 1:1"]["source_revision_text"] == "In the beginning"
+    assert verses_by_vref["GEN 1:2"]["target_revision_text"] == "ndi dziko lapansi"
+    assert verses_by_vref["GEN 1:2"]["source_revision_text"] == "and the earth"
+
+    nb = by_vref["GEN 1:1"]["tfidf"]["target_neighbours"][0]
+    assert nb["vref"] == "GEN 1:2"
+    assert nb["target_revision_text"] == "ndi dziko lapansi"
+    assert nb["source_revision_text"] == "and the earth"
 
 
 def _seed_lexeme_cards(db_session, source_version_id, target_version_id, cards):
