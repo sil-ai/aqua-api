@@ -503,15 +503,23 @@ async def _latest_revision_for_version(
 
 
 async def _resolve_train_pair(
-    job_in: TrainingJobIn, db: AsyncSession
+    job_in: TrainingJobIn,
+    accessible_version_ids: Optional[List[int]],
+    db: AsyncSession,
 ) -> tuple[BibleRevision, BibleRevision, BibleVersion, BibleVersion]:
     """Resolve the (source, target) training pair from the request.
 
     Each side is identified by either revision_id (explicit) or version_id
-    (resolves to the latest non-deleted revision for that version). When a
-    revision_id is given, the linked version is loaded; when a version_id
-    is given, the latest revision is looked up. Raises 404 if any
-    referenced row is missing or the version has no revisions.
+    (resolves to the latest non-deleted revision for that version). Both
+    branches reject soft-deleted rows on either side of the revision/version
+    pair so training never targets a row a user has chosen to remove.
+
+    `accessible_version_ids` is None for admins (no scoping). For non-admins
+    it's the list of versions they can access; the version_id branch fails
+    with 403 *before* checking row existence, so a probing user can't tell
+    "version doesn't exist" from "version exists but you can't see it"
+    based on this endpoint alone. Raises 404 if any referenced row is
+    missing or the version has no revisions to train on.
     """
 
     async def _resolve_side(
@@ -525,13 +533,23 @@ async def _resolve_train_pair(
                     detail=f"{side.capitalize()} revision {revision_id} not found",
                 )
             version = await db.get(BibleVersion, revision.bible_version_id)
-            if not version:
+            if not version or version.deleted:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Bible version for {side} revision {revision_id} not found",
                 )
             return revision, version
 
+        # version_id branch: check access *before* hitting the DB so a
+        # non-admin probing arbitrary IDs can't learn version existence.
+        if (
+            accessible_version_ids is not None
+            and version_id not in accessible_version_ids
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Not authorized to access {side} version {version_id}",
+            )
         version = await db.get(BibleVersion, version_id)
         if not version or version.deleted:
             raise HTTPException(
@@ -569,20 +587,25 @@ async def create_training_job(
     The pair is identified by version_id (latest non-deleted revision is
     resolved) or by revision_id when a specific revision is required.
     """
+    accessible_version_ids = await _get_accessible_version_ids(current_user, db)
     source_rev, target_rev, source_version, target_version = await _resolve_train_pair(
-        job_in, db
+        job_in, accessible_version_ids, db
     )
     source_revision_id = source_rev.id
     target_revision_id = target_rev.id
 
-    # Auth: non-admin users must have group access to both bible versions
-    if not current_user.is_admin:
-        version_ids = await _get_accessible_version_ids(current_user, db)
-        if source_version.id not in version_ids or target_version.id not in version_ids:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to access one or both bible versions for training",
-            )
+    # Belt-and-suspenders: the version_id branch in _resolve_train_pair
+    # already gated on access for non-admins; this catches the revision_id
+    # branch (where access can't be checked until we know the parent
+    # version) and any future paths that add new resolution shapes.
+    if accessible_version_ids is not None and (
+        source_version.id not in accessible_version_ids
+        or target_version.id not in accessible_version_ids
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to access one or both bible versions for training",
+        )
 
     modal_env = os.getenv("MODAL_ENV", "main")
     session_id = str(uuid.uuid4())

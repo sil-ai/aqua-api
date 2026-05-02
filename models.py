@@ -1101,6 +1101,17 @@ class TrainingJobIn(BaseModel):
     revision is required. Exactly one of (version_id, revision_id) must be
     provided per side."""
 
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_version_id": 1,
+                "target_version_id": 2,
+                "options": {"use_eflomal": True},
+                "apps": ["word-alignment", "tfidf"],
+            }
+        }
+    }
+
     source_version_id: Optional[int] = None
     target_version_id: Optional[int] = None
     source_revision_id: Optional[int] = None
@@ -1124,16 +1135,6 @@ class TrainingJobIn(BaseModel):
                 "Provide exactly one of target_version_id or target_revision_id"
             )
         return self
-
-    model_config = {
-        "json_schema_extra": {
-            "example": {
-                "source_version_id": 1,
-                "target_version_id": 2,
-                "apps": ["word-alignment", "tfidf"],
-            }
-        }
-    }
 
 
 class TrainingJobOut(BaseModel):
