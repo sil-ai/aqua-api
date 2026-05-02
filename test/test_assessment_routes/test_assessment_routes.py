@@ -554,7 +554,8 @@ def test_duplicate_assessment_different_kwargs_allowed(
         )
         assert second.status_code == 200
 
-        # Same kwargs as first should still be blocked.
+        # Re-submitting kwargs that match an existing in-progress
+        # assessment should still be blocked.
         third = client.post(
             f"{prefix}/assessment",
             params={
@@ -565,6 +566,124 @@ def test_duplicate_assessment_different_kwargs_allowed(
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
         assert third.status_code == 409
+
+
+def test_duplicate_assessment_kwargs_vs_none_allowed(
+    client, regular_token1, db_session, test_db_session
+):
+    """An in-progress assessment with kwargs should not block one without (and vice versa)."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        with_kwargs = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"top_k": 5}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert with_kwargs.status_code == 200
+
+        without_kwargs = client.post(
+            f"{prefix}/assessment",
+            params={"revision_id": revision_id, "type": "sentence-length"},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert without_kwargs.status_code == 200
+
+        # And the same is true for an empty-dict kwargs (treated as no kwargs).
+        empty_kwargs = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": "{}",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        # Empty dict normalizes to None, so this collides with the no-kwargs row.
+        assert empty_kwargs.status_code == 409
+
+
+def test_duplicate_assessment_kwargs_key_order_blocked(
+    client, regular_token1, db_session, test_db_session
+):
+    """JSONB equality is structural: same keys/values in different order should 409."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"a": 1, "b": 2}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "extra_kwargs": '{"b": 2, "a": 1}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409
+
+
+def test_duplicate_assessment_legacy_sql_null_kwargs_blocked(
+    client, regular_token1, db_session, test_db_session
+):
+    """A pre-existing row with SQL NULL kwargs (not JSON null) still blocks a no-kwargs duplicate."""
+    from sqlalchemy import text
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = Mock(status_code=200)
+
+        first = client.post(
+            f"{prefix}/assessment",
+            params={"revision_id": revision_id, "type": "sentence-length"},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.status_code == 200
+        first_id = first.json()[0]["id"]
+
+        # Force the row's kwargs to genuine SQL NULL (the ORM stores Python
+        # None as the JSON null literal, so we need raw SQL to test this arm).
+        db_session.execute(
+            text("UPDATE assessment SET kwargs = NULL WHERE id = :id"),
+            {"id": first_id},
+        )
+        db_session.commit()
+
+        second = client.post(
+            f"{prefix}/assessment",
+            params={"revision_id": revision_id, "type": "sentence-length"},
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert second.status_code == 409
+        assert str(first_id) in second.json()["detail"]
 
 
 def test_duplicate_assessment_stale_allowed(

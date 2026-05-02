@@ -276,6 +276,9 @@ async def add_assessment(
             parsed_kwargs = AssessmentIn.validate_kwargs(parsed_kwargs)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
+        # Treat an empty kwargs object the same as no kwargs supplied
+        if not parsed_kwargs:
+            parsed_kwargs = None
         a.kwargs = parsed_kwargs
 
     # Check for duplicate in-progress assessment (admins can bypass)
@@ -296,11 +299,12 @@ async def add_assessment(
             stmt = stmt.where(Assessment.reference_id == a.reference_id)
         else:
             stmt = stmt.where(Assessment.reference_id.is_(None))
-        # SQLAlchemy stores Python None in JSONB columns as the JSON null literal
-        # (not SQL NULL), so match both forms when no kwargs were provided.
         if parsed_kwargs is not None:
             stmt = stmt.where(Assessment.kwargs == parsed_kwargs)
         else:
+            # SQLAlchemy persists Python None to JSONB as the JSON null literal,
+            # so new rows match `== JSON.NULL`. The `is_(None)` arm matches any
+            # legacy rows that were stored as SQL NULL.
             stmt = stmt.where(
                 or_(Assessment.kwargs.is_(None), Assessment.kwargs == JSON.NULL)
             )
