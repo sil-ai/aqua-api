@@ -60,7 +60,6 @@ from models import (
     TrainingType,
     WordAlignment,
 )
-
 from security_routes.auth_routes import get_current_user
 from utils.logging_config import setup_logger
 from utils.verse_range_utils import merge_verse_ranges
@@ -308,9 +307,7 @@ async def _gather_ngram_buckets(
     )
     buckets: dict[int, dict] = {}
     for nid, ngram, size, ngram_vref in (await db.execute(full_q)).all():
-        b = buckets.setdefault(
-            nid, {"ngram": ngram, "ngram_size": size, "vrefs": []}
-        )
+        b = buckets.setdefault(nid, {"ngram": ngram, "ngram_size": size, "vrefs": []})
         b["vrefs"].append(ngram_vref)
     return buckets
 
@@ -1268,7 +1265,9 @@ async def get_training_session_results(
             """
         ).bindparams(bindparam("page_vrefs", expanding=True))
 
-        async def _fetch_tfidf_raw(assessment_id: int) -> dict[str, list[tuple[str, float]]]:
+        async def _fetch_tfidf_raw(
+            assessment_id: int,
+        ) -> dict[str, list[tuple[str, float]]]:
             rows = await db.execute(
                 nn_query,
                 {
@@ -1280,9 +1279,7 @@ async def get_training_session_results(
             buckets: dict[str, list[tuple[str, float]]] = {}
             for row in rows.all():
                 sim = float(row.similarity) if row.similarity is not None else 0.0
-                buckets.setdefault(row.query_vref, []).append(
-                    (row.neighbour_vref, sim)
-                )
+                buckets.setdefault(row.query_vref, []).append((row.neighbour_vref, sim))
             return buckets
 
         if tfidf_id is not None:
