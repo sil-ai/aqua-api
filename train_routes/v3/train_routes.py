@@ -973,6 +973,10 @@ async def get_training_session_results(
     page_vrefs: List[str] = []
     total_count = 0
     if per_vref_subqueries:
+        # `.union()` (not `.union_all()`) is load-bearing: when both sem-sim
+        # and word-alignment write to `assessment_result` for the same vref,
+        # or when AlignmentTopSourceScores and AssessmentResult both surface
+        # the same word-alignment vref, we want one paginated row, not two.
         union_subq = per_vref_subqueries[0].union(*per_vref_subqueries[1:]).subquery()
         # Apply the BookReference join up front so total_count and the page
         # both see the same row set — without it, vrefs whose `book` doesn't
