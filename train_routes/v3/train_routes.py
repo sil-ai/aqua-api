@@ -246,7 +246,21 @@ async def _resolve_source_side_assessment_id(
     """Latest finished `assessment_type` assessment whose revision_id matches
     the session's source_revision_id, or None when no source-side training
     exists. Mirrors the predict-side cascade: source-side training is a
-    separate session that trained on the source revision."""
+    separate session that trained on the source revision.
+
+    Auth model: revision-keyed sharing. The caller has already passed
+    `_load_session_jobs`, which gates the *session* on the user having
+    access to both the source and target revisions (via version_id). Any
+    finished assessment on `source_revision_id` is therefore on a
+    revision the user can already see — and the corpus statistics are
+    derivable by anyone with that access — so we do not re-filter on
+    `Assessment.owner_id`.
+
+    Tiebreak on id when end_time is equal or null (NULLSLAST keeps a
+    stale half-finished row from preempting a real one), so the pick is
+    deterministic. When more than one finished assessment matches, log a
+    warning so an unusual workflow state is observable.
+    """
     stmt = (
         select(Assessment.id)
         .where(
@@ -256,9 +270,21 @@ async def _resolve_source_side_assessment_id(
             Assessment.deleted.is_not(True),
         )
         .order_by(Assessment.end_time.desc().nullslast(), Assessment.id.desc())
-        .limit(1)
     )
-    return await db.scalar(stmt)
+    rows = (await db.execute(stmt)).all()
+    if not rows:
+        return None
+    if len(rows) > 1:
+        logger.warning(
+            "multiple finished source-side assessments matched; picking latest",
+            extra={
+                "source_revision_id": source_revision_id,
+                "assessment_type": assessment_type,
+                "match_count": len(rows),
+                "picked_assessment_id": rows[0][0],
+            },
+        )
+    return rows[0][0]
 
 
 async def _load_verse_text_by_vref(
@@ -1097,6 +1123,10 @@ async def get_training_session_results(
     # Ngrams contribute to pagination too — a session with only ngrams
     # training would otherwise have no page vrefs. Includes source-side
     # ngrams so a verse only covered by source-side hits still paginates.
+    # Note: `source_ngrams_id` is only resolved when `ngrams_id is not None`
+    # (see line above the `_resolve_source_side_assessment_id` call), and the
+    # `ngrams_by_vref` population below is guarded on `ngrams_id is not None`
+    # for the same reason — keep these guards in sync if either is loosened.
     for assessment_id in (ngrams_id, source_ngrams_id):
         if assessment_id is None:
             continue
@@ -1268,6 +1298,17 @@ async def get_training_session_results(
         async def _fetch_tfidf_raw(
             assessment_id: int,
         ) -> dict[str, list[tuple[str, float]]]:
+            # `page_vrefs` are the session's target-side page vrefs. When this
+            # runs against `source_tfidf_id` it's a same-vref join into the
+            # *source* corpus's vector space — i.e. "for each target vref,
+            # find its nearest neighbours within the source-side corpus" —
+            # not a separate source-language pagination. If the source
+            # assessment has no vector for a given vref (canon mismatch,
+            # missing verse), the lateral join returns no rows for that
+            # query_vref and the side comes back empty — silently. We
+            # rely on Bible vrefs being shared across language pairs;
+            # mismatched-vref corpora produce empty source_neighbours
+            # rather than an error.
             rows = await db.execute(
                 nn_query,
                 {
@@ -1329,12 +1370,16 @@ async def get_training_session_results(
         ]
 
     tfidf_by_vref: dict[str, TfidfNeighboursBlock] = {}
-    if tfidf_id is not None or source_tfidf_id is not None:
+    # `source_tfidf_id` is only ever resolved inside the `tfidf_id is not None`
+    # branch above, so a single check on `tfidf_id` is sufficient. When tfidf
+    # is trained we always populate the block — even with empty lists on both
+    # sides — so a single-vref corpus or a vref with no matching neighbours
+    # still gets `tfidf={target_neighbours: [], source_neighbours: []}`,
+    # distinct from `tfidf=None` which signals "not trained".
+    if tfidf_id is not None:
         for v in page_vrefs:
             tgt = tfidf_target_raw.get(v, [])
             src = tfidf_source_raw.get(v, [])
-            if not tgt and not src:
-                continue
             tfidf_by_vref[v] = TfidfNeighboursBlock(
                 target_neighbours=_build_neighbours(tgt),
                 source_neighbours=_build_neighbours(src),

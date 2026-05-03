@@ -1667,7 +1667,11 @@ def test_session_results_ngrams_per_vref(
         headers=_auth_headers(regular_token1),
     ).json()
     # Ngrams now contribute to pagination: each distinct vref the ngram set
-    # fires on shows up as a page row.
+    # fires on shows up as a page row. GEN 1:1 is covered by 2 ngrams ("in
+    # the" and "god created") — without the `.distinct()` on `joined_subq`
+    # in the route, the ngrams subquery would emit one row per (ngram, vref)
+    # join and total_count would be 4, not 3. This assertion is the
+    # regression guard for that fix.
     assert full["results"]["total_count"] == 3
     by_vref = {b["vref"]: b for b in full["results"]["items"]}
     assert set(by_vref) == {"GEN 1:1", "GEN 1:2", "EXO 1:1"}
@@ -1985,6 +1989,340 @@ def test_session_results_hydrates_verse_text(
     assert nb["vref"] == "GEN 1:2"
     assert nb["target_revision_text"] == "ndi dziko lapansi"
     assert nb["source_revision_text"] == "and the earth"
+
+
+def test_session_results_source_side_neighbours_hydrate_with_session_revisions(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """`target_revision_text` / `source_revision_text` always carry the
+    *session's* target/source revision text at that vref, regardless of
+    which corpus (target-side or source-side) surfaced the neighbour.
+    A source-side tfidf neighbour at GEN 1:3 hydrates with target=R2's
+    GEN 1:3 and source=R1's GEN 1:3 — same as a target-side neighbour
+    would. The fields are revision-keyed, not corpus-keyed."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_source_hydration"},
+        apps=["tfidf"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    target_tfidf_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, target_tfidf_job["assessment_id"]
+    )
+
+    swap_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id_2,
+        test_revision_id,
+        options={"tag": "results_source_hydration_swap"},
+        apps=["tfidf"],
+    )
+    swap_tfidf_job = swap_resp.json()["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, swap_tfidf_job["assessment_id"]
+    )
+
+    def vec(x, y):
+        return [x, y] + [0.0] * 298
+
+    _seed_tfidf_vectors(
+        db_session,
+        target_tfidf_job["assessment_id"],
+        [("GEN 1:1", vec(1.0, 0.0)), ("GEN 1:2", vec(0.8, 0.6))],
+    )
+    _seed_tfidf_vectors(
+        db_session,
+        swap_tfidf_job["assessment_id"],
+        [("GEN 1:1", vec(0.0, 1.0)), ("GEN 1:3", vec(0.6, 0.8))],
+    )
+
+    # Source revision = R1 (test_revision_id), target = R2 (test_revision_id_2).
+    _seed_verse_text(
+        db_session,
+        test_revision_id,
+        [("GEN 1:3", "and the spirit (source)")],
+    )
+    _seed_verse_text(
+        db_session,
+        test_revision_id_2,
+        [("GEN 1:3", "ndipo mzimu (target)")],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+
+    src_nbs = by_vref["GEN 1:1"]["tfidf"]["source_neighbours"]
+    assert {n["vref"] for n in src_nbs} == {"GEN 1:3"}
+    nb = src_nbs[0]
+    assert nb["target_revision_text"] == "ndipo mzimu (target)"
+    assert nb["source_revision_text"] == "and the spirit (source)"
+
+
+def test_session_results_source_only_tfidf_vref_returns_empty_target_neighbours(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """A vref that is reachable only via source-side tfidf training (no
+    vector in the target corpus) still paginates and gets a populated
+    block — `target_neighbours=[]`, `source_neighbours=[...]`. With tfidf
+    trained, the block is never `None` even when one side has no hits."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_source_only_tfidf"},
+        apps=["tfidf"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    target_tfidf_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, target_tfidf_job["assessment_id"]
+    )
+
+    swap_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id_2,
+        test_revision_id,
+        options={"tag": "results_source_only_tfidf_swap"},
+        apps=["tfidf"],
+    )
+    swap_tfidf_job = swap_resp.json()["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, swap_tfidf_job["assessment_id"]
+    )
+
+    def vec(x, y):
+        return [x, y] + [0.0] * 298
+
+    # Target tfidf has GEN 1:1 only; source tfidf has GEN 1:1 + GEN 1:3.
+    _seed_tfidf_vectors(
+        db_session,
+        target_tfidf_job["assessment_id"],
+        [("GEN 1:1", vec(1.0, 0.0))],
+    )
+    _seed_tfidf_vectors(
+        db_session,
+        swap_tfidf_job["assessment_id"],
+        [("GEN 1:1", vec(0.0, 1.0)), ("GEN 1:3", vec(0.6, 0.8))],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+    # GEN 1:3 paginates via the source-side subquery even though it has
+    # no target-side vector.
+    assert "GEN 1:3" in by_vref
+    tfidf = by_vref["GEN 1:3"]["tfidf"]
+    # Block populated (not None) — the contract: tfidf=None means "not
+    # trained"; an empty `target_neighbours` here means "trained, no
+    # target-side neighbours for this vref".
+    assert tfidf is not None
+    assert tfidf["target_neighbours"] == []
+    assert {n["vref"] for n in tfidf["source_neighbours"]} == {"GEN 1:1"}
+
+
+def test_session_results_source_only_ngram_vref_gets_empty_target_corpus(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """Symmetric coverage for ngrams: a vref hit only by a source-side
+    ngram still paginates and gets `target_corpus.matches=[]`,
+    `source_corpus.matches=[...]`."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_source_only_ngrams"},
+        apps=["ngrams"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    target_ngrams_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, target_ngrams_job["assessment_id"]
+    )
+
+    swap_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id_2,
+        test_revision_id,
+        options={"tag": "results_source_only_ngrams_swap"},
+        apps=["ngrams"],
+    )
+    swap_ngrams_job = swap_resp.json()["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, swap_ngrams_job["assessment_id"]
+    )
+
+    # Target ngrams cover GEN 1:1 only; source ngrams cover GEN 1:3 only.
+    _seed_ngrams(
+        db_session,
+        target_ngrams_job["assessment_id"],
+        [("target only", 2, ["GEN 1:1"])],
+    )
+    _seed_ngrams(
+        db_session,
+        swap_ngrams_job["assessment_id"],
+        [("source only", 2, ["GEN 1:3"])],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+    assert "GEN 1:3" in by_vref
+    block = by_vref["GEN 1:3"]["ngrams"]
+    assert block["target_corpus"]["matches"] == []
+    assert {m["ngram"] for m in block["source_corpus"]["matches"]} == {"source only"}
+
+
+def test_session_results_tfidf_top_k_limits_source_neighbours(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """`tfidf_top_k` applies symmetrically to both sides — capping
+    `source_neighbours` exactly like it caps `target_neighbours`."""
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_top_k_source"},
+        apps=["tfidf"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    target_tfidf_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, target_tfidf_job["assessment_id"]
+    )
+
+    swap_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id_2,
+        test_revision_id,
+        options={"tag": "results_top_k_source_swap"},
+        apps=["tfidf"],
+    )
+    swap_tfidf_job = swap_resp.json()["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, swap_tfidf_job["assessment_id"]
+    )
+
+    def vec(x, y):
+        return [x, y] + [0.0] * 298
+
+    _seed_tfidf_vectors(
+        db_session,
+        target_tfidf_job["assessment_id"],
+        [("GEN 1:1", vec(1.0, 0.0))],
+    )
+    # Source corpus has 3 vectors so GEN 1:1 has 2 source-side neighbours
+    # available; top_k=1 should cap the returned list to 1.
+    _seed_tfidf_vectors(
+        db_session,
+        swap_tfidf_job["assessment_id"],
+        [
+            ("GEN 1:1", vec(1.0, 0.0)),
+            ("GEN 1:2", vec(0.8, 0.6)),
+            ("GEN 1:3", vec(0.6, 0.8)),
+        ],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        params={"tfidf_top_k": 1},
+        headers=_auth_headers(regular_token1),
+    ).json()
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+    assert len(by_vref["GEN 1:1"]["tfidf"]["source_neighbours"]) == 1
+
+
+def test_session_results_picks_latest_when_multiple_source_assessments(
+    client, regular_token1, test_revision_id, test_revision_id_2, db_session
+):
+    """When more than one finished assessment matches
+    (revision_id, type) on the source side, the resolver picks the
+    latest by end_time/id and only that one's data flows through."""
+    # Session A: source=R1, target=R2.
+    create_resp = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "results_multi_source_target"},
+        apps=["ngrams"],
+    )
+    payload = create_resp.json()
+    session_id = payload["session_id"]
+    target_ngrams_job = payload["training_jobs"][0]
+    _advance_assessment_to_finished(
+        client, regular_token1, target_ngrams_job["assessment_id"]
+    )
+    _seed_ngrams(
+        db_session,
+        target_ngrams_job["assessment_id"],
+        [("on target", 2, ["GEN 1:1"])],
+    )
+
+    # Two swapped sessions (target=R1) — older then newer. Both finished;
+    # the resolver should pick the second one's assessment.
+    older_swap = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id_2,
+        test_revision_id,
+        options={"tag": "results_multi_source_older"},
+        apps=["ngrams"],
+    )
+    older_job = older_swap.json()["training_jobs"][0]
+    _advance_assessment_to_finished(client, regular_token1, older_job["assessment_id"])
+    _seed_ngrams(
+        db_session,
+        older_job["assessment_id"],
+        [("older source", 2, ["GEN 1:1"])],
+    )
+
+    newer_swap = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id_2,
+        test_revision_id,
+        options={"tag": "results_multi_source_newer"},
+        apps=["ngrams"],
+    )
+    newer_job = newer_swap.json()["training_jobs"][0]
+    _advance_assessment_to_finished(client, regular_token1, newer_job["assessment_id"])
+    _seed_ngrams(
+        db_session,
+        newer_job["assessment_id"],
+        [("newer source", 2, ["GEN 1:1"])],
+    )
+
+    data = client.get(
+        f"{prefix}/train/status/{session_id}/results",
+        headers=_auth_headers(regular_token1),
+    ).json()
+    by_vref = {b["vref"]: b for b in data["results"]["items"]}
+    src_matches = by_vref["GEN 1:1"]["ngrams"]["source_corpus"]["matches"]
+    # The newer source-side assessment wins; the older one's "older source"
+    # ngram does not appear.
+    assert {m["ngram"] for m in src_matches} == {"newer source"}
 
 
 def _seed_lexeme_cards(db_session, source_version_id, target_version_id, cards):

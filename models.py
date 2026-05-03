@@ -517,6 +517,10 @@ class TfidfNeighbour(BaseModel):
 
 class TfidfNeighboursBlock(BaseModel):
     target_neighbours: List[TfidfNeighbour] = Field(default_factory=list)
+    # Asymmetric with `NgramCorpusBlock.source_corpus`: tfidf has no
+    # `None`/`[]` distinction here — an empty list means either "no
+    # source-side training" or "trained, no neighbours found". Clients
+    # cannot tell the two apart from this field alone.
     source_neighbours: List[TfidfNeighbour] = Field(default_factory=list)
 
 
@@ -527,7 +531,7 @@ class NgramVerseHit(BaseModel):
 
 
 class NgramMatch(BaseModel):
-    id: Optional[int] = None
+    id: int
     ngram: str
     ngram_size: int
     verses: List[NgramVerseHit] = Field(default_factory=list)
