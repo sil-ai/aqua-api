@@ -282,7 +282,15 @@ def test_predict_forwards_payload_to_modal(client, regular_token1):
 @pytest.mark.parametrize(
     "field,extra,expected",
     [
-        ("include_critique", {"include_critique": True}, True),
+        # critique=True must be accompanied by translation=True (the
+        # cross-flag validator rejects critique-without-translation), so the
+        # explicit-true case sends both. Forwarding still asserts only the
+        # parametrised field — the other cases pin translation independently.
+        (
+            "include_critique",
+            {"include_critique": True, "include_translation": True},
+            True,
+        ),
         ("include_critique", {"include_critique": False}, False),
         ("include_critique", {}, False),
         ("include_translation", {"include_translation": True}, True),
@@ -325,6 +333,19 @@ def test_predict_forwards_include_flags_to_modal(
     assert response.status_code == 200, response.text
     assert field in captured["payload"]
     assert captured["payload"][field] is expected
+
+
+def test_predict_rejects_critique_without_translation(client, regular_token1):
+    """`include_critique=True` requires `include_translation=True` —
+    aqua-api mirrors the agent-side validator so the caller gets a clean
+    422 at the boundary instead of a per-app error string later."""
+    response = client.post(
+        f"/{prefix}/predict",
+        json=_body(apps=["agent"], include_critique=True, include_translation=False),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422, response.text
+    assert "include_translation" in response.text
 
 
 def test_predict_duplicate_apps_deduplicated(client, regular_token1):
