@@ -1273,7 +1273,7 @@ async def get_training_session_results(
     # revision, regardless of how many neighbours were returned).
     tfidf_target_raw: dict[str, list[tuple[str, float]]] = {}
     tfidf_source_raw: dict[str, list[tuple[str, float]]] = {}
-    if (tfidf_id is not None or source_tfidf_id is not None) and page_vrefs:
+    if tfidf_id is not None and page_vrefs:
         nn_query = text(
             """
             SELECT q.vref AS query_vref,
