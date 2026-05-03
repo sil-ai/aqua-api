@@ -353,10 +353,10 @@ def test_predict_passes_through_translation_and_critique(client, regular_token1)
     include_translation / include_critique) must round-trip to the client
     untouched. `PredictAppResult.data: Optional[Any]` is the passthrough
     point; this pins it so a future schema-strip regression is caught."""
-    # Mirror the real agent.predict() return shape from
-    # aqua-assessments/assessments/agent/app.py:2611-2684 — including the
-    # optional `warnings` list — so a future change that strips unknown
-    # top-level keys would fail here.
+    # Mirror the real agent.predict() return shape — pairs carrying
+    # translation/critique/lexeme_cards plus top-level grammar_sketch,
+    # language profiles, and an optional `warnings` list — so a future
+    # change that strips unknown top-level keys would fail here.
     agent_response = {
         "pairs": [
             {
