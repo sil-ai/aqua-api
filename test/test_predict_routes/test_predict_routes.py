@@ -349,12 +349,14 @@ def test_predict_rejects_critique_without_translation(client, regular_token1):
 
 
 def test_predict_passes_through_translation_and_critique(client, regular_token1):
-    """When the agent app returns per-pair `translation` and `critique`
-    payloads (driven by `include_translation` / `include_critique`), they
-    must reach the client untouched. `PredictAppResult.data` is typed
-    `Optional[Any]` precisely so any agent-side schema changes flow
-    through without a model bump — but that means a typed-strip regression
-    would be silent. This test pins the passthrough contract."""
+    """Agent's per-pair translation + critique (driven by
+    include_translation / include_critique) must round-trip to the client
+    untouched. `PredictAppResult.data: Optional[Any]` is the passthrough
+    point; this pins it so a future schema-strip regression is caught."""
+    # Mirror the real agent.predict() return shape from
+    # aqua-assessments/assessments/agent/app.py:2611-2684 — including the
+    # optional `warnings` list — so a future change that strips unknown
+    # top-level keys would fail here.
     agent_response = {
         "pairs": [
             {
@@ -379,6 +381,7 @@ def test_predict_passes_through_translation_and_critique(client, regular_token1)
         "grammar_sketch": "VSO; agreement on nouns.",
         "source_language_profile": {"family": "Indo-European"},
         "target_language_profile": {"family": "Bantu"},
+        "warnings": [],
     }
     with patch(
         "predict_routes.v3.predict_routes.modal.Function",
@@ -395,18 +398,12 @@ def test_predict_passes_through_translation_and_critique(client, regular_token1)
         )
 
     assert response.status_code == 200, response.text
-    body = response.json()
-    envelope = body["results"]["agent"]
+    envelope = response.json()["results"]["agent"]
     assert envelope["status"] == "ok"
-    # Whole agent payload must round-trip unchanged.
+    # Deep equality on the whole agent payload — every key, including
+    # nested translation/critique fields and top-level grammar_sketch /
+    # language profiles / warnings, must round-trip untouched.
     assert envelope["data"] == agent_response
-    pair = envelope["data"]["pairs"][0]
-    assert pair["translation"]["literal"].startswith("In the beginning")
-    assert pair["critique"]["omissions"] == ["the"]
-    assert pair["critique"]["replacements"][0]["target"] == "skies"
-    # Top-level companion fields must also survive.
-    assert envelope["data"]["grammar_sketch"] == "VSO; agreement on nouns."
-    assert envelope["data"]["target_language_profile"] == {"family": "Bantu"}
 
 
 def test_predict_duplicate_apps_deduplicated(client, regular_token1):
