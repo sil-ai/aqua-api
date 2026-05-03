@@ -259,7 +259,9 @@ async def _resolve_source_side_assessment_id(
     Tiebreak on id when end_time is equal or null (NULLSLAST keeps a
     stale half-finished row from preempting a real one), so the pick is
     deterministic. When more than one finished assessment matches, log a
-    warning so an unusual workflow state is observable.
+    warning so an unusual workflow state is observable. We only fetch up
+    to 2 rows: the second is just enough to detect ">1 matched" without
+    materialising potentially many historical assessments on a hot path.
     """
     stmt = (
         select(Assessment.id)
@@ -270,6 +272,7 @@ async def _resolve_source_side_assessment_id(
             Assessment.deleted.is_not(True),
         )
         .order_by(Assessment.end_time.desc().nullslast(), Assessment.id.desc())
+        .limit(2)
     )
     rows = (await db.execute(stmt)).all()
     if not rows:
@@ -280,7 +283,6 @@ async def _resolve_source_side_assessment_id(
             extra={
                 "source_revision_id": source_revision_id,
                 "assessment_type": assessment_type,
-                "match_count": len(rows),
                 "picked_assessment_id": rows[0][0],
             },
         )
