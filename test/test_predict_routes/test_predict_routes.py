@@ -280,19 +280,32 @@ def test_predict_forwards_payload_to_modal(client, regular_token1):
 
 
 @pytest.mark.parametrize(
-    "extra,expected",
+    "field,extra,expected",
     [
-        ({"include_critique": True}, True),
-        ({"include_critique": False}, False),
-        ({}, False),
+        ("include_critique", {"include_critique": True}, True),
+        ("include_critique", {"include_critique": False}, False),
+        ("include_critique", {}, False),
+        ("include_translation", {"include_translation": True}, True),
+        ("include_translation", {"include_translation": False}, False),
+        ("include_translation", {}, False),
     ],
-    ids=["explicit_true", "explicit_false", "omitted_defaults_false"],
+    ids=[
+        "critique_explicit_true",
+        "critique_explicit_false",
+        "critique_omitted_defaults_false",
+        "translation_explicit_true",
+        "translation_explicit_false",
+        "translation_omitted_defaults_false",
+    ],
 )
-def test_predict_forwards_include_critique_to_modal(
-    client, regular_token1, extra, expected
+def test_predict_forwards_include_flags_to_modal(
+    client, regular_token1, field, extra, expected
 ):
-    """`include_critique` survives `model_dump(exclude={"apps"})` and reaches Modal —
-    regression guard for the bug where the missing field was silently stripped."""
+    """`include_translation` and `include_critique` both survive
+    `model_dump(exclude={"apps"})` and reach Modal — regression guard for
+    the bug where a missing field is silently stripped (predict's agent
+    side defaults both to False, so a dropped True flag silently disables
+    the feature)."""
     captured = {}
 
     async def capture(payload):
@@ -310,8 +323,8 @@ def test_predict_forwards_include_critique_to_modal(
         )
 
     assert response.status_code == 200, response.text
-    assert "include_critique" in captured["payload"]
-    assert captured["payload"]["include_critique"] is expected
+    assert field in captured["payload"]
+    assert captured["payload"][field] is expected
 
 
 def test_predict_duplicate_apps_deduplicated(client, regular_token1):

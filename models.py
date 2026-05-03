@@ -380,6 +380,7 @@ class PredictInput(BaseModel):
     target_version_id: Optional[int] = None
     limit: Optional[int] = Field(default=None, ge=1, le=10000)
     apps: Optional[List[str]] = None
+    include_translation: bool = False
     include_critique: bool = False
 
     model_config = {
@@ -397,6 +398,7 @@ class PredictInput(BaseModel):
                 "source_version_id": 1,
                 "target_version_id": 2,
                 "apps": ["ngrams", "tfidf"],
+                "include_translation": False,
                 "include_critique": False,
             }
         }
