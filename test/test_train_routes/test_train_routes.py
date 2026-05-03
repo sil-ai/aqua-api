@@ -7,6 +7,8 @@ from database.models import (
     AlignmentTopSourceScores,
     Assessment,
     AssessmentResult,
+    BibleRevision,
+    BibleVersion,
     NgramsTable,
     NgramVrefTable,
     TfidfPcaVector,
@@ -106,6 +108,30 @@ def _create_training_jobs_via_api(
     if apps is not None:
         data["apps"] = apps
 
+    return _post_train_with_payload(
+        client,
+        token,
+        data,
+        spawn_by_app=spawn_by_app,
+        spawn_by_type=spawn_by_type,
+        default_exc=default_exc,
+        calls=calls,
+        payloads=payloads,
+    )
+
+
+def _post_train_with_payload(
+    client,
+    token,
+    data: dict,
+    spawn_by_app=None,
+    spawn_by_type=None,
+    default_exc=_UNSET,
+    calls: list = None,
+    payloads: list = None,
+):
+    """POST /train with an arbitrary payload (lets tests exercise the new
+    version_id / revision_id selectors directly)."""
     mock_function_cls = _make_modal_mock(
         spawn_by_app,
         spawn_by_type,
@@ -447,6 +473,270 @@ def test_create_training_job_invalid_revision(client, regular_token1, test_revis
         client, regular_token1, test_revision_id, 999999
     )
     assert response.status_code == 404
+
+
+def _fail_queued_training_assessments(db_session):
+    """Mark every queued training Assessment failed so duplicate-detection in
+    subsequent tests doesn't see an "active" job from the test that just ran.
+    Cheaper than truncating tables and survives the module-scoped fixtures."""
+    db_session.expire_all()
+    queued = (
+        db_session.query(Assessment)
+        .filter(Assessment.is_training.is_(True), Assessment.status == "queued")
+        .all()
+    )
+    for a in queued:
+        a.status = "failed"
+    db_session.commit()
+
+
+def test_create_training_job_with_version_ids_resolves_latest_revision(
+    client,
+    regular_token1,
+    test_version_id,
+    test_revision_id,
+    test_revision_id_2,
+    db_session,
+):
+    """POST /train with version_id (no revision_id) resolves to the latest
+    non-deleted revision for that version on each side, and the resolved IDs
+    are persisted to the TrainingJob row (not just to the response)."""
+    response = _post_train_with_payload(
+        client,
+        regular_token1,
+        {
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id,
+            "options": {"tag": "version-id-resolution"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    jobs = response.json()["training_jobs"]
+    assert jobs
+
+    # test_revision_id_2 was created after test_revision_id under the same
+    # version, so "latest" = the higher id. Auto-increment ordering in the
+    # fixture is what makes max() the right oracle here; if the fixture ever
+    # seeds explicit IDs out of order this oracle would need updating.
+    expected_latest = max(test_revision_id, test_revision_id_2)
+    for job in jobs:
+        assert job["source_revision_id"] == expected_latest
+        assert job["target_revision_id"] == expected_latest
+        assert job["source_version_id"] == test_version_id
+        assert job["target_version_id"] == test_version_id
+
+    # Confirm the resolved IDs hit the DB row, not just the response shape.
+    # The serializer reads from the same ORM objects we wrote, so a bug in
+    # the runner-config plumbing could pass the response check while the
+    # persisted row has wrong values.
+    db_session.expire_all()
+    job_ids = [j["id"] for j in jobs]
+    persisted = db_session.query(TrainingJob).filter(TrainingJob.id.in_(job_ids)).all()
+    assert len(persisted) == len(jobs)
+    for row in persisted:
+        assert row.source_revision_id == expected_latest
+        assert row.target_revision_id == expected_latest
+        assert row.source_version_id == test_version_id
+        assert row.target_version_id == test_version_id
+
+    _fail_queued_training_assessments(db_session)
+
+
+def test_create_training_job_version_id_skips_soft_deleted_revisions(
+    client,
+    regular_token1,
+    test_version_id,
+    test_revision_id,
+    test_revision_id_2,
+    db_session,
+):
+    """The "latest" lookup must filter `deleted IS NOT TRUE` — without this
+    filter, deleting the newest revision wouldn't fall back to the prior one.
+    Soft-deletes the newer revision, runs the resolver, and restores the
+    flag so other tests in the module aren't disturbed."""
+    newer_id = max(test_revision_id, test_revision_id_2)
+    older_id = min(test_revision_id, test_revision_id_2)
+
+    newer = db_session.query(BibleRevision).filter(BibleRevision.id == newer_id).first()
+    newer.deleted = True
+    db_session.commit()
+    try:
+        response = _post_train_with_payload(
+            client,
+            regular_token1,
+            {
+                "source_version_id": test_version_id,
+                "target_version_id": test_version_id,
+                "options": {"tag": "soft-deleted-skip"},
+            },
+        )
+        assert response.status_code == 200, response.text
+        for job in response.json()["training_jobs"]:
+            assert job["source_revision_id"] == older_id
+            assert job["target_revision_id"] == older_id
+    finally:
+        # Always restore the flag and clean up queued assessments so the
+        # module-scoped fixture stays valid for downstream tests, even if
+        # an assertion above raised.
+        db_session.expire_all()
+        newer = (
+            db_session.query(BibleRevision).filter(BibleRevision.id == newer_id).first()
+        )
+        newer.deleted = False
+        db_session.commit()
+        _fail_queued_training_assessments(db_session)
+
+
+def test_create_training_job_revision_id_with_deleted_parent_version_returns_404(
+    client,
+    admin_token,
+    test_version_id,
+    test_revision_id,
+    db_session,
+):
+    """Mirrors the version_id branch's deleted-version check: if the caller
+    passes an explicit revision_id whose parent BibleVersion is soft-deleted,
+    we still 404. Soft-deletes the version, asserts, restores. Uses admin to
+    isolate this from the version-access path."""
+    version = (
+        db_session.query(BibleVersion)
+        .filter(BibleVersion.id == test_version_id)
+        .first()
+    )
+    version.deleted = True
+    db_session.commit()
+    try:
+        response = _post_train_with_payload(
+            client,
+            admin_token,
+            {
+                "source_revision_id": test_revision_id,
+                "target_revision_id": test_revision_id,
+            },
+        )
+        assert response.status_code == 404, response.text
+    finally:
+        db_session.expire_all()
+        version = (
+            db_session.query(BibleVersion)
+            .filter(BibleVersion.id == test_version_id)
+            .first()
+        )
+        version.deleted = False
+        db_session.commit()
+
+
+def test_create_training_job_explicit_revision_overrides_version_default(
+    client,
+    regular_token1,
+    test_version_id,
+    test_revision_id,
+    test_revision_id_2,
+    db_session,
+):
+    """A caller can mix version_id on one side and revision_id on the other —
+    the explicit revision wins regardless of what "latest" would resolve to."""
+    older_revision = min(test_revision_id, test_revision_id_2)
+    response = _post_train_with_payload(
+        client,
+        regular_token1,
+        {
+            "source_revision_id": older_revision,
+            "target_version_id": test_version_id,
+            "options": {"tag": "explicit-revision-override"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    jobs = response.json()["training_jobs"]
+    assert jobs
+
+    expected_target = max(test_revision_id, test_revision_id_2)
+    for job in jobs:
+        assert job["source_revision_id"] == older_revision
+        assert job["target_revision_id"] == expected_target
+
+    _fail_queued_training_assessments(db_session)
+
+
+def test_create_training_job_rejects_both_ids_on_same_side(
+    client, regular_token1, test_version_id, test_revision_id, test_revision_id_2
+):
+    """Providing both version_id and revision_id on the same side is a 422."""
+    response = _post_train_with_payload(
+        client,
+        regular_token1,
+        {
+            "source_version_id": test_version_id,
+            "source_revision_id": test_revision_id,
+            "target_revision_id": test_revision_id_2,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_create_training_job_rejects_missing_ids_on_a_side(
+    client, regular_token1, test_revision_id_2
+):
+    """Providing neither version_id nor revision_id on a side is a 422."""
+    response = _post_train_with_payload(
+        client,
+        regular_token1,
+        {"target_revision_id": test_revision_id_2},
+    )
+    assert response.status_code == 422
+
+
+def test_create_training_job_unknown_version_id_returns_404(
+    client, admin_token, test_version_id
+):
+    """A version_id that doesn't exist returns 404 for an admin (who isn't
+    short-circuited by the access check)."""
+    response = _post_train_with_payload(
+        client,
+        admin_token,
+        {
+            "source_version_id": test_version_id,
+            "target_version_id": 999999,
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_create_training_job_inaccessible_version_id_returns_403_not_404(
+    client, regular_token1, test_version_id
+):
+    """A non-admin probing an arbitrary `target_version_id` they can't see
+    must not be able to distinguish "version doesn't exist" (would be 404)
+    from "version exists but you can't see it" (403). The version_id branch
+    short-circuits to 403 *before* the existence check, so 999999 returns
+    403 even though it's not a real version."""
+    response = _post_train_with_payload(
+        client,
+        regular_token1,
+        {
+            "source_version_id": test_version_id,
+            "target_version_id": 999999,
+        },
+    )
+    assert response.status_code == 403
+
+
+def test_create_training_job_version_with_no_revisions_returns_404(
+    client, admin_token, test_version_id, test_version_id_2
+):
+    """A version that exists but has no non-deleted revisions returns 404 —
+    we have nothing to train on. Uses admin to bypass the version-access check
+    since test_version_id_2 has no group-access rows."""
+    response = _post_train_with_payload(
+        client,
+        admin_token,
+        {
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert response.status_code == 404
+    assert "no revisions" in response.json()["detail"].lower()
 
 
 def test_create_training_job_duplicate_detection(

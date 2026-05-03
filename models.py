@@ -1096,8 +1096,26 @@ class TrainingType(str, Enum):
 
 
 class TrainingJobIn(BaseModel):
-    source_revision_id: int
-    target_revision_id: int
+    """Identify the training pair by version_id (preferred — latest non-deleted
+    revision is resolved server-side) or by revision_id when a specific
+    revision is required. Exactly one of (version_id, revision_id) must be
+    provided per side."""
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_version_id": 1,
+                "target_version_id": 2,
+                "options": {"use_eflomal": True},
+                "apps": ["word-alignment", "tfidf"],
+            }
+        }
+    }
+
+    source_version_id: Optional[int] = None
+    target_version_id: Optional[int] = None
+    source_revision_id: Optional[int] = None
+    target_revision_id: Optional[int] = None
     options: Optional[Dict[str, Any]] = None
     apps: Optional[List[str]] = None
 
@@ -1105,6 +1123,18 @@ class TrainingJobIn(BaseModel):
     @classmethod
     def validate_options(cls, v):
         return _validate_assessment_kwargs(v)
+
+    @model_validator(mode="after")
+    def _require_one_id_per_side(self):
+        if (self.source_version_id is None) == (self.source_revision_id is None):
+            raise ValueError(
+                "Provide exactly one of source_version_id or source_revision_id"
+            )
+        if (self.target_version_id is None) == (self.target_revision_id is None):
+            raise ValueError(
+                "Provide exactly one of target_version_id or target_revision_id"
+            )
+        return self
 
 
 class TrainingJobOut(BaseModel):
