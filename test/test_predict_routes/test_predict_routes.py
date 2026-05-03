@@ -348,6 +348,67 @@ def test_predict_rejects_critique_without_translation(client, regular_token1):
     assert "include_translation" in response.text
 
 
+def test_predict_passes_through_translation_and_critique(client, regular_token1):
+    """When the agent app returns per-pair `translation` and `critique`
+    payloads (driven by `include_translation` / `include_critique`), they
+    must reach the client untouched. `PredictAppResult.data` is typed
+    `Optional[Any]` precisely so any agent-side schema changes flow
+    through without a model bump — but that means a typed-strip regression
+    would be silent. This test pins the passthrough contract."""
+    agent_response = {
+        "pairs": [
+            {
+                "vref": "GEN 1:1",
+                "source_text": "In the beginning...",
+                "target_text": "Hapo mwanzo...",
+                "translation": {
+                    "hyper_literal": "In beginning created God heavens earth.",
+                    "literal": "In the beginning God created the heavens and earth.",
+                    "english_translation": "In the beginning God created the heavens and the earth.",
+                },
+                "critique": {
+                    "omissions": ["the"],
+                    "additions": [],
+                    "replacements": [
+                        {"source": "heavens", "target": "skies", "severity": "low"}
+                    ],
+                },
+                "lexeme_cards": [],
+            }
+        ],
+        "grammar_sketch": "VSO; agreement on nouns.",
+        "source_language_profile": {"family": "Indo-European"},
+        "target_language_profile": {"family": "Bantu"},
+    }
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock({"agent-critique": agent_response}),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(
+                apps=["agent"],
+                include_translation=True,
+                include_critique=True,
+            ),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    envelope = body["results"]["agent"]
+    assert envelope["status"] == "ok"
+    # Whole agent payload must round-trip unchanged.
+    assert envelope["data"] == agent_response
+    pair = envelope["data"]["pairs"][0]
+    assert pair["translation"]["literal"].startswith("In the beginning")
+    assert pair["critique"]["omissions"] == ["the"]
+    assert pair["critique"]["replacements"][0]["target"] == "skies"
+    # Top-level companion fields must also survive.
+    assert envelope["data"]["grammar_sketch"] == "VSO; agreement on nouns."
+    assert envelope["data"]["target_language_profile"] == {"family": "Bantu"}
+
+
 def test_predict_duplicate_apps_deduplicated(client, regular_token1):
     """Duplicate entries in `apps` are deduplicated; Modal is called once per app."""
     call_count = {"ngrams": 0}
