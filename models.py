@@ -510,7 +510,43 @@ class TfidfResult(BaseModel):
 
 class TfidfNeighbour(BaseModel):
     vref: str
-    score: float
+    similarity: float
+    target_revision_text: Optional[str] = None
+    source_revision_text: Optional[str] = None
+
+
+class TfidfNeighboursBlock(BaseModel):
+    target_neighbours: List[TfidfNeighbour] = Field(default_factory=list)
+    # Asymmetric with `NgramCorpusBlock.source_corpus`: tfidf has no
+    # `None`/`[]` distinction here — an empty list means either "no
+    # source-side training" or "trained, no neighbours found". Clients
+    # cannot tell the two apart from this field alone.
+    source_neighbours: List[TfidfNeighbour] = Field(default_factory=list)
+
+
+class NgramVerseHit(BaseModel):
+    vref: str
+    target_revision_text: Optional[str] = None
+    source_revision_text: Optional[str] = None
+
+
+class NgramMatch(BaseModel):
+    id: int
+    ngram: str
+    ngram_size: int
+    verses: List[NgramVerseHit] = Field(default_factory=list)
+
+
+class NgramCorpusMatches(BaseModel):
+    matches: List[NgramMatch] = Field(default_factory=list)
+
+
+class NgramCorpusBlock(BaseModel):
+    target_corpus: NgramCorpusMatches = Field(default_factory=NgramCorpusMatches)
+    # `None` (not an empty block) when the session has no source-side ngrams
+    # training to match against — distinguishes "we looked and found nothing"
+    # from "no source-side corpus available".
+    source_corpus: Optional[NgramCorpusMatches] = None
 
 
 class WordAlignment(BaseModel):
@@ -1183,7 +1219,15 @@ class TrainingSessionVrefResults(BaseModel):
     # `alignment_top_source_scores`. Mirrors the shape of
     # `semantic_similarity` so clients can treat the two the same way.
     word_alignment_score: Optional[Result_v2] = None
-    tfidf: List[TfidfNeighbour] = Field(default_factory=list)
+    # Per-vref tfidf and ngrams mirror the predict pair shape: `tfidf` carries
+    # nearest-neighbour vrefs from both sides (target and source) of the
+    # trained corpora; `ngrams` carries trained ngrams that fire on this
+    # verse, with `verses` lists hydrated from the corresponding revision
+    # text. Predict's cross-axis matches (target ngrams in source text and
+    # vice versa) are not returned — train-status reads stored corpus hits
+    # only.
+    tfidf: Optional[TfidfNeighboursBlock] = None
+    ngrams: Optional[NgramCorpusBlock] = None
     # Full lexeme cards (same shape as `GET /v3/agent/lexeme-card`) whose
     # lemma or any surface form intersects this verse on either side.
     # Cards are filtered by the verse — the cards themselves are returned
@@ -1203,7 +1247,6 @@ class TrainingSessionResultsResponse(BaseModel):
     training_jobs: List[TrainingJobOut]
     inference_readiness: Dict[str, InferenceReadiness]
     results: TrainingSessionResultsPage
-    ngrams: List[NgramResult] = Field(default_factory=list)
     # True when the lexeme-card load hit the per-request cap and only
     # the highest-confidence prefix of cards was matched against the
     # page's vrefs. Lets a client distinguish "no card matches found"
