@@ -348,6 +348,64 @@ def test_predict_rejects_critique_without_translation(client, regular_token1):
     assert "include_translation" in response.text
 
 
+def test_predict_passes_through_translation_and_critique(client, regular_token1):
+    """Agent's per-pair translation + critique (driven by
+    include_translation / include_critique) must round-trip to the client
+    untouched. `PredictAppResult.data: Optional[Any]` is the passthrough
+    point; this pins it so a future schema-strip regression is caught."""
+    # Mirror the real agent.predict() return shape — pairs carrying
+    # translation/critique/lexeme_cards plus top-level grammar_sketch,
+    # language profiles, and an optional `warnings` list — so a future
+    # change that strips unknown top-level keys would fail here.
+    agent_response = {
+        "pairs": [
+            {
+                "vref": "GEN 1:1",
+                "source_text": "In the beginning...",
+                "target_text": "Hapo mwanzo...",
+                "translation": {
+                    "hyper_literal": "In beginning created God heavens earth.",
+                    "literal": "In the beginning God created the heavens and earth.",
+                    "english_translation": "In the beginning God created the heavens and the earth.",
+                },
+                "critique": {
+                    "omissions": ["the"],
+                    "additions": [],
+                    "replacements": [
+                        {"source": "heavens", "target": "skies", "severity": "low"}
+                    ],
+                },
+                "lexeme_cards": [],
+            }
+        ],
+        "grammar_sketch": "VSO; agreement on nouns.",
+        "source_language_profile": {"family": "Indo-European"},
+        "target_language_profile": {"family": "Bantu"},
+        "warnings": [],
+    }
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock({"agent-critique": agent_response}),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(
+                apps=["agent"],
+                include_translation=True,
+                include_critique=True,
+            ),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    envelope = response.json()["results"]["agent"]
+    assert envelope["status"] == "ok"
+    # Deep equality on the whole agent payload — every key, including
+    # nested translation/critique fields and top-level grammar_sketch /
+    # language profiles / warnings, must round-trip untouched.
+    assert envelope["data"] == agent_response
+
+
 def test_predict_duplicate_apps_deduplicated(client, regular_token1):
     """Duplicate entries in `apps` are deduplicated; Modal is called once per app."""
     call_count = {"ngrams": 0}
