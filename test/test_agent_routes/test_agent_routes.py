@@ -1038,6 +1038,171 @@ def test_add_lexeme_card_examples_with_unknown_revision_id_fails(
     assert "999999" in response.json()["detail"]
 
 
+def test_add_lexeme_card_empty_examples_without_revision_id_succeeds(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """An explicit empty `examples` list is treated as 'no examples' — no revision_id needed."""
+    response = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "empty_examples_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "examples": [],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["examples"] == []
+
+
+def test_add_lexeme_card_sense_examples_without_revision_id_succeeds(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """Sense-level examples live in the senses JSONB column and aren't revision-scoped."""
+    response = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "sense_examples_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "senses": [
+                {
+                    "definition": "to drink",
+                    "examples": ["I drink water", "She drinks tea"],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["senses"][0]["examples"] == ["I drink water", "She drinks tea"]
+    assert data["examples"] == []
+
+
+def test_add_lexeme_card_upsert_replace_no_revision_preserves_prior_examples(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """replace_existing=true upsert without revision_id must NOT touch prior-revision examples."""
+    target_lemma = "preserve_replace_lemma"
+
+    # Seed: create the card with one example bound to test_revision_id.
+    seed = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "examples": [{"source": "I drink", "target": "Ninakunywa"}],
+        },
+    )
+    assert seed.status_code == 200
+    assert len(seed.json()["examples"]) == 1
+
+    # Re-POST the same card without a revision_id and with replace_existing=true.
+    # Without a revision context, the examples table must be left alone, and
+    # the response must surface examples=[] (no scope to fetch from).
+    upsert = client.post(
+        "/v3/agent/lexeme-card?replace_existing=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "pos": "verb",
+        },
+    )
+    assert upsert.status_code == 200
+    assert upsert.json()["examples"] == []
+    assert upsert.json()["pos"] == "verb"
+
+    # Re-fetch with the original revision_id: the seeded example is still there.
+    refetch = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert refetch.status_code == 200
+    assert len(refetch.json()["examples"]) == 1
+    assert refetch.json()["examples"][0]["target"] == "Ninakunywa"
+
+
+def test_add_lexeme_card_upsert_append_no_revision_preserves_prior_examples(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Append-mode upsert without revision_id must NOT drop prior-revision examples."""
+    target_lemma = "preserve_append_lemma"
+
+    seed = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "surface_forms": ["original_form"],
+            "examples": [{"source": "I drink", "target": "Ninakunywa"}],
+        },
+    )
+    assert seed.status_code == 200
+    assert len(seed.json()["examples"]) == 1
+
+    # Append-mode upsert (replace_existing default false) without revision_id.
+    upsert = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "surface_forms": ["appended_form"],
+        },
+    )
+    assert upsert.status_code == 200
+    assert upsert.json()["examples"] == []
+    assert "appended_form" in upsert.json()["surface_forms"]
+    assert "original_form" in upsert.json()["surface_forms"]
+
+    refetch = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert refetch.status_code == 200
+    assert len(refetch.json()["examples"]) == 1
+    assert refetch.json()["examples"][0]["target"] == "Ninakunywa"
+
+
 def test_add_lexeme_card_different_languages(
     client,
     regular_token1,

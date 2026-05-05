@@ -4,7 +4,6 @@ import datetime
 import socket
 import time
 import unicodedata
-from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
@@ -478,7 +477,7 @@ async def add_critique_issues(
 @router.post("/agent/lexeme-card", response_model=LexemeCardOut)
 async def add_lexeme_card(
     card: LexemeCardIn,
-    revision_id: Optional[int] = None,
+    revision_id: int | None = None,
     replace_existing: bool = False,
     is_user_edit: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -530,9 +529,9 @@ async def add_lexeme_card(
         from sqlalchemy.dialects.postgresql import insert as pg_insert
         from sqlalchemy.sql import func
 
-        # Top-level `card.examples` are the only revision-scoped payload
-        # (they go to AgentLexemeCardExample, which carries the revision FK).
-        # Refuse to silently drop examples a caller bothered to send.
+        # Top-level `card.examples` are revision-scoped (they write to
+        # AgentLexemeCardExample, which carries the revision FK). An empty
+        # list is treated as "no examples" and accepted without a revision.
         if card.examples and revision_id is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -649,7 +648,8 @@ async def add_lexeme_card(
                                 .on_conflict_do_nothing()
                             )
                     else:
-                        # If examples is None and replace_existing=True, remove this revision's examples
+                        # examples is None: caller explicitly wants this
+                        # revision's examples wiped. Delete without re-inserting.
                         delete_query = delete(AgentLexemeCardExample).where(
                             AgentLexemeCardExample.lexeme_card_id == existing_card.id,
                             AgentLexemeCardExample.revision_id == revision_id,
