@@ -1038,6 +1038,27 @@ def test_add_lexeme_card_examples_with_unknown_revision_id_fails(
     assert "999999" in response.json()["detail"]
 
 
+def test_add_lexeme_card_unknown_version_id_without_revision_id_returns_404(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+):
+    """Without revision_id, an unknown version_id must surface as 404 — not a 500 from FK violation."""
+    response = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "bogus_version_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": 999998,
+        },
+    )
+
+    assert response.status_code == 404
+    assert "999998" in response.json()["detail"]
+
+
 def test_add_lexeme_card_empty_examples_without_revision_id_succeeds(
     client,
     regular_token1,

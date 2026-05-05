@@ -21,6 +21,7 @@ from database.models import (
     AgentTranslation,
     AgentWordAlignment,
     BibleRevision,
+    BibleVersion,
 )
 from database.models import UserDB as UserModel
 from models import (
@@ -566,6 +567,27 @@ async def add_lexeme_card(
                         f"is not in the card's version pair "
                         f"({card.source_version_id}, {card.target_version_id})"
                     ),
+                )
+        else:
+            # No revision context, so the in-pair check above can't validate
+            # the version FKs as a side effect. Verify both up front so an
+            # unknown ID surfaces as 404 instead of a 500 from the FK
+            # IntegrityError on commit.
+            requested_versions = {card.source_version_id, card.target_version_id}
+            found_versions = set(
+                (
+                    await db.scalars(
+                        select(BibleVersion.id).where(
+                            BibleVersion.id.in_(requested_versions)
+                        )
+                    )
+                ).all()
+            )
+            missing = requested_versions - found_versions
+            if missing:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Bible version(s) not found: {sorted(missing)}",
                 )
 
         # Sort alignment_scores by value in descending order (highest scores first)
