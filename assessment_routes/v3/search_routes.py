@@ -177,12 +177,17 @@ async def search_revision_text(
     Provide exactly one of ``revision_id`` or ``version_id``.  When
     ``version_id`` is given, results are deduplicated by verse location
     (book, chapter, verse): for each verse, the most recent non-empty
-    revision belonging to that version is chosen.  Older revisions only
-    fill gaps where the most recent revision lacks the verse.
+    *matching* revision belonging to that version is chosen.  The ILIKE
+    prefilter is applied before per-vref dedup, so older revisions fill
+    gaps where the most recent revision lacks the verse (empty text) or
+    doesn't contain the search term — i.e. results surface the term wherever
+    it appears in the version's history, preferring the newer wording when
+    multiple revisions match.
 
     Optionally provide at most one of ``comparison_revision_id`` or
-    ``comparison_version_id`` for parallel text. The same per-vref
-    best-revision pick applies to ``comparison_version_id``.
+    ``comparison_version_id`` for parallel text. For ``comparison_version_id``
+    the same per-vref pick applies (latest non-empty wins; the search term
+    is only required on the main side, not on the comparison).
     """
     request_start = time.perf_counter()
 

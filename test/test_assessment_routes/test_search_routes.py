@@ -1118,15 +1118,22 @@ def setup_version_search_test_data(db_session):
     db_session.commit()
     db_session.refresh(swh_version)
 
-    swh_rev = BibleRevision(
+    swh_rev_old = BibleRevision(
         date=date(2024, 1, 1),
         bible_version_id=swh_version.id,
         published=True,
         machine_translation=False,
     )
-    db_session.add(swh_rev)
+    swh_rev_new = BibleRevision(
+        date=date(2024, 6, 1),
+        bible_version_id=swh_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    db_session.add_all([swh_rev_old, swh_rev_new])
     db_session.commit()
-    db_session.refresh(swh_rev)
+    db_session.refresh(swh_rev_old)
+    db_session.refresh(swh_rev_new)
 
     for book, chapter, verse, text in [
         ("GEN", 1, 1, "Hapo mwanzo Mungu aliumba mbingu na dunia."),
@@ -1135,13 +1142,27 @@ def setup_version_search_test_data(db_session):
         db_session.add(
             VerseText(
                 text=text,
-                revision_id=swh_rev.id,
+                revision_id=swh_rev_old.id,
                 verse_reference=f"{book} {chapter}:{verse}",
                 book=book,
                 chapter=chapter,
                 verse=verse,
             )
         )
+    # Newer Swahili revision: distinct wording so we can verify the comp pick
+    # picks the newer revision per vref. GEN 1:1 has new wording; GEN 1:3
+    # is left to the older revision (newer revision lacks it) so the
+    # comp-side fallback path is also exercised.
+    db_session.add(
+        VerseText(
+            text="Mwanzoni Mungu aliumba mbingu na nchi.",
+            revision_id=swh_rev_new.id,
+            verse_reference="GEN 1:1",
+            book="GEN",
+            chapter=1,
+            verse=1,
+        )
+    )
 
     # Grant access for testuser1 (group1) to both versions
     for version in [eng_version, swh_version]:
@@ -1159,7 +1180,9 @@ def setup_version_search_test_data(db_session):
         "eng_rev_old": eng_rev_old.id,
         "eng_rev_new": eng_rev_new.id,
         "swh_version": swh_version.id,
-        "swh_rev": swh_rev.id,
+        "swh_rev": swh_rev_old.id,
+        "swh_rev_old": swh_rev_old.id,
+        "swh_rev_new": swh_rev_new.id,
     }
 
 
@@ -1328,7 +1351,13 @@ def test_search_version_id_falls_back_when_latest_empty(
 def test_search_by_version_id_with_comparison_version_id(
     client, regular_token1, test_db_session
 ):
-    """version_id main + comparison_version_id returns per-vref-paired latest text."""
+    """version_id main + comparison_version_id returns per-vref-paired latest text.
+
+    Verifies both sides perform the per-vref date-DESC pick:
+    - Main: newer eng revision wins (different wording from older).
+    - Comp: GEN 1:1 has newer swh revision wording; GEN 1:3 falls back to
+      the older swh revision because the newer one lacks GEN 1:3.
+    """
     ids = setup_version_search_test_data(test_db_session)
 
     response = client.get(
@@ -1344,16 +1373,19 @@ def test_search_by_version_id_with_comparison_version_id(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["total_count"] > 0
+    by_ref = {(r["book"], r["chapter"], r["verse"]): r for r in data["results"]}
 
-    for result in data["results"]:
-        assert "comparison_text" in result
-        assert result["comparison_text"], "Expected non-empty comparison text"
-        # Main side should reflect the newer revision wording
-        assert (
-            "made the heavens" in result["main_text"]
-            or "Then God said" in result["main_text"]
-        ), f"Expected newer-revision wording on main side, got {result['main_text']!r}"
+    # Main side: newer revision wording on both verses
+    assert "made the heavens" in by_ref[("GEN", 1, 1)]["main_text"]
+    assert "Then God said" in by_ref[("GEN", 1, 3)]["main_text"]
+    # Comp side: GEN 1:1 — newer swh wording; GEN 1:3 — older swh wording
+    # (newer swh has no GEN 1:3, so it falls through to the older revision).
+    assert by_ref[("GEN", 1, 1)]["comparison_text"] == (
+        "Mwanzoni Mungu aliumba mbingu na nchi."
+    )
+    assert by_ref[("GEN", 1, 3)]["comparison_text"] == (
+        "Mungu akasema, Iwe nuru, ikawa nuru."
+    )
 
 
 def test_search_by_version_id_with_comparison_revision_id(
@@ -1382,7 +1414,7 @@ def test_search_by_version_id_with_comparison_revision_id(
 def test_search_by_revision_id_with_comparison_version_id(
     client, regular_token1, test_db_session
 ):
-    """revision_id main + comparison_version_id returns parallel text via comp pick."""
+    """revision_id main + comparison_version_id pairs against comp's per-vref pick."""
     ids = setup_version_search_test_data(test_db_session)
 
     response = client.get(
@@ -1398,8 +1430,236 @@ def test_search_by_revision_id_with_comparison_version_id(
 
     assert response.status_code == 200
     data = response.json()
-    assert data["total_count"] > 0
-    assert "comparison_text" in data["results"][0]
+    by_ref = {(r["book"], r["chapter"], r["verse"]): r for r in data["results"]}
+    # Comp side picks the newer swh revision for GEN 1:1 and the older one
+    # for GEN 1:3 (newer revision doesn't include GEN 1:3).
+    assert by_ref[("GEN", 1, 1)]["comparison_text"] == (
+        "Mwanzoni Mungu aliumba mbingu na nchi."
+    )
+    assert by_ref[("GEN", 1, 3)]["comparison_text"] == (
+        "Mungu akasema, Iwe nuru, ikawa nuru."
+    )
+
+
+def test_search_comparison_version_id_unauthorized_returns_404(
+    client, regular_token2, test_db_session
+):
+    """Authorized main + unauthorized comparison_version_id with no main matches → 404.
+
+    Main has access (so the auth_row check passes), no rows survive the JOIN
+    because comp side is empty, then the comp auth follow-up fires the
+    version-id 404 branch.
+    """
+    user2 = test_db_session.query(UserDB).filter(UserDB.username == "testuser2").first()
+    group2 = test_db_session.query(Group).filter(Group.name == "Group2").first()
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+
+    if (
+        test_db_session.query(IsoLanguage).filter(IsoLanguage.iso639 == "swh").first()
+        is None
+    ):
+        test_db_session.add(IsoLanguage(iso639="swh", name="Swahili"))
+        test_db_session.commit()
+
+    main_version = BibleVersion(
+        name="Auth Comp VID Main",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="ACVM",
+        owner_id=user2.id,
+        is_reference=False,
+    )
+    comp_version = BibleVersion(
+        name="Auth Comp VID Comp",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="ACVC",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add_all([main_version, comp_version])
+    test_db_session.commit()
+    test_db_session.refresh(main_version)
+    test_db_session.refresh(comp_version)
+
+    main_revision = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=main_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    comp_revision = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=comp_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add_all([main_revision, comp_revision])
+    test_db_session.commit()
+    test_db_session.refresh(main_revision)
+    test_db_session.refresh(comp_revision)
+
+    test_db_session.add(
+        VerseText(
+            text="Nothing matches the search term here.",
+            revision_id=main_revision.id,
+            verse_reference="GEN 1:1",
+            book="GEN",
+            chapter=1,
+            verse=1,
+        )
+    )
+    test_db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=main_version.id, group_id=group2.id),
+            BibleVersionAccess(bible_version_id=comp_version.id, group_id=group1.id),
+        ]
+    )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "version_id": main_version.id,
+            "comparison_version_id": comp_version.id,
+            "term": "zyxwvu-no-match",
+            "limit": 5,
+        },
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 404
+    assert "comparison_version_id" in response.json()["detail"]
+
+
+def test_search_version_id_excludes_deleted_revisions(
+    client, regular_token1, test_db_session
+):
+    """A revision flagged ``deleted=True`` must not contribute to the per-vref pick."""
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+
+    version = BibleVersion(
+        name="Deleted Rev Version",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="DRV",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add(version)
+    test_db_session.commit()
+    test_db_session.refresh(version)
+
+    rev_kept = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    rev_deleted = BibleRevision(
+        date=date(2024, 6, 1),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+        deleted=True,
+    )
+    test_db_session.add_all([rev_kept, rev_deleted])
+    test_db_session.commit()
+    test_db_session.refresh(rev_kept)
+    test_db_session.refresh(rev_deleted)
+
+    # Both have GEN 1:1 with "God"; the deleted revision is newer. The
+    # per-vref pick must skip the deleted revision and return the kept one.
+    test_db_session.add_all(
+        [
+            VerseText(
+                text="In the beginning God created the heaven and the earth.",
+                revision_id=rev_kept.id,
+                verse_reference="GEN 1:1",
+                book="GEN",
+                chapter=1,
+                verse=1,
+            ),
+            VerseText(
+                text="Deleted-revision wording about God should not appear.",
+                revision_id=rev_deleted.id,
+                verse_reference="GEN 1:1",
+                book="GEN",
+                chapter=1,
+                verse=1,
+            ),
+        ]
+    )
+    test_db_session.add(
+        BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+    )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"version_id": version.id, "term": "God", "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 1
+    assert "created the heaven" in data["results"][0]["main_text"]
+
+
+def test_search_version_id_all_empty_rows_returns_200_empty(
+    client, regular_token1, test_db_session
+):
+    """A version whose only verses have empty text must 200-empty (not 404)."""
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+
+    version = BibleVersion(
+        name="All-Empty Version",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="AEV",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add(version)
+    test_db_session.commit()
+    test_db_session.refresh(version)
+
+    revision = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add(revision)
+    test_db_session.commit()
+    test_db_session.refresh(revision)
+
+    test_db_session.add(
+        VerseText(
+            text="",
+            revision_id=revision.id,
+            verse_reference="GEN 1:1",
+            book="GEN",
+            chapter=1,
+            verse=1,
+        )
+    )
+    test_db_session.add(
+        BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+    )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"version_id": version.id, "term": "God", "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_count"] == 0
+    assert data["results"] == []
 
 
 def test_search_version_id_and_revision_id_mutually_exclusive(
