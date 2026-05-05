@@ -302,10 +302,6 @@ async def add_assessment(
         a.kwargs = combined_kwargs
         parsed_kwargs = combined_kwargs
 
-    # Eflomal word-alignment derives source/target version IDs from the
-    # reference and revision rows. Mapping per train_routes #620:
-    #   source_version_id ← bible_version_id of reference_id
-    #   target_version_id ← bible_version_id of revision_id
     # Strict-bool check: a caller could route around the typed query param
     # by passing `use_eflomal: 1` (or "true", etc.) via extra_kwargs. The
     # dedup SQL uses JSONB containment which is strictly typed, so a
@@ -317,22 +313,32 @@ async def add_assessment(
             detail="use_eflomal must be a boolean.",
         )
     is_eflomal = use_eflomal_kw is True
-    source_version_id: Optional[int] = None
-    target_version_id: Optional[int] = None
-    if is_eflomal:
-        if a.type != "word-alignment":
-            raise HTTPException(
-                status_code=400,
-                detail="use_eflomal is only valid for word-alignment assessments.",
-            )
-        revision = await db.get(BibleRevision, a.revision_id)
-        if revision is None or revision.deleted:
-            raise HTTPException(status_code=404, detail="revision_id does not exist.")
-        reference = await db.get(BibleRevision, a.reference_id)
-        if reference is None or reference.deleted:
-            raise HTTPException(status_code=404, detail="reference_id does not exist.")
-        source_version_id = reference.bible_version_id
-        target_version_id = revision.bible_version_id
+    if is_eflomal and a.type != "word-alignment":
+        raise HTTPException(
+            status_code=400,
+            detail="use_eflomal is only valid for word-alignment assessments.",
+        )
+
+    # Derive source/target version IDs from the reference and revision rows
+    # for every assessment type (not just eflomal). Downstream consumers
+    # (agent runner, eflomal pipeline, version-id-keyed artifact stores) all
+    # require these fields. Mapping:
+    #   source_version_id ← bible_version_id of reference_id
+    #   target_version_id ← bible_version_id of revision_id
+    revision = await db.get(BibleRevision, a.revision_id)
+    if revision is None or revision.deleted:
+        raise HTTPException(status_code=404, detail="revision_id does not exist.")
+    reference = (
+        await db.get(BibleRevision, a.reference_id)
+        if a.reference_id is not None
+        else None
+    )
+    if a.reference_id is not None and (reference is None or reference.deleted):
+        raise HTTPException(status_code=404, detail="reference_id does not exist.")
+    target_version_id: Optional[int] = revision.bible_version_id
+    source_version_id: Optional[int] = (
+        reference.bible_version_id if reference is not None else None
+    )
 
     # Check for already-completed assessment (force=true bypasses this)
     if not force:
