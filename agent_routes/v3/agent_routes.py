@@ -642,7 +642,9 @@ async def add_lexeme_card(
                         ]
                         if example_records:
                             await db.execute(
-                                pg_insert(AgentLexemeCardExample).values(example_records)
+                                pg_insert(AgentLexemeCardExample).values(
+                                    example_records
+                                )
                                 # Relies on ix_agent_lexeme_card_examples_unique
                                 .on_conflict_do_nothing()
                             )
