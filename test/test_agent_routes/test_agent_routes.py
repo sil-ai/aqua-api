@@ -966,6 +966,78 @@ def test_add_lexeme_card_revision_not_in_version_pair(
     assert "version pair" in response.json()["detail"].lower()
 
 
+def test_add_lexeme_card_without_revision_id_succeeds(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """A card with no examples may omit revision_id — it is purely version-keyed."""
+    response = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "water",
+            "target_lemma": "no_rev_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "senses": [{"definition": "the clear liquid", "examples": []}],
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["target_lemma"] == "no_rev_lemma"
+    assert data["examples"] == []
+
+
+def test_add_lexeme_card_examples_without_revision_id_fails(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """Sending examples without a revision_id is rejected — the examples table is revision-keyed."""
+    response = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "needs_rev_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "examples": [{"source": "water", "target": "maji"}],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "revision_id" in response.json()["detail"].lower()
+
+
+def test_add_lexeme_card_examples_with_unknown_revision_id_fails(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """A revision_id pointing to a nonexistent revision still returns 404 when supplied."""
+    response = client.post(
+        "/v3/agent/lexeme-card?revision_id=999999",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "bogus_rev_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "examples": [{"source": "water", "target": "maji"}],
+        },
+    )
+
+    assert response.status_code == 404
+    assert "999999" in response.json()["detail"]
+
+
 def test_add_lexeme_card_different_languages(
     client,
     regular_token1,

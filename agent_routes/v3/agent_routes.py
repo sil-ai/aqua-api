@@ -4,6 +4,7 @@ import datetime
 import socket
 import time
 import unicodedata
+from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
@@ -477,7 +478,7 @@ async def add_critique_issues(
 @router.post("/agent/lexeme-card", response_model=LexemeCardOut)
 async def add_lexeme_card(
     card: LexemeCardIn,
-    revision_id: int,
+    revision_id: Optional[int] = None,
     replace_existing: bool = False,
     is_user_edit: bool = False,
     db: AsyncSession = Depends(get_db),
@@ -492,7 +493,10 @@ async def add_lexeme_card(
 
     Input:
     - card: LexemeCardIn - The lexeme card data
-    - revision_id: int (required) - The Bible revision ID that the examples come from
+    - revision_id: int (optional) - The Bible revision ID that the examples come
+      from. Required only when `card.examples` is non-empty (top-level examples
+      are stored in a revision-scoped table). May be omitted for example-less
+      writes; the card itself is keyed only by version pair.
     - replace_existing: bool (optional, default=False) - If True, replaces list fields
       (surface_forms, senses) with new data and replaces examples for this revision_id.
       If False, appends new data to existing lists.
@@ -526,34 +530,44 @@ async def add_lexeme_card(
         from sqlalchemy.dialects.postgresql import insert as pg_insert
         from sqlalchemy.sql import func
 
-        # Examples must come from a revision in either the card's source or
-        # target version. The GET endpoint relies on this invariant when it
-        # filters examples by `BibleVersion.id IN (source_version_id,
-        # target_version_id)`; without this check, examples tied to revisions
-        # outside the pair would be silently invisible to all non-admin
-        # callers.
-        revision_version_id = await db.scalar(
-            select(BibleRevision.bible_version_id).where(
-                BibleRevision.id == revision_id
-            )
-        )
-        if revision_version_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Revision {revision_id} not found",
-            )
-        if revision_version_id not in {
-            card.source_version_id,
-            card.target_version_id,
-        }:
+        # Top-level `card.examples` are the only revision-scoped payload
+        # (they go to AgentLexemeCardExample, which carries the revision FK).
+        # Refuse to silently drop examples a caller bothered to send.
+        if card.examples and revision_id is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=(
-                    f"revision_id={revision_id} (version {revision_version_id}) "
-                    f"is not in the card's version pair "
-                    f"({card.source_version_id}, {card.target_version_id})"
-                ),
+                detail="revision_id is required when the card carries examples.",
             )
+
+        if revision_id is not None:
+            # Examples must come from a revision in either the card's source or
+            # target version. The GET endpoint relies on this invariant when it
+            # filters examples by `BibleVersion.id IN (source_version_id,
+            # target_version_id)`; without this check, examples tied to revisions
+            # outside the pair would be silently invisible to all non-admin
+            # callers.
+            revision_version_id = await db.scalar(
+                select(BibleRevision.bible_version_id).where(
+                    BibleRevision.id == revision_id
+                )
+            )
+            if revision_version_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Revision {revision_id} not found",
+                )
+            if revision_version_id not in {
+                card.source_version_id,
+                card.target_version_id,
+            }:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"revision_id={revision_id} (version {revision_version_id}) "
+                        f"is not in the card's version pair "
+                        f"({card.source_version_id}, {card.target_version_id})"
+                    ),
+                )
 
         # Sort alignment_scores by value in descending order (highest scores first)
         sorted_alignment_scores = None
@@ -602,39 +616,43 @@ async def add_lexeme_card(
                 existing_card.source_surface_forms = card.source_surface_forms
                 existing_card.senses = card.senses
 
-                # For examples: delete existing examples for this revision and add new ones
-                if card.examples is not None:
-                    # Delete existing examples for this lexeme card + revision
-                    delete_query = delete(AgentLexemeCardExample).where(
-                        AgentLexemeCardExample.lexeme_card_id == existing_card.id,
-                        AgentLexemeCardExample.revision_id == revision_id,
-                    )
-                    await db.execute(delete_query)
-
-                    # Add new examples; ON CONFLICT DO NOTHING silently skips any
-                    # duplicate (source_text, target_text) pairs within the payload.
-                    example_records = [
-                        {
-                            "lexeme_card_id": existing_card.id,
-                            "revision_id": revision_id,
-                            "source_text": example.get("source", ""),
-                            "target_text": example.get("target", ""),
-                        }
-                        for example in card.examples
-                    ]
-                    if example_records:
-                        await db.execute(
-                            pg_insert(AgentLexemeCardExample).values(example_records)
-                            # Relies on ix_agent_lexeme_card_examples_unique
-                            .on_conflict_do_nothing()
+                # For examples: delete existing examples for this revision and add new ones.
+                # When revision_id is None, the caller has no revision context
+                # (validated above to imply no examples), so leave the examples
+                # table untouched.
+                if revision_id is not None:
+                    if card.examples is not None:
+                        # Delete existing examples for this lexeme card + revision
+                        delete_query = delete(AgentLexemeCardExample).where(
+                            AgentLexemeCardExample.lexeme_card_id == existing_card.id,
+                            AgentLexemeCardExample.revision_id == revision_id,
                         )
-                else:
-                    # If examples is None and replace_existing=True, remove this revision's examples
-                    delete_query = delete(AgentLexemeCardExample).where(
-                        AgentLexemeCardExample.lexeme_card_id == existing_card.id,
-                        AgentLexemeCardExample.revision_id == revision_id,
-                    )
-                    await db.execute(delete_query)
+                        await db.execute(delete_query)
+
+                        # Add new examples; ON CONFLICT DO NOTHING silently skips any
+                        # duplicate (source_text, target_text) pairs within the payload.
+                        example_records = [
+                            {
+                                "lexeme_card_id": existing_card.id,
+                                "revision_id": revision_id,
+                                "source_text": example.get("source", ""),
+                                "target_text": example.get("target", ""),
+                            }
+                            for example in card.examples
+                        ]
+                        if example_records:
+                            await db.execute(
+                                pg_insert(AgentLexemeCardExample).values(example_records)
+                                # Relies on ix_agent_lexeme_card_examples_unique
+                                .on_conflict_do_nothing()
+                            )
+                    else:
+                        # If examples is None and replace_existing=True, remove this revision's examples
+                        delete_query = delete(AgentLexemeCardExample).where(
+                            AgentLexemeCardExample.lexeme_card_id == existing_card.id,
+                            AgentLexemeCardExample.revision_id == revision_id,
+                        )
+                        await db.execute(delete_query)
             else:
                 # Append new data to existing lists
                 if card.surface_forms:
@@ -661,7 +679,7 @@ async def add_lexeme_card(
                 # Use ON CONFLICT DO NOTHING so duplicates (already inserted for
                 # the same lexeme_card / revision / source / target) are silently
                 # skipped instead of raising IntegrityError.
-                if card.examples:
+                if card.examples and revision_id is not None:
                     example_records = [
                         {
                             "lexeme_card_id": existing_card.id,
@@ -680,23 +698,25 @@ async def add_lexeme_card(
             await db.commit()
             await db.refresh(existing_card)
 
-            # Query examples for this revision_id, ordered by ID (insertion order)
-            examples_query = (
-                select(AgentLexemeCardExample)
-                .where(
-                    AgentLexemeCardExample.lexeme_card_id == existing_card.id,
-                    AgentLexemeCardExample.revision_id == revision_id,
+            # Query examples for this revision_id, ordered by ID (insertion order).
+            # Without a revision_id there's no scope to query against, so return [].
+            if revision_id is None:
+                examples_list = []
+            else:
+                examples_query = (
+                    select(AgentLexemeCardExample)
+                    .where(
+                        AgentLexemeCardExample.lexeme_card_id == existing_card.id,
+                        AgentLexemeCardExample.revision_id == revision_id,
+                    )
+                    .order_by(AgentLexemeCardExample.id)
                 )
-                .order_by(AgentLexemeCardExample.id)
-            )
-            examples_result = await db.execute(examples_query)
-            examples_objs = examples_result.scalars().all()
-
-            # Convert to list of dicts
-            examples_list = [
-                {"source": ex.source_text, "target": ex.target_text}
-                for ex in examples_objs
-            ]
+                examples_result = await db.execute(examples_query)
+                examples_objs = examples_result.scalars().all()
+                examples_list = [
+                    {"source": ex.source_text, "target": ex.target_text}
+                    for ex in examples_objs
+                ]
 
             # Return card with only the examples for this revision_id
             card_dict = {
@@ -750,7 +770,7 @@ async def add_lexeme_card(
 
             # Add examples to the separate table. Use ON CONFLICT DO NOTHING to
             # tolerate duplicate (source_text, target_text) entries in the payload.
-            if card.examples:
+            if card.examples and revision_id is not None:
                 example_records = [
                     {
                         "lexeme_card_id": lexeme_card.id,
@@ -769,23 +789,25 @@ async def add_lexeme_card(
             await db.commit()
             await db.refresh(lexeme_card)
 
-            # Query examples for this revision_id, ordered by ID (insertion order)
-            examples_query = (
-                select(AgentLexemeCardExample)
-                .where(
-                    AgentLexemeCardExample.lexeme_card_id == lexeme_card.id,
-                    AgentLexemeCardExample.revision_id == revision_id,
+            # Query examples for this revision_id, ordered by ID (insertion order).
+            # Without a revision_id there's no scope to query against, so return [].
+            if revision_id is None:
+                examples_list = []
+            else:
+                examples_query = (
+                    select(AgentLexemeCardExample)
+                    .where(
+                        AgentLexemeCardExample.lexeme_card_id == lexeme_card.id,
+                        AgentLexemeCardExample.revision_id == revision_id,
+                    )
+                    .order_by(AgentLexemeCardExample.id)
                 )
-                .order_by(AgentLexemeCardExample.id)
-            )
-            examples_result = await db.execute(examples_query)
-            examples_objs = examples_result.scalars().all()
-
-            # Convert to list of dicts
-            examples_list = [
-                {"source": ex.source_text, "target": ex.target_text}
-                for ex in examples_objs
-            ]
+                examples_result = await db.execute(examples_query)
+                examples_objs = examples_result.scalars().all()
+                examples_list = [
+                    {"source": ex.source_text, "target": ex.target_text}
+                    for ex in examples_objs
+                ]
 
             # Return card with only the examples for this revision_id
             card_dict = {
