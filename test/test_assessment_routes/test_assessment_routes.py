@@ -1710,6 +1710,106 @@ def test_no_reference_assessment_derives_target_only(
         assert kwargs["target_version_id"] == version_id
 
 
+def test_non_eflomal_unknown_revision_returns_404(
+    client, regular_token1, db_session, test_db_session
+):
+    """Bogus revision_id or reference_id must 404 for non-eflomal types too —
+    the existence guard is no longer eflomal-only."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        # Bogus revision_id on a no-reference type
+        bad_revision = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": 999_999_999,
+                "type": "sentence-length",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert bad_revision.status_code == 404
+        assert bad_revision.json()["detail"] == "revision_id does not exist."
+
+        # Bogus reference_id on a reference-requiring type
+        bad_reference = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": 999_999_999,
+                "type": "agent-critique",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert bad_reference.status_code == 404
+        assert bad_reference.json()["detail"] == "reference_id does not exist."
+
+        assert mock_runner.await_count == 0
+
+
+def test_non_eflomal_deleted_revision_returns_404(
+    client, regular_token1, db_session, test_db_session
+):
+    """Soft-deleted revision_id or reference_id must 404 for non-eflomal types too."""
+    from database.models import BibleRevision as BibleRevisionModel
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    deleted_rev = (
+        test_db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.id == revision_id)
+        .one()
+    )
+    deleted_rev.deleted = True
+    test_db_session.commit()
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "revision_id does not exist."
+
+        # Symmetric case: soft-deleted reference
+        deleted_rev.deleted = False
+        deleted_ref = (
+            test_db_session.query(BibleRevisionModel)
+            .filter(BibleRevisionModel.id == reference_id)
+            .one()
+        )
+        deleted_ref.deleted = True
+        test_db_session.commit()
+
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "reference_id does not exist."
+
+        assert mock_runner.await_count == 0
+
+
 def test_use_eflomal_dedup_separate_from_regular(
     client, regular_token1, db_session, test_db_session
 ):
