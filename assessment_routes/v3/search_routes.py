@@ -119,8 +119,10 @@ def _side_subquery(
         )
         if ilike_pattern is not None:
             q = q.where(_nfc_sql(vt.text).ilike(ilike_pattern))
+        # br.id.desc() is a stable tie-breaker so the per-vref pick is
+        # deterministic when two revisions share the same date.
         q = q.distinct(vt.book, vt.chapter, vt.verse).order_by(
-            vt.book, vt.chapter, vt.verse, br.date.desc()
+            vt.book, vt.chapter, vt.verse, br.date.desc(), br.id.desc()
         )
     else:
         q = select(*select_cols).where(
@@ -140,14 +142,20 @@ async def search_revision_text(
     version_id: Optional[int] = Query(
         default=None,
         description=(
-            "Bible version id; searches the latest non-empty revision per verse "
-            "across all accessible revisions for this version."
+            "Bible version id; per (book, chapter, verse) returns the latest "
+            "non-empty revision whose text matches the search term, with older "
+            "revisions filling gaps where the latest revision is empty or "
+            "doesn't contain the term."
         ),
     ),
     comparison_revision_id: Optional[int] = None,
     comparison_version_id: Optional[int] = Query(
         default=None,
-        description="Bible version id for comparison text (per-vref latest non-empty)",
+        description=(
+            "Bible version id for comparison text; per (book, chapter, verse) "
+            "returns the latest non-empty revision (no search-term filter on "
+            "the comparison side)."
+        ),
     ),
     limit: int = Query(default=10, ge=1, le=1000),
     random: bool = False,
