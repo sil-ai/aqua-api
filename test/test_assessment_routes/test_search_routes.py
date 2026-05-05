@@ -1197,18 +1197,20 @@ def test_search_version_id_picks_latest_revision_text(
 
     assert response.status_code == 200
     data = response.json()
-    by_ref = {(r["book"], r["chapter"], r["verse"]): r["main_text"] for r in data["results"]}
+    by_ref = {
+        (r["book"], r["chapter"], r["verse"]): r["main_text"] for r in data["results"]
+    }
 
     # Newer revision wording is "made the heavens" / "Then God said".
     # Older is "created the heaven" / "And God said".
     assert ("GEN", 1, 1) in by_ref
-    assert "made the heavens" in by_ref[("GEN", 1, 1)], (
-        f"Expected newer revision wording at GEN 1:1; got {by_ref[('GEN', 1, 1)]!r}"
-    )
+    assert (
+        "made the heavens" in by_ref[("GEN", 1, 1)]
+    ), f"Expected newer revision wording at GEN 1:1; got {by_ref[('GEN', 1, 1)]!r}"
     assert ("GEN", 1, 3) in by_ref
-    assert "Then God said" in by_ref[("GEN", 1, 3)], (
-        f"Expected newer revision wording at GEN 1:3; got {by_ref[('GEN', 1, 3)]!r}"
-    )
+    assert (
+        "Then God said" in by_ref[("GEN", 1, 3)]
+    ), f"Expected newer revision wording at GEN 1:3; got {by_ref[('GEN', 1, 3)]!r}"
 
 
 def test_search_version_id_falls_back_when_latest_empty(
@@ -1306,9 +1308,15 @@ def test_search_version_id_falls_back_when_latest_empty(
 
     assert response.status_code == 200
     data = response.json()
-    by_ref = {(r["book"], r["chapter"], r["verse"]): r["main_text"] for r in data["results"]}
+    by_ref = {
+        (r["book"], r["chapter"], r["verse"]): r["main_text"] for r in data["results"]
+    }
 
-    assert ("GEN", 1, 1) in by_ref, (
+    assert (
+        "GEN",
+        1,
+        1,
+    ) in by_ref, (
         f"Expected GEN 1:1 (older) to fall through when newer is empty; got {data}"
     )
     assert "created the heaven" in by_ref[("GEN", 1, 1)]
