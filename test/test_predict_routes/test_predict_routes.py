@@ -657,8 +657,9 @@ def _spawn_agent_and_get_job(client, token, body_overrides=None):
 
 def test_predict_job_running_returns_retry_after(client, regular_token1):
     """Polling a job whose Modal call hasn't completed yet returns
-    status=running with a Retry-After header so the client can pace
-    itself without us having to invent a separate cadence channel."""
+    status=running with a Retry-After header and the submitted pairs
+    echoed back (translation/critique null since the slow path hasn't
+    finished)."""
     import modal
 
     job_id = _spawn_agent_and_get_job(client, regular_token1)
@@ -676,14 +677,20 @@ def test_predict_job_running_returns_retry_after(client, regular_token1):
     assert body["status"] == "running"
     assert body["id"] == job_id
     assert response.headers.get("Retry-After") == "10"
+    # Echo of submitted pairs is in the response even while still running,
+    # so a client that wants to render input + status without waiting can.
+    assert len(body["pairs"]) == 1
+    assert body["pairs"][0]["vref"] == "GEN 1:1"
+    assert body["pairs"][0]["translation"] is None
+    assert body["pairs"][0]["critique"] is None
 
 
 def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_token1):
     """When the Modal call completes, the polling endpoint returns each
-    submitted pair (echoing back vref / source_text / target_text in the
-    order submitted) with its translation populated. Order is anchored on
-    the input — vref is an optional label, so we don't trust the agent's
-    response order."""
+    submitted pair with its translation populated. The vref / source_text
+    / target_text echo is always taken from `pairs_input`, never from the
+    agent response — vref is an optional label and we don't want a
+    hypothetical agent bug that mangled echo fields to propagate."""
     import modal
 
     submitted_pairs = [
@@ -700,29 +707,31 @@ def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_t
         body_overrides={"pairs": submitted_pairs},
     )
 
-    # Simulate the agent returning pairs in a different order than
-    # submitted — the polling endpoint should still serve them by
-    # submitted-index.
+    # The mock agent response intentionally has WRONG vref / source_text
+    # / target_text on every pair. The polling endpoint must ignore those
+    # and echo back the submitted values; only translation / critique
+    # come from the agent (positionally, since the agent preserves input
+    # order — see assessments/agent/app.py's `for pair in pairs:` loop).
     agent_complete = {
         "pairs": [
             {
-                "vref": "GEN 1:1",
-                "source_text": "src-A",
-                "target_text": "tgt-A",
+                "vref": "WRONG-1",
+                "source_text": "wrong-A",
+                "target_text": "wrong-A",
                 "translation": {"literal": "A-translation"},
                 "critique": None,
             },
             {
-                "vref": None,
-                "source_text": "src-B",
-                "target_text": "tgt-B",
+                "vref": "WRONG-2",
+                "source_text": "wrong-B",
+                "target_text": "wrong-B",
                 "translation": {"literal": "B-translation"},
                 "critique": None,
             },
             {
-                "vref": "GEN 1:3",
-                "source_text": "src-C",
-                "target_text": "tgt-C",
+                "vref": "WRONG-3",
+                "source_text": "wrong-C",
+                "target_text": "wrong-C",
                 "translation": {"literal": "C-translation"},
                 "critique": None,
             },
@@ -743,9 +752,11 @@ def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_t
     assert len(body["pairs"]) == 3
     for idx, submitted in enumerate(submitted_pairs):
         out = body["pairs"][idx]
+        # echo: always from the submitted pair, never from the agent
         assert out["vref"] == submitted.get("vref")
         assert out["source_text"] == submitted["source_text"]
         assert out["target_text"] == submitted["target_text"]
+        # translation: positional from the agent (one per submitted pair)
         assert out["translation"]["literal"] == f"{chr(ord('A') + idx)}-translation"
 
 
@@ -759,14 +770,16 @@ def test_predict_job_complete_is_cached(client, regular_token1):
     fc_mock = AsyncMock()
     fc_mock.get.aio = AsyncMock(return_value={"pairs": []})
     with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock) as patched:
-        client.get(
+        first = client.get(
             f"/{prefix}/predict/jobs/{job_id}",
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
-        client.get(
+        second = client.get(
             f"/{prefix}/predict/jobs/{job_id}",
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
+        assert first.json()["status"] == "complete"
+        assert second.json()["status"] == "complete"
         assert patched.call_count == 1
 
 
@@ -819,3 +832,109 @@ def test_predict_job_unauthenticated_returns_401(client, regular_token1):
 
     response = client.get(f"/{prefix}/predict/jobs/{job_id}")
     assert response.status_code == 401
+
+
+def test_predict_spawn_failure_returns_failed_handle_in_post(client, regular_token1):
+    """If `Function.spawn` itself raises (e.g. modal auth, connectivity),
+    /predict still returns the synchronous fast-slice results and a
+    `failed` job handle so the caller learns the bad news in the POST
+    response. We deliberately do NOT persist a DB row in this case —
+    there's no Modal call to poll, so the job_id is informational only
+    and the polling endpoint will 404."""
+
+    def from_name(_app_name, _fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+        mock_fn.remote.aio = AsyncMock(return_value={"pairs": []})
+        mock_fn.spawn.aio = AsyncMock(side_effect=RuntimeError("modal auth failed"))
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["agent"], include_translation=True),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    job = body["job"]
+    assert job is not None
+    assert job["status"] == "failed"
+    assert job["id"].startswith("prj_")
+    # Sync slot still populated — the caller doesn't lose the fast-slice
+    # results just because the slow path didn't start.
+    assert body["results"]["agent"]["status"] == "ok"
+    # The handle id isn't pollable; surface it that way.
+    poll = client.get(
+        f"/{prefix}/predict/jobs/{job['id']}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert poll.status_code == 404
+
+
+def test_predict_job_admin_can_read_other_users_job(
+    client, regular_token1, admin_token
+):
+    """Admin bypass on the cross-user 404. Pinned because flipping the
+    `not current_user.is_admin` check would only break this test —
+    `test_predict_job_other_user_returns_404` would still pass without it."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value={"pairs": []})
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "complete"
+
+
+def test_predict_non_agent_apps_get_suppressed_flags_when_agent_co_selected(
+    client, regular_token1
+):
+    """When agent is co-selected with another app and translation is
+    requested, the synchronous payload sent to *every* app has
+    include_translation/include_critique zeroed (only the spawn carries
+    the real flags). Pins the design choice that the suppression isn't
+    agent-only — if a future app starts reading these flags it will see
+    the suppressed values during a slow-spawn request."""
+    captured: dict[str, dict] = {}
+
+    async def capture_sync(payload):
+        return payload  # echoed for inspection
+
+    async def spawn(_payload):
+        fc = AsyncMock()
+        fc.object_id = "fc-x"
+        return fc
+
+    def from_name(app_name, _fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+
+        async def capture(payload):
+            captured[app_name] = payload
+            return {"ok": True}
+
+        mock_fn.remote.aio = AsyncMock(side_effect=capture)
+        mock_fn.spawn.aio = AsyncMock(side_effect=spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams", "agent"], include_translation=True),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured["ngrams"]["include_translation"] is False
+    assert captured["agent-critique"]["include_translation"] is False

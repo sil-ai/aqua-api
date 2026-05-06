@@ -1237,16 +1237,18 @@ class PredictJob(Base):
     pairs_input = Column(JSONB, nullable=False)
     result = Column(JSONB, nullable=True)
     error = Column(Text, nullable=True)
-    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
     )
     completed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    owner = relationship("UserDB")
 
     __table_args__ = (
         CheckConstraint(
             "status IN ('running', 'complete', 'failed')",
             name="ck_predict_jobs_status",
         ),
-        Index("ix_predict_jobs_owner_created", "owner_user_id", "created_at"),
+        Index("ix_predict_jobs_owner_created", "owner_id", "created_at"),
     )

@@ -424,10 +424,6 @@ class PredictAppResult(BaseModel):
 
 
 class PredictJobHandle(BaseModel):
-    """Returned by POST /predict whenever the slow translation/critique pass
-    has been spawned in the background. The client polls `poll_url` until
-    `status` becomes 'complete' or 'failed'."""
-
     id: str
     status: Literal["running", "complete", "failed"]
     includes: List[Literal["translation", "critique"]]
@@ -441,11 +437,6 @@ class PredictFanoutResponse(BaseModel):
 
 
 class PredictJobPair(BaseModel):
-    """One pair's slow-path result. Echoes the original `vref` /
-    `source_text` / `target_text` so callers that submit without a vref
-    can still match results to inputs by index. Pairs are returned in the
-    same order they were submitted to /predict."""
-
     vref: Optional[str] = None
     source_text: Optional[str] = None
     target_text: str

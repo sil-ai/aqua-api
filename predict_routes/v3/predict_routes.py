@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 import fastapi
 import modal
+from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +34,8 @@ from security_routes.utilities import (
     is_user_authorized_for_revision,
 )
 from utils.logging_config import setup_logger
+
+load_dotenv()
 
 container_id = socket.gethostname()
 logger = setup_logger(__name__, container_id=container_id)
@@ -89,15 +92,18 @@ def _job_includes(job: PredictJob) -> list[str]:
 def _job_pairs_response(job: PredictJob) -> list[PredictJobPair]:
     """Reconstitute the per-pair slow-path payload, ordered as submitted.
 
-    We re-zip with the original `pairs_input` (rather than trusting the
-    agent's response order) so callers that omit `vref` can still match
-    results to inputs by index — vref is an optional label."""
+    The agent app preserves input order in its response, so translation /
+    critique are pulled positionally from `agent_pairs[idx]`. The vref /
+    source_text / target_text echo always comes from the original
+    `pairs_input` so callers that omit `vref` (an optional label) can
+    still match results to inputs by index, and so a hypothetical agent
+    bug that mangled echo fields wouldn't propagate to the response.
+    """
     result = job.result or {}
     agent_pairs = result.get("pairs") or []
-    by_index = {idx: agent_pairs[idx] for idx in range(len(agent_pairs))}
     out: list[PredictJobPair] = []
     for idx, submitted in enumerate(job.pairs_input or []):
-        agent_pair = by_index.get(idx) or {}
+        agent_pair = agent_pairs[idx] if idx < len(agent_pairs) else {}
         out.append(
             PredictJobPair(
                 vref=submitted.get("vref"),
@@ -278,11 +284,10 @@ async def predict(
             include_translation=body.include_translation,
             include_critique=body.include_critique,
             pairs_input=[p.model_dump() for p in body.pairs],
-            owner_user_id=current_user.id,
+            owner_id=current_user.id,
         )
         db.add(job)
         await db.commit()
-        await db.refresh(job)
 
         job_handle = PredictJobHandle(
             id=job.id,
@@ -320,7 +325,7 @@ async def get_predict_job(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
         )
-    if job.owner_user_id != current_user.id and not current_user.is_admin:
+    if job.owner_id != current_user.id and not current_user.is_admin:
         # 404 (not 403) so we don't leak the existence of jobs the caller
         # didn't create. Same posture other routes take.
         raise HTTPException(
@@ -343,13 +348,11 @@ async def get_predict_job(
             job.error = error_str
             job.completed_at = datetime.now(timezone.utc)
             await db.commit()
-            await db.refresh(job)
         else:
             job.status = "complete"
             job.result = data
             job.completed_at = datetime.now(timezone.utc)
             await db.commit()
-            await db.refresh(job)
 
     if job.status == "running":
         return PredictJobStatusResponse(

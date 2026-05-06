@@ -30,11 +30,11 @@ def upgrade() -> None:
         sa.Column("pairs_input", JSONB(), nullable=False),
         sa.Column("result", JSONB(), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("owner_user_id", sa.Integer(), nullable=False),
+        sa.Column("owner_id", sa.Integer(), nullable=False),
         sa.Column(
             "created_at",
             sa.TIMESTAMP(timezone=True),
-            server_default=sa.text("now()"),
+            server_default=sa.func.now(),
             nullable=False,
         ),
         sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
@@ -42,13 +42,13 @@ def upgrade() -> None:
             "status IN ('running', 'complete', 'failed')",
             name="ck_predict_jobs_status",
         ),
-        sa.ForeignKeyConstraint(["owner_user_id"], ["users.id"]),
+        sa.ForeignKeyConstraint(["owner_id"], ["users.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(
         "ix_predict_jobs_owner_created",
         "predict_jobs",
-        ["owner_user_id", "created_at"],
+        ["owner_id", "created_at"],
         unique=False,
     )
 
