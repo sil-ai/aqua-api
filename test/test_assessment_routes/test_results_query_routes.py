@@ -2025,6 +2025,28 @@ def test_ngrams_result_caches_total_count_for_finished_assessment(
     assert refreshed.json()["total_count"] == primed_count + 1
 
 
+def test_ngrams_result_missing_assessment_returns_404_for_admin(
+    client, admin_token, test_db_session
+):
+    """Admins are authorized for every assessment without an existence
+    check (`is_user_authorized_for_assessment` short-circuits True),
+    so a request for a nonexistent assessment_id has to be handled by
+    the count helper itself — otherwise the missing row would raise
+    NoResultFound and surface as a 500."""
+    setup_assessments_results(test_db_session)
+
+    # Pick an id far above any seeded assessment.
+    missing_id = 9_999_999
+
+    response = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": missing_id},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 404, response.text
+    assert str(missing_id) in response.json()["detail"]
+
+
 def test_ngrams_result_does_not_cache_in_progress_assessment(
     client, regular_token1, test_db_session
 ):

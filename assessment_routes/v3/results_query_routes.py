@@ -261,6 +261,12 @@ async def build_results_query(
 # matches the "ngrams shouldn't grow on a finished assessment" contract
 # above; if it ever drifts in production, this comment is the place to
 # revisit.
+#
+# Eviction is lazy: an entry is only removed when its key is re-accessed
+# after expiry. The dict size is therefore bounded by "unique finished
+# assessment_ids queried by this worker since startup," not by the TTL.
+# At 12-ish bytes per entry this stays sub-1MB even at 100k assessments,
+# which is small enough that we don't bother with a background sweep.
 _NGRAMS_TOTAL_COUNT_TTL_SECONDS = 3600
 _ngrams_total_count_cache: Dict[int, Tuple[int, float]] = {}
 
@@ -274,23 +280,30 @@ async def _get_ngrams_total_count(assessment_id: int, db: AsyncSession) -> int:
         del _ngrams_total_count_cache[assessment_id]
 
     # One round-trip: fetch the count alongside the assessment status
-    # so we can decide whether to cache without a second query. Callers
-    # are expected to have already verified the assessment exists via
-    # auth, so the row is always present here.
+    # so we can decide whether to cache without a second query.
+    # `is_user_authorized_for_assessment` short-circuits True for
+    # admins without verifying the row exists, so we still need to
+    # handle a missing assessment here.
     count_subq = (
         select(func.count())
         .select_from(NgramsTable)
         .where(NgramsTable.assessment_id == assessment_id)
         .scalar_subquery()
     )
-    count, assessment_status = (
+    row = (
         await db.execute(
             select(count_subq.label("count"), Assessment.status).where(
                 Assessment.id == assessment_id
             )
         )
-    ).one()
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assessment {assessment_id} not found",
+        )
 
+    count, assessment_status = row
     if assessment_status == "finished":
         _ngrams_total_count_cache[assessment_id] = (
             count,
