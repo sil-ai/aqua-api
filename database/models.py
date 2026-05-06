@@ -75,6 +75,12 @@ class NgramsTable(Base):
 
     vrefs = relationship("NgramVrefTable", back_populates="ngram")
 
+    # /v3/ngrams_result paginates this table directly with
+    # `WHERE assessment_id = :id ORDER BY id LIMIT/OFFSET`. Composite
+    # `(assessment_id, id)` lets Postgres serve that as a single index
+    # walk without a separate sort step. See #650.
+    __table_args__ = (Index("ix_ngrams_table_assessment_id_id", "assessment_id", "id"),)
+
 
 class NgramVrefTable(Base):
     __tablename__ = "ngram_vref_table"
