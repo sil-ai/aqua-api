@@ -237,6 +237,61 @@ async def build_results_query(
     )
 
 
+# Per-worker memoization of `ngrams_table` total counts, keyed by
+# `assessment_id` and only populated for assessments in terminal
+# `status='finished'` state — for those, the count cannot change
+# without a new assessment row being created (see #651). Each entry is
+# (count, monotonic_expires_at). A 1h TTL keeps deleted/restarted
+# assessments from sticking around forever without coupling this cache
+# to the assessment write paths.
+_NGRAMS_TOTAL_COUNT_TTL_SECONDS = 3600
+_ngrams_total_count_cache: Dict[int, Tuple[int, float]] = {}
+
+
+async def _get_ngrams_total_count(assessment_id: int, db: AsyncSession) -> int:
+    cached = _ngrams_total_count_cache.get(assessment_id)
+    if cached is not None:
+        count, expires_at = cached
+        if expires_at > time.monotonic():
+            return count
+        del _ngrams_total_count_cache[assessment_id]
+
+    # One round-trip: fetch the count alongside the assessment status
+    # so we can decide whether to cache without a second query.
+    count_subq = (
+        select(func.count())
+        .select_from(NgramsTable)
+        .where(NgramsTable.assessment_id == assessment_id)
+        .scalar_subquery()
+    )
+    row = (
+        await db.execute(
+            select(count_subq.label("count"), Assessment.status).where(
+                Assessment.id == assessment_id
+            )
+        )
+    ).one_or_none()
+
+    if row is None:
+        # Assessment row absent — auth should have stopped us, but be
+        # defensive and fall back to a plain count.
+        return (
+            await db.scalar(
+                select(func.count())
+                .select_from(NgramsTable)
+                .where(NgramsTable.assessment_id == assessment_id)
+            )
+        ) or 0
+
+    count, assessment_status = row
+    if assessment_status == "finished":
+        _ngrams_total_count_cache[assessment_id] = (
+            count,
+            time.monotonic() + _NGRAMS_TOTAL_COUNT_TTL_SECONDS,
+        )
+    return count
+
+
 async def fetch_ngrams_page(
     assessment_id: int,
     page: Optional[int],
@@ -299,11 +354,7 @@ async def fetch_ngrams_page(
     # with `vrefs=[]` instead of vanishing). vrefless ngrams aren't
     # expected in normal training output but aren't schema-prevented
     # either, so we lean toward visibility over the old hidden-skip.
-    total_count = await db.scalar(
-        select(func.count())
-        .select_from(NgramsTable)
-        .where(NgramsTable.assessment_id == assessment_id)
-    )
+    total_count = await _get_ngrams_total_count(assessment_id, db)
 
     return rows, total_count
 
