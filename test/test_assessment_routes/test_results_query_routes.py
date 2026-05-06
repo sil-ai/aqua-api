@@ -1851,3 +1851,67 @@ def test_ngrams_result_unauthorized_assessment_returns_403(
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"page": 2},  # page without page_size
+        {"page_size": 5},  # page_size without page
+    ],
+    ids=["page_without_size", "size_without_page"],
+)
+def test_ngrams_result_partial_pagination_args_rejected(
+    client, regular_token1, test_db_session, params
+):
+    """`page` and `page_size` must be provided together. Without this
+    check, supplying `page=2` alone silently bypassed the offset/limit
+    branch in fetch_ngrams_page and returned the entire table."""
+    assessment_id, _ = _setup_ngrams_assessment(test_db_session)
+
+    response = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": assessment_id, **params},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 400
+    assert "page" in response.json()["detail"].lower()
+
+
+def test_ngrams_result_includes_vrefless_ngram(client, regular_token1, test_db_session):
+    """A ngram with no rows in ngram_vref_table now appears in results
+    with `vrefs=[]` instead of being silently dropped (the old INNER
+    JOIN behaviour). Pinned because the docstring on fetch_ngrams_page
+    promises this contract — switching back to INNER JOIN would be a
+    silent regression that callers couldn't easily notice."""
+    from database.models import NgramsTable
+
+    assessment_id, seeds = _setup_ngrams_assessment(test_db_session)
+
+    # Add a vrefless ngram. The schema permits it (no NOT NULL on the
+    # vref relationship from this side; ngrams_table doesn't require
+    # at-least-one ngram_vref_table row).
+    orphan = NgramsTable(
+        assessment_id=assessment_id,
+        ngram="orphan_ngram_with_no_vrefs",
+        ngram_size=4,
+    )
+    test_db_session.add(orphan)
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": assessment_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    by_ngram = {r["ngram"]: r for r in body["results"]}
+    assert "orphan_ngram_with_no_vrefs" in by_ngram
+    assert by_ngram["orphan_ngram_with_no_vrefs"]["vrefs"] == []
+    # And total_count includes the orphan, so len(results) == total_count
+    # in the unpaginated case — the inconsistency the old INNER JOIN
+    # produced is gone.
+    assert body["total_count"] == len(seeds) + 1
+    assert len(body["results"]) == body["total_count"]

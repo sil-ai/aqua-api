@@ -291,6 +291,14 @@ async def fetch_ngrams_page(
         for r in ngram_rows
     ]
 
+    # `total_count` counts every ngram for the assessment, regardless of
+    # whether it has any vrefs attached. The previous query used INNER
+    # JOIN, which silently dropped vrefless ngrams from results while
+    # this same count still included them — an inconsistency the new
+    # leaf-pagination flow makes explicit (a vrefless ngram now appears
+    # with `vrefs=[]` instead of vanishing). vrefless ngrams aren't
+    # expected in normal training output but aren't schema-prevented
+    # either, so we lean toward visibility over the old hidden-skip.
     total_count = await db.scalar(
         select(func.count())
         .select_from(NgramsTable)
@@ -697,6 +705,7 @@ async def get_ngrams_result(
         A dictionary containing the list of results and the total count of results.
     """
     request_start = time.perf_counter()
+    await validate_parameters(None, None, None, None, page, page_size)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
