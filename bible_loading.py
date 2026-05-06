@@ -17,7 +17,7 @@ skeleton from disk on every request. Both have been collapsed:
 
 import asyncio
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional, Tuple
 
 from sqlalchemy.sql import insert
 
@@ -32,12 +32,17 @@ _INSERT_BATCH_SIZE = 5000
 _VREF_PATH = Path(__file__).resolve().parent / "fixtures" / "vref.txt"
 
 
-def _parse_vref_skeleton() -> List[tuple]:
-    """Parse fixtures/vref.txt once into a list of (book, chapter, verse_str,
-    verse_reference) tuples. Lines like "GEN 1:1"; tolerates `<range>` markers
-    by treating any line that doesn't match `BOOK CHAPTER:VERSE` as None
-    placeholders skipped at upload time."""
-    rows: List[tuple] = []
+_VrefSlot = Optional[Tuple[str, int, int, str]]
+
+
+def _parse_vref_skeleton() -> List[_VrefSlot]:
+    """Parse fixtures/vref.txt once into a list of (book, chapter, verse,
+    verse_reference) tuples, with `None` placeholders for non-canonical
+    lines (e.g. `<range>` markers) so the skeleton stays 1:1 with the
+    file's line ordering. Trailing blank lines are stripped so a stray
+    newline at end-of-file can't silently inflate the skeleton length
+    and break the input length check."""
+    rows: List[_VrefSlot] = []
     with open(_VREF_PATH, mode="r", encoding="utf-8") as f:
         for raw in f:
             line = raw.strip()
@@ -58,10 +63,12 @@ def _parse_vref_skeleton() -> List[tuple]:
             except (ValueError, IndexError):
                 # Range markers etc — not a real vref slot.
                 rows.append(None)
+    while rows and rows[-1] is None:
+        rows.pop()
     return rows
 
 
-_VREF_SKELETON: List[tuple] = _parse_vref_skeleton()
+_VREF_SKELETON: List[_VrefSlot] = _parse_vref_skeleton()
 
 
 def _build_verse_records(verses: Iterable, revision_id: int) -> List[dict]:

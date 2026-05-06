@@ -210,7 +210,6 @@ async def upload_revision(
     # rollback on a parse error leaves no orphaned revision behind, and the
     # whole upload pays one WAL fsync at the end instead of one per batch.
     await db.flush()
-    await db.refresh(new_revision)
 
     try:
         contents = await file.read()
