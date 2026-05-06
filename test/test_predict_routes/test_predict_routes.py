@@ -657,17 +657,31 @@ def _spawn_agent_and_get_job(client, token, body_overrides=None):
     return response.json()["job"]["id"]
 
 
-def test_predict_job_running_returns_retry_after(client, regular_token1):
+@pytest.mark.parametrize(
+    "timeout_exc",
+    [TimeoutError("not yet"), "modal_timeout"],
+    ids=["builtin_TimeoutError", "modal_exception_TimeoutError"],
+)
+def test_predict_job_running_returns_retry_after(client, regular_token1, timeout_exc):
     """Polling a job whose Modal call hasn't completed yet returns
     status=running with a Retry-After header and the submitted pairs
     echoed back (translation/critique null since the slow path hasn't
-    finished)."""
+    finished).
+
+    Pinned for both exception classes because modal's
+    `_functions.poll_function` raises the builtin `TimeoutError`, not
+    `modal.exception.TimeoutError` (which does NOT subclass it). An
+    earlier version of the route only caught the modal class and
+    silently flipped every still-running poll to status=failed."""
     import modal
+
+    if timeout_exc == "modal_timeout":
+        timeout_exc = modal.exception.TimeoutError("not yet")
 
     job_id = _spawn_agent_and_get_job(client, regular_token1)
 
     fc_mock = AsyncMock()
-    fc_mock.get.aio = AsyncMock(side_effect=modal.exception.TimeoutError("not yet"))
+    fc_mock.get.aio = AsyncMock(side_effect=timeout_exc)
     with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
         response = client.get(
             f"/{prefix}/predict/jobs/{job_id}",
