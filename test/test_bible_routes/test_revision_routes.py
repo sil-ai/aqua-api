@@ -308,3 +308,73 @@ def test_get_revision(client, regular_token1, regular_token2, db_session):
     # remove 5 revisions
     for revision in listed_revisions:
         delete_revision(client, regular_token2, revision["id"])
+
+
+def _post_revision_with_payload(client, token, version_id, payload: bytes):
+    headers = {"Authorization": f"Bearer {token}"}
+    test_revision = {"version_id": version_id, "name": "Bad Revision"}
+    files = {"file": ("upload.txt", payload, "text/plain")}
+    return client.post(
+        f"{prefix}/revision", params=test_revision, files=files, headers=headers
+    )
+
+
+def test_upload_revision_empty_file_no_orphan(
+    client, regular_token1, db_session
+):
+    """An empty / whitespace-only file must 400 and leave no BibleRevision row."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    before = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+
+    response = _post_revision_with_payload(
+        client, regular_token1, version_id, b"\n\n   \n"
+    )
+    assert response.status_code == 400
+
+    db_session.expire_all()
+    after = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+    assert after == before, "rollback should leave no orphan BibleRevision row"
+
+
+def test_upload_revision_wrong_line_count_no_orphan(
+    client, regular_token1, db_session
+):
+    """A file with the wrong number of lines must 400 and leave no orphan row."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    before = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+
+    # Three lines is far from the expected 41,899.
+    response = _post_revision_with_payload(
+        client, regular_token1, version_id, b"In the beginning\nGod created\nthe heavens\n"
+    )
+    assert response.status_code == 400
+
+    db_session.expire_all()
+    after = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+    assert after == before, "rollback should leave no orphan BibleRevision row"
+
+
+def test_upload_revision_persists_verses(client, regular_token1, db_session):
+    """End-to-end: a successful upload commits both the revision and its verses."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    db_session.expire_all()
+    assert revision_exists(db_session, revision_id)
+    assert count_verses_in_revision(db_session, revision_id) > 0

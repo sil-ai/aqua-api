@@ -215,7 +215,8 @@ async def upload_revision(
     try:
         contents = await file.read()
         await process_and_upload_revision(contents, new_revision.id, db)
-        # text_loading commits the transaction once all verses are inserted.
+        # One commit covers the BibleRevision row + all VerseText inserts.
+        await db.commit()
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

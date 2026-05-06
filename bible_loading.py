@@ -8,22 +8,28 @@ skeleton from disk on every request. Both have been collapsed:
 
 - The vref skeleton is parsed once at import and cached as a list of
   (book, chapter, verse_str, verse_reference) tuples.
-- `text_loading` runs the whole upload in a single transaction (one fsync),
-  using a 5000-row INSERT batch to stay under Postgres' 65535-parameter
-  cap (6 cols × 5000 = 30k params, leaves headroom).
+- `text_loading` issues one INSERT batch at a time without committing,
+  using a 5000-row batch to stay under Postgres' 65535-parameter cap
+  (6 cols × 5000 = 30k params, leaves headroom). The caller owns the
+  transaction boundary so the BibleRevision row and its verses commit
+  together (one WAL fsync) and rollback together on error.
 """
 
 import asyncio
+from pathlib import Path
 from typing import Iterable, List
 
 from sqlalchemy.sql import insert
 
 from database.models import VerseText
 
-
 # Insert batch size: 5000 rows × 6 columns = 30,000 bound parameters,
 # safely under the Postgres protocol limit of 65,535 per statement.
 _INSERT_BATCH_SIZE = 5000
+
+# Resolve fixtures/vref.txt relative to this file so import succeeds
+# regardless of the process's cwd (test runners, alembic env, scripts).
+_VREF_PATH = Path(__file__).resolve().parent / "fixtures" / "vref.txt"
 
 
 def _parse_vref_skeleton() -> List[tuple]:
@@ -32,7 +38,7 @@ def _parse_vref_skeleton() -> List[tuple]:
     by treating any line that doesn't match `BOOK CHAPTER:VERSE` as None
     placeholders skipped at upload time."""
     rows: List[tuple] = []
-    with open("fixtures/vref.txt", mode="r", encoding="utf-8") as f:
+    with open(_VREF_PATH, mode="r", encoding="utf-8") as f:
         for raw in f:
             line = raw.strip()
             if not line:
@@ -124,25 +130,22 @@ async def async_text_dataframe(verses, bible_revision):
 
 
 async def text_loading(verse_records, db):
-    """Insert pre-built verse records in one transaction.
+    """Insert pre-built verse records in batches without committing.
 
-    Single commit at the end means one WAL fsync per upload instead of one
-    per batch. Under CI contention (multiple concurrent uploads × 41 fsyncs
-    each) the per-batch commit was producing 100s+ tail latencies that
-    App Runner's 120s LB timeout was killing as 502s.
+    The caller owns the transaction boundary: one commit at the end of the
+    full upload means one WAL fsync per request instead of one per batch.
+    Under CI contention (multiple concurrent uploads × 41 fsyncs each) the
+    old per-batch commit produced 100s+ tail latencies that App Runner's
+    120s LB timeout was killing as 502s.
     """
     if not verse_records:
         return
-    if not isinstance(verse_records, list):
-        # Backwards-compat with callers that still hand a pandas DataFrame.
-        verse_records = verse_records.to_dict(orient="records")
-
     for start in range(0, len(verse_records), _INSERT_BATCH_SIZE):
         batch = verse_records[start : start + _INSERT_BATCH_SIZE]
         await db.execute(insert(VerseText), batch)
-    await db.commit()
 
 
 async def upload_bible(verses, bible_revision, db):
     verse_records = await async_text_dataframe(verses, bible_revision)
     await text_loading(verse_records, db)
+    await db.commit()
