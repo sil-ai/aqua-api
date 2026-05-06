@@ -336,7 +336,11 @@ async def get_predict_job(
         try:
             fc = modal.FunctionCall.from_id(job.modal_call_id)
             data = await fc.get.aio(timeout=0)
-        except modal.exception.TimeoutError:
+        except (TimeoutError, modal.exception.TimeoutError):
+            # modal._functions.poll_function raises the builtin TimeoutError
+            # (not modal.exception.TimeoutError, which doesn't subclass it)
+            # when timeout=0 hits with no result yet; catch both so the
+            # right modal version doesn't matter.
             response.headers["Retry-After"] = str(_JOB_POLL_INTERVAL_S)
         except Exception as exc:
             logger.warning(
