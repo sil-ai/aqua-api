@@ -35,7 +35,7 @@ def _nfc_sql(col):
 
 def _authorized_revisions_select(
     user: UserModel,
-    iso: Optional[str] = None,
+    version_id: Optional[int] = None,
     revision_id: Optional[int] = None,
 ):
     """Return a SELECT of revision IDs the user may access, optionally scoped.
@@ -45,8 +45,8 @@ def _authorized_revisions_select(
     standalone to distinguish "no access" (empty) from "no text matches"
     (non-empty) when the main search returns zero rows.
     """
-    if iso is None and revision_id is None:
-        raise ValueError("at least one of iso or revision_id must be provided")
+    if version_id is None and revision_id is None:
+        raise ValueError("at least one of version_id or revision_id must be provided")
     q = (
         select(BibleRevision.id)
         .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
@@ -57,8 +57,8 @@ def _authorized_revisions_select(
     )
     if revision_id is not None:
         q = q.where(BibleRevision.id == revision_id)
-    elif iso is not None:
-        q = q.where(BibleVersion.iso_language == iso)
+    elif version_id is not None:
+        q = q.where(BibleVersion.id == version_id)
 
     if not user.is_admin:
         user_groups_subq = (
@@ -75,22 +75,87 @@ def _authorized_revisions_select(
     return q
 
 
+def _side_subquery(
+    user: UserModel,
+    version_id: Optional[int],
+    revision_id: Optional[int],
+    ilike_pattern: Optional[str],
+):
+    """Build a subquery yielding one verse_text row per (book, chapter, verse).
+
+    For ``version_id``, applies ``DISTINCT ON (book, chapter, verse)`` ordered
+    by ``bible_revision.date DESC`` so the latest non-empty revision wins per
+    vref, with older revisions filling gaps where the latest revision lacks
+    the verse (empty text or no row).
+
+    For ``revision_id``, simply filters by revision id (one row per vref by
+    construction). Empty-text rows are excluded in both modes.
+
+    Authorization is enforced inline via :func:`_authorized_revisions_select`,
+    so unauthorized callers get an empty subquery (zero rows).
+    """
+    auth_revs = _authorized_revisions_select(
+        user, version_id=version_id, revision_id=revision_id
+    )
+
+    vt = aliased(VerseText)
+    select_cols = [
+        vt.id.label("id"),
+        vt.book.label("book"),
+        vt.chapter.label("chapter"),
+        vt.verse.label("verse"),
+        vt.text.label("text"),
+    ]
+
+    if version_id is not None:
+        br = aliased(BibleRevision)
+        q = (
+            select(*select_cols)
+            .join(br, br.id == vt.revision_id)
+            .where(
+                vt.revision_id.in_(auth_revs),
+                vt.text != "",
+            )
+        )
+        if ilike_pattern is not None:
+            q = q.where(_nfc_sql(vt.text).ilike(ilike_pattern))
+        # br.id.desc() is a stable tie-breaker so the per-vref pick is
+        # deterministic when two revisions share the same date.
+        q = q.distinct(vt.book, vt.chapter, vt.verse).order_by(
+            vt.book, vt.chapter, vt.verse, br.date.desc(), br.id.desc()
+        )
+    else:
+        q = select(*select_cols).where(
+            vt.revision_id.in_(auth_revs),
+            vt.text != "",
+        )
+        if ilike_pattern is not None:
+            q = q.where(_nfc_sql(vt.text).ilike(ilike_pattern))
+
+    return q.subquery()
+
+
 @router.get("/textsearch")
 async def search_revision_text(
     term: str = Query(..., min_length=1, max_length=200),
     revision_id: Optional[int] = None,
-    iso: Optional[str] = Query(
+    version_id: Optional[int] = Query(
         default=None,
-        min_length=3,
-        max_length=3,
-        description="ISO 639-3 code; searches all accessible revisions for this language",
+        description=(
+            "Bible version id; per (book, chapter, verse) returns the latest "
+            "non-empty revision whose text matches the search term, with older "
+            "revisions filling gaps where the latest revision is empty or "
+            "doesn't contain the term."
+        ),
     ),
     comparison_revision_id: Optional[int] = None,
-    comparison_iso: Optional[str] = Query(
+    comparison_version_id: Optional[int] = Query(
         default=None,
-        min_length=3,
-        max_length=3,
-        description="ISO 639-3 code for comparison text",
+        description=(
+            "Bible version id for comparison text; per (book, chapter, verse) "
+            "returns the latest non-empty revision (no search-term filter on "
+            "the comparison side)."
+        ),
     ),
     limit: int = Query(default=10, ge=1, le=1000),
     random: bool = False,
@@ -117,32 +182,38 @@ async def search_revision_text(
     not cross a word boundary. The term must contain at least one visible
     (non-whitespace, non-format) character.
 
-    Provide either ``revision_id`` or ``iso`` (not both).  When ``iso`` is
-    given, all accessible revisions for that language are searched and results
-    are deduplicated by verse location (book, chapter, verse).  When multiple
-    revisions cover the same verse, one is chosen arbitrarily.
+    Provide exactly one of ``revision_id`` or ``version_id``.  When
+    ``version_id`` is given, results are deduplicated by verse location
+    (book, chapter, verse): for each verse, the most recent non-empty
+    *matching* revision belonging to that version is chosen.  The ILIKE
+    prefilter is applied before per-vref dedup, so older revisions fill
+    gaps where the most recent revision lacks the verse (empty text) or
+    doesn't contain the search term — i.e. results surface the term wherever
+    it appears in the version's history, preferring the newer wording when
+    multiple revisions match.
 
-    Similarly, provide either ``comparison_revision_id`` or ``comparison_iso``
-    for parallel text.  When ``comparison_iso`` resolves to multiple revisions,
-    one comparison text per verse is returned (non-deterministic choice).
+    Optionally provide at most one of ``comparison_revision_id`` or
+    ``comparison_version_id`` for parallel text. For ``comparison_version_id``
+    the same per-vref pick applies (latest non-empty wins; the search term
+    is only required on the main side, not on the comparison).
     """
     request_start = time.perf_counter()
 
     # --- validate parameter combinations ---------------------------------
-    if revision_id is not None and iso is not None:
+    if revision_id is not None and version_id is not None:
         raise HTTPException(
             status_code=400,
-            detail="Provide either revision_id or iso, not both",
+            detail="Provide either revision_id or version_id, not both",
         )
-    if revision_id is None and iso is None:
+    if revision_id is None and version_id is None:
         raise HTTPException(
             status_code=400,
-            detail="Either revision_id or iso is required",
+            detail="Either revision_id or version_id is required",
         )
-    if comparison_revision_id is not None and comparison_iso is not None:
+    if comparison_revision_id is not None and comparison_version_id is not None:
         raise HTTPException(
             status_code=400,
-            detail="Provide either comparison_revision_id or comparison_iso, not both",
+            detail="Provide either comparison_revision_id or comparison_version_id, not both",
         )
 
     # Parse `*` wildcards. A leading/trailing `*` drops the word boundary
@@ -182,23 +253,6 @@ async def search_revision_text(
             detail="Term must contain at least one visible character",
         )
 
-    # Build authorization subqueries (executed inline with the search query
-    # so auth + search are a single DB round-trip in the success case).
-    main_auth_select = _authorized_revisions_select(
-        current_user, iso=iso, revision_id=revision_id
-    )
-    comp_auth_select = None
-    if comparison_revision_id is not None or comparison_iso is not None:
-        comp_auth_select = _authorized_revisions_select(
-            current_user,
-            iso=comparison_iso,
-            revision_id=comparison_revision_id,
-        )
-
-    use_dedup = iso is not None
-    use_comparison = comp_auth_select is not None
-    comp_dedup = comparison_iso is not None
-
     # Normalize each piece to NFC so accented characters match regardless
     # of whether the query or stored text uses composed vs decomposed forms.
     normalized_pieces = [unicodedata.normalize("NFC", p) for p in pieces]
@@ -214,63 +268,48 @@ async def search_revision_text(
     ]
     like_pattern = "%" + "%".join(escaped_pieces) + "%"
 
-    # Build the base query
-    vt1_alias = aliased(VerseText, name="vt1")
-
+    # Build per-side subqueries. Each subquery produces one row per
+    # (book, chapter, verse): a single revision pick for revision_id mode
+    # or the date-DESC latest non-empty pick for version_id mode.
+    main_sub = _side_subquery(
+        current_user,
+        version_id=version_id,
+        revision_id=revision_id,
+        ilike_pattern=like_pattern,
+    )
+    use_comparison = (
+        comparison_revision_id is not None or comparison_version_id is not None
+    )
     if use_comparison:
-        vt2_alias = aliased(VerseText, name="vt2")
-
-        select_cols = [
-            vt1_alias.id.label("id"),
-            vt1_alias.book.label("book"),
-            vt1_alias.chapter.label("chapter"),
-            vt1_alias.verse.label("verse"),
-            vt1_alias.text.label("main_text"),
-            vt2_alias.text.label("comparison_text"),
-        ]
-
-        search_query = (
-            select(*select_cols)
-            .join(
-                vt2_alias,
-                (vt2_alias.book == vt1_alias.book)
-                & (vt2_alias.chapter == vt1_alias.chapter)
-                & (vt2_alias.verse == vt1_alias.verse)
-                & (vt2_alias.revision_id.in_(comp_auth_select)),
-            )
-            .where(
-                vt1_alias.revision_id.in_(main_auth_select),
-                _nfc_sql(vt1_alias.text).ilike(like_pattern),
-                vt1_alias.text != "",
-                vt2_alias.text != "",
+        comp_sub = _side_subquery(
+            current_user,
+            version_id=comparison_version_id,
+            revision_id=comparison_revision_id,
+            ilike_pattern=None,
+        )
+        search_query = select(
+            main_sub.c.id.label("id"),
+            main_sub.c.book.label("book"),
+            main_sub.c.chapter.label("chapter"),
+            main_sub.c.verse.label("verse"),
+            main_sub.c.text.label("main_text"),
+            comp_sub.c.text.label("comparison_text"),
+        ).select_from(
+            main_sub.join(
+                comp_sub,
+                (comp_sub.c.book == main_sub.c.book)
+                & (comp_sub.c.chapter == main_sub.c.chapter)
+                & (comp_sub.c.verse == main_sub.c.verse),
             )
         )
-
-        if use_dedup or comp_dedup:
-            search_query = search_query.distinct(
-                vt1_alias.book,
-                vt1_alias.chapter,
-                vt1_alias.verse,
-            )
     else:
         search_query = select(
-            vt1_alias.id.label("id"),
-            vt1_alias.book.label("book"),
-            vt1_alias.chapter.label("chapter"),
-            vt1_alias.verse.label("verse"),
-            vt1_alias.text.label("main_text"),
-        ).where(
-            vt1_alias.revision_id.in_(main_auth_select),
-            _nfc_sql(vt1_alias.text).ilike(like_pattern),
-            vt1_alias.text != "",
-        )
-
-        if use_dedup:
-            search_query = search_query.distinct(
-                vt1_alias.book,
-                vt1_alias.chapter,
-                vt1_alias.verse,
-            )
+            main_sub.c.id.label("id"),
+            main_sub.c.book.label("book"),
+            main_sub.c.chapter.label("chapter"),
+            main_sub.c.verse.label("verse"),
+            main_sub.c.text.label("main_text"),
+        ).select_from(main_sub)
 
     # Cap the DB result set. The Python-side whole-word filter may discard
     # ilike matches that aren't whole words, so we overfetch to give enough
@@ -285,25 +324,26 @@ async def search_revision_text(
     sql_limit = min(limit * 10 * len(pieces), SQL_LIMIT_ABS_CAP)
     search_query = search_query.limit(sql_limit)
 
-    # Apply ordering.  DISTINCT ON requires the leading ORDER BY columns to
-    # match, so when dedup is active we always order by (book, chapter, verse)
-    # first.  For random mode with dedup, we wrap the deduped result as a
-    # subquery and randomise the outer query.
-    needs_dedup = use_dedup or comp_dedup
-    if needs_dedup:
-        search_query = search_query.order_by(
-            vt1_alias.book, vt1_alias.chapter, vt1_alias.verse
-        )
-        if random:
-            sub = search_query.subquery()
-            search_query = select(sub).order_by(func.random())
+    # Apply ordering on the outer query. Per-side dedup is already handled
+    # inside main_sub / comp_sub, so the outer query is free to randomize
+    # without violating DISTINCT ON's leading-column rule.
+    if random:
+        search_query = search_query.order_by(func.random())
     else:
-        if random:
-            search_query = search_query.order_by(func.random())
-        else:
-            search_query = search_query.order_by(
-                vt1_alias.book, vt1_alias.chapter, vt1_alias.verse
-            )
+        search_query = search_query.order_by(
+            main_sub.c.book, main_sub.c.chapter, main_sub.c.verse
+        )
+
+    main_auth_select = _authorized_revisions_select(
+        current_user, version_id=version_id, revision_id=revision_id
+    )
+    comp_auth_select = None
+    if use_comparison:
+        comp_auth_select = _authorized_revisions_select(
+            current_user,
+            version_id=comparison_version_id,
+            revision_id=comparison_revision_id,
+        )
 
     try:
         # Execute the query
@@ -315,10 +355,13 @@ async def search_revision_text(
         if not rows:
             auth_row = (await db.execute(main_auth_select.limit(1))).scalars().first()
             if auth_row is None:
-                if iso is not None:
+                if version_id is not None:
                     raise HTTPException(
                         status_code=404,
-                        detail=f"No accessible revisions found for iso '{iso}'",
+                        detail=(
+                            f"No accessible revisions found for version_id "
+                            f"'{version_id}'"
+                        ),
                     )
                 # revision_id path: non-admins get 403 (unauthorized or
                 # non-existent — indistinguishable by design). Admins are
@@ -335,12 +378,12 @@ async def search_revision_text(
                     (await db.execute(comp_auth_select.limit(1))).scalars().first()
                 )
                 if comp_auth_row is None:
-                    if comparison_iso is not None:
+                    if comparison_version_id is not None:
                         raise HTTPException(
                             status_code=404,
                             detail=(
-                                f"No accessible revisions found for comparison iso "
-                                f"'{comparison_iso}'"
+                                f"No accessible revisions found for "
+                                f"comparison_version_id '{comparison_version_id}'"
                             ),
                         )
                     if not current_user.is_admin:
@@ -397,10 +440,10 @@ async def search_revision_text(
                 "method": "GET",
                 "path": "/textsearch",
                 "revision_id": revision_id,
-                "iso": iso,
+                "version_id": version_id,
                 "term": term,
                 "comparison_revision_id": comparison_revision_id,
-                "comparison_iso": comparison_iso,
+                "comparison_version_id": comparison_version_id,
                 "limit": limit,
                 "random": random,
                 "results_returned": len(filtered_results),
@@ -424,7 +467,7 @@ async def search_revision_text(
                 "method": "GET",
                 "path": "/textsearch",
                 "revision_id": revision_id,
-                "iso": iso,
+                "version_id": version_id,
                 "term": term,
             },
         )
