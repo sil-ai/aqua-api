@@ -2,20 +2,28 @@ __version__ = "v3"
 
 import asyncio
 import os
+import secrets
 import socket
 import time
+from datetime import datetime, timezone
 
 import fastapi
 import modal
-from fastapi import Depends, HTTPException, Query, status
+from dotenv import load_dotenv
+from fastapi import Depends, HTTPException, Query, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
+from database.models import PredictJob
 from database.models import UserDB as UserModel
 from models import (
     PredictAppResult,
     PredictFanoutResponse,
     PredictInput,
+    PredictJobHandle,
+    PredictJobPair,
+    PredictJobStatusResponse,
     SemanticSimilarityRequest,
     SemanticSimilarityResponse,
     TextLengthsInferenceResponse,
@@ -26,6 +34,8 @@ from security_routes.utilities import (
     is_user_authorized_for_revision,
 )
 from utils.logging_config import setup_logger
+
+load_dotenv()
 
 container_id = socket.gethostname()
 logger = setup_logger(__name__, container_id=container_id)
@@ -58,6 +68,52 @@ def _get_predict_fn(modal_app: str, env: str) -> modal.Function:
         fn = modal.Function.from_name(modal_app, "predict", environment_name=env)
         _fn_cache[key] = fn
     return fn
+
+
+# Polling cadence advertised to clients on a still-running job. Translation
+# alone for a chapter typically lands in 30–120s; critique adds a similar
+# amount on top. 10s keeps responsiveness high without hammering the API.
+_JOB_POLL_INTERVAL_S = 10
+
+
+def _new_job_id() -> str:
+    return f"prj_{secrets.token_hex(12)}"
+
+
+def _job_includes(job: PredictJob) -> list[str]:
+    out: list[str] = []
+    if job.include_translation:
+        out.append("translation")
+    if job.include_critique:
+        out.append("critique")
+    return out
+
+
+def _job_pairs_response(job: PredictJob) -> list[PredictJobPair]:
+    """Reconstitute the per-pair slow-path payload, ordered as submitted.
+
+    The agent app preserves input order in its response, so translation /
+    critique are pulled positionally from `agent_pairs[idx]`. The vref /
+    source_text / target_text echo always comes from the original
+    `pairs_input` so callers that omit `vref` (an optional label) can
+    still match results to inputs by index, and so a hypothetical agent
+    bug that mangled echo fields wouldn't propagate to the response.
+    """
+    result = job.result or {}
+    agent_pairs = result.get("pairs") or []
+    out: list[PredictJobPair] = []
+    for idx, submitted in enumerate(job.pairs_input or []):
+        agent_pair = agent_pairs[idx] if idx < len(agent_pairs) else {}
+        out.append(
+            PredictJobPair(
+                vref=submitted.get("vref"),
+                source_text=submitted.get("source_text"),
+                target_text=submitted.get("target_text", ""),
+                translation=agent_pair.get("translation"),
+                critique=agent_pair.get("critique"),
+            )
+        )
+    return out
 
 
 @router.post("/predict", response_model=PredictFanoutResponse)
@@ -104,6 +160,22 @@ async def predict(
     modal_env = os.getenv("MODAL_ENV", "main")
     input_payload = body.model_dump(exclude={"apps"})
 
+    # Translation/critique are the only slow legs of the agent app — both
+    # are LLM passes that can blow past API timeouts on a chapter-sized
+    # batch. When asked for either, run the synchronous fan-out with the
+    # flags off (so every app, including agent, returns the fast slice
+    # only) and spawn a second agent call in the background to do the
+    # slow work. The caller polls /predict/jobs/{id} for that result.
+    spawn_slow_agent = "agent" in selected and (
+        body.include_translation or body.include_critique
+    )
+    if spawn_slow_agent:
+        sync_payload = dict(input_payload)
+        sync_payload["include_translation"] = False
+        sync_payload["include_critique"] = False
+    else:
+        sync_payload = input_payload
+
     async def call_one(name: str) -> tuple[str, PredictAppResult]:
         started = time.perf_counter()
         modal_app = PREDICT_APPS[name]
@@ -111,7 +183,7 @@ async def predict(
         try:
             fn = _get_predict_fn(modal_app, modal_env)
             data = await asyncio.wait_for(
-                fn.remote.aio(input_payload), timeout=timeout_s
+                fn.remote.aio(sync_payload), timeout=timeout_s
             )
             duration_ms = int((time.perf_counter() - started) * 1000)
             return name, PredictAppResult(
@@ -158,11 +230,145 @@ async def predict(
             "reference_id": body.reference_id,
             "assessment_id": body.assessment_id,
             "modal_env": modal_env,
+            "spawn_slow_agent": spawn_slow_agent,
         },
     )
 
-    pairs = await asyncio.gather(*(call_one(n) for n in selected))
-    return PredictFanoutResponse(pairs=body.pairs, results=dict(pairs))
+    sync_task = asyncio.gather(*(call_one(n) for n in selected))
+
+    job_handle: PredictJobHandle | None = None
+    if spawn_slow_agent:
+        # Spawn the slow agent path concurrently with the synchronous
+        # fan-out. If the spawn itself fails (auth, modal connectivity)
+        # we still return the synchronous results — surface the failure
+        # via a job handle whose status is 'failed' so the client doesn't
+        # poll forever.
+        job_id = _new_job_id()
+        try:
+            agent_fn = _get_predict_fn(PREDICT_APPS["agent"], modal_env)
+            fc = await agent_fn.spawn.aio(input_payload)
+            modal_call_id = fc.object_id
+        except Exception as exc:
+            logger.error(
+                f"failed to spawn slow agent path: {type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+            # Still wait for the sync work to finish so the rest of the
+            # response is intact, then return a failed-job handle. We
+            # don't persist the job on spawn failure — the caller learns
+            # the status synchronously and there's no Modal call to poll.
+            pairs_results = await sync_task
+            return PredictFanoutResponse(
+                pairs=body.pairs,
+                results=dict(pairs_results),
+                job=PredictJobHandle(
+                    id=job_id,
+                    status="failed",
+                    includes=[
+                        n
+                        for n, on in (
+                            ("translation", body.include_translation),
+                            ("critique", body.include_critique),
+                        )
+                        if on
+                    ],
+                    poll_url=f"/latest/predict/jobs/{job_id}",
+                ),
+            )
+
+        job = PredictJob(
+            id=job_id,
+            modal_call_id=modal_call_id,
+            modal_environment=modal_env,
+            status="running",
+            include_translation=body.include_translation,
+            include_critique=body.include_critique,
+            pairs_input=[p.model_dump() for p in body.pairs],
+            owner_id=current_user.id,
+        )
+        db.add(job)
+        await db.commit()
+
+        job_handle = PredictJobHandle(
+            id=job.id,
+            status="running",
+            includes=_job_includes(job),
+            poll_url=f"/latest/predict/jobs/{job.id}",
+        )
+
+    pairs_results = await sync_task
+    return PredictFanoutResponse(
+        pairs=body.pairs, results=dict(pairs_results), job=job_handle
+    )
+
+
+@router.get(
+    "/predict/jobs/{job_id}",
+    response_model=PredictJobStatusResponse,
+)
+async def get_predict_job(
+    job_id: str,
+    response: Response,
+    current_user: UserModel = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> PredictJobStatusResponse:
+    """Poll a slow translation/critique job spawned by POST /predict.
+
+    Pairs are returned in the same order they were submitted to /predict,
+    each with the original `vref` / `source_text` / `target_text` echoed
+    back so callers that submit without a vref can still match results
+    by index.
+    """
+    result = await db.execute(select(PredictJob).where(PredictJob.id == job_id))
+    job: PredictJob | None = result.scalar_one_or_none()
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
+        )
+    if job.owner_id != current_user.id and not current_user.is_admin:
+        # 404 (not 403) so we don't leak the existence of jobs the caller
+        # didn't create. Same posture other routes take.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Job not found"
+        )
+
+    if job.status == "running":
+        try:
+            fc = modal.FunctionCall.from_id(job.modal_call_id)
+            data = await fc.get.aio(timeout=0)
+        except modal.exception.TimeoutError:
+            response.headers["Retry-After"] = str(_JOB_POLL_INTERVAL_S)
+        except Exception as exc:
+            logger.warning(
+                f"predict job {job.id} failed: {type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+            error_str = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+            job.status = "failed"
+            job.error = error_str
+            job.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+        else:
+            job.status = "complete"
+            job.result = data
+            job.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+
+    if job.status == "running":
+        return PredictJobStatusResponse(
+            id=job.id,
+            status="running",
+            includes=_job_includes(job),
+            pairs=_job_pairs_response(job),
+        )
+
+    return PredictJobStatusResponse(
+        id=job.id,
+        status=job.status,
+        includes=_job_includes(job),
+        pairs=_job_pairs_response(job),
+        error=job.error,
+    )
 
 
 @router.post(

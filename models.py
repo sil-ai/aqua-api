@@ -11,6 +11,7 @@ from pydantic import (
     EmailStr,
     Field,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -423,9 +424,43 @@ class PredictAppResult(BaseModel):
     duration_ms: int
 
 
+class PredictJobHandle(BaseModel):
+    id: str
+    status: Literal["running", "complete", "failed"]
+    includes: List[Literal["translation", "critique"]]
+    poll_url: str
+
+
 class PredictFanoutResponse(BaseModel):
     pairs: List[TextPair]
     results: Dict[str, PredictAppResult]
+    job: Optional[PredictJobHandle] = None
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_job(self, handler):
+        # The fast-only path (no include_translation/critique) shouldn't
+        # surface a `"job": null` key in the response — keep the wire
+        # shape identical to pre-async callers.
+        data = handler(self)
+        if data.get("job") is None:
+            data.pop("job", None)
+        return data
+
+
+class PredictJobPair(BaseModel):
+    vref: Optional[str] = None
+    source_text: Optional[str] = None
+    target_text: str
+    translation: Optional[Dict[str, Any]] = None
+    critique: Optional[Dict[str, Any]] = None
+
+
+class PredictJobStatusResponse(BaseModel):
+    id: str
+    status: Literal["running", "complete", "failed"]
+    includes: List[Literal["translation", "critique"]]
+    pairs: List[PredictJobPair]
+    error: Optional[str] = None
 
 
 # Results model to record in the DB.

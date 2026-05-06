@@ -17,12 +17,17 @@ def _clear_fn_cache():
     predict_routes._fn_cache.clear()
 
 
-def _make_modal_mock(results_by_app: dict):
+def _make_modal_mock(results_by_app: dict, spawn_id_by_app: dict | None = None):
     """Return a mock `modal.Function` class whose `from_name(app, fn, ...)` maps
     to a mock whose `.remote.aio(...)` returns/raises the configured value.
 
     `results_by_app[app_name]` may be a dict (returned), an Exception subclass
-    (raised), or a callable (called with the input payload)."""
+    (raised), or a callable (called with the input payload).
+
+    `spawn_id_by_app[app_name]` configures the FunctionCall.object_id that
+    `.spawn.aio(...)` should return. Tests that exercise the slow-agent
+    spawn path supply this; others can omit it."""
+    spawn_id_by_app = spawn_id_by_app or {}
 
     def from_name(app_name, fn_name, environment_name=None):
         config = results_by_app[app_name]
@@ -33,6 +38,12 @@ def _make_modal_mock(results_by_app: dict):
             mock_fn.remote.aio = AsyncMock(side_effect=config)
         else:
             mock_fn.remote.aio = AsyncMock(return_value=config)
+
+        spawn_id = spawn_id_by_app.get(app_name)
+        if spawn_id is not None:
+            fc = AsyncMock()
+            fc.object_id = spawn_id
+            mock_fn.spawn.aio = AsyncMock(return_value=fc)
         return mock_fn
 
     mock_cls = AsyncMock()
@@ -348,34 +359,23 @@ def test_predict_rejects_critique_without_translation(client, regular_token1):
     assert "include_translation" in response.text
 
 
-def test_predict_passes_through_translation_and_critique(client, regular_token1):
-    """Agent's per-pair translation + critique (driven by
-    include_translation / include_critique) must round-trip to the client
-    untouched. `PredictAppResult.data: Optional[Any]` is the passthrough
-    point; this pins it so a future schema-strip regression is caught."""
-    # Mirror the real agent.predict() return shape — pairs carrying
-    # translation/critique/lexeme_cards plus top-level grammar_sketch,
-    # language profiles, and an optional `warnings` list — so a future
-    # change that strips unknown top-level keys would fail here.
-    agent_response = {
+def test_predict_agent_fast_slice_round_trips(client, regular_token1):
+    """The synchronous agent response (language profiles, lexeme cards,
+    grammar sketch) must round-trip to the client untouched.
+    `PredictAppResult.data: Optional[Any]` is the passthrough point; this
+    pins it so a future schema-strip regression is caught."""
+    # Fast-slice agent response: pairs include lexeme_cards but
+    # translation/critique are null because the synchronous call is now
+    # always made with both flags False (the slow path is spawned).
+    agent_fast_response = {
         "pairs": [
             {
                 "vref": "GEN 1:1",
                 "source_text": "In the beginning...",
                 "target_text": "Hapo mwanzo...",
-                "translation": {
-                    "hyper_literal": "In beginning created God heavens earth.",
-                    "literal": "In the beginning God created the heavens and earth.",
-                    "english_translation": "In the beginning God created the heavens and the earth.",
-                },
-                "critique": {
-                    "omissions": ["the"],
-                    "additions": [],
-                    "replacements": [
-                        {"source": "heavens", "target": "skies", "severity": "low"}
-                    ],
-                },
-                "lexeme_cards": [],
+                "translation": None,
+                "critique": None,
+                "lexeme_cards": [{"target_lemma": "mwanzo", "definition": "beginning"}],
             }
         ],
         "grammar_sketch": "VSO; agreement on nouns.",
@@ -385,8 +385,47 @@ def test_predict_passes_through_translation_and_critique(client, regular_token1)
     }
     with patch(
         "predict_routes.v3.predict_routes.modal.Function",
-        _make_modal_mock({"agent-critique": agent_response}),
+        _make_modal_mock({"agent-critique": agent_fast_response}),
     ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["agent"]),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    envelope = response.json()["results"]["agent"]
+    assert envelope["status"] == "ok"
+    assert envelope["data"] == agent_fast_response
+
+
+def test_predict_spawns_slow_agent_when_translation_requested(client, regular_token1):
+    """`include_translation=True` must trigger a Function.spawn for the
+    agent's slow path while the synchronous fan-out runs the agent with
+    both flags off — the slow LLM passes can blow past API timeouts on a
+    chapter-sized batch, so they're returned via a polling job instead."""
+    sync_payloads: list[dict] = []
+    spawn_payloads: list[dict] = []
+
+    async def capture_sync(payload):
+        sync_payloads.append(payload)
+        return {"pairs": [], "grammar_sketch": None}
+
+    async def capture_spawn(payload):
+        spawn_payloads.append(payload)
+        fc = AsyncMock()
+        fc.object_id = "fc-test-spawn-id"
+        return fc
+
+    def from_name(app_name, fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+        mock_fn.remote.aio = AsyncMock(side_effect=capture_sync)
+        mock_fn.spawn.aio = AsyncMock(side_effect=capture_spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
         response = client.post(
             f"/{prefix}/predict",
             json=_body(
@@ -398,12 +437,43 @@ def test_predict_passes_through_translation_and_critique(client, regular_token1)
         )
 
     assert response.status_code == 200, response.text
-    envelope = response.json()["results"]["agent"]
-    assert envelope["status"] == "ok"
-    # Deep equality on the whole agent payload — every key, including
-    # nested translation/critique fields and top-level grammar_sketch /
-    # language profiles / warnings, must round-trip untouched.
-    assert envelope["data"] == agent_response
+    body = response.json()
+    # Synchronous agent call ran with both flags suppressed.
+    assert len(sync_payloads) == 1
+    assert sync_payloads[0]["include_translation"] is False
+    assert sync_payloads[0]["include_critique"] is False
+    # Spawn was issued with the original flags so the slow path actually
+    # produces translation + critique.
+    assert len(spawn_payloads) == 1
+    assert spawn_payloads[0]["include_translation"] is True
+    assert spawn_payloads[0]["include_critique"] is True
+    # Job handle present and pointing at the polling endpoint.
+    job = body["job"]
+    assert job is not None
+    assert job["status"] == "running"
+    assert job["includes"] == ["translation", "critique"]
+    assert job["id"].startswith("prj_")
+    assert job["poll_url"].endswith(f"/predict/jobs/{job['id']}")
+
+
+def test_predict_no_job_when_translation_not_requested(client, regular_token1):
+    """`include_translation=False` must skip the spawn entirely — clients
+    that aren't paying the LLM-latency cost get the existing zero-job
+    response shape unchanged. The `job` key must be absent from the
+    response (not present-but-null), so existing callers that didn't
+    know about `job` see a byte-identical response shape."""
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock({"agent-critique": {"pairs": []}}),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["agent"]),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    assert "job" not in response.json()
 
 
 def test_predict_duplicate_apps_deduplicated(client, regular_token1):
@@ -552,3 +622,321 @@ def test_predict_unauthorized_assessment_returns_403(
     )
     assert response.status_code == 403
     assert str(test_assessment_id) in response.json()["detail"]
+
+
+# ----- /predict/jobs/{id} polling endpoint --------------------------------
+
+
+def _spawn_agent_and_get_job(client, token, body_overrides=None):
+    """Helper: POST a slow-path predict request and return the job_id."""
+    overrides = body_overrides or {}
+
+    async def fast_resp(_payload):
+        return {"pairs": []}
+
+    async def spawn(_payload):
+        fc = AsyncMock()
+        fc.object_id = "fc-test-call-id"
+        return fc
+
+    def from_name(_app_name, _fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+        mock_fn.remote.aio = AsyncMock(side_effect=fast_resp)
+        mock_fn.spawn.aio = AsyncMock(side_effect=spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["agent"], include_translation=True, **overrides),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert response.status_code == 200, response.text
+    return response.json()["job"]["id"]
+
+
+def test_predict_job_running_returns_retry_after(client, regular_token1):
+    """Polling a job whose Modal call hasn't completed yet returns
+    status=running with a Retry-After header and the submitted pairs
+    echoed back (translation/critique null since the slow path hasn't
+    finished)."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(side_effect=modal.exception.TimeoutError("not yet"))
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "running"
+    assert body["id"] == job_id
+    assert response.headers.get("Retry-After") == "10"
+    # Echo of submitted pairs is in the response even while still running,
+    # so a client that wants to render input + status without waiting can.
+    assert len(body["pairs"]) == 1
+    assert body["pairs"][0]["vref"] == "GEN 1:1"
+    assert body["pairs"][0]["translation"] is None
+    assert body["pairs"][0]["critique"] is None
+
+
+def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_token1):
+    """When the Modal call completes, the polling endpoint returns each
+    submitted pair with its translation populated. The vref / source_text
+    / target_text echo is always taken from `pairs_input`, never from the
+    agent response — vref is an optional label and we don't want a
+    hypothetical agent bug that mangled echo fields to propagate."""
+    import modal
+
+    submitted_pairs = [
+        # Deliberately omit vref on the second pair to verify that the
+        # source_text/target_text echo + index ordering carries the
+        # client through even without a label.
+        {"vref": "GEN 1:1", "source_text": "src-A", "target_text": "tgt-A"},
+        {"source_text": "src-B", "target_text": "tgt-B"},
+        {"vref": "GEN 1:3", "source_text": "src-C", "target_text": "tgt-C"},
+    ]
+    job_id = _spawn_agent_and_get_job(
+        client,
+        regular_token1,
+        body_overrides={"pairs": submitted_pairs},
+    )
+
+    # The mock agent response intentionally has WRONG vref / source_text
+    # / target_text on every pair. The polling endpoint must ignore those
+    # and echo back the submitted values; only translation / critique
+    # come from the agent (positionally, since the agent preserves input
+    # order — see assessments/agent/app.py's `for pair in pairs:` loop).
+    agent_complete = {
+        "pairs": [
+            {
+                "vref": "WRONG-1",
+                "source_text": "wrong-A",
+                "target_text": "wrong-A",
+                "translation": {"literal": "A-translation"},
+                "critique": None,
+            },
+            {
+                "vref": "WRONG-2",
+                "source_text": "wrong-B",
+                "target_text": "wrong-B",
+                "translation": {"literal": "B-translation"},
+                "critique": None,
+            },
+            {
+                "vref": "WRONG-3",
+                "source_text": "wrong-C",
+                "target_text": "wrong-C",
+                "translation": {"literal": "C-translation"},
+                "critique": None,
+            },
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "complete"
+    assert body["includes"] == ["translation"]
+    assert len(body["pairs"]) == 3
+    for idx, submitted in enumerate(submitted_pairs):
+        out = body["pairs"][idx]
+        # echo: always from the submitted pair, never from the agent
+        assert out["vref"] == submitted.get("vref")
+        assert out["source_text"] == submitted["source_text"]
+        assert out["target_text"] == submitted["target_text"]
+        # translation: positional from the agent (one per submitted pair)
+        assert out["translation"]["literal"] == f"{chr(ord('A') + idx)}-translation"
+
+
+def test_predict_job_complete_is_cached(client, regular_token1):
+    """Once a job lands in a terminal state we don't go back to Modal —
+    the second poll must serve from the DB."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value={"pairs": []})
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock) as patched:
+        first = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        second = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert first.json()["status"] == "complete"
+        assert second.json()["status"] == "complete"
+        assert patched.call_count == 1
+
+
+def test_predict_job_failed_records_error(client, regular_token1):
+    """If the spawned Modal call raises, status flips to 'failed' and the
+    error message is surfaced to the caller."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(side_effect=RuntimeError("boom-from-modal"))
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert body["error"] == "RuntimeError"
+
+
+def test_predict_job_unknown_returns_404(client, regular_token1):
+    """A job id that doesn't exist returns 404, not 500."""
+    response = client.get(
+        f"/{prefix}/predict/jobs/prj_does_not_exist",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_predict_job_other_user_returns_404(client, regular_token1, regular_token2):
+    """Another user can't read a job they didn't create. Return 404
+    rather than 403 so we don't leak the existence of other users'
+    jobs."""
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    response = client.get(
+        f"/{prefix}/predict/jobs/{job_id}",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 404
+
+
+def test_predict_job_unauthenticated_returns_401(client, regular_token1):
+    """No token -> 401."""
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    response = client.get(f"/{prefix}/predict/jobs/{job_id}")
+    assert response.status_code == 401
+
+
+def test_predict_spawn_failure_returns_failed_handle_in_post(client, regular_token1):
+    """If `Function.spawn` itself raises (e.g. modal auth, connectivity),
+    /predict still returns the synchronous fast-slice results and a
+    `failed` job handle so the caller learns the bad news in the POST
+    response. We deliberately do NOT persist a DB row in this case —
+    there's no Modal call to poll, so the job_id is informational only
+    and the polling endpoint will 404."""
+
+    def from_name(_app_name, _fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+        mock_fn.remote.aio = AsyncMock(return_value={"pairs": []})
+        mock_fn.spawn.aio = AsyncMock(side_effect=RuntimeError("modal auth failed"))
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["agent"], include_translation=True),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    job = body["job"]
+    assert job is not None
+    assert job["status"] == "failed"
+    assert job["id"].startswith("prj_")
+    # Sync slot still populated — the caller doesn't lose the fast-slice
+    # results just because the slow path didn't start.
+    assert body["results"]["agent"]["status"] == "ok"
+    # The handle id isn't pollable; surface it that way.
+    poll = client.get(
+        f"/{prefix}/predict/jobs/{job['id']}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert poll.status_code == 404
+
+
+def test_predict_job_admin_can_read_other_users_job(
+    client, regular_token1, admin_token
+):
+    """Admin bypass on the cross-user 404. Pinned because flipping the
+    `not current_user.is_admin` check would only break this test —
+    `test_predict_job_other_user_returns_404` would still pass without it."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value={"pairs": []})
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "complete"
+
+
+def test_predict_non_agent_apps_get_suppressed_flags_when_agent_co_selected(
+    client, regular_token1
+):
+    """When agent is co-selected with another app and translation is
+    requested, the synchronous payload sent to *every* app has
+    include_translation/include_critique zeroed (only the spawn carries
+    the real flags). Pins the design choice that the suppression isn't
+    agent-only — if a future app starts reading these flags it will see
+    the suppressed values during a slow-spawn request."""
+    captured: dict[str, dict] = {}
+
+    async def capture_sync(payload):
+        return payload  # echoed for inspection
+
+    async def spawn(_payload):
+        fc = AsyncMock()
+        fc.object_id = "fc-x"
+        return fc
+
+    def from_name(app_name, _fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+
+        async def capture(payload):
+            captured[app_name] = payload
+            return {"ok": True}
+
+        mock_fn.remote.aio = AsyncMock(side_effect=capture)
+        mock_fn.spawn.aio = AsyncMock(side_effect=spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams", "agent"], include_translation=True),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured["ngrams"]["include_translation"] is False
+    assert captured["agent-critique"]["include_translation"] is False
