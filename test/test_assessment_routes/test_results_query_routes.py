@@ -1684,3 +1684,170 @@ def test_compare_text_lengths_no_ids_error(client, regular_token1, test_db_sessi
 
     assert response.status_code == 400
     assert "Must provide either" in response.json()["detail"]
+
+
+# ----- /v3/ngrams_result --------------------------------------------------
+
+
+def _setup_ngrams_assessment(db_session):
+    """Create a finished ngrams assessment with a small but pagination-
+    exercising number of ngrams (each with 1–3 vrefs). Returns the
+    assessment_id and the list of (ngram, ngram_size, vrefs) tuples in
+    insertion order so tests can assert results match input."""
+    from database.models import NgramsTable, NgramVrefTable
+
+    setup_assessments_results(db_session)
+    existing = (
+        db_session.query(Assessment)
+        .filter(Assessment.type == "ngrams", Assessment.status == "finished")
+        .first()
+    )
+    if existing and (
+        db_session.query(NgramsTable)
+        .filter(NgramsTable.assessment_id == existing.id)
+        .first()
+    ):
+        # Already seeded — return existing data so other tests can reuse.
+        rows = (
+            db_session.query(NgramsTable)
+            .filter(NgramsTable.assessment_id == existing.id)
+            .order_by(NgramsTable.id)
+            .all()
+        )
+        seeds = []
+        for r in rows:
+            vrefs = [
+                v.vref
+                for v in db_session.query(NgramVrefTable)
+                .filter(NgramVrefTable.ngram_id == r.id)
+                .all()
+            ]
+            seeds.append((r.ngram, r.ngram_size, vrefs))
+        return existing.id, seeds
+
+    if not existing:
+        # Fixtures load revision 138 under version 115 and revision 772
+        # under version 505; setup_assessments_results grants Group1
+        # access to both versions, so a regular_token1 caller can read
+        # an assessment scoped to those revisions.
+        existing = Assessment(
+            revision_id=138,
+            reference_id=772,
+            type="ngrams",
+            status="finished",
+            assessment_version="1",
+        )
+        db_session.add(existing)
+        db_session.commit()
+        db_session.refresh(existing)
+
+    # 12 ngrams — enough to exercise multi-page pagination at page_size=5.
+    seeds = [
+        ("the lord", 2, ["GEN 1:1", "GEN 1:2"]),
+        ("of god", 2, ["GEN 1:3"]),
+        ("son of man", 3, ["MAT 8:20", "MAT 9:6", "MAT 10:23"]),
+        ("in the beginning", 3, ["GEN 1:1"]),
+        ("light of the world", 4, ["JHN 8:12"]),
+        ("kingdom of heaven", 3, ["MAT 4:17", "MAT 5:3"]),
+        ("bread of life", 3, ["JHN 6:35"]),
+        ("good shepherd", 2, ["JHN 10:11"]),
+        ("alpha and omega", 3, ["REV 1:8", "REV 22:13"]),
+        ("the way", 2, ["JHN 14:6"]),
+        ("the truth", 2, ["JHN 14:6"]),
+        ("the life", 2, ["JHN 14:6"]),
+    ]
+    for ngram, size, vrefs in seeds:
+        ng = NgramsTable(assessment_id=existing.id, ngram=ngram, ngram_size=size)
+        db_session.add(ng)
+        db_session.flush()
+        for v in vrefs:
+            db_session.add(NgramVrefTable(ngram_id=ng.id, vref=v))
+    db_session.commit()
+    return existing.id, seeds
+
+
+def test_ngrams_result_unpaginated_returns_all(client, regular_token1, test_db_session):
+    """No page params → returns every ngram in the assessment with full
+    vref lists, ordered by ngram id."""
+    assessment_id, seeds = _setup_ngrams_assessment(test_db_session)
+
+    response = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": assessment_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total_count"] == len(seeds)
+    assert len(body["results"]) == len(seeds)
+    # Insertion order = id order, since auto-increment assigns ids in that order.
+    for got, (ngram, size, vrefs) in zip(body["results"], seeds):
+        assert got["ngram"] == ngram
+        assert got["ngram_size"] == size
+        # Order of vrefs within a single ngram isn't guaranteed by the
+        # query (we don't sort the vref lookup), so compare as sets.
+        assert set(got["vrefs"]) == set(vrefs)
+
+
+def test_ngrams_result_pagination_covers_corpus_without_overlap(
+    client, regular_token1, test_db_session
+):
+    """Walk the assessment a page at a time and assert: every ngram
+    appears exactly once, in id order, and each page <= page_size. This
+    is the regression guard for the two-step pagination — if the leaf
+    pagination ever drifts out of sync with the vref join, ngrams would
+    silently duplicate, vanish, or get the wrong vrefs."""
+    assessment_id, seeds = _setup_ngrams_assessment(test_db_session)
+
+    page_size = 5
+    seen_ngrams: list[str] = []
+    seen_ids: list[int] = []
+    seen_vrefs_by_ngram: dict[str, set] = {}
+
+    page = 1
+    while True:
+        response = client.get(
+            "/v3/ngrams_result",
+            params={
+                "assessment_id": assessment_id,
+                "page": page,
+                "page_size": page_size,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["total_count"] == len(seeds)
+        assert len(body["results"]) <= page_size
+        if not body["results"]:
+            break
+        for r in body["results"]:
+            seen_ngrams.append(r["ngram"])
+            seen_ids.append(r["id"])
+            seen_vrefs_by_ngram[r["ngram"]] = set(r["vrefs"])
+        page += 1
+
+    assert sorted(seen_ngrams) == sorted(n for n, _, _ in seeds)
+    assert len(seen_ids) == len(seeds), "duplicate or missing ngrams across pages"
+    assert seen_ids == sorted(seen_ids), "ngrams not returned in id order"
+
+    # Each ngram's vrefs must match what we seeded — joining with the
+    # vref table after pagination must not lose or merge vrefs across
+    # ngrams.
+    for ngram, _, vrefs in seeds:
+        assert seen_vrefs_by_ngram[ngram] == set(vrefs), ngram
+
+
+def test_ngrams_result_unauthorized_assessment_returns_403(
+    client, regular_token2, test_db_session
+):
+    """Users outside the assessment's group can't read its ngrams."""
+    assessment_id, _ = _setup_ngrams_assessment(test_db_session)
+
+    response = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": assessment_id},
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
