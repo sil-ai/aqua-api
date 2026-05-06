@@ -30,36 +30,33 @@ def upgrade() -> None:
     # can't run inside a transaction, so wrap the index ops in
     # alembic's autocommit_block.
     #
+    # We use raw `op.execute` rather than `op.create_index` /
+    # `op.drop_index` so we can use Postgres' `IF [NOT] EXISTS`
+    # forms — the SQLAlchemy 1.4 alembic helpers don't expose those.
+    # The defensive `DROP INDEX IF EXISTS` before the create handles
+    # the case where a prior interrupted CONCURRENTLY attempt left
+    # an INVALID index behind; a re-run otherwise fails on
+    # "relation already exists".
+    #
     # Once the composite is in place, the existing single-column
     # `ix_ngrams_table_assessment_id` is redundant — any plan that
     # would use it can use the leading column of the composite — so
     # drop it to save write amplification on every insert.
     with op.get_context().autocommit_block():
-        op.create_index(
-            "ix_ngrams_table_assessment_id_id",
-            "ngrams_table",
-            ["assessment_id", "id"],
-            unique=False,
-            postgresql_concurrently=True,
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_ngrams_table_assessment_id_id")
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+            "ix_ngrams_table_assessment_id_id "
+            "ON ngrams_table (assessment_id, id)"
         )
-        op.drop_index(
-            "ix_ngrams_table_assessment_id",
-            table_name="ngrams_table",
-            postgresql_concurrently=True,
-        )
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_ngrams_table_assessment_id")
 
 
 def downgrade() -> None:
     with op.get_context().autocommit_block():
-        op.create_index(
-            "ix_ngrams_table_assessment_id",
-            "ngrams_table",
-            ["assessment_id"],
-            unique=False,
-            postgresql_concurrently=True,
+        op.execute(
+            "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+            "ix_ngrams_table_assessment_id "
+            "ON ngrams_table (assessment_id)"
         )
-        op.drop_index(
-            "ix_ngrams_table_assessment_id_id",
-            table_name="ngrams_table",
-            postgresql_concurrently=True,
-        )
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_ngrams_table_assessment_id_id")
