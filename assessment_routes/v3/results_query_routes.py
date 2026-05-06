@@ -237,51 +237,75 @@ async def build_results_query(
     )
 
 
-async def build_ngrams_query(
+async def fetch_ngrams_page(
     assessment_id: int,
     page: Optional[int],
     page_size: Optional[int],
     db: AsyncSession,
-):
+) -> Tuple[List[dict], int]:
+    """Return a page of n-gram results for an assessment, plus the total count.
+
+    Two-step query: first paginate `ngrams_table` (cheap — index on
+    `assessment_id`, primary-key ordering), then fetch vrefs for just
+    that page from `ngram_vref_table`. The previous single-query form
+    `JOIN ... GROUP BY ... ORDER BY ... LIMIT` forced Postgres to
+    aggregate the entire assessment corpus before LIMIT could be
+    applied, so every page paid for the whole table — see #648.
     """
-    Builds a query to fetch n-gram results for an assessment.
-
-    Args:
-        assessment_id (int): The ID of the assessment to fetch n-gram results for.
-        page (Optional[int]): The page number for pagination. Default is None.
-        page_size (Optional[int]): The number of results per page. Default is None.
-        db (Session): The database session object to execute queries against.
-
-    Returns:
-        Tuple: A tuple containing the base query object and the count query object.
-    """
-
-    # Select ngrams and their corresponding vrefs
-    base_query = (
+    ngrams_query = (
         select(
             NgramsTable.id,
             NgramsTable.assessment_id,
             NgramsTable.ngram,
             NgramsTable.ngram_size,
-            func.array_agg(NgramVrefTable.vref).label("vrefs"),
         )
-        .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
         .where(NgramsTable.assessment_id == assessment_id)
-        .group_by(NgramsTable.id)
         .order_by(NgramsTable.id)
     )
-
-    # Apply pagination
     if page is not None and page_size is not None:
-        base_query = base_query.offset((page - 1) * page_size).limit(page_size)
+        ngrams_query = ngrams_query.offset((page - 1) * page_size).limit(page_size)
 
-    count_query = (
+    ngram_rows = (await db.execute(ngrams_query)).all()
+    ngram_ids = [r.id for r in ngram_rows]
+
+    vrefs_by_id: dict = {}
+    if ngram_ids:
+        vref_rows = (
+            await db.execute(
+                select(NgramVrefTable.ngram_id, NgramVrefTable.vref).where(
+                    NgramVrefTable.ngram_id.in_(ngram_ids)
+                )
+            )
+        ).all()
+        for r in vref_rows:
+            vrefs_by_id.setdefault(r.ngram_id, []).append(r.vref)
+
+    rows = [
+        {
+            "id": r.id,
+            "assessment_id": r.assessment_id,
+            "ngram": r.ngram,
+            "ngram_size": r.ngram_size,
+            "vrefs": vrefs_by_id.get(r.id, []),
+        }
+        for r in ngram_rows
+    ]
+
+    # `total_count` counts every ngram for the assessment, regardless of
+    # whether it has any vrefs attached. The previous query used INNER
+    # JOIN, which silently dropped vrefless ngrams from results while
+    # this same count still included them — an inconsistency the new
+    # leaf-pagination flow makes explicit (a vrefless ngram now appears
+    # with `vrefs=[]` instead of vanishing). vrefless ngrams aren't
+    # expected in normal training output but aren't schema-prevented
+    # either, so we lean toward visibility over the old hidden-skip.
+    total_count = await db.scalar(
         select(func.count())
         .select_from(NgramsTable)
         .where(NgramsTable.assessment_id == assessment_id)
     )
 
-    return base_query, count_query
+    return rows, total_count
 
 
 async def build_text_lengths_query(
@@ -656,8 +680,12 @@ async def get_result(
 )
 async def get_ngrams_result(
     assessment_id: int,
-    page: Optional[int] = None,
-    page_size: Optional[int] = None,
+    page: Optional[int] = Query(default=None, ge=1),
+    # Cap page_size at 10_000 — the vref lookup turns each page into an
+    # `IN (id, id, ...)` query, and we don't want one client request to
+    # produce a SQL statement big enough to strain the DB or hit
+    # Postgres' bind-parameter limits.
+    page_size: Optional[int] = Query(default=None, ge=1, le=10_000),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -681,30 +709,18 @@ async def get_ngrams_result(
         A dictionary containing the list of results and the total count of results.
     """
     request_start = time.perf_counter()
+    await validate_parameters(None, None, None, None, page, page_size)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to see this assessment",
         )
 
-    # ✅ Build and execute the query for ngrams
-    query, count_query = await build_ngrams_query(assessment_id, page, page_size, db)
+    result_data, total_count = await fetch_ngrams_page(
+        assessment_id, page, page_size, db
+    )
 
-    result_data, total_count = await execute_query(query, count_query, db)
-
-    # ✅ Process and format the results
-    result_list = [
-        NgramResult(
-            id=row.id,
-            assessment_id=row.assessment_id,
-            ngram=row.ngram,
-            ngram_size=row.ngram_size,
-            vrefs=(
-                row.vrefs if row.vrefs is not None else []
-            ),  # Ensure it's always a list
-        )
-        for row in result_data
-    ]
+    result_list = [NgramResult(**row) for row in result_data]
 
     duration = round(time.perf_counter() - request_start, 2)
     logger.info(
