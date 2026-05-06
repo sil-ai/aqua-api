@@ -69,7 +69,11 @@ class NgramsTable(Base):
     __tablename__ = "ngrams_table"
 
     id = Column(Integer, primary_key=True)
-    assessment_id = Column(Integer, ForeignKey("assessment.id"), index=True)
+    # No `index=True` here — the composite below covers any
+    # assessment_id-only filter via its leading column, so a
+    # standalone `assessment_id` index would only add write
+    # amplification.
+    assessment_id = Column(Integer, ForeignKey("assessment.id"))
     ngram = Column(Text)
     ngram_size = Column(Integer)
 
