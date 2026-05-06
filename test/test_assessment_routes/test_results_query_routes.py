@@ -1689,6 +1689,22 @@ def test_compare_text_lengths_no_ids_error(client, regular_token1, test_db_sessi
 # ----- /v3/ngrams_result --------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _clear_ngrams_total_count_cache():
+    """Reset the per-process total_count cache before every test in this
+    module. Several ngrams_result tests share a finished assessment via
+    `_setup_ngrams_assessment`, and warming the cache in one test would
+    otherwise hide newly-inserted rows from a later test. Cheap to run
+    everywhere — non-ngrams tests just see an empty dict."""
+    from assessment_routes.v3.results_query_routes import (
+        _ngrams_total_count_cache,
+    )
+
+    _ngrams_total_count_cache.clear()
+    yield
+    _ngrams_total_count_cache.clear()
+
+
 def _setup_ngrams_assessment(db_session):
     """Create a finished ngrams assessment with a small but pagination-
     exercising number of ngrams (each with 1–3 vrefs). Returns the
@@ -1933,15 +1949,6 @@ def test_ngrams_result_includes_vrefless_ngram(client, regular_token1, test_db_s
     test_db_session.add(orphan)
     test_db_session.commit()
 
-    # Earlier tests on this same finished assessment populated the
-    # per-worker total_count cache (see #651). Drop that entry so the
-    # new orphan is reflected in this request's count.
-    from assessment_routes.v3.results_query_routes import (
-        _ngrams_total_count_cache,
-    )
-
-    _ngrams_total_count_cache.pop(assessment_id, None)
-
     response = client.get(
         "/v3/ngrams_result",
         params={"assessment_id": assessment_id},
@@ -1970,13 +1977,12 @@ def test_ngrams_result_caches_total_count_for_finished_assessment(
     because counts on finished assessments are immutable by contract
     (a rerun produces a new assessment row, not new rows on the old
     one)."""
-    from database.models import NgramsTable
     from assessment_routes.v3.results_query_routes import (
         _ngrams_total_count_cache,
     )
+    from database.models import NgramsTable
 
     assessment_id, _ = _setup_ngrams_assessment(test_db_session)
-    _ngrams_total_count_cache.pop(assessment_id, None)
 
     # Prime the cache.
     primed = client.get(
@@ -2025,10 +2031,10 @@ def test_ngrams_result_does_not_cache_in_progress_assessment(
     """Counts for non-finished assessments must not be memoized — an
     in-progress assessment can still grow rows, and serving a stale
     count would confuse pagination during a live training run."""
-    from database.models import NgramsTable
     from assessment_routes.v3.results_query_routes import (
         _ngrams_total_count_cache,
     )
+    from database.models import NgramsTable
 
     setup_assessments_results(test_db_session)
     in_progress = Assessment(
@@ -2047,8 +2053,6 @@ def test_ngrams_result_does_not_cache_in_progress_assessment(
         )
     )
     test_db_session.commit()
-
-    _ngrams_total_count_cache.pop(in_progress.id, None)
 
     response = client.get(
         "/v3/ngrams_result",

@@ -237,13 +237,30 @@ async def build_results_query(
     )
 
 
-# Per-worker memoization of `ngrams_table` total counts, keyed by
-# `assessment_id` and only populated for assessments in terminal
-# `status='finished'` state — for those, the count cannot change
-# without a new assessment row being created (see #651). Each entry is
-# (count, monotonic_expires_at). A 1h TTL keeps deleted/restarted
-# assessments from sticking around forever without coupling this cache
-# to the assessment write paths.
+# Process-local memoization of `ngrams_table` total counts, keyed by
+# `assessment_id` and only populated for assessments in `status='finished'`
+# state. The intended contract (#651) is that finished ngrams assessments
+# don't grow new rows — a rerun produces a new assessment row instead.
+#
+# That contract is *policy, not enforcement*: `push_ngrams` and
+# `delete_ngrams` (results_push_routes.py) take only an authorization
+# dependency, with no terminal-status guard. Soft-delete
+# (`Assessment.deleted=True`) likewise leaves `status` unchanged and is
+# not visible to the auth check. So out-of-band writes against a
+# finished assessment, or reads against a soft-deleted one, can serve a
+# stale count for up to the TTL. The 1h TTL is the only safeguard
+# against those cases — we accept that bound rather than coupling this
+# cache to every assessment write path.
+#
+# Concurrent requests for the same uncached assessment_id race to
+# populate the entry; both writes produce identical counts so the final
+# state is correct. With multiple worker processes behind a load
+# balancer, each worker keeps its own dict — so a paginating client
+# striped across workers may observe `total_count` flap by a row or two
+# during the window where one worker is warm and another isn't. That
+# matches the "ngrams shouldn't grow on a finished assessment" contract
+# above; if it ever drifts in production, this comment is the place to
+# revisit.
 _NGRAMS_TOTAL_COUNT_TTL_SECONDS = 3600
 _ngrams_total_count_cache: Dict[int, Tuple[int, float]] = {}
 
@@ -257,33 +274,23 @@ async def _get_ngrams_total_count(assessment_id: int, db: AsyncSession) -> int:
         del _ngrams_total_count_cache[assessment_id]
 
     # One round-trip: fetch the count alongside the assessment status
-    # so we can decide whether to cache without a second query.
+    # so we can decide whether to cache without a second query. Callers
+    # are expected to have already verified the assessment exists via
+    # auth, so the row is always present here.
     count_subq = (
         select(func.count())
         .select_from(NgramsTable)
         .where(NgramsTable.assessment_id == assessment_id)
         .scalar_subquery()
     )
-    row = (
+    count, assessment_status = (
         await db.execute(
             select(count_subq.label("count"), Assessment.status).where(
                 Assessment.id == assessment_id
             )
         )
-    ).one_or_none()
+    ).one()
 
-    if row is None:
-        # Assessment row absent — auth should have stopped us, but be
-        # defensive and fall back to a plain count.
-        return (
-            await db.scalar(
-                select(func.count())
-                .select_from(NgramsTable)
-                .where(NgramsTable.assessment_id == assessment_id)
-            )
-        ) or 0
-
-    count, assessment_status = row
     if assessment_status == "finished":
         _ngrams_total_count_cache[assessment_id] = (
             count,
