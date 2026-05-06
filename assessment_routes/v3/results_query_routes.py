@@ -680,8 +680,12 @@ async def get_result(
 )
 async def get_ngrams_result(
     assessment_id: int,
-    page: Optional[int] = None,
-    page_size: Optional[int] = None,
+    page: Optional[int] = Query(default=None, ge=1),
+    # Cap page_size at 10_000 — the vref lookup turns each page into an
+    # `IN (id, id, ...)` query, and we don't want one client request to
+    # produce a SQL statement big enough to strain the DB or hit
+    # Postgres' bind-parameter limits.
+    page_size: Optional[int] = Query(default=None, ge=1, le=10_000),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):

@@ -1878,6 +1878,40 @@ def test_ngrams_result_partial_pagination_args_rejected(
     assert "page" in response.json()["detail"].lower()
 
 
+@pytest.mark.parametrize(
+    "params,reason",
+    [
+        ({"page": 0, "page_size": 5}, "page=0 would compute negative OFFSET"),
+        ({"page": -1, "page_size": 5}, "page negative"),
+        ({"page": 1, "page_size": 0}, "page_size=0 is meaningless"),
+        ({"page": 1, "page_size": -5}, "page_size negative"),
+        ({"page": 1, "page_size": 10001}, "page_size above 10k cap"),
+    ],
+    ids=[
+        "page_zero",
+        "page_negative",
+        "size_zero",
+        "size_negative",
+        "size_above_cap",
+    ],
+)
+def test_ngrams_result_pagination_bounds_rejected(
+    client, regular_token1, test_db_session, params, reason
+):
+    """page>=1, page_size in [1, 10000] are enforced at the FastAPI
+    boundary so a bad client can't (a) crash the query with a
+    negative OFFSET (Postgres rejects it → 500) or (b) blow up the
+    vref-fetch IN-list with an unbounded page_size."""
+    assessment_id, _ = _setup_ngrams_assessment(test_db_session)
+
+    response = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": assessment_id, **params},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422, reason
+
+
 def test_ngrams_result_includes_vrefless_ngram(client, regular_token1, test_db_session):
     """A ngram with no rows in ngram_vref_table now appears in results
     with `vrefs=[]` instead of being silently dropped (the old INNER
