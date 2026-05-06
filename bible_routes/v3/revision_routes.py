@@ -3,7 +3,6 @@ import time
 from datetime import date
 from typing import List, Optional
 
-import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -132,18 +131,18 @@ async def process_and_upload_revision(
     has_text = False
     verses = []
     for line in text_content.splitlines():
-        if line not in ["\n", "", " "]:
+        stripped = line.strip()
+        if stripped:
             verses.append(line.replace("\n", ""))
             has_text = True
         else:
-            verses.append(np.nan)
+            verses.append(None)
 
     if not has_text:
         raise ValueError("File has no text.")
 
-    bible_revision = [revision_id] * len(verses)
-    verse_text = await async_text_dataframe(verses, bible_revision)
-    await text_loading(verse_text, db)
+    verse_records = await async_text_dataframe(verses, revision_id)
+    await text_loading(verse_records, db)
 
 
 @router.post("/revision", response_model=RevisionOut)
@@ -206,19 +205,19 @@ async def upload_revision(
         machine_translation=revision.machineTranslation,
     )
     db.add(new_revision)
+    # Flush (to assign new_revision.id for the verse FK) but don't commit
+    # yet — keep the revision row and its verses in one transaction so
+    # rollback on a parse error leaves no orphaned revision behind, and the
+    # whole upload pays one WAL fsync at the end instead of one per batch.
     await db.flush()
-    await db.refresh(new_revision)
-    await db.commit()
 
     try:
-        # Read file and process revision
         contents = await file.read()
         await process_and_upload_revision(contents, new_revision.id, db)
-        await db.commit()  # Commit if processing is successful
-    except Exception as e:  # Catching a broader exception
-        # Delete the previously committed revision
-        await db.delete(new_revision)
+        # One commit covers the BibleRevision row + all VerseText inserts.
         await db.commit()
+    except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
     version = await db.scalar(
