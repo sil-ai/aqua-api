@@ -459,7 +459,9 @@ def test_predict_spawns_slow_agent_when_translation_requested(client, regular_to
 def test_predict_no_job_when_translation_not_requested(client, regular_token1):
     """`include_translation=False` must skip the spawn entirely — clients
     that aren't paying the LLM-latency cost get the existing zero-job
-    response shape unchanged."""
+    response shape unchanged. The `job` key must be absent from the
+    response (not present-but-null), so existing callers that didn't
+    know about `job` see a byte-identical response shape."""
     with patch(
         "predict_routes.v3.predict_routes.modal.Function",
         _make_modal_mock({"agent-critique": {"pairs": []}}),
@@ -471,7 +473,7 @@ def test_predict_no_job_when_translation_not_requested(client, regular_token1):
         )
 
     assert response.status_code == 200
-    assert response.json().get("job") is None
+    assert "job" not in response.json()
 
 
 def test_predict_duplicate_apps_deduplicated(client, regular_token1):

@@ -11,6 +11,7 @@ from pydantic import (
     EmailStr,
     Field,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -434,6 +435,16 @@ class PredictFanoutResponse(BaseModel):
     pairs: List[TextPair]
     results: Dict[str, PredictAppResult]
     job: Optional[PredictJobHandle] = None
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_job(self, handler):
+        # The fast-only path (no include_translation/critique) shouldn't
+        # surface a `"job": null` key in the response — keep the wire
+        # shape identical to pre-async callers.
+        data = handler(self)
+        if data.get("job") is None:
+            data.pop("job", None)
+        return data
 
 
 class PredictJobPair(BaseModel):
