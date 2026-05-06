@@ -1214,3 +1214,39 @@ class TfidfSvdChunk(Base):
     chunk_index = Column(Integer, primary_key=True)
     components_bytes = Column(LargeBinary, nullable=False)
     received_at = Column(TIMESTAMP, nullable=False, server_default=func.now())
+
+
+class PredictJob(Base):
+    """Tracks a backgrounded /predict slow-path call (translation/critique).
+
+    The fast slice of /predict (language profiles, lexeme cards, grammar
+    sketch) is returned synchronously. When the caller asks for translation
+    or critique we additionally `Function.spawn` the agent, persist the
+    Modal function call id, and let the caller poll
+    `GET /predict/jobs/{id}` for the slow result.
+    """
+
+    __tablename__ = "predict_jobs"
+
+    id = Column(Text, primary_key=True)
+    modal_call_id = Column(Text, nullable=False)
+    modal_environment = Column(Text, nullable=False)
+    status = Column(Text, nullable=False)
+    include_translation = Column(Boolean, nullable=False)
+    include_critique = Column(Boolean, nullable=False)
+    pairs_input = Column(JSONB, nullable=False)
+    result = Column(JSONB, nullable=True)
+    error = Column(Text, nullable=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    completed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'complete', 'failed')",
+            name="ck_predict_jobs_status",
+        ),
+        Index("ix_predict_jobs_owner_created", "owner_user_id", "created_at"),
+    )

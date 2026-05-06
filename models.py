@@ -423,9 +423,42 @@ class PredictAppResult(BaseModel):
     duration_ms: int
 
 
+class PredictJobHandle(BaseModel):
+    """Returned by POST /predict whenever the slow translation/critique pass
+    has been spawned in the background. The client polls `poll_url` until
+    `status` becomes 'complete' or 'failed'."""
+
+    id: str
+    status: Literal["running", "complete", "failed"]
+    includes: List[Literal["translation", "critique"]]
+    poll_url: str
+
+
 class PredictFanoutResponse(BaseModel):
     pairs: List[TextPair]
     results: Dict[str, PredictAppResult]
+    job: Optional[PredictJobHandle] = None
+
+
+class PredictJobPair(BaseModel):
+    """One pair's slow-path result. Echoes the original `vref` /
+    `source_text` / `target_text` so callers that submit without a vref
+    can still match results to inputs by index. Pairs are returned in the
+    same order they were submitted to /predict."""
+
+    vref: Optional[str] = None
+    source_text: Optional[str] = None
+    target_text: str
+    translation: Optional[Dict[str, Any]] = None
+    critique: Optional[Dict[str, Any]] = None
+
+
+class PredictJobStatusResponse(BaseModel):
+    id: str
+    status: Literal["running", "complete", "failed"]
+    includes: List[Literal["translation", "critique"]]
+    pairs: List[PredictJobPair]
+    error: Optional[str] = None
 
 
 # Results model to record in the DB.
