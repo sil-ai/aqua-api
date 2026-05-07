@@ -29,11 +29,11 @@ def _env_int(name: str, default: int) -> int:
 #
 # Default sizing: with 8 uvicorn workers, steady-state is ~16 conns per
 # container (8 × pool_size 2) and the burst ceiling is 40 (8 × (2 + 3)).
-# DigitalOcean managed Postgres caps connections at roughly 25 on the
-# smallest tiers, ~97 mid-tier, ~197 large. Steady-state fits any tier;
-# the burst ceiling fits comfortably on mid-tier and above. On a small
-# tier, drop AQUA_DB_POOL_SIZE=1 / AQUA_DB_MAX_OVERFLOW=2 (≤24 ceiling)
-# or factor in additional consumers (alembic, batch jobs, replicas).
+# RDS default max_connections is LEAST({DBInstanceClassMemory/9531392},
+# 5000) — roughly 170 on db.t3.small, 340 on db.t3.medium, 675 on
+# db.m5.large — so 40/container leaves comfortable headroom even on
+# small instance classes. Tune the env vars if running many containers
+# or if other consumers (alembic, batch jobs, replicas) eat the budget.
 if os.getenv("AQUA_DB_POOLCLASS", "").lower() == "null":
     from sqlalchemy.pool import NullPool
 
