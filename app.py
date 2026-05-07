@@ -16,6 +16,7 @@ from assessment_routes.v3.search_routes import router as search_router_v3
 from assessment_routes.v3.tfidf_artifact_routes import (
     router as tfidf_artifact_router_v3,
 )
+from assessment_routes.v3.timeout_sweep_routes import router as timeout_sweep_router_v3
 from bible_routes.v3.language_routes import router as language_router_v3
 from bible_routes.v3.revision_routes import router as revision_router_v3
 from bible_routes.v3.verse_routes import router as verse_router_v3
@@ -114,6 +115,7 @@ def configure_routing(app):
     app.include_router(tfidf_artifact_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(results_write_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(predict_router_v3, prefix="/v3", tags=["Version 3"])
+    app.include_router(timeout_sweep_router_v3, prefix="/v3", tags=["Version 3"])
 
     app.include_router(
         language_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
@@ -142,6 +144,9 @@ def configure_routing(app):
         results_write_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
     )
     app.include_router(predict_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(
+        timeout_sweep_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
+    )
 
     app.include_router(security_router, prefix="/latest", tags=["Latest"])
     app.include_router(admin_router, prefix="/latest", tags=["Latest"])
