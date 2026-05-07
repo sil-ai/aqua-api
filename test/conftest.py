@@ -1,5 +1,11 @@
 # version_id conftest.py
+import os
 from datetime import date
+
+# TestClient spawns a new event loop per request; asyncpg connections can't
+# migrate across loops. Force NullPool so the app-level engine opens a fresh
+# connection each time during tests. Must run before `from app import app`.
+os.environ.setdefault("AQUA_DB_POOLCLASS", "null")
 
 import bcrypt
 import pandas as pd
