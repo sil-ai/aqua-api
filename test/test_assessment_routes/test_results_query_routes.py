@@ -1689,6 +1689,22 @@ def test_compare_text_lengths_no_ids_error(client, regular_token1, test_db_sessi
 # ----- /v3/ngrams_result --------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _clear_ngrams_total_count_cache():
+    """Reset the per-process total_count cache before every test in this
+    module. Several ngrams_result tests share a finished assessment via
+    `_setup_ngrams_assessment`, and warming the cache in one test would
+    otherwise hide newly-inserted rows from a later test. Cheap to run
+    everywhere — non-ngrams tests just see an empty dict."""
+    from assessment_routes.v3.results_query_routes import (
+        _ngrams_total_count_cache,
+    )
+
+    _ngrams_total_count_cache.clear()
+    yield
+    _ngrams_total_count_cache.clear()
+
+
 def _setup_ngrams_assessment(db_session):
     """Create a finished ngrams assessment with a small but pagination-
     exercising number of ngrams (each with 1–3 vrefs). Returns the
@@ -1949,3 +1965,123 @@ def test_ngrams_result_includes_vrefless_ngram(client, regular_token1, test_db_s
     # produced is gone.
     assert body["total_count"] == len(seeds) + 1
     assert len(body["results"]) == body["total_count"]
+
+
+def test_ngrams_result_caches_total_count_for_finished_assessment(
+    client, regular_token1, test_db_session
+):
+    """For a `status='finished'` assessment, total_count is memoized
+    per-worker by assessment_id (see #651). Once the cache is warm,
+    rows added behind the cache's back stay hidden from total_count
+    until the entry is invalidated — which is the intended behaviour
+    because counts on finished assessments are immutable by contract
+    (a rerun produces a new assessment row, not new rows on the old
+    one)."""
+    from assessment_routes.v3.results_query_routes import (
+        _ngrams_total_count_cache,
+    )
+    from database.models import NgramsTable
+
+    assessment_id, _ = _setup_ngrams_assessment(test_db_session)
+
+    # Prime the cache.
+    primed = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": assessment_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert primed.status_code == 200, primed.text
+    primed_count = primed.json()["total_count"]
+    assert assessment_id in _ngrams_total_count_cache
+
+    # Insert a row behind the cache's back.
+    test_db_session.add(
+        NgramsTable(
+            assessment_id=assessment_id,
+            ngram="cache_probe_ngram",
+            ngram_size=2,
+        )
+    )
+    test_db_session.commit()
+
+    # Cached count should still come back unchanged.
+    cached = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": assessment_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert cached.status_code == 200, cached.text
+    assert cached.json()["total_count"] == primed_count
+
+    # Invalidating the entry forces a fresh COUNT and now reflects the
+    # newly-added row.
+    _ngrams_total_count_cache.pop(assessment_id, None)
+    refreshed = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": assessment_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["total_count"] == primed_count + 1
+
+
+def test_ngrams_result_missing_assessment_returns_404_for_admin(
+    client, admin_token, test_db_session
+):
+    """Admins are authorized for every assessment without an existence
+    check (`is_user_authorized_for_assessment` short-circuits True),
+    so a request for a nonexistent assessment_id has to be handled by
+    the count helper itself — otherwise the missing row would raise
+    NoResultFound and surface as a 500."""
+    setup_assessments_results(test_db_session)
+
+    # Pick an id far above any seeded assessment.
+    missing_id = 9_999_999
+
+    response = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": missing_id},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == 404, response.text
+    assert str(missing_id) in response.json()["detail"]
+
+
+def test_ngrams_result_does_not_cache_in_progress_assessment(
+    client, regular_token1, test_db_session
+):
+    """Counts for non-finished assessments must not be memoized — an
+    in-progress assessment can still grow rows, and serving a stale
+    count would confuse pagination during a live training run."""
+    from assessment_routes.v3.results_query_routes import (
+        _ngrams_total_count_cache,
+    )
+    from database.models import NgramsTable
+
+    setup_assessments_results(test_db_session)
+    in_progress = Assessment(
+        revision_id=138,
+        reference_id=772,
+        type="ngrams",
+        status="queued",
+        assessment_version="1",
+    )
+    test_db_session.add(in_progress)
+    test_db_session.commit()
+    test_db_session.refresh(in_progress)
+    test_db_session.add(
+        NgramsTable(
+            assessment_id=in_progress.id, ngram="probe_in_progress", ngram_size=1
+        )
+    )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/ngrams_result",
+        params={"assessment_id": in_progress.id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["total_count"] == 1
+    # Must not have been memoized — only finished assessments are cached.
+    assert in_progress.id not in _ngrams_total_count_cache

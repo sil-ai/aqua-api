@@ -237,6 +237,81 @@ async def build_results_query(
     )
 
 
+# Process-local memoization of `ngrams_table` total counts, keyed by
+# `assessment_id` and only populated for assessments in `status='finished'`
+# state. The intended contract (#651) is that finished ngrams assessments
+# don't grow new rows — a rerun produces a new assessment row instead.
+#
+# That contract is *policy, not enforcement*: `push_ngrams` and
+# `delete_ngrams` (results_push_routes.py) take only an authorization
+# dependency, with no terminal-status guard. Soft-delete
+# (`Assessment.deleted=True`) likewise leaves `status` unchanged and is
+# not visible to the auth check. So out-of-band writes against a
+# finished assessment, or reads against a soft-deleted one, can serve a
+# stale count for up to the TTL. The 1h TTL is the only safeguard
+# against those cases — we accept that bound rather than coupling this
+# cache to every assessment write path.
+#
+# Concurrent requests for the same uncached assessment_id race to
+# populate the entry; both writes produce identical counts so the final
+# state is correct. With multiple worker processes behind a load
+# balancer, each worker keeps its own dict — so a paginating client
+# striped across workers may observe `total_count` flap by a row or two
+# during the window where one worker is warm and another isn't. That
+# matches the "ngrams shouldn't grow on a finished assessment" contract
+# above; if it ever drifts in production, this comment is the place to
+# revisit.
+#
+# Eviction is lazy: an entry is only removed when its key is re-accessed
+# after expiry. The dict size is therefore bounded by "unique finished
+# assessment_ids queried by this worker since startup," not by the TTL.
+# At 12-ish bytes per entry this stays sub-1MB even at 100k assessments,
+# which is small enough that we don't bother with a background sweep.
+_NGRAMS_TOTAL_COUNT_TTL_SECONDS = 3600
+_ngrams_total_count_cache: Dict[int, Tuple[int, float]] = {}
+
+
+async def _get_ngrams_total_count(assessment_id: int, db: AsyncSession) -> int:
+    cached = _ngrams_total_count_cache.get(assessment_id)
+    if cached is not None:
+        count, expires_at = cached
+        if expires_at > time.monotonic():
+            return count
+        del _ngrams_total_count_cache[assessment_id]
+
+    # One round-trip: fetch the count alongside the assessment status
+    # so we can decide whether to cache without a second query.
+    # `is_user_authorized_for_assessment` short-circuits True for
+    # admins without verifying the row exists, so we still need to
+    # handle a missing assessment here.
+    count_subq = (
+        select(func.count())
+        .select_from(NgramsTable)
+        .where(NgramsTable.assessment_id == assessment_id)
+        .scalar_subquery()
+    )
+    row = (
+        await db.execute(
+            select(count_subq.label("count"), Assessment.status).where(
+                Assessment.id == assessment_id
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assessment {assessment_id} not found",
+        )
+
+    count, assessment_status = row
+    if assessment_status == "finished":
+        _ngrams_total_count_cache[assessment_id] = (
+            count,
+            time.monotonic() + _NGRAMS_TOTAL_COUNT_TTL_SECONDS,
+        )
+    return count
+
+
 async def fetch_ngrams_page(
     assessment_id: int,
     page: Optional[int],
@@ -299,11 +374,7 @@ async def fetch_ngrams_page(
     # with `vrefs=[]` instead of vanishing). vrefless ngrams aren't
     # expected in normal training output but aren't schema-prevented
     # either, so we lean toward visibility over the old hidden-skip.
-    total_count = await db.scalar(
-        select(func.count())
-        .select_from(NgramsTable)
-        .where(NgramsTable.assessment_id == assessment_id)
-    )
+    total_count = await _get_ngrams_total_count(assessment_id, db)
 
     return rows, total_count
 
