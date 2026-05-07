@@ -27,10 +27,13 @@ def _env_int(name: str, default: int) -> int:
 # Production runs a single persistent loop per worker and benefits from
 # pooling — avoids the asyncpg+TLS handshake on every request.
 #
-# Default sizing is conservative: 8 uvicorn workers × (2 + 3) = 40 max
-# connections per container, well under the typical DigitalOcean managed
-# Postgres limit (~25 on small tiers, ~97 mid-tier). Tune via env vars if
-# the running tier and replica count have headroom.
+# Default sizing: with 8 uvicorn workers, steady-state is ~16 conns per
+# container (8 × pool_size 2) and the burst ceiling is 40 (8 × (2 + 3)).
+# DigitalOcean managed Postgres caps connections at roughly 25 on the
+# smallest tiers, ~97 mid-tier, ~197 large. Steady-state fits any tier;
+# the burst ceiling fits comfortably on mid-tier and above. On a small
+# tier, drop AQUA_DB_POOL_SIZE=1 / AQUA_DB_MAX_OVERFLOW=2 (≤24 ceiling)
+# or factor in additional consumers (alembic, batch jobs, replicas).
 if os.getenv("AQUA_DB_POOLCLASS", "").lower() == "null":
     from sqlalchemy.pool import NullPool
 
