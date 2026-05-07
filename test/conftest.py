@@ -1,16 +1,25 @@
 # version_id conftest.py
-from datetime import date
+import os
 
-import bcrypt
-import pandas as pd
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+# TestClient spawns a new event loop per request; asyncpg connections can't
+# migrate across loops. Force NullPool so the app-level engine opens a fresh
+# connection each time during tests. Set unconditionally (not setdefault) so
+# the test process can never accidentally inherit a pooled engine — this must
+# run before `from app import app` regardless of pytest collection order.
+os.environ["AQUA_DB_POOLCLASS"] = "null"
 
-from app import app
-from database.models import (
+from datetime import date  # noqa: E402
+
+import bcrypt  # noqa: E402
+import pandas as pd  # noqa: E402
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import create_engine, select  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+from app import app  # noqa: E402
+from database.models import (  # noqa: E402
     Assessment,
     Base,
     BibleRevision,

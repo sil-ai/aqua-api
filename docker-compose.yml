@@ -14,6 +14,14 @@ services:
       - GRAPHQL_URL=${GRAPHQL_URL}
       - GRAPHQL_SECRET=${GRAPHQL_SECRET}
       - AQUA_DB=postgresql+asyncpg://dbuser:dbpassword@db:5432/dbname
+      # DB connection pool tuning (defaults: pool_size=2, max_overflow=3,
+      # timeout=10, recycle=1800). Set AQUA_DB_POOLCLASS=null to disable
+      # pooling entirely (one connection per request).
+      - AQUA_DB_POOLCLASS=${AQUA_DB_POOLCLASS:-}
+      - AQUA_DB_POOL_SIZE=${AQUA_DB_POOL_SIZE:-}
+      - AQUA_DB_MAX_OVERFLOW=${AQUA_DB_MAX_OVERFLOW:-}
+      - AQUA_DB_POOL_TIMEOUT=${AQUA_DB_POOL_TIMEOUT:-}
+      - AQUA_DB_POOL_RECYCLE=${AQUA_DB_POOL_RECYCLE:-}
       - TEST_KEY=${TEST_KEY}
       - FAIL_KEY=${FAIL_KEY}
       - KEY_VAULT=${KEY_VAULT}
