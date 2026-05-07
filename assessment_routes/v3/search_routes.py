@@ -145,7 +145,7 @@ def _comp_lateral(
 ):
     """LATERAL subquery yielding the comparison text for the current main row.
 
-    For ``revision_id`` mode, returns the single row matching the vref
+    For ``revision_id`` mode, returns at most one row matching the vref
     (zero rows if the comp revision lacks the verse). For ``version_id``
     mode, performs the per-vref date-DESC pick of the latest non-empty
     revision text.
@@ -154,10 +154,15 @@ def _comp_lateral(
     so each main row triggers an indexed lookup against
     ``ix_verse_text_verse_reference_revision`` instead of materializing the
     full Bible for the comparison version up-front.
+
+    The auth subquery is materialized as a CTE so Postgres evaluates it
+    once for the entire statement instead of risking re-evaluation per
+    lateral invocation, which would cost more for non-admin users whose
+    auth involves additional joins.
     """
     auth_revs = _authorized_revisions_select(
         user, version_id=version_id, revision_id=revision_id
-    )
+    ).cte("comp_auth_revs")
 
     vt = aliased(VerseText)
 
@@ -167,21 +172,29 @@ def _comp_lateral(
             select(vt.text.label("text"))
             .join(br, br.id == vt.revision_id)
             .where(
-                vt.revision_id.in_(auth_revs),
+                vt.revision_id.in_(select(auth_revs)),
                 vt.text != "",
+                vt.verse_reference.is_not(None),
                 vt.verse_reference == main_vref_col,
             )
+            # br.id.desc() is a stable tie-breaker so the per-vref pick is
+            # deterministic when two revisions share the same date.
             .order_by(br.date.desc(), br.id.desc())
             .limit(1)
         )
     else:
+        # The (verse_reference, revision_id) index is non-unique; in case
+        # duplicate rows ever exist for a (vref, revision_id) pair, pick the
+        # newest by id so the result is deterministic.
         q = (
             select(vt.text.label("text"))
             .where(
-                vt.revision_id.in_(auth_revs),
+                vt.revision_id.in_(select(auth_revs)),
                 vt.text != "",
+                vt.verse_reference.is_not(None),
                 vt.verse_reference == main_vref_col,
             )
+            .order_by(vt.id.desc())
             .limit(1)
         )
 
@@ -371,8 +384,9 @@ async def search_revision_text(
     search_query = search_query.limit(sql_limit)
 
     # Apply ordering on the outer query. Per-side dedup is already handled
-    # inside main_sub / comp_sub, so the outer query is free to randomize
-    # without violating DISTINCT ON's leading-column rule.
+    # inside main_sub (and the comp lateral picks at most one row per main
+    # row), so the outer query is free to randomize without violating
+    # DISTINCT ON's leading-column rule.
     if random:
         search_query = search_query.order_by(func.random())
     else:
