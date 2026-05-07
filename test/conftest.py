@@ -3,8 +3,10 @@ import os
 
 # TestClient spawns a new event loop per request; asyncpg connections can't
 # migrate across loops. Force NullPool so the app-level engine opens a fresh
-# connection each time during tests. Must run before `from app import app`.
-os.environ.setdefault("AQUA_DB_POOLCLASS", "null")
+# connection each time during tests. Set unconditionally (not setdefault) so
+# the test process can never accidentally inherit a pooled engine — this must
+# run before `from app import app` regardless of pytest collection order.
+os.environ["AQUA_DB_POOLCLASS"] = "null"
 
 from datetime import date  # noqa: E402
 
