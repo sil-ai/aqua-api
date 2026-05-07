@@ -1388,6 +1388,114 @@ def test_search_by_version_id_with_comparison_version_id(
     )
 
 
+def test_search_comparison_drops_main_rows_with_no_comp_coverage(
+    client, regular_token1, test_db_session
+):
+    """When comp has no row at all for a vref the main matches, that main
+    row is dropped from results (INNER JOIN LATERAL semantics)."""
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+    if (
+        test_db_session.query(IsoLanguage).filter(IsoLanguage.iso639 == "swh").first()
+        is None
+    ):
+        test_db_session.add(IsoLanguage(iso639="swh", name="Swahili"))
+        test_db_session.commit()
+
+    eng_version = BibleVersion(
+        name="Drop Coverage Eng",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="DCE",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    swh_version = BibleVersion(
+        name="Drop Coverage Swh",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="DCS",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add_all([eng_version, swh_version])
+    test_db_session.commit()
+    test_db_session.refresh(eng_version)
+    test_db_session.refresh(swh_version)
+
+    eng_rev = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=eng_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    swh_rev = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=swh_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add_all([eng_rev, swh_rev])
+    test_db_session.commit()
+    test_db_session.refresh(eng_rev)
+    test_db_session.refresh(swh_rev)
+
+    # Main matches at GEN 1:1 and GEN 1:2
+    for verse, text in [
+        (1, "God created the heavens."),
+        (2, "God said let there be light."),
+    ]:
+        test_db_session.add(
+            VerseText(
+                text=text,
+                revision_id=eng_rev.id,
+                verse_reference=f"GEN 1:{verse}",
+                book="GEN",
+                chapter=1,
+                verse=verse,
+            )
+        )
+    # Comp covers GEN 1:1 only — GEN 1:2 has no row at all on the comp side.
+    test_db_session.add(
+        VerseText(
+            text="Mwanzoni Mungu aliumba mbingu.",
+            revision_id=swh_rev.id,
+            verse_reference="GEN 1:1",
+            book="GEN",
+            chapter=1,
+            verse=1,
+        )
+    )
+    for version in (eng_version, swh_version):
+        test_db_session.add(
+            BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+        )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "version_id": eng_version.id,
+            "comparison_version_id": swh_version.id,
+            "term": "God",
+            "limit": 10,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    # GEN 1:2 must be absent because comp lacks coverage there.
+    assert ("GEN", 1, 1) in refs
+    assert (
+        "GEN",
+        1,
+        2,
+    ) not in refs, (
+        f"Expected GEN 1:2 dropped from results when comp has no row for it; got {refs}"
+    )
+
+
 def test_search_by_version_id_with_comparison_revision_id(
     client, regular_token1, test_db_session
 ):

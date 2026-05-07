@@ -7,7 +7,7 @@ import unicodedata
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func
+from sqlalchemy import func, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
@@ -75,24 +75,27 @@ def _authorized_revisions_select(
     return q
 
 
-def _side_subquery(
+def _main_subquery(
     user: UserModel,
     version_id: Optional[int],
     revision_id: Optional[int],
-    ilike_pattern: Optional[str],
+    ilike_pattern: str,
 ):
-    """Build a subquery yielding one verse_text row per (book, chapter, verse).
+    """Build the main-side subquery: one verse_text row per (book, chapter, verse)
+    matching the search term.
 
     For ``version_id``, applies ``DISTINCT ON (book, chapter, verse)`` ordered
-    by ``bible_revision.date DESC`` so the latest non-empty revision wins per
-    vref, with older revisions filling gaps where the latest revision lacks
-    the verse (empty text or no row).
+    by ``bible_revision.date DESC`` so the latest non-empty matching revision
+    wins per vref, with older revisions filling gaps where the latest revision
+    lacks the verse (empty text or no term match).
 
     For ``revision_id``, simply filters by revision id (one row per vref by
     construction). Empty-text rows are excluded in both modes.
 
     Authorization is enforced inline via :func:`_authorized_revisions_select`,
-    so unauthorized callers get an empty subquery (zero rows).
+    so unauthorized callers get an empty subquery (zero rows). Includes
+    ``verse_reference`` so callers can join the comparison side via the
+    indexed column.
     """
     auth_revs = _authorized_revisions_select(
         user, version_id=version_id, revision_id=revision_id
@@ -104,6 +107,7 @@ def _side_subquery(
         vt.book.label("book"),
         vt.chapter.label("chapter"),
         vt.verse.label("verse"),
+        vt.verse_reference.label("verse_reference"),
         vt.text.label("text"),
     ]
 
@@ -115,10 +119,9 @@ def _side_subquery(
             .where(
                 vt.revision_id.in_(auth_revs),
                 vt.text != "",
+                _nfc_sql(vt.text).ilike(ilike_pattern),
             )
         )
-        if ilike_pattern is not None:
-            q = q.where(_nfc_sql(vt.text).ilike(ilike_pattern))
         # br.id.desc() is a stable tie-breaker so the per-vref pick is
         # deterministic when two revisions share the same date.
         q = q.distinct(vt.book, vt.chapter, vt.verse).order_by(
@@ -128,11 +131,74 @@ def _side_subquery(
         q = select(*select_cols).where(
             vt.revision_id.in_(auth_revs),
             vt.text != "",
+            _nfc_sql(vt.text).ilike(ilike_pattern),
         )
-        if ilike_pattern is not None:
-            q = q.where(_nfc_sql(vt.text).ilike(ilike_pattern))
 
     return q.subquery()
+
+
+def _comp_lateral(
+    user: UserModel,
+    version_id: Optional[int],
+    revision_id: Optional[int],
+    main_vref_col,
+):
+    """LATERAL subquery yielding the comparison text for the current main row.
+
+    For ``revision_id`` mode, returns at most one row matching the vref
+    (zero rows if the comp revision lacks the verse). For ``version_id``
+    mode, performs the per-vref date-DESC pick of the latest non-empty
+    revision text.
+
+    Correlates to ``main_vref_col`` (the main row's ``verse_reference``)
+    so each main row triggers an indexed lookup against
+    ``ix_verse_text_verse_reference_revision`` instead of materializing the
+    full Bible for the comparison version up-front.
+
+    The auth subquery is materialized as a CTE so Postgres evaluates it
+    once for the entire statement instead of risking re-evaluation per
+    lateral invocation, which would cost more for non-admin users whose
+    auth involves additional joins.
+    """
+    auth_revs = _authorized_revisions_select(
+        user, version_id=version_id, revision_id=revision_id
+    ).cte("comp_auth_revs")
+
+    vt = aliased(VerseText)
+
+    if version_id is not None:
+        br = aliased(BibleRevision)
+        q = (
+            select(vt.text.label("text"))
+            .join(br, br.id == vt.revision_id)
+            .where(
+                vt.revision_id.in_(select(auth_revs)),
+                vt.text != "",
+                vt.verse_reference.is_not(None),
+                vt.verse_reference == main_vref_col,
+            )
+            # br.id.desc() is a stable tie-breaker so the per-vref pick is
+            # deterministic when two revisions share the same date.
+            .order_by(br.date.desc(), br.id.desc())
+            .limit(1)
+        )
+    else:
+        # The (verse_reference, revision_id) index is non-unique; in case
+        # duplicate rows ever exist for a (vref, revision_id) pair, pick the
+        # newest by id so the result is deterministic.
+        q = (
+            select(vt.text.label("text"))
+            .where(
+                vt.revision_id.in_(select(auth_revs)),
+                vt.text != "",
+                vt.verse_reference.is_not(None),
+                vt.verse_reference == main_vref_col,
+            )
+            .order_by(vt.id.desc())
+            .limit(1)
+        )
+
+    return q.lateral("comp")
 
 
 @router.get("/textsearch")
@@ -268,10 +334,10 @@ async def search_revision_text(
     ]
     like_pattern = "%" + "%".join(escaped_pieces) + "%"
 
-    # Build per-side subqueries. Each subquery produces one row per
-    # (book, chapter, verse): a single revision pick for revision_id mode
-    # or the date-DESC latest non-empty pick for version_id mode.
-    main_sub = _side_subquery(
+    # Build the main-side subquery (one row per vref matching the term),
+    # then look up the comparison side per-row via LATERAL so we never
+    # materialize the full Bible for the comparison version.
+    main_sub = _main_subquery(
         current_user,
         version_id=version_id,
         revision_id=revision_id,
@@ -281,11 +347,11 @@ async def search_revision_text(
         comparison_revision_id is not None or comparison_version_id is not None
     )
     if use_comparison:
-        comp_sub = _side_subquery(
+        comp_lat = _comp_lateral(
             current_user,
             version_id=comparison_version_id,
             revision_id=comparison_revision_id,
-            ilike_pattern=None,
+            main_vref_col=main_sub.c.verse_reference,
         )
         search_query = select(
             main_sub.c.id.label("id"),
@@ -293,15 +359,8 @@ async def search_revision_text(
             main_sub.c.chapter.label("chapter"),
             main_sub.c.verse.label("verse"),
             main_sub.c.text.label("main_text"),
-            comp_sub.c.text.label("comparison_text"),
-        ).select_from(
-            main_sub.join(
-                comp_sub,
-                (comp_sub.c.book == main_sub.c.book)
-                & (comp_sub.c.chapter == main_sub.c.chapter)
-                & (comp_sub.c.verse == main_sub.c.verse),
-            )
-        )
+            comp_lat.c.text.label("comparison_text"),
+        ).select_from(main_sub.join(comp_lat, true()))
     else:
         search_query = select(
             main_sub.c.id.label("id"),
@@ -325,8 +384,9 @@ async def search_revision_text(
     search_query = search_query.limit(sql_limit)
 
     # Apply ordering on the outer query. Per-side dedup is already handled
-    # inside main_sub / comp_sub, so the outer query is free to randomize
-    # without violating DISTINCT ON's leading-column rule.
+    # inside main_sub (and the comp lateral picks at most one row per main
+    # row), so the outer query is free to randomize without violating
+    # DISTINCT ON's leading-column rule.
     if random:
         search_query = search_query.order_by(func.random())
     else:
