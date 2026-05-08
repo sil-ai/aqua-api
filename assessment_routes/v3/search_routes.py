@@ -7,7 +7,7 @@ import unicodedata
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, true
+from sqlalchemy import func, text, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
@@ -406,7 +406,22 @@ async def search_revision_text(
         )
 
     try:
-        # Execute the query
+        # The trgm GIN index on NORMALIZE(text, NFC) has very poor real
+        # selectivity for common-trigram phrases (e.g. "mu kwata" returns
+        # ~1.4M candidate rows per scan), but the planner's selectivity
+        # estimate is ~80x optimistic. Combined with the nested loop over
+        # multi-revision versions, that picks a plan that re-runs the trgm
+        # bitmap scan once per revision (~6s × N revisions).
+        #
+        # The plain ix_verse_text_revision_id scan with a per-row
+        # NORMALIZE+ILIKE recheck is ~76x faster on the slow case (1.2s vs
+        # 91s in production EXPLAIN ANALYZE) and only marginally slower on
+        # the selective-phrase case where both plans are sub-second. Force
+        # it on for this query; SET LOCAL scopes the change to this
+        # transaction, so the pooled connection isn't poisoned for other
+        # callers.
+        await db.execute(text("SET LOCAL enable_bitmapscan = off"))
+
         result = await db.execute(search_query)
         rows = result.all()
 
