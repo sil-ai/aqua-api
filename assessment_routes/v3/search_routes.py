@@ -416,10 +416,12 @@ async def search_revision_text(
         # The plain ix_verse_text_revision_id scan with a per-row
         # NORMALIZE+ILIKE recheck is ~76x faster on the slow case (1.2s vs
         # 91s in production EXPLAIN ANALYZE) and only marginally slower on
-        # the selective-phrase case where both plans are sub-second. Force
-        # it on for this query; SET LOCAL scopes the change to this
-        # transaction, so the pooled connection isn't poisoned for other
-        # callers.
+        # the selective-phrase case where both plans are sub-second. Disable
+        # bitmap scan so the planner picks that path. SET LOCAL scopes the
+        # change to this transaction, so the pooled connection isn't
+        # poisoned for other callers — but note this relies on session-mode
+        # pooling: in pgbouncer transaction-mode the setting would only
+        # cover the SET statement itself and silently no-op for the search.
         await db.execute(text("SET LOCAL enable_bitmapscan = off"))
 
         result = await db.execute(search_query)
