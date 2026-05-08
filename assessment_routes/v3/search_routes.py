@@ -218,10 +218,11 @@ async def search_revision_text(
     version_id: Optional[int] = Query(
         default=None,
         description=(
-            "Bible version id; per (book, chapter, verse) returns the latest "
-            "non-empty revision whose text matches the search term, with older "
-            "revisions filling gaps where the latest revision is empty or "
-            "doesn't contain the term."
+            "Bible version id; per (book, chapter, verse) the most recent "
+            "non-empty revision is chosen first, and the search term is then "
+            "matched against that latest text. Older revisions only fill in "
+            "for verses where the latest revision is empty, not for term "
+            "mismatches — results reflect the version's current text."
         ),
     ),
     comparison_revision_id: Optional[int] = None,
