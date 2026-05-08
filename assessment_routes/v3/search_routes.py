@@ -221,8 +221,9 @@ async def search_revision_text(
             "Bible version id; per (book, chapter, verse) the most recent "
             "non-empty revision is chosen first, and the search term is then "
             "matched against that latest text. Older revisions only fill in "
-            "for verses where the latest revision is empty, not for term "
-            "mismatches — results reflect the version's current text."
+            "for verses where the latest revision is empty or missing the "
+            "row, not for term mismatches — results reflect the version's "
+            "current text."
         ),
     ),
     comparison_revision_id: Optional[int] = None,
