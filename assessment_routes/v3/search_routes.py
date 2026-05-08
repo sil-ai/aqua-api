@@ -84,10 +84,13 @@ def _main_subquery(
     """Build the main-side subquery: one verse_text row per (book, chapter, verse)
     matching the search term.
 
-    For ``version_id``, applies ``DISTINCT ON (book, chapter, verse)`` ordered
-    by ``bible_revision.date DESC`` so the latest non-empty matching revision
-    wins per vref, with older revisions filling gaps where the latest revision
-    lacks the verse (empty text or no term match).
+    For ``version_id``, picks the latest non-empty revision text per vref
+    *first* (``DISTINCT ON (book, chapter, verse) ORDER BY date DESC``) and
+    only then applies the term filter. This means the search reflects the
+    version's current text only — a verse whose latest revision dropped the
+    term will not appear, even if an older revision contained it. Doing
+    dedup-before-filter keeps the per-row NORMALIZE+ILIKE recheck on the
+    much smaller deduped vref set instead of every row of every revision.
 
     For ``revision_id``, simply filters by revision id (one row per vref by
     construction). Empty-text rows are excluded in both modes.
@@ -113,20 +116,27 @@ def _main_subquery(
 
     if version_id is not None:
         br = aliased(BibleRevision)
-        q = (
+        # br.id.desc() is a stable tie-breaker so the per-vref pick is
+        # deterministic when two revisions share the same date.
+        latest_per_vref = (
             select(*select_cols)
             .join(br, br.id == vt.revision_id)
             .where(
                 vt.revision_id.in_(auth_revs),
                 vt.text != "",
-                _nfc_sql(vt.text).ilike(ilike_pattern),
             )
+            .distinct(vt.book, vt.chapter, vt.verse)
+            .order_by(vt.book, vt.chapter, vt.verse, br.date.desc(), br.id.desc())
+            .subquery()
         )
-        # br.id.desc() is a stable tie-breaker so the per-vref pick is
-        # deterministic when two revisions share the same date.
-        q = q.distinct(vt.book, vt.chapter, vt.verse).order_by(
-            vt.book, vt.chapter, vt.verse, br.date.desc(), br.id.desc()
-        )
+        q = select(
+            latest_per_vref.c.id,
+            latest_per_vref.c.book,
+            latest_per_vref.c.chapter,
+            latest_per_vref.c.verse,
+            latest_per_vref.c.verse_reference,
+            latest_per_vref.c.text,
+        ).where(_nfc_sql(latest_per_vref.c.text).ilike(ilike_pattern))
     else:
         q = select(*select_cols).where(
             vt.revision_id.in_(auth_revs),
@@ -249,14 +259,12 @@ async def search_revision_text(
     (non-whitespace, non-format) character.
 
     Provide exactly one of ``revision_id`` or ``version_id``.  When
-    ``version_id`` is given, results are deduplicated by verse location
-    (book, chapter, verse): for each verse, the most recent non-empty
-    *matching* revision belonging to that version is chosen.  The ILIKE
-    prefilter is applied before per-vref dedup, so older revisions fill
-    gaps where the most recent revision lacks the verse (empty text) or
-    doesn't contain the search term — i.e. results surface the term wherever
-    it appears in the version's history, preferring the newer wording when
-    multiple revisions match.
+    ``version_id`` is given, results reflect the version's current text:
+    for each verse, the most recent non-empty revision is chosen first,
+    and the search term is then matched against that latest text. A verse
+    whose latest revision no longer contains the term will not surface,
+    even if an older revision did — searches return the version "as it
+    stands today," not its full revision history.
 
     Optionally provide at most one of ``comparison_revision_id`` or
     ``comparison_version_id`` for parallel text. For ``comparison_version_id``

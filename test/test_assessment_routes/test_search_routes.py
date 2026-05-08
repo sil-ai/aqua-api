@@ -1348,6 +1348,111 @@ def test_search_version_id_falls_back_when_latest_empty(
     assert "Spirit of God" in by_ref[("GEN", 1, 2)]
 
 
+def test_search_version_id_does_not_fall_back_for_term_mismatch(
+    client, regular_token1, test_db_session
+):
+    """When the latest revision has non-empty text that doesn't match the
+    term, the verse is NOT returned even if an older revision did match.
+    Pins the dedup-first semantic against any accidental return of the
+    pre-2026 'fall back to older matching revision' behavior."""
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+
+    version = BibleVersion(
+        name="No Term Fallback",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="NTF",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add(version)
+    test_db_session.commit()
+    test_db_session.refresh(version)
+
+    rev_old = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    rev_new = BibleRevision(
+        date=date(2024, 6, 1),
+        bible_version_id=version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add_all([rev_old, rev_new])
+    test_db_session.commit()
+    test_db_session.refresh(rev_old)
+    test_db_session.refresh(rev_new)
+
+    # GEN 1:1 — older has "rutabaga", newer has "carrot" (newer dropped the term)
+    test_db_session.add(
+        VerseText(
+            text="The unique rutabaga grew there.",
+            revision_id=rev_old.id,
+            verse_reference="GEN 1:1",
+            book="GEN",
+            chapter=1,
+            verse=1,
+        )
+    )
+    test_db_session.add(
+        VerseText(
+            text="The carrot grew there.",
+            revision_id=rev_new.id,
+            verse_reference="GEN 1:1",
+            book="GEN",
+            chapter=1,
+            verse=1,
+        )
+    )
+    # GEN 1:2 — only newer has the term (sanity: still surfaces)
+    test_db_session.add(
+        VerseText(
+            text="Plain text.",
+            revision_id=rev_old.id,
+            verse_reference="GEN 1:2",
+            book="GEN",
+            chapter=1,
+            verse=2,
+        )
+    )
+    test_db_session.add(
+        VerseText(
+            text="The new rutabaga thrived.",
+            revision_id=rev_new.id,
+            verse_reference="GEN 1:2",
+            book="GEN",
+            chapter=1,
+            verse=2,
+        )
+    )
+    test_db_session.add(
+        BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+    )
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={"version_id": version.id, "term": "rutabaga", "limit": 10},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    refs = {(r["book"], r["chapter"], r["verse"]) for r in data["results"]}
+    # GEN 1:1 must NOT be returned — newer revision dropped the term.
+    assert (
+        "GEN",
+        1,
+        1,
+    ) not in refs, f"Expected GEN 1:1 absent (newer revision lacks term); got {data}"
+    # GEN 1:2 IS returned — newer revision has the term.
+    assert ("GEN", 1, 2) in refs
+
+
 def test_search_by_version_id_with_comparison_version_id(
     client, regular_token1, test_db_session
 ):
