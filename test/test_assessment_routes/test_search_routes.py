@@ -2875,7 +2875,12 @@ def test_search_include_alignments_without_comparison_side(
 def test_search_include_alignments_hide_flag_filtered(
     client, regular_token1, test_db_session
 ):
-    """Rows with hide=True are not returned even when the assessment is auto-picked."""
+    """Rows with hide=True are excluded; hide=NULL passes through.
+
+    NULL-hide rows exist in production from a pre-fix push bug (migration
+    a4d18b5c2e91); the filter must treat them as not-hidden rather than
+    silently dropping them along with the explicitly-hidden rows.
+    """
     main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
     assessment_id = _setup_alignment_assessment(
         test_db_session,
@@ -2884,18 +2889,19 @@ def test_search_include_alignments_hide_flag_filtered(
         [
             ("JHN 3:16", "visible-source", "visible-target", 0.92),
             ("JHN 3:16", "hidden-source", "hidden-target", 0.95),
+            ("JHN 3:16", "null-hide-source", "null-hide-target", 0.88),
         ],
     )
-    # Flip the second row to hide=True after insertion.
-    hidden = (
+    rows = (
         test_db_session.query(AlignmentTopSourceScores)
-        .filter(
-            AlignmentTopSourceScores.assessment_id == assessment_id,
-            AlignmentTopSourceScores.source == "hidden-source",
-        )
-        .one()
+        .filter(AlignmentTopSourceScores.assessment_id == assessment_id)
+        .all()
     )
-    hidden.hide = True
+    for row in rows:
+        if row.source == "hidden-source":
+            row.hide = True
+        elif row.source == "null-hide-source":
+            row.hide = None
     test_db_session.commit()
 
     response = client.get(
@@ -2912,7 +2918,101 @@ def test_search_include_alignments_hide_flag_filtered(
     assert response.status_code == 200
     data = response.json()
     jhn = next(r for r in data["results"] if r["verse"] == 16)
-    assert {a["source"] for a in jhn["alignments"]} == {"visible-source"}
+    assert {a["source"] for a in jhn["alignments"]} == {
+        "visible-source",
+        "null-hide-source",
+    }
+
+
+def test_search_include_alignments_explicit_id_pair_mismatch_omits_field(
+    client, regular_token1, test_db_session
+):
+    """An explicit alignment_assessment_id from a different pair is rejected.
+
+    Guards against accidentally attaching alignment data from an unrelated
+    assessment (different revisions) to the requested verse pairs.
+    """
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+
+    # Build a separate pair (still owned by testuser1) and an assessment on it.
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+
+    other_main_version = BibleVersion(
+        name="Other Pair Main",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="OPM",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    other_comp_version = BibleVersion(
+        name="Other Pair Comp",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="OPC",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add_all([other_main_version, other_comp_version])
+    test_db_session.commit()
+    test_db_session.refresh(other_main_version)
+    test_db_session.refresh(other_comp_version)
+
+    other_main_rev = BibleRevision(
+        date=date.today(),
+        bible_version_id=other_main_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    other_comp_rev = BibleRevision(
+        date=date.today(),
+        bible_version_id=other_comp_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add_all([other_main_rev, other_comp_rev])
+    test_db_session.commit()
+    test_db_session.refresh(other_main_rev)
+    test_db_session.refresh(other_comp_rev)
+
+    test_db_session.add_all(
+        [
+            BibleVersionAccess(
+                bible_version_id=other_main_version.id, group_id=group1.id
+            ),
+            BibleVersionAccess(
+                bible_version_id=other_comp_version.id, group_id=group1.id
+            ),
+        ]
+    )
+    test_db_session.commit()
+
+    other_pair_assessment = _setup_alignment_assessment(
+        test_db_session,
+        other_main_rev.id,
+        other_comp_rev.id,
+        [("JHN 3:16", "wrong-pair-source", "wrong-pair-target", 0.99)],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+            "alignment_assessment_id": other_pair_assessment,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"]
+    for r in data["results"]:
+        # Pair-match guard rejected the cross-pair assessment id; field omitted.
+        assert "alignments" not in r
 
 
 def test_search_include_alignments_unauthorized_explicit_id_omits_field(
@@ -2920,10 +3020,11 @@ def test_search_include_alignments_unauthorized_explicit_id_omits_field(
 ):
     """An explicit alignment_assessment_id the user can't see falls through silently.
 
-    regular_token2 has access to no versions, so the search itself fails — but
-    we set up versions/revisions and an assessment for testuser1 and a separate
-    pair for testuser2 to confirm the auth check kicks in on the explicit id
-    rather than leaking another user's alignment data.
+    Sets up testuser1's data plus an alignment assessment, and a separate
+    pair that testuser2 owns. testuser2 then searches their own pair but
+    points at testuser1's assessment id — the search itself succeeds, but
+    alignments are omitted because the explicit id fails the assessment
+    auth check (and would also fail the pair-match guard).
     """
     # Set up testuser1's data and assessment.
     main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)

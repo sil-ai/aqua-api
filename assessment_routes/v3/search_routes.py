@@ -239,17 +239,26 @@ async def _resolve_alignment_assessment_id(
             user.id, alignment_assessment_id, db
         ):
             return None
-        # Confirm the assessment exists and is a finished word-alignment run;
-        # otherwise the alignments query would just return no rows anyway.
-        exists = await db.scalar(
-            select(Assessment.id).where(
-                Assessment.id == alignment_assessment_id,
-                Assessment.type == "word-alignment",
-                Assessment.status == "finished",
-                Assessment.deleted.is_not(True),
+        # Confirm the assessment is a finished, non-deleted word-alignment
+        # run. When both textsearch revision IDs are concrete, also enforce
+        # that the assessment's pair matches — otherwise we'd be attaching
+        # alignments from an unrelated assessment to these verse pairs.
+        # In version_id mode neither side is concrete here, so the caller
+        # owns the responsibility for picking a sensible assessment.
+        conditions = [
+            Assessment.id == alignment_assessment_id,
+            Assessment.type == "word-alignment",
+            Assessment.status == "finished",
+            Assessment.deleted.is_not(True),
+        ]
+        if revision_id is not None and comparison_revision_id is not None:
+            conditions.extend(
+                [
+                    Assessment.revision_id == revision_id,
+                    Assessment.reference_id == comparison_revision_id,
+                ]
             )
-        )
-        return exists
+        return await db.scalar(select(Assessment.id).where(*conditions))
 
     if revision_id is None or comparison_revision_id is None:
         # Auto-pick only works with a concrete (revision, comparison_revision)
@@ -305,7 +314,10 @@ async def _fetch_alignments_by_vref(
                 AlignmentTopSourceScores.assessment_id == assessment_id,
                 AlignmentTopSourceScores.vref.in_(vrefs),
                 AlignmentTopSourceScores.score >= min_score,
-                AlignmentTopSourceScores.hide.is_(False),
+                # NULL hide rows exist from a pre-fix push bug (migration
+                # a4d18b5c2e91); treat NULL as not-hidden so we only drop
+                # rows the caller explicitly hid.
+                AlignmentTopSourceScores.hide.is_not(True),
             )
         )
     ).all()
