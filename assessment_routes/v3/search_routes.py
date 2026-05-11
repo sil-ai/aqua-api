@@ -22,7 +22,10 @@ from database.models import (
     BibleVersionAccess,
 )
 from database.models import UserDB as UserModel
-from database.models import UserGroup, VerseText
+from database.models import (
+    UserGroup,
+    VerseText,
+)
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 from utils.logging_config import setup_logger
@@ -701,8 +704,7 @@ async def search_revision_text(
             )
             if alignment_assessment_used is not None:
                 vrefs = [
-                    f"{r['book']} {r['chapter']}:{r['verse']}"
-                    for r in filtered_results
+                    f"{r['book']} {r['chapter']}:{r['verse']}" for r in filtered_results
                 ]
                 alignments_by_vref = await _fetch_alignments_by_vref(
                     db,
