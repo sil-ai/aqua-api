@@ -246,6 +246,7 @@ async def _resolve_alignment_assessment_id(
                 Assessment.id == alignment_assessment_id,
                 Assessment.type == "word-alignment",
                 Assessment.status == "finished",
+                Assessment.deleted.is_not(True),
             )
         )
         return exists
@@ -255,6 +256,9 @@ async def _resolve_alignment_assessment_id(
         # pair — version_id mode could span multiple revisions per verse.
         return None
 
+    # nullslast on end_time so a `finished` row with a NULL end_time (data
+    # edge case) can't outrank a legitimately timestamped one — Postgres
+    # puts NULLs first on DESC by default.
     assessment_id = await db.scalar(
         select(Assessment.id)
         .where(
@@ -262,8 +266,9 @@ async def _resolve_alignment_assessment_id(
             Assessment.reference_id == comparison_revision_id,
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
+            Assessment.deleted.is_not(True),
         )
-        .order_by(Assessment.end_time.desc(), Assessment.id.desc())
+        .order_by(Assessment.end_time.desc().nullslast(), Assessment.id.desc())
         .limit(1)
     )
     if assessment_id is None:

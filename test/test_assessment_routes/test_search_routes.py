@@ -2764,14 +2764,14 @@ def test_search_include_alignments_explicit_id_overrides(
 def test_search_include_alignments_skips_unfinished_assessment(
     client, regular_token1, test_db_session
 ):
-    """A pending word-alignment assessment is not auto-picked."""
+    """A running word-alignment assessment is not auto-picked."""
     main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
     _setup_alignment_assessment(
         test_db_session,
         main_revision_id,
         comp_revision_id,
         [("JHN 3:16", "loved", "loved", 0.92)],
-        status="pending",
+        status="running",
     )
 
     response = client.get(
@@ -2789,3 +2789,264 @@ def test_search_include_alignments_skips_unfinished_assessment(
     data = response.json()
     for r in data["results"]:
         assert "alignments" not in r
+
+
+def test_search_include_alignments_auto_picks_latest_finished(
+    client, regular_token1, test_db_session
+):
+    """When multiple finished assessments exist for the pair, the latest wins."""
+    from datetime import datetime, timedelta
+
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+
+    older_id = _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "old-source", "old-target", 0.99)],
+    )
+    newer_id = _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "new-source", "new-target", 0.99)],
+    )
+    # Stamp end_times explicitly so ordering isn't relying on insertion order
+    # or the id tie-breaker doing the right thing accidentally.
+    now = datetime.utcnow()
+    older = test_db_session.query(Assessment).filter(Assessment.id == older_id).one()
+    newer = test_db_session.query(Assessment).filter(Assessment.id == newer_id).one()
+    older.end_time = now - timedelta(days=1)
+    newer.end_time = now
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    jhn = next(r for r in data["results"] if r["verse"] == 16)
+    sources = {a["source"] for a in jhn["alignments"]}
+    assert sources == {"new-source"}
+
+
+def test_search_include_alignments_without_comparison_side(
+    client, regular_token1, test_db_session
+):
+    """include_alignments=true without a comparison side returns no alignments field.
+
+    Pins the documented contract — alignments require a parallel pair to be
+    meaningful, and the API silently omits the field rather than erroring.
+    """
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    # Set up an assessment that would match if comparison were provided —
+    # the test confirms it's still skipped because no comparison was requested.
+    _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "loved", "loved", 0.92)],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    for r in data["results"]:
+        assert "alignments" not in r
+
+
+def test_search_include_alignments_hide_flag_filtered(
+    client, regular_token1, test_db_session
+):
+    """Rows with hide=True are not returned even when the assessment is auto-picked."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    assessment_id = _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [
+            ("JHN 3:16", "visible-source", "visible-target", 0.92),
+            ("JHN 3:16", "hidden-source", "hidden-target", 0.95),
+        ],
+    )
+    # Flip the second row to hide=True after insertion.
+    hidden = (
+        test_db_session.query(AlignmentTopSourceScores)
+        .filter(
+            AlignmentTopSourceScores.assessment_id == assessment_id,
+            AlignmentTopSourceScores.source == "hidden-source",
+        )
+        .one()
+    )
+    hidden.hide = True
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    jhn = next(r for r in data["results"] if r["verse"] == 16)
+    assert {a["source"] for a in jhn["alignments"]} == {"visible-source"}
+
+
+def test_search_include_alignments_unauthorized_explicit_id_omits_field(
+    client, regular_token2, test_db_session
+):
+    """An explicit alignment_assessment_id the user can't see falls through silently.
+
+    regular_token2 has access to no versions, so the search itself fails — but
+    we set up versions/revisions and an assessment for testuser1 and a separate
+    pair for testuser2 to confirm the auth check kicks in on the explicit id
+    rather than leaking another user's alignment data.
+    """
+    # Set up testuser1's data and assessment.
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    user1_assessment_id = _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "secret-source", "secret-target", 0.99)],
+    )
+
+    # Now build a second pair that testuser2 can access, with the same vrefs
+    # but no alignment data of its own.
+    user2 = test_db_session.query(UserDB).filter(UserDB.username == "testuser2").first()
+    group2 = test_db_session.query(Group).filter(Group.name == "Group2").first()
+    version_main = BibleVersion(
+        name="User2 Main",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="U2M",
+        owner_id=user2.id,
+        is_reference=False,
+    )
+    version_comp = BibleVersion(
+        name="User2 Comp",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="U2C",
+        owner_id=user2.id,
+        is_reference=False,
+    )
+    test_db_session.add_all([version_main, version_comp])
+    test_db_session.commit()
+    test_db_session.refresh(version_main)
+    test_db_session.refresh(version_comp)
+
+    rev_main = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_main.id,
+        published=True,
+        machine_translation=False,
+    )
+    rev_comp = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_comp.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add_all([rev_main, rev_comp])
+    test_db_session.commit()
+    test_db_session.refresh(rev_main)
+    test_db_session.refresh(rev_comp)
+
+    for rev_id in (rev_main.id, rev_comp.id):
+        test_db_session.add(
+            VerseText(
+                text="For God so loved the world",
+                revision_id=rev_id,
+                verse_reference="JHN 3:16",
+                book="JHN",
+                chapter=3,
+                verse=16,
+            )
+        )
+    test_db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=version_main.id, group_id=group2.id),
+            BibleVersionAccess(bible_version_id=version_comp.id, group_id=group2.id),
+        ]
+    )
+    test_db_session.commit()
+
+    # testuser2 searches their own pair but points at testuser1's assessment id.
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": rev_main.id,
+            "comparison_revision_id": rev_comp.id,
+            "term": "loved",
+            "include_alignments": True,
+            "alignment_assessment_id": user1_assessment_id,
+        },
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"]  # search itself succeeded for testuser2's pair
+    for r in data["results"]:
+        # Auth failed on the explicit id → field omitted, no leak.
+        assert "alignments" not in r
+
+
+def test_search_include_alignments_empty_array_when_no_links_above_threshold(
+    client, regular_token1, test_db_session
+):
+    """Verse with an assessment but no links above the threshold gets [], not omitted.
+
+    Pins the contract: alignments field is per-pair (omitted when no
+    assessment exists), but per-verse the field is always present once an
+    assessment was found.
+    """
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "below", "below", 0.05)],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+            "min_alignment_score": 0.5,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    jhn = next(r for r in data["results"] if r["verse"] == 16)
+    assert "alignments" in jhn
+    assert jhn["alignments"] == []
