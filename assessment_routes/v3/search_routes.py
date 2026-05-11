@@ -14,10 +14,20 @@ from sqlalchemy.sql import select
 from sqlalchemy.sql.expression import literal_column
 
 from database.dependencies import get_db
-from database.models import BibleRevision, BibleVersion, BibleVersionAccess
+from database.models import (
+    AlignmentTopSourceScores,
+    Assessment,
+    BibleRevision,
+    BibleVersion,
+    BibleVersionAccess,
+)
 from database.models import UserDB as UserModel
-from database.models import UserGroup, VerseText
+from database.models import (
+    UserGroup,
+    VerseText,
+)
 from security_routes.auth_routes import get_current_user
+from security_routes.utilities import is_user_authorized_for_assessment
 from utils.logging_config import setup_logger
 
 container_id = socket.gethostname()
@@ -211,6 +221,126 @@ def _comp_lateral(
     return q.lateral("comp")
 
 
+async def _resolve_alignment_assessment_id(
+    db: AsyncSession,
+    user: UserModel,
+    revision_id: Optional[int],
+    comparison_revision_id: Optional[int],
+    alignment_assessment_id: Optional[int],
+) -> Optional[int]:
+    """Pick the eflomal assessment to source alignment links from.
+
+    Explicit ``alignment_assessment_id`` wins; otherwise auto-pick the most
+    recent finished ``word-alignment`` assessment whose
+    ``(revision_id, reference_id)`` matches ``(revision_id, comparison_revision_id)``.
+    Returns ``None`` if no candidate exists or the user is not authorized to
+    see the chosen assessment — callers should fall back to the unannotated
+    response instead of erroring (per issue #661).
+    """
+    if alignment_assessment_id is not None:
+        if not await is_user_authorized_for_assessment(
+            user.id, alignment_assessment_id, db
+        ):
+            return None
+        # Confirm the assessment is a finished, non-deleted word-alignment
+        # run. When both textsearch revision IDs are concrete, also enforce
+        # that the assessment's pair matches — otherwise we'd be attaching
+        # alignments from an unrelated assessment to these verse pairs.
+        # In version_id mode neither side is concrete here, so the caller
+        # owns the responsibility for picking a sensible assessment.
+        conditions = [
+            Assessment.id == alignment_assessment_id,
+            Assessment.type == "word-alignment",
+            Assessment.status == "finished",
+            Assessment.deleted.is_not(True),
+        ]
+        if revision_id is not None and comparison_revision_id is not None:
+            conditions.extend(
+                [
+                    Assessment.revision_id == revision_id,
+                    Assessment.reference_id == comparison_revision_id,
+                ]
+            )
+        return await db.scalar(select(Assessment.id).where(*conditions))
+
+    if revision_id is None or comparison_revision_id is None:
+        # Auto-pick only works with a concrete (revision, comparison_revision)
+        # pair — version_id mode could span multiple revisions per verse.
+        return None
+
+    # nullslast on end_time so a `finished` row with a NULL end_time (data
+    # edge case) can't outrank a legitimately timestamped one — Postgres
+    # puts NULLs first on DESC by default.
+    assessment_id = await db.scalar(
+        select(Assessment.id)
+        .where(
+            Assessment.revision_id == revision_id,
+            Assessment.reference_id == comparison_revision_id,
+            Assessment.type == "word-alignment",
+            Assessment.status == "finished",
+            Assessment.deleted.is_not(True),
+        )
+        .order_by(Assessment.end_time.desc().nullslast(), Assessment.id.desc())
+        .limit(1)
+    )
+    if assessment_id is None:
+        return None
+    if not await is_user_authorized_for_assessment(user.id, assessment_id, db):
+        return None
+    return assessment_id
+
+
+async def _fetch_alignments_by_vref(
+    db: AsyncSession,
+    assessment_id: int,
+    vrefs: list[str],
+    min_score: float,
+) -> dict[str, list[dict]]:
+    """Return ``{vref: [{source, target, score}, ...]}`` for the given vrefs.
+
+    ``source`` is from the assessment's ``reference_id`` side (textsearch's
+    ``comparison_revision_id``); ``target`` is from the ``revision_id`` side
+    (textsearch's main side). Rows with ``score < min_score`` are filtered
+    server-side.
+    """
+    if not vrefs:
+        return {}
+
+    rows = (
+        await db.execute(
+            select(
+                AlignmentTopSourceScores.vref,
+                AlignmentTopSourceScores.source,
+                AlignmentTopSourceScores.target,
+                AlignmentTopSourceScores.score,
+            ).where(
+                AlignmentTopSourceScores.assessment_id == assessment_id,
+                AlignmentTopSourceScores.vref.in_(vrefs),
+                AlignmentTopSourceScores.score >= min_score,
+                # NULL hide rows exist from a pre-fix push bug (migration
+                # a4d18b5c2e91); treat NULL as not-hidden so we only drop
+                # rows the caller explicitly hid.
+                AlignmentTopSourceScores.hide.is_not(True),
+            )
+        )
+    ).all()
+
+    by_vref: dict[str, list[dict]] = {}
+    for row in rows:
+        by_vref.setdefault(row.vref, []).append(
+            {
+                "source": row.source,
+                "target": row.target,
+                "score": float(row.score),
+            }
+        )
+    # Strongest link first within each verse so callers reading top-N see the
+    # most confident pairs without re-sorting.
+    for links in by_vref.values():
+        links.sort(key=lambda link: link["score"], reverse=True)
+    return by_vref
+
+
 @router.get("/textsearch")
 async def search_revision_text(
     term: str = Query(..., min_length=1, max_length=200),
@@ -237,6 +367,35 @@ async def search_revision_text(
     ),
     limit: int = Query(default=10, ge=1, le=1000),
     random: bool = False,
+    include_alignments: bool = Query(
+        default=False,
+        description=(
+            "If true, annotate each result with per-verse word alignments "
+            "from the most recent finished eflomal word-alignment assessment "
+            "for the (revision_id, comparison_revision_id) pair. Each result "
+            "gains an ``alignments`` array of ``{source, target, score}`` "
+            "objects. If no eflomal assessment exists for the pair, results "
+            "are returned without the ``alignments`` field (no error)."
+        ),
+    ),
+    min_alignment_score: float = Query(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Filter alignment links below this score server-side. Only "
+            "applies when ``include_alignments`` is true."
+        ),
+    ),
+    alignment_assessment_id: Optional[int] = Query(
+        default=None,
+        description=(
+            "Optional explicit word-alignment assessment id to source "
+            "alignments from. When omitted, the latest finished "
+            "word-alignment assessment for the "
+            "(revision_id, comparison_revision_id) pair is used."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -272,6 +431,16 @@ async def search_revision_text(
     ``comparison_version_id`` for parallel text. For ``comparison_version_id``
     the same per-vref pick applies (latest non-empty wins; the search term
     is only required on the main side, not on the comparison).
+
+    Pass ``include_alignments=true`` to annotate each result with per-verse
+    word alignments from the latest finished eflomal word-alignment
+    assessment matching ``(revision_id, comparison_revision_id)``. Each
+    result gains an ``alignments`` array of ``{source, target, score}``
+    objects, where ``source`` is from the comparison side and ``target``
+    is from the main side. Links below ``min_alignment_score`` are filtered
+    server-side. ``alignment_assessment_id`` overrides the auto-pick. When
+    no matching assessment exists or the user lacks access to it, results
+    are returned without the ``alignments`` field (no error).
     """
     request_start = time.perf_counter()
 
@@ -520,6 +689,33 @@ async def search_revision_text(
         # request a larger limit.
         truncated = len(rows) >= sql_limit and len(filtered_results) < limit
 
+        # Optional per-verse word-alignment annotation. Skipped silently when
+        # no eflomal assessment matches the pair, when the user is not
+        # authorized for the chosen assessment, or when the search did not
+        # use a comparison side (alignments require a parallel text pair).
+        alignment_assessment_used: Optional[int] = None
+        if include_alignments and filtered_results and use_comparison:
+            alignment_assessment_used = await _resolve_alignment_assessment_id(
+                db,
+                current_user,
+                revision_id=revision_id,
+                comparison_revision_id=comparison_revision_id,
+                alignment_assessment_id=alignment_assessment_id,
+            )
+            if alignment_assessment_used is not None:
+                vrefs = [
+                    f"{r['book']} {r['chapter']}:{r['verse']}" for r in filtered_results
+                ]
+                alignments_by_vref = await _fetch_alignments_by_vref(
+                    db,
+                    alignment_assessment_used,
+                    vrefs,
+                    min_alignment_score,
+                )
+                for r in filtered_results:
+                    vref = f"{r['book']} {r['chapter']}:{r['verse']}"
+                    r["alignments"] = alignments_by_vref.get(vref, [])
+
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
             f"search_revision_text completed in {duration}s",
@@ -535,6 +731,8 @@ async def search_revision_text(
                 "random": random,
                 "results_returned": len(filtered_results),
                 "truncated": truncated,
+                "include_alignments": include_alignments,
+                "alignment_assessment_used": alignment_assessment_used,
                 "duration_s": duration,
             },
         )

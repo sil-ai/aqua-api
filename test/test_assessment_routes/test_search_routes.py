@@ -3,6 +3,8 @@ import unicodedata
 from datetime import date
 
 from database.models import (
+    AlignmentTopSourceScores,
+    Assessment,
     BibleRevision,
     BibleVersion,
     BibleVersionAccess,
@@ -2547,3 +2549,605 @@ def test_search_wildcard_with_comparison(client, regular_token1, test_db_session
     for r in data["results"]:
         assert "comparison_text" in r
         assert r["comparison_text"]  # non-empty
+
+
+def _setup_alignment_assessment(
+    db_session,
+    revision_id: int,
+    reference_id: int,
+    rows: list[tuple[str, str, str, float]],
+    status: str = "finished",
+) -> int:
+    """Create a finished word-alignment assessment plus alignment rows.
+
+    ``rows`` is a list of ``(vref, source, target, score)`` tuples. Returns
+    the assessment id.
+    """
+    assessment = Assessment(
+        revision_id=revision_id,
+        reference_id=reference_id,
+        type="word-alignment",
+        status=status,
+    )
+    db_session.add(assessment)
+    db_session.commit()
+    db_session.refresh(assessment)
+
+    for vref, source, target, score in rows:
+        book, rest = vref.split(" ")
+        chapter, verse = rest.split(":")
+        db_session.add(
+            AlignmentTopSourceScores(
+                assessment_id=assessment.id,
+                vref=vref,
+                source=source,
+                target=target,
+                score=score,
+                book=book,
+                chapter=int(chapter),
+                verse=int(verse),
+                hide=False,
+                flag=False,
+            )
+        )
+    db_session.commit()
+    return assessment.id
+
+
+def test_search_include_alignments_basic(client, regular_token1, test_db_session):
+    """include_alignments=true annotates each result with the alignment array."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [
+            ("JHN 3:16", "loved", "loved", 0.92),
+            ("JHN 3:16", "world", "world", 0.88),
+            ("JHN 3:16", "god", "god", 0.95),
+            ("JHN 3:16", "noise", "noise", 0.10),  # below default threshold
+        ],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    jhn = next(
+        r
+        for r in data["results"]
+        if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+    )
+    assert "alignments" in jhn
+    sources = {a["source"] for a in jhn["alignments"]}
+    # Below-threshold link filtered out server-side.
+    assert sources == {"loved", "world", "god"}
+    # Strongest first.
+    assert jhn["alignments"][0]["score"] >= jhn["alignments"][-1]["score"]
+    # Score is a JSON number, not a stringy Numeric.
+    assert all(isinstance(a["score"], (int, float)) for a in jhn["alignments"])
+
+
+def test_search_include_alignments_default_off(client, regular_token1, test_db_session):
+    """Without include_alignments, the response shape matches today's (no field)."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "loved", "loved", 0.92)],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    for r in data["results"]:
+        assert "alignments" not in r
+
+
+def test_search_include_alignments_min_score_filter(
+    client, regular_token1, test_db_session
+):
+    """min_alignment_score filters rows server-side."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [
+            ("JHN 3:16", "loved", "loved", 0.92),
+            ("JHN 3:16", "world", "world", 0.45),
+            ("JHN 3:16", "god", "god", 0.35),
+        ],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+            "min_alignment_score": 0.5,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    jhn = next(r for r in data["results"] if r["verse"] == 16)
+    assert {a["source"] for a in jhn["alignments"]} == {"loved"}
+
+
+def test_search_include_alignments_no_assessment_omits_field(
+    client, regular_token1, test_db_session
+):
+    """When no eflomal assessment exists for the pair, alignments field is omitted."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    # Deliberately do NOT set up an alignment assessment.
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"]  # search itself still returns rows
+    for r in data["results"]:
+        assert "alignments" not in r
+
+
+def test_search_include_alignments_explicit_id_overrides(
+    client, regular_token1, test_db_session
+):
+    """alignment_assessment_id pins a specific assessment, overriding auto-pick."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    # Create two assessments — the explicit id should win even though the
+    # auto-pick would prefer the newer one.
+    older_id = _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "old-source", "old-target", 0.99)],
+    )
+    _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "new-source", "new-target", 0.99)],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+            "alignment_assessment_id": older_id,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    jhn = next(r for r in data["results"] if r["verse"] == 16)
+    sources = {a["source"] for a in jhn["alignments"]}
+    assert sources == {"old-source"}
+
+
+def test_search_include_alignments_skips_unfinished_assessment(
+    client, regular_token1, test_db_session
+):
+    """A running word-alignment assessment is not auto-picked."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "loved", "loved", 0.92)],
+        status="running",
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    for r in data["results"]:
+        assert "alignments" not in r
+
+
+def test_search_include_alignments_auto_picks_latest_finished(
+    client, regular_token1, test_db_session
+):
+    """When multiple finished assessments exist for the pair, the latest wins."""
+    from datetime import datetime, timedelta
+
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+
+    older_id = _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "old-source", "old-target", 0.99)],
+    )
+    newer_id = _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "new-source", "new-target", 0.99)],
+    )
+    # Stamp end_times explicitly so ordering isn't relying on insertion order
+    # or the id tie-breaker doing the right thing accidentally.
+    now = datetime.utcnow()
+    older = test_db_session.query(Assessment).filter(Assessment.id == older_id).one()
+    newer = test_db_session.query(Assessment).filter(Assessment.id == newer_id).one()
+    older.end_time = now - timedelta(days=1)
+    newer.end_time = now
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    jhn = next(r for r in data["results"] if r["verse"] == 16)
+    sources = {a["source"] for a in jhn["alignments"]}
+    assert sources == {"new-source"}
+
+
+def test_search_include_alignments_without_comparison_side(
+    client, regular_token1, test_db_session
+):
+    """include_alignments=true without a comparison side returns no alignments field.
+
+    Pins the documented contract — alignments require a parallel pair to be
+    meaningful, and the API silently omits the field rather than erroring.
+    """
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    # Set up an assessment that would match if comparison were provided —
+    # the test confirms it's still skipped because no comparison was requested.
+    _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "loved", "loved", 0.92)],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    for r in data["results"]:
+        assert "alignments" not in r
+
+
+def test_search_include_alignments_hide_flag_filtered(
+    client, regular_token1, test_db_session
+):
+    """Rows with hide=True are excluded; hide=NULL passes through.
+
+    NULL-hide rows exist in production from a pre-fix push bug (migration
+    a4d18b5c2e91); the filter must treat them as not-hidden rather than
+    silently dropping them along with the explicitly-hidden rows.
+    """
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    assessment_id = _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [
+            ("JHN 3:16", "visible-source", "visible-target", 0.92),
+            ("JHN 3:16", "hidden-source", "hidden-target", 0.95),
+            ("JHN 3:16", "null-hide-source", "null-hide-target", 0.88),
+        ],
+    )
+    rows = (
+        test_db_session.query(AlignmentTopSourceScores)
+        .filter(AlignmentTopSourceScores.assessment_id == assessment_id)
+        .all()
+    )
+    for row in rows:
+        if row.source == "hidden-source":
+            row.hide = True
+        elif row.source == "null-hide-source":
+            row.hide = None
+    test_db_session.commit()
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    jhn = next(r for r in data["results"] if r["verse"] == 16)
+    assert {a["source"] for a in jhn["alignments"]} == {
+        "visible-source",
+        "null-hide-source",
+    }
+
+
+def test_search_include_alignments_explicit_id_pair_mismatch_omits_field(
+    client, regular_token1, test_db_session
+):
+    """An explicit alignment_assessment_id from a different pair is rejected.
+
+    Guards against accidentally attaching alignment data from an unrelated
+    assessment (different revisions) to the requested verse pairs.
+    """
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+
+    # Build a separate pair (still owned by testuser1) and an assessment on it.
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+
+    other_main_version = BibleVersion(
+        name="Other Pair Main",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="OPM",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    other_comp_version = BibleVersion(
+        name="Other Pair Comp",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="OPC",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add_all([other_main_version, other_comp_version])
+    test_db_session.commit()
+    test_db_session.refresh(other_main_version)
+    test_db_session.refresh(other_comp_version)
+
+    other_main_rev = BibleRevision(
+        date=date.today(),
+        bible_version_id=other_main_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    other_comp_rev = BibleRevision(
+        date=date.today(),
+        bible_version_id=other_comp_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add_all([other_main_rev, other_comp_rev])
+    test_db_session.commit()
+    test_db_session.refresh(other_main_rev)
+    test_db_session.refresh(other_comp_rev)
+
+    test_db_session.add_all(
+        [
+            BibleVersionAccess(
+                bible_version_id=other_main_version.id, group_id=group1.id
+            ),
+            BibleVersionAccess(
+                bible_version_id=other_comp_version.id, group_id=group1.id
+            ),
+        ]
+    )
+    test_db_session.commit()
+
+    other_pair_assessment = _setup_alignment_assessment(
+        test_db_session,
+        other_main_rev.id,
+        other_comp_rev.id,
+        [("JHN 3:16", "wrong-pair-source", "wrong-pair-target", 0.99)],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+            "alignment_assessment_id": other_pair_assessment,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"]
+    for r in data["results"]:
+        # Pair-match guard rejected the cross-pair assessment id; field omitted.
+        assert "alignments" not in r
+
+
+def test_search_include_alignments_unauthorized_explicit_id_omits_field(
+    client, regular_token2, test_db_session
+):
+    """An explicit alignment_assessment_id the user can't see falls through silently.
+
+    Sets up testuser1's data plus an alignment assessment, and a separate
+    pair that testuser2 owns. testuser2 then searches their own pair but
+    points at testuser1's assessment id — the search itself succeeds, but
+    alignments are omitted because the explicit id fails the assessment
+    auth check (and would also fail the pair-match guard).
+    """
+    # Set up testuser1's data and assessment.
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    user1_assessment_id = _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "secret-source", "secret-target", 0.99)],
+    )
+
+    # Now build a second pair that testuser2 can access, with the same vrefs
+    # but no alignment data of its own.
+    user2 = test_db_session.query(UserDB).filter(UserDB.username == "testuser2").first()
+    group2 = test_db_session.query(Group).filter(Group.name == "Group2").first()
+    version_main = BibleVersion(
+        name="User2 Main",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="U2M",
+        owner_id=user2.id,
+        is_reference=False,
+    )
+    version_comp = BibleVersion(
+        name="User2 Comp",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="U2C",
+        owner_id=user2.id,
+        is_reference=False,
+    )
+    test_db_session.add_all([version_main, version_comp])
+    test_db_session.commit()
+    test_db_session.refresh(version_main)
+    test_db_session.refresh(version_comp)
+
+    rev_main = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_main.id,
+        published=True,
+        machine_translation=False,
+    )
+    rev_comp = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_comp.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add_all([rev_main, rev_comp])
+    test_db_session.commit()
+    test_db_session.refresh(rev_main)
+    test_db_session.refresh(rev_comp)
+
+    for rev_id in (rev_main.id, rev_comp.id):
+        test_db_session.add(
+            VerseText(
+                text="For God so loved the world",
+                revision_id=rev_id,
+                verse_reference="JHN 3:16",
+                book="JHN",
+                chapter=3,
+                verse=16,
+            )
+        )
+    test_db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=version_main.id, group_id=group2.id),
+            BibleVersionAccess(bible_version_id=version_comp.id, group_id=group2.id),
+        ]
+    )
+    test_db_session.commit()
+
+    # testuser2 searches their own pair but points at testuser1's assessment id.
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": rev_main.id,
+            "comparison_revision_id": rev_comp.id,
+            "term": "loved",
+            "include_alignments": True,
+            "alignment_assessment_id": user1_assessment_id,
+        },
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["results"]  # search itself succeeded for testuser2's pair
+    for r in data["results"]:
+        # Auth failed on the explicit id → field omitted, no leak.
+        assert "alignments" not in r
+
+
+def test_search_include_alignments_empty_array_when_no_links_above_threshold(
+    client, regular_token1, test_db_session
+):
+    """Verse with an assessment but no links above the threshold gets [], not omitted.
+
+    Pins the contract: alignments field is per-pair (omitted when no
+    assessment exists), but per-verse the field is always present once an
+    assessment was found.
+    """
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_alignment_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        [("JHN 3:16", "below", "below", 0.05)],
+    )
+
+    response = client.get(
+        "/v3/textsearch",
+        params={
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+            "min_alignment_score": 0.5,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    jhn = next(r for r in data["results"] if r["verse"] == 16)
+    assert "alignments" in jhn
+    assert jhn["alignments"] == []
