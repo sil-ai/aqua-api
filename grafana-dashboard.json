@@ -60,7 +60,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | status_code =~ \"$status\" | method =~ \"$method\" | url =~ \".*$endpoint.*\" [$__range]))",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | status_code =~ \"$status\" | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" [$__range]))",
           "instant": true,
           "queryType": "instant",
           "refId": "A"
@@ -106,7 +106,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "100 * sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"4..|5..\" [$__range])) / sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code != \"\" [$__range]))",
+          "expr": "100 * sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"4..|5..\" [$__range])) / sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code != \"\" [$__range]))",
           "instant": true,
           "queryType": "instant",
           "refId": "A"
@@ -150,7 +150,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"5..\" [$__range]))",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"5..\" [$__range]))",
           "instant": true,
           "queryType": "instant",
           "refId": "A"
@@ -195,7 +195,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"4..\" [$__range]))",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"4..\" [$__range]))",
           "instant": true,
           "queryType": "instant",
           "refId": "A"
@@ -241,7 +241,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "avg(quantile_over_time(0.95, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__range]))",
+          "expr": "avg(quantile_over_time(0.95, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__range]))",
           "instant": true,
           "queryType": "instant",
           "refId": "A"
@@ -287,7 +287,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "avg(quantile_over_time(0.99, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__range]))",
+          "expr": "avg(quantile_over_time(0.99, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__range]))",
           "instant": true,
           "queryType": "instant",
           "refId": "A"
@@ -356,7 +356,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"2..\" [$__interval]))",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"2..\" [$__interval]))",
           "legendFormat": "2xx",
           "queryType": "range",
           "refId": "A"
@@ -364,7 +364,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"3..\" [$__interval]))",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"3..\" [$__interval]))",
           "legendFormat": "3xx",
           "queryType": "range",
           "refId": "B"
@@ -372,7 +372,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"4..\" [$__interval]))",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"4..\" [$__interval]))",
           "legendFormat": "4xx",
           "queryType": "range",
           "refId": "C"
@@ -380,7 +380,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"5..\" [$__interval]))",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"5..\" [$__interval]))",
           "legendFormat": "5xx",
           "queryType": "range",
           "refId": "D"
@@ -419,7 +419,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "sum by (status_code) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code != \"\" [$__interval]))",
+          "expr": "sum by (status_code) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code != \"\" [$__interval]))",
           "legendFormat": "{{status_code}}",
           "queryType": "range",
           "refId": "A"
@@ -487,7 +487,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "avg(quantile_over_time(0.50, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__interval]))",
+          "expr": "avg(quantile_over_time(0.50, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__interval]))",
           "legendFormat": "p50",
           "queryType": "range",
           "refId": "A"
@@ -495,7 +495,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "avg(quantile_over_time(0.95, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__interval]))",
+          "expr": "avg(quantile_over_time(0.95, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__interval]))",
           "legendFormat": "p95",
           "queryType": "range",
           "refId": "B"
@@ -503,7 +503,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "avg(quantile_over_time(0.99, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__interval]))",
+          "expr": "avg(quantile_over_time(0.99, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__interval]))",
           "legendFormat": "p99",
           "queryType": "range",
           "refId": "C"
@@ -562,7 +562,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(10, quantile_over_time(0.95, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | unwrap formatted_process_time [$__range]) by (url))",
+          "expr": "topk(10, quantile_over_time(0.95, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"$status\" | unwrap formatted_process_time [$__range]) by (url))",
           "instant": true,
           "queryType": "instant",
           "refId": "A"
@@ -639,7 +639,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(15, sum by (url) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"[45]..\" [$__range])))",
+          "expr": "topk(15, sum by (url) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"[45]..\" [$__range])))",
           "instant": true,
           "queryType": "instant",
           "refId": "A"
@@ -770,7 +770,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(15, sum by (username) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | username != \"\" [$__range])))",
+          "expr": "topk(15, sum by (username) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"$status\" | username != \"\" [$__range])))",
           "instant": true,
           "queryType": "instant",
           "refId": "A"
@@ -834,7 +834,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "topk(15, sum by (username) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"[45]..\" | username != \"\" [$__range])))",
+          "expr": "topk(15, sum by (username) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"[45]..\" | username != \"\" [$__range])))",
           "instant": true,
           "queryType": "instant",
           "refId": "A"
@@ -880,7 +880,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "{project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"[45]..\" | line_format \"{{.method}} {{.url}} → {{.status_code}} {{.status_phrase}} ({{.formatted_process_time}}ms) user={{.username}}{{if .exception_type}} [{{.exception_type}}]{{end}}\"",
+          "expr": "{project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"[45]..\" | line_format \"{{.method}} {{.url}} → {{.status_code}} {{.status_phrase}} ({{.formatted_process_time}}ms) user={{.username}}{{if .exception_type}} [{{.exception_type}}]{{end}}\"",
           "queryType": "range",
           "refId": "A"
         }
@@ -907,7 +907,7 @@
         {
           "datasource": { "type": "loki", "uid": "loki" },
           "editorMode": "code",
-          "expr": "{project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | line_format \"{{.method}} {{.url}} → {{.status_code}} {{.status_phrase}} ({{.formatted_process_time}}ms) user={{.username}}\"",
+          "expr": "{project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | username =~ \"$username\" | status_code =~ \"$status\" | line_format \"{{.method}} {{.url}} → {{.status_code}} {{.status_phrase}} ({{.formatted_process_time}}ms) user={{.username}}\"",
           "queryType": "range",
           "refId": "A"
         }
@@ -937,6 +937,17 @@
         "skipUrlSync": false,
         "sort": 1,
         "type": "query"
+      },
+      {
+        "current": { "selected": false, "text": ".*", "value": ".*" },
+        "hide": 0,
+        "label": "User",
+        "name": "username",
+        "options": [{ "selected": true, "text": ".*", "value": ".*" }],
+        "query": ".*",
+        "skipUrlSync": false,
+        "type": "textbox",
+        "description": "Filter by username. Use a regex, e.g. alice, alice|bob, or .* for all."
       },
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
