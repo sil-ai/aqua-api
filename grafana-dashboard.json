@@ -1,0 +1,1065 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "AQuA API observability — traffic, errors, performance, and logs sourced from the LoggingMiddleware structured JSON logs in Loki.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 100,
+      "panels": [],
+      "title": "Overview",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Total HTTP requests in the selected time range matching the current filters.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "id": 1,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | status_code =~ \"$status\" | method =~ \"$method\" | url =~ \".*$endpoint.*\" [$__range]))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Requests",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Percentage of requests returning 4xx or 5xx status codes.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 2,
+          "mappings": [],
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 10 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "100 * sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"4..|5..\" [$__range])) / sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code != \"\" [$__range]))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Error Rate",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Number of requests returning 5xx status codes (server errors).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"5..\" [$__range]))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "5xx Server Errors",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Number of requests returning 4xx status codes (client errors).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "orange", "value": 50 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 1 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"4..\" [$__range]))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "4xx Client Errors",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "95th percentile request latency in milliseconds, derived from formatted_process_time.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 500 },
+              { "color": "orange", "value": 1500 },
+              { "color": "red", "value": 5000 }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 1 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "avg(quantile_over_time(0.95, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__range]))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "p95 Latency",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "99th percentile request latency in milliseconds.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "decimals": 0,
+          "mappings": [],
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1000 },
+              { "color": "orange", "value": 3000 },
+              { "color": "red", "value": 10000 }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "avg(quantile_over_time(0.99, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__range]))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "p99 Latency",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 6 },
+      "id": 101,
+      "panels": [],
+      "title": "Traffic & Errors",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Request volume bucketed by HTTP status class. Stacked bars surface error spikes against background traffic.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "req/min",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": { "group": "A", "mode": "normal" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          { "matcher": { "id": "byFrameRefID", "options": "A" }, "properties": [{ "id": "displayName", "value": "2xx" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byFrameRefID", "options": "B" }, "properties": [{ "id": "displayName", "value": "3xx" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byFrameRefID", "options": "C" }, "properties": [{ "id": "displayName", "value": "4xx" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }] },
+          { "matcher": { "id": "byFrameRefID", "options": "D" }, "properties": [{ "id": "displayName", "value": "5xx" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 7 },
+      "id": 7,
+      "options": {
+        "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"2..\" [$__interval]))",
+          "legendFormat": "2xx",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"3..\" [$__interval]))",
+          "legendFormat": "3xx",
+          "queryType": "range",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"4..\" [$__interval]))",
+          "legendFormat": "4xx",
+          "queryType": "range",
+          "refId": "C"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "sum(count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"5..\" [$__interval]))",
+          "legendFormat": "5xx",
+          "queryType": "range",
+          "refId": "D"
+        }
+      ],
+      "title": "Request Volume by Status Class",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Distribution of HTTP status codes across the selected time range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "hideFrom": { "legend": false, "tooltip": false, "viz": false } },
+          "mappings": []
+        },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "^2.*" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byRegexp", "options": "^3.*" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byRegexp", "options": "^4.*" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "yellow" } }] },
+          { "matcher": { "id": "byRegexp", "options": "^5.*" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 7 },
+      "id": 8,
+      "options": {
+        "displayLabels": ["percent"],
+        "legend": { "displayMode": "table", "placement": "right", "showLegend": true, "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["sum"], "fields": "", "values": false },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "sum by (status_code) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code != \"\" [$__interval]))",
+          "legendFormat": "{{status_code}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Status Code Distribution",
+      "type": "piechart"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 16 },
+      "id": 102,
+      "panels": [],
+      "title": "Performance",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Request latency percentiles (p50, p95, p99) over time, in milliseconds.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "ms",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "hideFrom": { "legend": false, "tooltip": false, "viz": false },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": { "type": "linear" },
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": { "group": "A", "mode": "none" },
+            "thresholdsStyle": { "mode": "off" }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "green", "value": null }]
+          },
+          "unit": "ms"
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "p50" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "p95" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "p99" }, "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 17 },
+      "id": 9,
+      "options": {
+        "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "right", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "avg(quantile_over_time(0.50, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__interval]))",
+          "legendFormat": "p50",
+          "queryType": "range",
+          "refId": "A"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "avg(quantile_over_time(0.95, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__interval]))",
+          "legendFormat": "p95",
+          "queryType": "range",
+          "refId": "B"
+        },
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "avg(quantile_over_time(0.99, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | __error__ = \"\" | drop status_code, status_phrase, url, method, username, host, port, body_str, message, exception_type, exception_message, traceback, name, level, asctime, timestamp | unwrap formatted_process_time [$__interval]))",
+          "legendFormat": "p99",
+          "queryType": "range",
+          "refId": "C"
+        }
+      ],
+      "title": "Latency Percentiles",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Top 10 endpoints by p95 latency (only endpoints with at least one request).",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 500 },
+              { "color": "orange", "value": 1500 },
+              { "color": "red", "value": 5000 }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "p95 latency" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "gauge", "mode": "gradient" } },
+              { "id": "custom.width", "value": 200 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "url" },
+            "properties": [{ "id": "custom.width", "value": 360 }]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 17 },
+      "id": 10,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "p95 latency" }]
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "topk(10, quantile_over_time(0.95, {project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | unwrap formatted_process_time [$__range]) by (url))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Top 10 Slowest Endpoints (p95)",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": {},
+            "renameByName": { "Value": "p95 latency", "Value #A": "p95 latency", "url": "url" }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+      "id": 103,
+      "panels": [],
+      "title": "Issues",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Endpoints generating the most 4xx and 5xx responses in the selected time range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "orange", "value": 25 },
+              { "color": "red", "value": 100 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "errors" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "gauge", "mode": "gradient" } },
+              { "id": "custom.width", "value": 180 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "url" },
+            "properties": [{ "id": "custom.width", "value": 380 }]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 27 },
+      "id": 11,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "errors" }]
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "topk(15, sum by (url) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"[45]..\" [$__range])))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Endpoints by Errors",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": {},
+            "renameByName": { "Value": "errors", "Value #A": "errors", "url": "url" }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Unhandled exceptions captured by LoggingMiddleware (only emitted on 5xx). Empty here means no server-side crashes — that's good.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "count" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "gauge", "mode": "gradient" } },
+              { "id": "custom.width", "value": 180 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 27 },
+      "id": 12,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "count" }]
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "topk(15, sum by (exception_type) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | exception_type != \"\" [$__range])))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Unhandled Exceptions (5xx)",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": {},
+            "renameByName": { "Value": "count", "Value #A": "count", "exception_type": "exception_type" }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 36 },
+      "id": 104,
+      "panels": [],
+      "title": "User Activity",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Top users by total requests in the selected time range.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{ "color": "blue", "value": null }]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "requests" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "gauge", "mode": "gradient" } },
+              { "id": "custom.width", "value": 220 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 37 },
+      "id": 13,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "requests" }]
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "topk(15, sum by (username) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | username != \"\" [$__range])))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Users by Traffic",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": {},
+            "renameByName": { "Value": "requests", "Value #A": "requests", "username": "username" }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "Top users by error count (4xx + 5xx). Useful for spotting bad clients or auth issues.",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "custom": {
+            "align": "auto",
+            "cellOptions": { "type": "auto" },
+            "inspect": false
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 25 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "errors" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "gauge", "mode": "gradient" } },
+              { "id": "custom.width", "value": 220 }
+            ]
+          }
+        ]
+      },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 37 },
+      "id": 14,
+      "options": {
+        "cellHeight": "sm",
+        "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "errors" }]
+      },
+      "pluginVersion": "10.2.3",
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "topk(15, sum by (username) (count_over_time({project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"[45]..\" | username != \"\" [$__range])))",
+          "instant": true,
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Users by Errors",
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true },
+            "indexByName": {},
+            "renameByName": { "Value": "errors", "Value #A": "errors", "username": "username" }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 46 },
+      "id": 105,
+      "panels": [],
+      "title": "Logs",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "All 4xx and 5xx responses, ignoring the status filter so issues are always visible.",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 47 },
+      "id": 15,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "{project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"[45]..\" | line_format \"{{.method}} {{.url}} → {{.status_code}} {{.status_phrase}} ({{.formatted_process_time}}ms) user={{.username}}{{if .exception_type}} [{{.exception_type}}]{{end}}\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Error Logs (4xx / 5xx)",
+      "type": "logs"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "description": "All requests matching the current filters.",
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 59 },
+      "id": 16,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending",
+        "wrapLogMessage": false
+      },
+      "targets": [
+        {
+          "datasource": { "type": "loki", "uid": "loki" },
+          "editorMode": "code",
+          "expr": "{project=\"aqua-api\", environment=~\"$environment\"} | json | method =~ \"$method\" | url =~ \".*$endpoint.*\" | status_code =~ \"$status\" | line_format \"{{.method}} {{.url}} → {{.status_code}} {{.status_phrase}} ({{.formatted_process_time}}ms) user={{.username}}\"",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "All Logs",
+      "type": "logs"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["aqua-api", "loki", "api"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "main", "value": "main" },
+        "datasource": { "type": "loki", "uid": "loki" },
+        "definition": "label_values({project=\"aqua-api\"}, environment)",
+        "hide": 0,
+        "includeAll": false,
+        "label": "Environment",
+        "multi": false,
+        "name": "environment",
+        "options": [],
+        "query": { "label": "environment", "refId": "LokiVariableQueryEditor-VariableQuery", "stream": "{project=\"aqua-api\"}", "type": 1 },
+        "refresh": 1,
+        "regex": "",
+        "skipUrlSync": false,
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "hide": 0,
+        "includeAll": true,
+        "label": "Status",
+        "multi": false,
+        "name": "status",
+        "options": [
+          { "selected": true, "text": "All", "value": "$__all" },
+          { "selected": false, "text": "2xx", "value": "2.." },
+          { "selected": false, "text": "3xx", "value": "3.." },
+          { "selected": false, "text": "4xx", "value": "4.." },
+          { "selected": false, "text": "5xx", "value": "5.." },
+          { "selected": false, "text": "Errors (4xx+5xx)", "value": "(4|5).." },
+          { "selected": false, "text": "200", "value": "200" },
+          { "selected": false, "text": "401", "value": "401" },
+          { "selected": false, "text": "403", "value": "403" },
+          { "selected": false, "text": "404", "value": "404" },
+          { "selected": false, "text": "422", "value": "422" },
+          { "selected": false, "text": "500", "value": "500" }
+        ],
+        "query": "2xx : 2.., 3xx : 3.., 4xx : 4.., 5xx : 5.., Errors (4xx+5xx) : (4|5).., 200 : 200, 401 : 401, 403 : 403, 404 : 404, 422 : 422, 500 : 500",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom",
+        "allValue": ".+"
+      },
+      {
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "hide": 0,
+        "includeAll": true,
+        "label": "Method",
+        "multi": false,
+        "name": "method",
+        "options": [
+          { "selected": true, "text": "All", "value": "$__all" },
+          { "selected": false, "text": "GET", "value": "GET" },
+          { "selected": false, "text": "POST", "value": "POST" },
+          { "selected": false, "text": "PUT", "value": "PUT" },
+          { "selected": false, "text": "PATCH", "value": "PATCH" },
+          { "selected": false, "text": "DELETE", "value": "DELETE" }
+        ],
+        "query": "GET, POST, PUT, PATCH, DELETE",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom",
+        "allValue": ".+"
+      },
+      {
+        "current": { "selected": false, "text": ".*", "value": ".*" },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Endpoint",
+        "multi": false,
+        "name": "endpoint",
+        "options": [
+          { "selected": true, "text": ".*", "value": ".*" },
+          { "selected": false, "text": "/textsearch", "value": "/textsearch" },
+          { "selected": false, "text": "/assessment", "value": "/assessment" },
+          { "selected": false, "text": "/assessment/eflomal/results", "value": "/assessment/eflomal/results" },
+          { "selected": false, "text": "/assessment/timeout-sweep", "value": "/assessment/timeout-sweep" },
+          { "selected": false, "text": "/assessment/{id}/status", "value": "/assessment/[0-9]+/status" },
+          { "selected": false, "text": "/predict", "value": "/predict" },
+          { "selected": false, "text": "/revision", "value": "/revision" },
+          { "selected": false, "text": "/version", "value": "/version" },
+          { "selected": false, "text": "/language", "value": "/language" },
+          { "selected": false, "text": "/agent/translation", "value": "/agent/translation" },
+          { "selected": false, "text": "/agent/translations", "value": "/agent/translations" },
+          { "selected": false, "text": "/agent/translations-test", "value": "/agent/translations-test" },
+          { "selected": false, "text": "/agent/lexeme-card", "value": "/agent/lexeme-card" },
+          { "selected": false, "text": "/agent/lexeme-card/check-word", "value": "/agent/lexeme-card/check-word" },
+          { "selected": false, "text": "/agent/lexeme-card/deduplicate", "value": "/agent/lexeme-card/deduplicate" },
+          { "selected": false, "text": "/agent/word-alignment", "value": "/agent/word-alignment" },
+          { "selected": false, "text": "/agent/word-alignment/all", "value": "/agent/word-alignment/all" },
+          { "selected": false, "text": "/agent/word-alignment/bulk", "value": "/agent/word-alignment/bulk" },
+          { "selected": false, "text": "/agent/critique", "value": "/agent/critique" },
+          { "selected": false, "text": "/tokenizer", "value": "/tokenizer" },
+          { "selected": false, "text": "/tokenizer/cooccurrences", "value": "/tokenizer/cooccurrences" },
+          { "selected": false, "text": "/tokenizer/index", "value": "/tokenizer/index" },
+          { "selected": false, "text": "/tokenizer/morphemes", "value": "/tokenizer/morphemes" },
+          { "selected": false, "text": "/tokenizer/profile", "value": "/tokenizer/profile" },
+          { "selected": false, "text": "/tokenizer/runs", "value": "/tokenizer/runs" },
+          { "selected": false, "text": "/tokenizer/search", "value": "/tokenizer/search" },
+          { "selected": false, "text": "/tokenizer/word-index", "value": "/tokenizer/word-index" },
+          { "selected": false, "text": "/affixes", "value": "/affixes" },
+          { "selected": false, "text": "/train", "value": "/train" },
+          { "selected": false, "text": "/train/status", "value": "/train/status" },
+          { "selected": false, "text": "/verse", "value": "/verse" },
+          { "selected": false, "text": "/chapter", "value": "/chapter" },
+          { "selected": false, "text": "/chapters", "value": "/chapters" },
+          { "selected": false, "text": "/book", "value": "/book" },
+          { "selected": false, "text": "/text", "value": "/text" },
+          { "selected": false, "text": "/texts", "value": "/texts" },
+          { "selected": false, "text": "/script", "value": "/script" },
+          { "selected": false, "text": "/words", "value": "/words" },
+          { "selected": false, "text": "/missingwords", "value": "/missingwords" },
+          { "selected": false, "text": "/vrefs", "value": "/vrefs" },
+          { "selected": false, "text": "/vref-text", "value": "/vref-text" },
+          { "selected": false, "text": "/users", "value": "/users" },
+          { "selected": false, "text": "/users/me", "value": "/users/me" },
+          { "selected": false, "text": "/groups", "value": "/groups" },
+          { "selected": false, "text": "/groups/me", "value": "/groups/me" },
+          { "selected": false, "text": "/link-user-group", "value": "/link-user-group" },
+          { "selected": false, "text": "/unlink-user-group", "value": "/unlink-user-group" },
+          { "selected": false, "text": "/change-password", "value": "/change-password" },
+          { "selected": false, "text": "/token", "value": "/token" }
+        ],
+        "query": ".*,/textsearch,/assessment,/assessment/eflomal/results,/assessment/timeout-sweep,/assessment/[0-9]+/status,/predict,/revision,/version,/language,/agent/translation,/agent/translations,/agent/translations-test,/agent/lexeme-card,/agent/lexeme-card/check-word,/agent/lexeme-card/deduplicate,/agent/word-alignment,/agent/word-alignment/all,/agent/word-alignment/bulk,/agent/critique,/tokenizer,/tokenizer/cooccurrences,/tokenizer/index,/tokenizer/morphemes,/tokenizer/profile,/tokenizer/runs,/tokenizer/search,/tokenizer/word-index,/affixes,/train,/train/status,/verse,/chapter,/chapters,/book,/text,/texts,/script,/words,/missingwords,/vrefs,/vref-text,/users,/users/me,/groups,/groups/me,/link-user-group,/unlink-user-group,/change-password,/token",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {
+    "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h"],
+    "time_options": ["15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d"]
+  },
+  "timezone": "",
+  "title": "AQuA API — Observability",
+  "uid": "a8a16ea8-ecb3-490c-a404-a19aa82feae1",
+  "version": 17,
+  "weekStart": ""
+}
