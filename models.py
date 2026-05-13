@@ -1,9 +1,19 @@
 import datetime
+import math
 import re
+import unicodedata
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 
 class VersionUpdate(BaseModel):
@@ -169,10 +179,17 @@ class RevisionOut_v3(BaseModel):
     }
 
 
+class WordCount(BaseModel):
+    word: str
+    count: int = Field(ge=1)
+
+
 class VerseText(BaseModel):
     id: Optional[int] = None
     text: str
     verse_reference: str
+    verse_references: Optional[List[str]] = None
+    first_verse_reference: Optional[str] = None
     revision_id: int
     book: Optional[str] = None
     chapter: Optional[int] = None
@@ -183,6 +200,8 @@ class VerseText(BaseModel):
             "example": {
                 "text": "In the beginning God created the heaven and the earth.",
                 "verse_reference": "GEN 1:1",
+                "verse_references": ["GEN 1:1"],
+                "first_verse_reference": "GEN 1:1",
                 "revision_id": 1,
                 "book": "GEN",
                 "chapter": 1,
@@ -190,6 +209,40 @@ class VerseText(BaseModel):
             }
         },
     }
+
+
+class AssessmentStatus(str, Enum):
+    queued = "queued"
+    running = "running"
+    finished = "finished"
+    failed = "failed"
+
+
+# All assessment runs (training and non-training) follow queued → running →
+# finished. Progress within `running` is reported via percent_complete on
+# self-loop PATCHes. `failed` is reachable from any non-terminal state.
+ASSESSMENT_VALID_TRANSITIONS = {
+    AssessmentStatus.queued: {
+        AssessmentStatus.running,
+        AssessmentStatus.failed,
+    },
+    # running → running is intentional: allows runners to send progress updates
+    AssessmentStatus.running: {
+        AssessmentStatus.running,
+        AssessmentStatus.finished,
+        AssessmentStatus.failed,
+    },
+}
+
+ASSESSMENT_TERMINAL_STATUSES = {AssessmentStatus.finished, AssessmentStatus.failed}
+
+
+class AssessmentStatusUpdate(BaseModel):
+    status: AssessmentStatus
+    status_detail: Optional[str] = None
+    percent_complete: Optional[float] = Field(None, ge=0.0, le=100.0)
+
+    model_config = {"use_enum_values": True}
 
 
 class AssessmentType(Enum):
@@ -202,41 +255,42 @@ class AssessmentType(Enum):
     agent_critique = "agent-critique"
 
 
+def _validate_assessment_kwargs(v):
+    """Shared validator for Assessment.kwargs / TrainingJob.options.
+
+    /v3/train persists options onto Assessment.kwargs (issue #571), so both
+    endpoints must enforce the same shape — otherwise /v3/train can create
+    Assessment rows that break existing /v3/assessment kwargs queries.
+    """
+    if v is None:
+        return v
+    if len(v) > 20:
+        raise ValueError("kwargs may not contain more than 20 keys")
+    for key, val in v.items():
+        if len(key) > 64:
+            raise ValueError(f"kwargs key '{key[:64]}...' exceeds 64-character limit")
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key):
+            raise ValueError(f"kwargs key '{key}' must be a valid Python identifier")
+        if not isinstance(val, (str, int, float, bool, type(None))):
+            raise ValueError(
+                f"kwargs values must be scalar types, got {type(val).__name__} for key '{key}'"
+            )
+        if isinstance(val, str) and len(val) > 1000:
+            raise ValueError("kwargs string values must not exceed 1000 characters")
+    return v
+
+
 class AssessmentIn(BaseModel):
     id: Optional[int] = None
     revision_id: int
     reference_id: Optional[int] = None
     type: AssessmentType
-    train: Optional[bool] = None
-    source_language: Optional[str] = None
-    target_language: Optional[str] = None
-    first_vref: Optional[str] = None
-    last_vref: Optional[str] = None
     kwargs: Optional[Dict[str, Any]] = None
 
     @field_validator("kwargs")
     @classmethod
     def validate_kwargs(cls, v):
-        if v is None:
-            return v
-        if len(v) > 20:
-            raise ValueError("kwargs may not contain more than 20 keys")
-        for key, val in v.items():
-            if len(key) > 64:
-                raise ValueError(
-                    f"kwargs key '{key[:64]}...' exceeds 64-character limit"
-                )
-            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", key):
-                raise ValueError(
-                    f"kwargs key '{key}' must be a valid Python identifier"
-                )
-            if not isinstance(val, (str, int, float, bool, type(None))):
-                raise ValueError(
-                    f"kwargs values must be scalar types, got {type(val).__name__} for key '{key}'"
-                )
-            if isinstance(val, str) and len(val) > 1000:
-                raise ValueError("kwargs string values must not exceed 1000 characters")
-        return v
+        return _validate_assessment_kwargs(v)
 
     model_config = {
         "json_schema_extra": {
@@ -261,8 +315,10 @@ class AssessmentOut(BaseModel):
     start_time: Optional[datetime.datetime] = None
     end_time: Optional[datetime.datetime] = None
     owner_id: Optional[int] = None
-    # class Config:
-    #     use_enum_values = True
+    status_detail: Optional[str] = None
+    percent_complete: Optional[float] = None
+    is_training: bool = False
+    kwargs: Optional[Dict[str, Any]] = None
 
     model_config = {
         "json_schema_extra": {
@@ -271,15 +327,140 @@ class AssessmentOut(BaseModel):
                 "revision_id": 1,
                 "reference_id": 1,
                 "type": "word-alignment",
-                "status": "completed",
+                "status": "finished",
                 "requested_time": "2024-06-01T12:00:00",
                 "start_time": "2024-06-01T12:00:00",
                 "end_time": "2024-06-01T12:00:00",
                 "owner_id": 1,
+                "kwargs": None,
             }
         },
         "from_attributes": True,
     }
+
+
+class SemanticSimilarityRequest(BaseModel):
+    text1: str = Field(..., max_length=10000)
+    text2: str = Field(..., max_length=10000)
+    source_version_id: int
+    target_version_id: int
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "text1": "Hapo mwanzo Mungu aliumba mbingu na dunia.",
+                "text2": "In the beginning God created the heavens and the earth.",
+                "source_version_id": 1,
+                "target_version_id": 2,
+            }
+        }
+    }
+
+
+class SemanticSimilarityResponse(BaseModel):
+    score: float
+
+
+class TextLengthsInferenceResponse(BaseModel):
+    word_count_difference: int
+    char_count_difference: int
+
+
+class TextPair(BaseModel):
+    vref: Optional[str] = Field(default=None, max_length=50)
+    source_text: Optional[str] = Field(default=None, max_length=10000)
+    target_text: str = Field(..., max_length=10000)
+
+
+class PredictInput(BaseModel):
+    pairs: List[TextPair] = Field(..., min_length=1, max_length=5000)
+    assessment_id: Optional[int] = None
+    revision_id: Optional[int] = None
+    reference_id: Optional[int] = None
+    source_version_id: Optional[int] = None
+    target_version_id: Optional[int] = None
+    limit: Optional[int] = Field(default=None, ge=1, le=10000)
+    apps: Optional[List[str]] = None
+    include_translation: bool = False
+    include_critique: bool = False
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "pairs": [
+                    {
+                        "vref": "GEN 1:1",
+                        "source_text": "In the beginning God created the heavens and the earth.",
+                        "target_text": "Hapo mwanzo Mungu aliumba mbingu na dunia.",
+                    }
+                ],
+                "revision_id": 1,
+                "reference_id": 2,
+                "source_version_id": 1,
+                "target_version_id": 2,
+                "apps": ["ngrams", "tfidf"],
+                "include_translation": False,
+                "include_critique": False,
+            }
+        }
+    }
+
+    @model_validator(mode="after")
+    def _critique_requires_translation(self) -> "PredictInput":
+        # Mirrors the agent-side validator in aqua-assessments
+        # (shared/predict_input.py): critique runs over translations, so
+        # asking for it without translation is a bug, not a silent no-op.
+        # Reject early at the API boundary so the caller sees a 422 rather
+        # than a per-app error string in the fan-out response.
+        if self.include_critique and not self.include_translation:
+            raise ValueError("include_critique=True requires include_translation=True")
+        return self
+
+
+class PredictAppResult(BaseModel):
+    status: Literal["ok", "error", "not_trained"]
+    data: Optional[Any] = None
+    error: Optional[str] = None
+    duration_ms: int
+
+
+class PredictJobHandle(BaseModel):
+    id: str
+    status: Literal["running", "complete", "failed"]
+    includes: List[Literal["translation", "critique"]]
+    poll_url: str
+
+
+class PredictFanoutResponse(BaseModel):
+    pairs: List[TextPair]
+    results: Dict[str, PredictAppResult]
+    job: Optional[PredictJobHandle] = None
+
+    @model_serializer(mode="wrap")
+    def _drop_unset_job(self, handler):
+        # The fast-only path (no include_translation/critique) shouldn't
+        # surface a `"job": null` key in the response — keep the wire
+        # shape identical to pre-async callers.
+        data = handler(self)
+        if data.get("job") is None:
+            data.pop("job", None)
+        return data
+
+
+class PredictJobPair(BaseModel):
+    vref: Optional[str] = None
+    source_text: Optional[str] = None
+    target_text: str
+    translation: Optional[Dict[str, Any]] = None
+    critique: Optional[Dict[str, Any]] = None
+
+
+class PredictJobStatusResponse(BaseModel):
+    id: str
+    status: Literal["running", "complete", "failed"]
+    includes: List[Literal["translation", "critique"]]
+    pairs: List[PredictJobPair]
+    error: Optional[str] = None
 
 
 # Results model to record in the DB.
@@ -375,7 +556,50 @@ class TfidfResult(BaseModel):
     }
 
 
+class TfidfNeighbour(BaseModel):
+    vref: str
+    similarity: float
+    target_revision_text: Optional[str] = None
+    source_revision_text: Optional[str] = None
+
+
+class TfidfNeighboursBlock(BaseModel):
+    target_neighbours: List[TfidfNeighbour] = Field(default_factory=list)
+    # Asymmetric with `NgramCorpusBlock.source_corpus`: tfidf has no
+    # `None`/`[]` distinction here — an empty list means either "no
+    # source-side training" or "trained, no neighbours found". Clients
+    # cannot tell the two apart from this field alone.
+    source_neighbours: List[TfidfNeighbour] = Field(default_factory=list)
+
+
+class NgramVerseHit(BaseModel):
+    vref: str
+    target_revision_text: Optional[str] = None
+    source_revision_text: Optional[str] = None
+
+
+class NgramMatch(BaseModel):
+    id: int
+    ngram: str
+    ngram_size: int
+    verses: List[NgramVerseHit] = Field(default_factory=list)
+
+
+class NgramCorpusMatches(BaseModel):
+    matches: List[NgramMatch] = Field(default_factory=list)
+
+
+class NgramCorpusBlock(BaseModel):
+    target_corpus: NgramCorpusMatches = Field(default_factory=NgramCorpusMatches)
+    # `None` (not an empty block) when the session has no source-side ngrams
+    # training to match against — distinguishes "we looked and found nothing"
+    # from "no source-side corpus available".
+    source_corpus: Optional[NgramCorpusMatches] = None
+
+
 class WordAlignment(BaseModel):
+    model_config = {"from_attributes": True}
+
     id: Optional[int] = None
     assessment_id: int
     vref: Optional[str] = None
@@ -452,8 +676,8 @@ class TokenData(BaseModel):
 class AgentWordAlignmentIn(BaseModel):
     source_word: str
     target_word: str
-    source_language: str
-    target_language: str
+    source_version_id: int
+    target_version_id: int
     score: float = 0.0
     is_human_verified: bool = False
 
@@ -462,8 +686,8 @@ class AgentWordAlignmentIn(BaseModel):
             "example": {
                 "source_word": "love",
                 "target_word": "amor",
-                "source_language": "eng",
-                "target_language": "spa",
+                "source_version_id": 1,
+                "target_version_id": 2,
                 "score": 0.95,
                 "is_human_verified": False,
             }
@@ -475,8 +699,8 @@ class AgentWordAlignmentOut(BaseModel):
     id: int
     source_word: str
     target_word: str
-    source_language: str
-    target_language: str
+    source_version_id: int
+    target_version_id: int
     score: float
     is_human_verified: bool
     created_at: Optional[datetime.datetime] = None
@@ -488,8 +712,8 @@ class AgentWordAlignmentOut(BaseModel):
                 "id": 1,
                 "source_word": "love",
                 "target_word": "amor",
-                "source_language": "eng",
-                "target_language": "spa",
+                "source_version_id": 1,
+                "target_version_id": 2,
                 "score": 0.95,
                 "is_human_verified": False,
                 "created_at": "2024-06-01T12:00:00",
@@ -508,21 +732,26 @@ class AgentWordAlignmentBulkItem(BaseModel):
 
 
 class AgentWordAlignmentBulkRequest(BaseModel):
-    source_language: str  # ISO 639-3
-    target_language: str  # ISO 639-3
+    source_version_id: int
+    target_version_id: int
     alignments: list[AgentWordAlignmentBulkItem]
 
 
 class LexemeCardIn(BaseModel):
     source_lemma: Optional[str] = None
     target_lemma: str
-    source_language: str
-    target_language: str
+    source_version_id: int
+    target_version_id: int
 
     @field_validator("target_lemma")
     @classmethod
     def normalize_target_lemma(cls, v):
-        return v.lower() if v else v
+        return unicodedata.normalize("NFC", v).lower() if v else v
+
+    @field_validator("source_lemma")
+    @classmethod
+    def normalize_source_lemma(cls, v):
+        return unicodedata.normalize("NFC", v) if v else v
 
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
@@ -533,13 +762,27 @@ class LexemeCardIn(BaseModel):
     english_lemma: Optional[str] = None
     alignment_scores: Optional[Dict[str, float]] = None
 
+    @field_validator("surface_forms")
+    @classmethod
+    def normalize_surface_forms(cls, v):
+        if v is None:
+            return v
+        return [unicodedata.normalize("NFC", s) if isinstance(s, str) else s for s in v]
+
+    @field_validator("source_surface_forms")
+    @classmethod
+    def normalize_source_surface_forms(cls, v):
+        if v is None:
+            return v
+        return [unicodedata.normalize("NFC", s) if isinstance(s, str) else s for s in v]
+
     model_config = {
         "json_schema_extra": {
             "example": {
                 "source_lemma": "love",
                 "target_lemma": "amor",
-                "source_language": "eng",
-                "target_language": "spa",
+                "source_version_id": 1,
+                "target_version_id": 2,
                 "pos": "verb",
                 "surface_forms": [
                     "amor",
@@ -578,8 +821,8 @@ class LexemeCardOut(BaseModel):
     id: int
     source_lemma: Optional[str] = None
     target_lemma: str
-    source_language: str
-    target_language: str
+    source_version_id: int
+    target_version_id: int
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
     source_surface_forms: Optional[list] = None  # Source language surface forms
@@ -610,7 +853,12 @@ class LexemeCardPatch(BaseModel):
     @field_validator("target_lemma")
     @classmethod
     def normalize_target_lemma(cls, v):
-        return v.lower() if v else v
+        return unicodedata.normalize("NFC", v).lower() if v else v
+
+    @field_validator("source_lemma")
+    @classmethod
+    def normalize_source_lemma(cls, v):
+        return unicodedata.normalize("NFC", v) if v else v
 
     pos: Optional[str] = None
     confidence: Optional[float] = None
@@ -621,6 +869,20 @@ class LexemeCardPatch(BaseModel):
     examples: Optional[List[dict]] = None  # Each dict has: source, target, revision_id
     # Dict values can be float or None (None means remove that key)
     alignment_scores: Optional[Dict[str, Optional[float]]] = None
+
+    @field_validator("surface_forms")
+    @classmethod
+    def normalize_surface_forms(cls, v):
+        if v is None:
+            return v
+        return [unicodedata.normalize("NFC", s) for s in v]
+
+    @field_validator("source_surface_forms")
+    @classmethod
+    def normalize_source_surface_forms(cls, v):
+        if v is None:
+            return v
+        return [unicodedata.normalize("NFC", s) for s in v]
 
     model_config = {
         "json_schema_extra": {
@@ -875,7 +1137,7 @@ class AgentTranslationOut(BaseModel):
     id: int
     assessment_id: int
     revision_id: int
-    language: str
+    reference_version_id: int
     script: str
     vref: str
     version: int
@@ -891,7 +1153,7 @@ class AgentTranslationOut(BaseModel):
                 "id": 1,
                 "assessment_id": 123,
                 "revision_id": 456,
-                "language": "eng",
+                "reference_version_id": 789,
                 "script": "Latn",
                 "vref": "JHN 1:1",
                 "version": 1,
@@ -904,3 +1166,641 @@ class AgentTranslationOut(BaseModel):
         },
         "from_attributes": True,
     }
+
+
+# Training models
+
+
+class TrainingType(str, Enum):
+    semantic_similarity = "semantic-similarity"
+    tfidf = "tfidf"
+    word_alignment = "word-alignment"
+    ngrams = "ngrams"
+    agent_critique = "agent-critique"
+
+
+class TrainingJobIn(BaseModel):
+    """Identify the training pair by version_id (preferred — latest non-deleted
+    revision is resolved server-side) or by revision_id when a specific
+    revision is required. Exactly one of (version_id, revision_id) must be
+    provided per side."""
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_version_id": 1,
+                "target_version_id": 2,
+                "options": {"use_eflomal": True},
+                "apps": ["word-alignment", "tfidf"],
+            }
+        }
+    }
+
+    source_version_id: Optional[int] = None
+    target_version_id: Optional[int] = None
+    source_revision_id: Optional[int] = None
+    target_revision_id: Optional[int] = None
+    options: Optional[Dict[str, Any]] = None
+    apps: Optional[List[str]] = None
+
+    @field_validator("options")
+    @classmethod
+    def validate_options(cls, v):
+        return _validate_assessment_kwargs(v)
+
+    @model_validator(mode="after")
+    def _require_one_id_per_side(self):
+        if (self.source_version_id is None) == (self.source_revision_id is None):
+            raise ValueError(
+                "Provide exactly one of source_version_id or source_revision_id"
+            )
+        if (self.target_version_id is None) == (self.target_revision_id is None):
+            raise ValueError(
+                "Provide exactly one of target_version_id or target_revision_id"
+            )
+        return self
+
+
+class TrainingJobOut(BaseModel):
+    """TrainingJob is metadata only after aqua-api#584 — status, timing, and
+    progress are sourced from the linked Assessment row when serializing."""
+
+    id: int
+    type: str
+    source_revision_id: int
+    target_revision_id: int
+    source_version_id: int
+    target_version_id: int
+    options: Optional[Dict[str, Any]] = None
+    requested_time: Optional[datetime.datetime] = None
+    owner_id: Optional[int] = None
+    session_id: Optional[str] = None
+    assessment_id: Optional[int] = None
+
+    # Mirrored from the linked Assessment row.
+    status: Optional[str] = None
+    status_detail: Optional[str] = None
+    percent_complete: Optional[float] = None
+    start_time: Optional[datetime.datetime] = None
+    end_time: Optional[datetime.datetime] = None
+
+    model_config = {"use_enum_values": True}
+
+
+class InferenceReadiness(BaseModel):
+    ready: bool
+    pending_training: List[str] = Field(default_factory=list)
+
+
+class TrainingResponse(BaseModel):
+    session_id: str
+    training_jobs: List[TrainingJobOut]
+    inference_readiness: Dict[str, InferenceReadiness]
+
+
+class TrainingSessionVrefResults(BaseModel):
+    vref: str
+    semantic_similarity: Optional[Result_v2] = None
+    word_alignment: List[WordAlignment] = Field(default_factory=list)
+    # Verse-level aggregate score for word-alignment, written to
+    # `assessment_result` alongside the per-word-pair rows in
+    # `alignment_top_source_scores`. Mirrors the shape of
+    # `semantic_similarity` so clients can treat the two the same way.
+    word_alignment_score: Optional[Result_v2] = None
+    # Per-vref tfidf and ngrams mirror the predict pair shape: `tfidf` carries
+    # nearest-neighbour vrefs from both sides (target and source) of the
+    # trained corpora; `ngrams` carries trained ngrams that fire on this
+    # verse, with `verses` lists hydrated from the corresponding revision
+    # text. Predict's cross-axis matches (target ngrams in source text and
+    # vice versa) are not returned — train-status reads stored corpus hits
+    # only.
+    tfidf: Optional[TfidfNeighboursBlock] = None
+    ngrams: Optional[NgramCorpusBlock] = None
+    # Full lexeme cards (same shape as `GET /v3/agent/lexeme-card`) whose
+    # lemma or any surface form intersects this verse on either side.
+    # Cards are filtered by the verse — the cards themselves are returned
+    # in full, not a subset of their fields.
+    lexeme_cards: List[LexemeCardOut] = Field(default_factory=list)
+
+
+class TrainingSessionResultsPage(BaseModel):
+    items: List[TrainingSessionVrefResults]
+    total_count: int
+    page: Optional[int] = None
+    page_size: Optional[int] = None
+
+
+class TrainingSessionResultsResponse(BaseModel):
+    session_id: str
+    training_jobs: List[TrainingJobOut]
+    inference_readiness: Dict[str, InferenceReadiness]
+    results: TrainingSessionResultsPage
+    # True when the lexeme-card load hit the per-request cap and only
+    # the highest-confidence prefix of cards was matched against the
+    # page's vrefs. Lets a client distinguish "no card matches found"
+    # from "we didn't look at every card".
+    lexeme_cards_truncated: bool = False
+
+
+class EflomalDictionaryItem(BaseModel):
+    """Dictionary entry. Words in original form (case preserved)."""
+
+    source_word: str
+    target_word: str
+    count: int
+    probability: float
+
+
+class EflomalCooccurrenceItem(BaseModel):
+    """Co-occurrence entry. Words in normalized form (lowercase, alphanumeric)."""
+
+    source_word: str
+    target_word: str
+    co_occur_count: int
+    aligned_count: int
+
+
+class EflomalTargetWordCountItem(BaseModel):
+    """Target word frequency. Word in normalized form."""
+
+    word: str
+    count: int
+
+
+class EflomalResultsPushRequest(BaseModel):
+    """Create the eflomal_assessment metadata row (no bulk data).
+
+    After this call succeeds, push dictionary, cooccurrences, and
+    target-word-counts via their own endpoints, then PATCH the
+    assessment status to 'finished'.
+    """
+
+    assessment_id: int
+    source_version_id: Optional[int] = None
+    target_version_id: Optional[int] = None
+    num_verse_pairs: int
+    num_alignment_links: int
+    num_dictionary_entries: int
+    num_missing_words: int
+
+
+class EflomalAssessmentOut(BaseModel):
+    """Push response — summary only, not the 470K+ data rows."""
+
+    id: int
+    assessment_id: int
+    source_version_id: int
+    target_version_id: int
+    num_verse_pairs: int
+    num_alignment_links: int
+    num_dictionary_entries: int
+    num_missing_words: int
+    created_at: Optional[datetime.datetime] = None
+    model_config = {"from_attributes": True}
+
+
+class EflomalPriorItem(BaseModel):
+    """LEX prior row: one BPE token pair with a Dirichlet-prior alpha."""
+
+    source_bpe: str
+    target_bpe: str
+    alpha: float = Field(ge=0.5, le=0.95, allow_inf_nan=False)
+
+
+class EflomalReverseDictSource(BaseModel):
+    """One source-word candidate in a reverse_dict entry."""
+
+    source: str
+    count: int
+
+
+class EflomalBpeModels(BaseModel):
+    """SentencePiece BPE models (serialized protobuf), one per direction."""
+
+    source_model_b64: str
+    target_model_b64: str
+
+
+class EflomalResultsPullResponse(BaseModel):
+    """Full eflomal training artifacts for inference consumption.
+
+    Replaces Modal's load_artifacts() — all data needed to run realtime_assess()
+    is returned in a single response for the caller to load and cache.
+    """
+
+    assessment_id: int
+    source_version_id: int
+    target_version_id: int
+    num_verse_pairs: int
+    num_alignment_links: int
+    num_dictionary_entries: int
+    num_missing_words: int
+    created_at: Optional[datetime.datetime] = None
+    reference_id: Optional[int] = None
+    revision_id: Optional[int] = None
+    reverse_dict: dict[str, list[EflomalReverseDictSource]] = Field(
+        default_factory=dict
+    )
+    target_word_counts: list[EflomalTargetWordCountItem]
+    priors: list[EflomalPriorItem] = Field(default_factory=list)
+    bpe_models: Optional[EflomalBpeModels] = None
+
+
+# --- TF-IDF artifact (encoder state) models ---
+
+
+class TfidfVectorizerPayload(BaseModel):
+    vocabulary: Dict[str, int]
+    idf: List[float]
+    params: Dict[str, Any]
+
+
+# TfidfSvdMeta (shape + dtype only) is shared by chunked uploads that don't
+# carry the bytes inline. TfidfSvdPayload adds the base64-encoded .npy blob.
+class TfidfSvdMeta(BaseModel):
+    n_components: int = Field(..., ge=1, le=4096)
+    n_features: int = Field(..., ge=1, le=10_000_000)
+    dtype: Literal["float32", "float64"] = "float32"
+
+
+class TfidfSvdPayload(TfidfSvdMeta):
+    components_b64: str
+
+
+# Pull responses can downcast the components matrix to float16 or int8 to
+# halve/quarter wire size. int8 carries a scale factor so clients can
+# rehydrate via `arr.astype(float32) * int8_scale / 127`. Stays separate from
+# TfidfSvdPayload so the push validator's float32/float64-only contract is
+# unaffected by widening the response dtype set; only the dtype field is
+# overridden to widen the Literal.
+class TfidfSvdPullPayload(TfidfSvdMeta):
+    dtype: Literal["float32", "float64", "float16", "int8"] = "float32"
+    components_b64: str
+    int8_scale: Optional[float] = None
+
+    @model_validator(mode="after")
+    def _int8_requires_scale(self) -> "TfidfSvdPullPayload":
+        if self.dtype == "int8" and self.int8_scale is None:
+            raise ValueError("int8_scale is required when dtype='int8'")
+        if self.dtype != "int8" and self.int8_scale is not None:
+            raise ValueError("int8_scale is only valid when dtype='int8'")
+        return self
+
+
+class TfidfArtifactsPushRequest(BaseModel):
+    source_version_id: Optional[int] = None
+    n_components: int
+    n_corpus_vrefs: int
+    sklearn_version: str
+    word_vectorizer: TfidfVectorizerPayload
+    char_vectorizer: TfidfVectorizerPayload
+    svd: TfidfSvdPayload
+
+
+class TfidfArtifactsPushResponse(BaseModel):
+    assessment_id: int
+    n_word_features: int
+    n_char_features: int
+    components_bytes: int
+
+
+class TfidfArtifactsPullResponse(BaseModel):
+    assessment_id: int
+    source_version_id: int
+    n_components: int
+    n_word_features: int
+    n_char_features: int
+    n_corpus_vrefs: int
+    sklearn_version: str
+    created_at: Optional[datetime.datetime] = None
+    word_vectorizer: TfidfVectorizerPayload
+    char_vectorizer: TfidfVectorizerPayload
+    svd: TfidfSvdPullPayload
+
+
+# --- Chunked TF-IDF artifact upload (for components_ arrays over the single-POST cap) ---
+
+
+class TfidfArtifactsInitRequest(BaseModel):
+    source_version_id: Optional[int] = None
+    n_components: int
+    n_corpus_vrefs: int
+    sklearn_version: str
+    word_vectorizer: TfidfVectorizerPayload
+    char_vectorizer: TfidfVectorizerPayload
+    svd: TfidfSvdMeta
+    total_chunks: int = Field(..., ge=1, le=1024)
+
+
+class TfidfArtifactsInitResponse(BaseModel):
+    upload_id: str
+    assessment_id: int
+    total_chunks: int
+
+
+class TfidfArtifactsChunkRequest(BaseModel):
+    upload_id: str
+    chunk_index: int = Field(..., ge=0)
+    components_b64: str
+
+
+class TfidfArtifactsChunkResponse(BaseModel):
+    upload_id: str
+    chunk_index: int
+    bytes_received: int
+    chunks_received: int
+    total_chunks: int
+
+
+class TfidfArtifactsCommitRequest(BaseModel):
+    upload_id: str
+
+
+class TfidfArtifactsAbortRequest(BaseModel):
+    upload_id: str
+
+
+class TfidfArtifactsAbortResponse(BaseModel):
+    upload_id: str
+    chunks_removed: int
+
+
+TFIDF_CORPUS_VECTOR_DIM = 300
+
+
+class TfidfByVectorRequest(BaseModel):
+    assessment_id: int
+    vector: List[float] = Field(
+        ..., min_length=TFIDF_CORPUS_VECTOR_DIM, max_length=TFIDF_CORPUS_VECTOR_DIM
+    )
+    limit: int = Field(default=10, ge=1, le=500)
+    reference_id: Optional[int] = Field(default=None, ge=1)
+
+    @field_validator("vector")
+    @classmethod
+    def _reject_non_finite(cls, v: List[float]) -> List[float]:
+        if any(not math.isfinite(x) for x in v):
+            raise ValueError("vector must not contain inf or nan")
+        return v
+
+
+TFIDF_MAX_BATCH_VECTORS = 500
+TFIDF_MAX_BATCH_RESULTS = 25000
+
+
+class TfidfByVectorsRequest(BaseModel):
+    assessment_id: int
+    vectors: List[List[float]] = Field(
+        ..., min_length=1, max_length=TFIDF_MAX_BATCH_VECTORS
+    )
+    limit: int = Field(default=10, ge=1, le=500)
+    reference_id: Optional[int] = Field(default=None, ge=1)
+
+    @field_validator("vectors")
+    @classmethod
+    def _validate_vectors(cls, vs: List[List[float]]) -> List[List[float]]:
+        for i, vec in enumerate(vs):
+            if len(vec) != TFIDF_CORPUS_VECTOR_DIM:
+                raise ValueError(
+                    f"vectors[{i}] has length {len(vec)}, expected {TFIDF_CORPUS_VECTOR_DIM}"
+                )
+            if any(not math.isfinite(x) for x in vec):
+                raise ValueError(f"vectors[{i}] must not contain inf or nan")
+        return vs
+
+
+class TfidfByVectorsResponse(BaseModel):
+    results: List[List[TfidfResult]]
+
+
+# --- Assessment Results Push/Delete models ---
+
+
+class AssessmentResultItem(BaseModel):
+    vref: str
+    score: float
+    flag: bool = False
+    source: Optional[str] = None
+    target: Optional[Any] = None
+    note: Optional[str] = None
+
+
+class AlignmentScoreItem(BaseModel):
+    vref: str
+    score: float
+    flag: bool = False
+    source: Optional[str] = None
+    target: Optional[str] = None
+    note: Optional[str] = None
+
+
+class TextLengthsItem(BaseModel):
+    vref: str
+    word_lengths: float
+    char_lengths: float
+    word_lengths_z: float
+    char_lengths_z: float
+
+
+class TfidfPcaVectorItem(BaseModel):
+    vref: str
+    vector: List[float] = Field(..., min_length=300, max_length=300)
+
+
+class NgramItem(BaseModel):
+    ngram: str
+    ngram_size: int
+    vrefs: List[str] = Field(..., max_length=50_000)
+
+
+class InsertResponse(BaseModel):
+    ids: List[int]
+
+
+class DeleteRequest(BaseModel):
+    ids: List[int]
+
+
+class DeleteResponse(BaseModel):
+    deleted: int
+
+
+MorphemeClass = Literal["LEXICAL", "GRAMMATICAL", "BOUND_ROOT", "UNKNOWN"]
+
+
+class LanguageProfileIn(BaseModel):
+    name: str
+    autonym: Optional[str] = None
+    family: Optional[str] = None
+    branch: Optional[str] = None
+    script: Optional[str] = None
+    typology_summary: Optional[str] = None
+    morphology_notes: Optional[str] = None
+    grammar_sketch: Optional[str] = Field(None, max_length=65536)
+    common_affixes: Optional[List[Dict[str, Any]]] = None
+    sources: Optional[List[str]] = None
+
+
+class LanguageProfileOut(LanguageProfileIn):
+    model_config = ConfigDict(from_attributes=True)
+
+    iso_639_3: str
+    created_at: Optional[datetime.datetime] = None
+    updated_at: Optional[datetime.datetime] = None
+
+
+class MorphemeIn(BaseModel):
+    morpheme: str
+    morpheme_class: MorphemeClass
+
+
+class MorphemeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    morpheme: str
+    morpheme_class: MorphemeClass
+    first_seen_revision_id: Optional[int] = None
+
+
+class MorphemeListOut(BaseModel):
+    iso_639_3: str
+    total: int
+    morphemes: List[MorphemeOut]
+
+
+class TokenizerRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    iso_639_3: str
+    revision_id: int
+    n_sample_verses: Optional[int] = None
+    sample_method: Optional[str] = None
+    source_model: Optional[str] = None
+    status: str
+    stats_json: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime.datetime] = None
+
+
+class TokenizerRunListOut(BaseModel):
+    runs: List[TokenizerRunOut]
+
+
+class TokenizerRunRequest(BaseModel):
+    iso_639_3: str
+    revision_id: int
+    n_sample_verses: Optional[int] = None
+    sample_method: Optional[str] = None
+    source_model: Optional[str] = None
+    profile: Optional[LanguageProfileIn] = None
+    morphemes: List[MorphemeIn] = Field(default_factory=list)
+    stats: Optional[Dict[str, Any]] = None
+
+
+class TokenizerRunCommitResponse(BaseModel):
+    run_id: int
+    # n_morphemes_new + n_morphemes_existing == unique morphemes after
+    # casefolding (may be < len(payload.morphemes) due to case dedup).
+    # n_class_conflicts is a subset of n_morphemes_existing: a conflict is
+    # an existing row whose stored class disagrees with the incoming class
+    # (the stored class wins; the incoming class is logged and discarded).
+    n_morphemes_new: int
+    n_morphemes_existing: int
+    n_class_conflicts: int
+
+
+class IndexRequest(BaseModel):
+    iso_639_3: str
+    revision_id: int
+
+
+class IndexResponse(BaseModel):
+    verses_indexed: int
+    unique_morpheme_verse_pairs: int
+
+
+AffixPosition = Literal["prefix", "suffix", "infix"]
+
+
+class AffixIn(BaseModel):
+    form: str = Field(..., min_length=1)
+    position: AffixPosition
+    gloss: str = Field(..., min_length=1)
+    examples: Optional[List[str]] = None
+    n_runs: int = Field(default=1, ge=1, le=32767)
+
+
+class AffixOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    form: str
+    position: AffixPosition
+    gloss: str
+    examples: Optional[List[str]] = None
+    n_runs: int = Field(default=1, ge=1, le=32767)
+    source_model: Optional[str] = None
+    first_seen_revision_id: Optional[int] = None
+
+
+class AffixListOut(BaseModel):
+    iso_639_3: str
+    total: int
+    affixes: List[AffixOut]
+
+
+class AffixCommitRequest(BaseModel):
+    iso_639_3: str
+    revision_id: Optional[int] = None
+    source_model: Optional[str] = None
+    affixes: List[AffixIn] = Field(default_factory=list)
+
+
+class AffixCommitResponse(BaseModel):
+    n_affixes_new: int
+    n_affixes_updated: int
+    n_affixes_unchanged: int
+
+
+class AffixReplaceResponse(BaseModel):
+    n_deleted: int
+    n_inserted: int
+
+
+class WordIndexRequest(BaseModel):
+    iso_639_3: str = Field(..., min_length=3, max_length=3)
+    revision_id: int
+
+
+class WordIndexResponse(BaseModel):
+    unique_words_indexed: int
+    word_morpheme_pairs: int
+
+
+class CooccurrenceItem(BaseModel):
+    morpheme: str
+    morpheme_class: str
+    co_occurrence_count: int
+    example_words: List[str]
+    typical_position: str
+
+
+class CooccurrenceResponse(BaseModel):
+    morpheme: str
+    total_words_containing: int
+    is_truncated: bool = False
+    cooccurrences: List[CooccurrenceItem]
+
+
+class MorphemeSearchResult(BaseModel):
+    verse_reference: str
+    text: str
+    comparison_text: Optional[str] = None
+    surface_forms: List[str]
+    count: int
+
+
+class MorphemeSearchResponse(BaseModel):
+    morpheme: str
+    iso_639_3: str
+    result_count: int
+    results: List[MorphemeSearchResult]

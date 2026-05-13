@@ -1,9 +1,21 @@
 # test_agent_translation.py
 """Tests for agent translation storage API endpoints."""
 
-from database.models import AgentTranslation
+from database.models import AgentTranslation, Assessment, BibleRevision
 
 prefix = "v3"
+
+
+def _reference_version_id(db_session, assessment_id):
+    assessment = (
+        db_session.query(Assessment).filter(Assessment.id == assessment_id).one()
+    )
+    revision = (
+        db_session.query(BibleRevision)
+        .filter(BibleRevision.id == assessment.reference_id)
+        .one()
+    )
+    return revision.bible_version_id
 
 
 def test_add_translation_success(
@@ -37,7 +49,9 @@ def test_add_translation_success(
     assert data["created_at"] is not None
     # New denormalized fields
     assert data["revision_id"] is not None
-    assert data["language"] == "eng"
+    assert data["reference_version_id"] == _reference_version_id(
+        db_session, test_assessment_id
+    )
     assert data["script"] == "Latn"
 
     # Verify in database
@@ -49,14 +63,16 @@ def test_add_translation_success(
     assert translation is not None
     assert translation.vref == "JHN 1:1"
     assert translation.version == 1
-    assert translation.language == "eng"
+    assert translation.reference_version_id == _reference_version_id(
+        db_session, test_assessment_id
+    )
     assert translation.script == "Latn"
 
 
 def test_add_translation_version_auto_increment(
     client, regular_token1, test_assessment_id, db_session
 ):
-    """Test that version auto-increments for same revision+language+script+vref."""
+    """Test that version auto-increments for same revision+reference version+script+vref."""
     translation_data = {
         "assessment_id": test_assessment_id,
         "vref": "JHN 1:2",
@@ -214,7 +230,9 @@ def test_add_translations_bulk_success(
     # Verify new fields present
     for t in data:
         assert t["revision_id"] is not None
-        assert t["language"] == "eng"
+        assert t["reference_version_id"] == _reference_version_id(
+            db_session, test_assessment_id
+        )
         assert t["script"] == "Latn"
 
 
@@ -575,9 +593,11 @@ def test_get_translations_by_revision_id(
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
+    reference_version_id = _reference_version_id(db_session, assessment1.id)
+
     # Query by revision_id (latest version per vref) — script omitted
     response = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&reference_version_id={reference_version_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -630,8 +650,9 @@ def test_get_translations_by_revision_id_all_versions(
         )
 
     # Query with all_versions=true
+    reference_version_id = _reference_version_id(db_session, assessment.id)
     response = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng&vref=JHN 2:3&all_versions=true",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&reference_version_id={reference_version_id}&vref=JHN 2:3&all_versions=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -703,8 +724,9 @@ def test_get_translations_by_revision_id_with_vref_filter(
         )
 
     # Query by revision_id with vref filter
+    reference_version_id = _reference_version_id(db_session, assessment.id)
     response = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng&vref=JHN 2:6",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&reference_version_id={reference_version_id}&vref=JHN 2:6",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -745,8 +767,9 @@ def test_get_translations_by_revision_id_with_verse_range(
         )
 
     # Query by revision_id with verse range
+    reference_version_id = _reference_version_id(db_session, assessment.id)
     response = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng&script=Latn&first_vref=JHN 2:11&last_vref=JHN 2:13",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&reference_version_id={reference_version_id}&script=Latn&first_vref=JHN 2:11&last_vref=JHN 2:13",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -762,30 +785,30 @@ def test_get_translations_by_revision_id_with_verse_range(
     assert "JHN 2:14" not in vrefs
 
 
-def test_get_translations_by_revision_id_requires_language(
+def test_get_translations_by_revision_id_requires_reference_version(
     client, regular_token1, test_revision_id
 ):
-    """Test that revision_id without language returns 400."""
+    """Test that revision_id without reference_version_id returns 400."""
     response = client.get(
         f"{prefix}/agent/translations?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 400
-    assert "language is required" in response.json()["detail"].lower()
+    assert "reference_version_id is required" in response.json()["detail"].lower()
 
-    # script alone (without language) should also fail
+    # script alone (without reference_version_id) should also fail
     response = client.get(
         f"{prefix}/agent/translations?revision_id={test_revision_id}&script=Latn",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 400
-    assert "language is required" in response.json()["detail"].lower()
+    assert "reference_version_id is required" in response.json()["detail"].lower()
 
 
-def test_get_translations_by_revision_id_with_language_filter(
+def test_get_translations_by_revision_id_with_reference_version_filter(
     client, regular_token1, test_revision_id, db_session
 ):
-    """Test filtering translations by language when querying by revision_id."""
+    """Test filtering translations by reference version when querying by revision_id."""
     from datetime import date
 
     from database.models import (
@@ -836,7 +859,7 @@ def test_get_translations_by_revision_id_with_language_filter(
         .first()
     )
 
-    # Create two assessments for the same revision_id but different reference languages
+    # Create two assessments for the same revision_id but different reference versions
     assessment_eng = Assessment(
         revision_id=test_revision_id,
         reference_id=eng_revision.id,
@@ -876,9 +899,9 @@ def test_get_translations_by_revision_id_with_language_filter(
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
-    # Query with language=eng — should only get the eng-reference translation
+    # Query with the eng reference version — should only get the eng-reference translation
     response_eng = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng&script=Latn&vref=JHN 3:1&all_versions=true",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&reference_version_id={eng_version.id}&script=Latn&vref=JHN 3:1&all_versions=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response_eng.status_code == 200
@@ -891,9 +914,9 @@ def test_get_translations_by_revision_id_with_language_filter(
     )
     assert not any(t["draft_text"] == "Swahili ref translation" for t in data_eng)
 
-    # Query with language=swh — should only get the swh-reference translation
+    # Query with the swh reference version — should only get the swh-reference translation
     response_swh = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=swh&script=Latn&vref=JHN 3:1&all_versions=true",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&reference_version_id={swh_version.id}&script=Latn&vref=JHN 3:1&all_versions=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response_swh.status_code == 200
@@ -907,12 +930,12 @@ def test_get_translations_by_revision_id_with_language_filter(
     assert not any(t["draft_text"] == "English ref translation" for t in data_swh)
 
 
-def test_get_translations_assessment_id_with_wrong_language(
+def test_get_translations_assessment_id_with_wrong_reference_version(
     client, regular_token1, test_assessment_id
 ):
-    """Test that assessment_id with mismatched language returns 400."""
+    """Test that assessment_id with mismatched reference_version_id returns 400."""
     response = client.get(
-        f"{prefix}/agent/translations?assessment_id={test_assessment_id}&language=swh",
+        f"{prefix}/agent/translations?assessment_id={test_assessment_id}&reference_version_id=999999",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -937,7 +960,7 @@ def test_version_increments_across_assessments(
     client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):
     """Test that version auto-increments across assessments sharing the same
-    revision+language+script when using the single POST endpoint."""
+    revision+reference version+script when using the single POST endpoint."""
     from database.models import Assessment
 
     # Create two assessments for the same revision
@@ -971,7 +994,7 @@ def test_version_increments_across_assessments(
     assert r1.status_code == 200
     assert r1.json()["version"] == 1
 
-    # POST via assessment2 for same revision+language+script+vref → version 2
+    # POST via assessment2 for same revision+reference version+script+vref → version 2
     r2 = client.post(
         f"{prefix}/agent/translation",
         json={
@@ -989,7 +1012,7 @@ def test_bulk_version_increments_across_assessments(
     client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):
     """Test that bulk POST version auto-increments across assessments sharing
-    the same revision+language+script."""
+    the same revision+reference version+script."""
     from database.models import Assessment
 
     assessment1 = Assessment(
@@ -1024,7 +1047,7 @@ def test_bulk_version_increments_across_assessments(
     assert r1.status_code == 200
     version1 = r1.json()[0]["version"]
 
-    # Bulk POST via assessment2 for same revision+language+script → next version
+    # Bulk POST via assessment2 for same revision+reference version+script → next version
     r2 = client.post(
         f"{prefix}/agent/translations",
         json={
@@ -1069,8 +1092,9 @@ def test_get_translations_by_revision_id_all_versions_no_script(
         )
 
     # Query with all_versions=true, no script
+    reference_version_id = _reference_version_id(db_session, assessment.id)
     response = client.get(
-        f"{prefix}/agent/translations?revision_id={test_revision_id}&language=eng&vref=JHN 4:5&all_versions=true",
+        f"{prefix}/agent/translations?revision_id={test_revision_id}&reference_version_id={reference_version_id}&vref=JHN 4:5&all_versions=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 

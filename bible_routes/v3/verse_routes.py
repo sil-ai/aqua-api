@@ -1,8 +1,11 @@
 __version__ = "v3"
 
 import pathlib
+import random as random_module
 import unicodedata
-from typing import Any, Dict, List
+from collections import Counter
+from enum import Enum
+from typing import Any, Dict, List, Optional, Union
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
@@ -16,16 +19,78 @@ from database.models import ChapterReference as ChapterReferenceModel
 from database.models import UserDB as UserModel
 from database.models import VerseReference as VerseReferenceModel
 from database.models import VerseText as VerseModel
-from models import RevisionChapters, VerseText
+from models import RevisionChapters, VerseText, WordCount
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_revision
 from utils.verse_range_utils import merge_verse_ranges
 
 router = fastapi.APIRouter()
 
+
+class IncludeVerses(str, Enum):
+    all = "all"
+    union = "union"
+    intersection = "intersection"
+
+
 # Load vref list once at module level
 _VREF_PATH = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "vref.txt"
 _VREF_LIST = _VREF_PATH.read_text(encoding="utf-8").splitlines()
+
+# Characters treated as part of a word during tokenization.
+_WORD_APOSTROPHES = frozenset(
+    "''ʼ''"
+)  # ASCII apostrophe + U+02BC modifier letter apostrophe
+_ZERO_WIDTH_JOINERS = frozenset(["‌", "‍"])  # ZWNJ + ZWJ for complex scripts
+
+
+def _is_range_marker(x):
+    return x == "<range>"
+
+
+def _combine_text(field, values):
+    return " ".join(v for v in values if v and v != "<range>")
+
+
+def _sample_items(
+    items: List[Any], limit: Optional[int], random: bool, seed: Optional[int]
+) -> List[Any]:
+    if limit is None or limit >= len(items):
+        return items
+    if not random:
+        return items[:limit]
+    indices = sorted(random_module.Random(seed).sample(range(len(items)), limit))
+    return [items[i] for i in indices]
+
+
+def _tokenize_words(text: str) -> List[str]:
+    """Lowercase token stream (with duplicates) for `text`, using
+    Unicode-aware splitting that handles letters/numbers/marks across scripts,
+    connector punctuation, apostrophes, and ZWNJ/ZWJ."""
+    words: List[str] = []
+    buf: List[str] = []
+    for ch in text:
+        cat = unicodedata.category(ch)
+        if (
+            cat.startswith("L")
+            or cat.startswith("N")
+            or cat.startswith("M")
+            or cat == "Pc"
+            or ch in _WORD_APOSTROPHES
+            or ch in _ZERO_WIDTH_JOINERS
+        ):
+            buf.append(ch)
+        else:
+            if buf:
+                word = "".join(buf).strip()
+                if word:
+                    words.append(word.lower())
+                buf = []
+    if buf:
+        word = "".join(buf).strip()
+        if word:
+            words.append(word.lower())
+    return words
 
 
 def extract_unique_words(text: str) -> List[str]:
@@ -52,53 +117,12 @@ def extract_unique_words(text: str) -> List[str]:
     List[str]
         List of unique words (lowercase) in order of first appearance
     """
-    words: List[str] = []
-    buf: List[str] = []
-
-    for ch in text:
-        cat = unicodedata.category(ch)
-
-        # Include all characters that can be part of words across different scripts:
-        # - Letters: Lu, Ll, Lt, Lm, Lo (all letter categories)
-        # - Numbers: Nd, Nl, No (can be part of words in some contexts)
-        # - Marks: Mn, Mc, Me (combining marks - essential for many scripts)
-        # - Connectors: Pc (underscore and similar)
-        # - Format characters that are part of words: Cf (but only specific ones)
-        # - Apostrophes and similar punctuation used in contractions
-        if (
-            cat.startswith("L")
-            or cat.startswith("N")  # All letters
-            or cat.startswith("M")  # All numbers (contextual)
-            or cat == "Pc"  # All marks (combining, spacing, enclosing)
-            or ch in "''ʼ''"  # Connector punctuation (underscore, etc.)
-            or ch == "\u200c"  # Apostrophes (various Unicode forms)
-            or ch  # Zero Width Non-Joiner (ZWNJ) - important for many scripts
-            == "\u200d"
-        ):  # Zero Width Joiner (ZWJ) - important for many scripts
-            buf.append(ch)
-        else:
-            # End of word - save if we have content
-            if buf:
-                word = "".join(buf).strip()
-                if word:  # Only add non-empty words
-                    words.append(word)
-                buf = []
-
-    # Don't forget the last word if text doesn't end with a separator
-    if buf:
-        word = "".join(buf).strip()
-        if word:
-            words.append(word)
-
-    # Normalize and deduplicate (preserve order for consistency)
-    out = []
+    out: List[str] = []
     seen = set()
-    for w in words:
-        wl = w.lower()
-        if wl and wl not in seen:
-            seen.add(wl)
-            out.append(wl)
-
+    for w in _tokenize_words(text):
+        if w not in seen:
+            seen.add(w)
+            out.append(w)
     return out
 
 
@@ -300,6 +324,15 @@ async def get_book(
 @router.get("/text", response_model=List[VerseText])
 async def get_text(
     revision_id: int,
+    include_verses: IncludeVerses = Query(
+        IncludeVerses.union,
+        description=(
+            "Which verses to include in the response. "
+            "'all': all 41,899 canonical verses, with empty text for missing verses. "
+            "'union': only verses that have text (default). "
+            "'intersection': treated identically to 'union' for a single revision."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -309,6 +342,10 @@ async def get_text(
     Input:
     - revision_id: int
     Description: The unique identifier for the revision.
+    - include_verses: IncludeVerses (all|union|intersection, default "union")
+    Description: Which verses to include. 'all' returns all 41,899 canonical
+    verses with empty text for missing ones. 'union' and 'intersection' are
+    treated identically for a single revision (both return only verses that have text).
 
     Returns:
     Fields(VerseText):
@@ -333,12 +370,122 @@ async def get_text(
             detail="User not authorized to access this revision.",
         )
     stmt = (
-        select(VerseModel)
+        select(
+            VerseModel.id,
+            VerseModel.text,
+            VerseModel.verse_reference,
+            VerseModel.revision_id,
+            VerseModel.book,
+            VerseModel.chapter,
+            VerseModel.verse,
+        )
+        .join(
+            VerseReferenceModel,
+            VerseModel.verse_reference == VerseReferenceModel.full_verse_id,
+        )
+        .join(
+            ChapterReferenceModel,
+            VerseReferenceModel.chapter == ChapterReferenceModel.full_chapter_id,
+        )
+        .join(
+            BookReferenceModel,
+            VerseReferenceModel.book_reference == BookReferenceModel.abbreviation,
+        )
         .where(VerseModel.revision_id == revision_id)
-        .order_by(VerseModel.id)
+        .order_by(
+            BookReferenceModel.number,
+            ChapterReferenceModel.number,
+            VerseReferenceModel.number,
+        )
     )
     result = await db.execute(stmt)
-    verses = result.scalars().all()
+    all_verses = result.all()
+
+    # Map vref -> verse info for preserving DB values after merge
+    vref_to_info = {
+        verse.verse_reference: {
+            "id": verse.id,
+            "text": verse.text or "",
+            "book": verse.book,
+            "chapter": verse.chapter,
+            "verse": verse.verse,
+        }
+        for verse in all_verses
+    }
+
+    if include_verses == IncludeVerses.all:
+        # Return exactly 41,899 rows — one per canonical verse, no merging
+        verses = []
+        for vref in _VREF_LIST:
+            info = vref_to_info.get(vref)
+            if info:
+                book = info["book"]
+                chapter = info["chapter"]
+                verse_num = info["verse"]
+                verse_id = info["id"]
+                text = "" if info["text"] == "<range>" else info["text"]
+            else:
+                book, cv = vref.split(" ", 1)
+                chapter_str, verse_str = cv.split(":")
+                chapter = int(chapter_str)
+                verse_num = int(verse_str)
+                verse_id = None
+                text = ""
+            verses.append(
+                VerseText(
+                    id=verse_id,
+                    text=text,
+                    verse_reference=vref,
+                    verse_references=[vref],
+                    first_verse_reference=vref,
+                    revision_id=revision_id,
+                    book=book,
+                    chapter=chapter,
+                    verse=verse_num,
+                )
+            )
+        return verses
+
+    # union / intersection: merge <range> markers, return only DB verses
+    combined_records = [
+        {"vrefs": [v.verse_reference], "text": v.text or ""} for v in all_verses
+    ]
+
+    merged_records = merge_verse_ranges(
+        combined_records,
+        verse_ref_field="vrefs",
+        combine_fields=["text"],
+        check_fields=["text"],
+        is_range_marker=_is_range_marker,
+        combine_function=_combine_text,
+    )
+
+    # Convert merged records back to VerseText objects
+    verses = []
+    for record in merged_records:
+        vrefs = record["vrefs"]
+        if len(vrefs) == 1:
+            verse_ref = vrefs[0]
+        else:
+            verse_ref = format_verse_range(vrefs[0], vrefs[-1])
+
+        first_vref = vrefs[0]
+        info = vref_to_info.get(first_vref, {})
+
+        verses.append(
+            VerseText(
+                id=info.get("id"),
+                text=record["text"],
+                verse_reference=verse_ref,
+                verse_references=vrefs,
+                first_verse_reference=first_vref,
+                revision_id=revision_id,
+                book=info.get("book"),
+                chapter=info.get("chapter"),
+                verse=info.get("verse"),
+            )
+        )
+
     return verses
 
 
@@ -395,30 +542,43 @@ async def get_vrefs(
     return verses
 
 
-@router.get("/words", response_model=List[str])
+@router.get("/words", response_model=Union[List[WordCount], List[str]])
 async def get_words(
     revision_id: int,
-    first_verse: str,
-    last_verse: str,
+    first_verse: Optional[str] = None,
+    last_verse: Optional[str] = None,
+    top_n: Optional[int] = Query(None, ge=1),
+    include_counts: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Gets a list of unique words from verses in a given range for a revision.
+    Gets unique words from a revision, optionally restricted to a verse range
+    and/or capped to the most frequent N.
 
     Input:
     - revision_id: int
     Description: The unique identifier for the revision.
-    - first_verse: str
-    Description: The first verse reference in the range. Must be in the format "GEN 1:1".
-    - last_verse: str
-    Description: The last verse reference in the range. Must be in the format "GEN 1:1".
+    - first_verse, last_verse: Optional[str]
+    Description: Verse range bounds (e.g. "GEN 1:1"). Either both or neither
+    must be supplied. When omitted, all verses in the revision are scanned.
+    - top_n: Optional[int]
+    Description: If set, return only the N most frequent words.
+    - include_counts: bool (default false)
+    Description: When true, return List[{word, count}] sorted by count desc
+    (ties broken alphabetically). When false (default), return List[str]
+    sorted alphabetically.
 
     Returns:
-    - List[str]
-    Description: A list of unique words found across all verses in the range.
-    Uses sophisticated Unicode-aware word splitting for international scripts.
+    - List[str] or List[WordCount]
+    Description: Words extracted with sophisticated Unicode-aware splitting.
     """
+
+    if (first_verse is None) != (last_verse is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="first_verse and last_verse must be supplied together.",
+        )
 
     if not await is_user_authorized_for_revision(current_user.id, revision_id, db):
         raise HTTPException(
@@ -426,6 +586,36 @@ async def get_words(
             detail="User not authorized to access this revision.",
         )
 
+    if first_verse is None:
+        verses_in_range = await _fetch_revision_verses(db, revision_id)
+    else:
+        verses_in_range = await _fetch_verses_in_range(
+            db, revision_id, first_verse, last_verse
+        )
+
+    counts = Counter()
+    for verse in verses_in_range:
+        if verse.text and not _is_range_marker(verse.text):
+            counts.update(_tokenize_words(verse.text))
+
+    ranked = sorted(counts.items(), key=lambda wc: (-wc[1], wc[0]))
+    if top_n is not None:
+        ranked = ranked[:top_n]
+
+    if include_counts:
+        return [WordCount(word=w, count=c) for w, c in ranked]
+    return sorted(w for w, _ in ranked)
+
+
+async def _fetch_revision_verses(db: AsyncSession, revision_id: int):
+    stmt = select(VerseModel).where(VerseModel.revision_id == revision_id)
+    result = await db.execute(stmt)
+    return result.scalars().all()
+
+
+async def _fetch_verses_in_range(
+    db: AsyncSession, revision_id: int, first_verse: str, last_verse: str
+):
     # First, get the ordering information for the first and last verses
     first_verse_query = (
         select(
@@ -557,27 +747,8 @@ async def get_words(
         )
     )
 
-    # Execute query to get only verses in the range
     result = await db.execute(stmt)
-    verses_in_range = result.scalars().all()
-
-    # Extract unique words using sophisticated Unicode-aware splitting
-    all_words = []
-    for verse in verses_in_range:
-        if verse.text:
-            words = extract_unique_words(verse.text)
-            all_words.extend(words)
-
-    # Deduplicate across all verses while preserving order
-    seen = set()
-    unique_words = []
-    for word in all_words:
-        if word not in seen:
-            seen.add(word)
-            unique_words.append(word)
-
-    # Return sorted list for consistent output
-    return sorted(unique_words)
+    return result.scalars().all()
 
 
 def format_verse_range(first_vref: str, last_vref: str) -> str:
@@ -612,6 +783,40 @@ def format_verse_range(first_vref: str, last_vref: str) -> str:
 @router.get("/texts", response_model=Dict[str, List[VerseText]])
 async def get_texts(
     revision_ids: List[int] = Query(..., min_items=2),
+    include_verses: IncludeVerses = Query(
+        IncludeVerses.union,
+        description=(
+            "Which verses to include in the response. "
+            "'all': all 41,899 canonical verses, with empty text for missing verses. "
+            "'union': verses where at least one revision has text (default). "
+            "'intersection': only verses where every revision has text."
+        ),
+    ),
+    limit: Optional[int] = Query(
+        None,
+        ge=1,
+        description=(
+            "Maximum number of verses to return per revision_id. "
+            "With include_verses='all', limit applies to the 41,899 canonical "
+            "verse slots (so some returned rows may have empty text)."
+        ),
+    ),
+    random: bool = Query(
+        False,
+        description=(
+            "If true, sample uniformly at random (after include_verses filtering) "
+            "instead of returning the first `limit` verses in canonical order. "
+            "Response is still ordered canonically."
+        ),
+    ),
+    seed: Optional[int] = Query(
+        None,
+        description=(
+            "RNG seed for deterministic sampling. Only meaningful when "
+            "random=true; ignored otherwise. If omitted with random=true, "
+            "sampling is non-deterministic."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -624,6 +829,17 @@ async def get_texts(
     Input:
     - revision_ids: List[int]
     Description: List of revision IDs to fetch (minimum 2).
+    - include_verses: IncludeVerses (all|union|intersection, default "union")
+    Description: Which verses to include in the response.
+    - limit: Optional[int]
+    Description: Maximum number of verses per revision_id. Sampling happens
+    after include_verses filtering and <range> merging.
+    - random: bool (default false)
+    Description: If true, sample uniformly at random; otherwise return the
+    first `limit` verses in canonical order.
+    - seed: Optional[int]
+    Description: RNG seed. Combined with random=true, two calls with the
+    same seed return the same sample. Ignored if random=false.
 
     Returns:
     Dict[str, List[VerseText]]: Dictionary keyed by revision_id (as string),
@@ -633,7 +849,9 @@ async def get_texts(
     Notes:
     - The returned dictionary will include an entry for every requested
       revision_id.
-    - If a revision contains no verses, its value will be an empty list.
+    - With include_verses='all', every revision gets all 41,899 canonical
+      verses (empty text for missing ones). With 'union' or 'intersection',
+      a revision with no matching verses will have an empty list.
     - If a verse exists in one revision but not another, the missing revision
       will have an empty string for that verse's text.
     """
@@ -688,23 +906,67 @@ async def get_texts(
 
     # Group by verse_reference: {vref -> {revision_id -> verse_row}}
     vref_to_revisions: Dict[str, Dict[int, Any]] = {}
-    # Track ordering of vrefs (first seen order from canonical query)
-    vref_order: List[str] = []
+    # Track ordering of vrefs from the query (canonical order)
+    queried_vref_order: List[str] = []
 
     for verse in all_verses:
         vref = verse.verse_reference
         if vref not in vref_to_revisions:
             vref_to_revisions[vref] = {}
-            vref_order.append(vref)
+            queried_vref_order.append(vref)
         vref_to_revisions[vref][verse.revision_id] = verse
+
+    # Determine verse ordering based on include_verses mode
+    if include_verses == IncludeVerses.all:
+        # Use the canonical vref list loaded at module startup
+        vref_order = _VREF_LIST
+    else:
+        vref_order = queried_vref_order
 
     # Create combined records with text field per revision
     # Each record: {"vrefs": ["GEN 1:1"], "text_123": "...", "text_456": "..."}
     text_fields = [f"text_{rev_id}" for rev_id in revision_ids]
+    rev_id_strs = [str(rev_id) for rev_id in revision_ids]
+    result_dict: Dict[str, List[VerseText]] = {key: [] for key in rev_id_strs}
+
+    if include_verses == IncludeVerses.all:
+        # Return exactly 41,899 rows per revision — no merging,
+        # <range> markers replaced with empty strings
+        vrefs_to_emit = _sample_items(_VREF_LIST, limit, random, seed)
+        for vref in vrefs_to_emit:
+            rev_verses = vref_to_revisions.get(vref, {})
+            book, cv = vref.split(" ", 1)
+            chapter_str, verse_str = cv.split(":")
+            chapter = int(chapter_str)
+            verse_num = int(verse_str)
+
+            for rev_id, rev_id_str in zip(revision_ids, rev_id_strs):
+                if rev_id in rev_verses:
+                    text = rev_verses[rev_id].text or ""
+                    text = "" if text == "<range>" else text
+                else:
+                    text = ""
+                result_dict[rev_id_str].append(
+                    VerseText(
+                        id=None,
+                        text=text,
+                        verse_reference=vref,
+                        verse_references=[vref],
+                        first_verse_reference=vref,
+                        revision_id=rev_id,
+                        book=book,
+                        chapter=chapter,
+                        verse=verse_num,
+                    )
+                )
+
+        return result_dict
+
+    # union / intersection: merge <range> markers, then filter
     combined_records: List[Dict] = []
 
     for vref in vref_order:
-        rev_verses = vref_to_revisions[vref]
+        rev_verses = vref_to_revisions.get(vref, {})
         record = {"vrefs": [vref]}
         for rev_id in revision_ids:
             field_name = f"text_{rev_id}"
@@ -721,21 +983,23 @@ async def get_texts(
         verse_ref_field="vrefs",
         combine_fields=text_fields,
         check_fields=text_fields,
-        is_range_marker=lambda x: x == "<range>",
-        # combine_function filters out empty strings and "<range>" markers:
-        # - empty strings represent "no verse text" for that revision
-        # - "<range>" is a structural marker, not actual text content
-        # Only actual text content is joined with spaces.
-        combine_function=lambda field, values: " ".join(
-            v for v in values if v and v != "<range>"
-        ),
+        is_range_marker=_is_range_marker,
+        combine_function=_combine_text,
     )
 
-    # Split back to per-revision lists (use string keys for JSON compatibility)
-    # Pre-compute string keys and field names to avoid repeated string operations
-    rev_id_strs = [str(rev_id) for rev_id in revision_ids]
-    rev_field_names = [f"text_{rev_id}" for rev_id in revision_ids]
-    result_dict: Dict[str, List[VerseText]] = {key: [] for key in rev_id_strs}
+    # Apply include_verses filtering
+    if include_verses == IncludeVerses.intersection:
+        # Keep only records where ALL revisions have non-empty text
+        merged_records = [
+            r for r in merged_records if all(r[f].strip() for f in text_fields)
+        ]
+    else:
+        # union: keep records where at least one revision has non-empty text
+        merged_records = [
+            r for r in merged_records if any(r[f].strip() for f in text_fields)
+        ]
+
+    merged_records = _sample_items(merged_records, limit, random, seed)
 
     for record in merged_records:
         vrefs = record["vrefs"]
@@ -754,13 +1018,15 @@ async def get_texts(
 
         # Create VerseText for each revision
         for rev_id, rev_id_str, field_name in zip(
-            revision_ids, rev_id_strs, rev_field_names
+            revision_ids, rev_id_strs, text_fields
         ):
             result_dict[rev_id_str].append(
                 VerseText(
                     id=None,
                     text=record[field_name],
                     verse_reference=verse_ref,
+                    verse_references=vrefs,
+                    first_verse_reference=first_vref,
                     revision_id=rev_id,
                     book=book,
                     chapter=chapter,

@@ -1,16 +1,25 @@
 # version_id conftest.py
-from datetime import date
+import os
 
-import bcrypt
-import pandas as pd
-import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+# TestClient spawns a new event loop per request; asyncpg connections can't
+# migrate across loops. Force NullPool so the app-level engine opens a fresh
+# connection each time during tests. Set unconditionally (not setdefault) so
+# the test process can never accidentally inherit a pooled engine — this must
+# run before `from app import app` regardless of pytest collection order.
+os.environ["AQUA_DB_POOLCLASS"] = "null"
 
-from app import app
-from database.models import (
+from datetime import date  # noqa: E402
+
+import bcrypt  # noqa: E402
+import pandas as pd  # noqa: E402
+import pytest  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import create_engine, select  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine  # noqa: E402
+from sqlalchemy.orm import sessionmaker  # noqa: E402
+
+from app import app  # noqa: E402
+from database.models import (  # noqa: E402
     Assessment,
     Base,
     BibleRevision,
@@ -127,6 +136,55 @@ def test_revision_id_2(test_db_session):
 
 
 @pytest.fixture(scope="module")
+def test_version_id(test_db_session, test_revision_id):
+    """Bible version ID of the primary test revision (loading_test version).
+
+    Tests that previously used `source_language="eng"` to identify the
+    source version pair use this in the version_id-keyed world. Both
+    test_revision_id and test_revision_id_2 belong to the same version,
+    so this also serves as target_version_id for tests that don't need a
+    distinct second version.
+    """
+    rev = (
+        test_db_session.query(BibleRevision)
+        .filter(BibleRevision.id == test_revision_id)
+        .first()
+    )
+    return rev.bible_version_id
+
+
+@pytest.fixture(scope="module")
+def test_version_id_2(test_db_session):
+    """A second Bible version ID, distinct from test_version_id.
+
+    Used by tests that need two different versions to verify isolation
+    (e.g. unique constraints on (source_version_id, target_version_id),
+    cross-version artifact separation). Created on first use and reused
+    across tests in the same module.
+    """
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    existing = (
+        test_db_session.query(BibleVersion)
+        .filter(BibleVersion.name == "loading_test_2")
+        .first()
+    )
+    if existing:
+        return existing.id
+    version = BibleVersion(
+        name="loading_test_2",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="BLTEST2",
+        owner_id=user1.id if user1 else None,
+        is_reference=False,
+    )
+    test_db_session.add(version)
+    test_db_session.commit()
+    test_db_session.refresh(version)
+    return version.id
+
+
+@pytest.fixture(scope="module")
 def test_assessment_id(test_db_session, test_revision_id, test_revision_id_2):
     """Create and return a test assessment ID for critique tests."""
     # Create a test assessment using the test revisions
@@ -140,6 +198,38 @@ def test_assessment_id(test_db_session, test_revision_id, test_revision_id_2):
     test_db_session.commit()
     test_db_session.refresh(assessment)
 
+    return assessment.id
+
+
+@pytest.fixture(scope="module")
+def test_eflomal_assessment_id(test_db_session, test_revision_id, test_revision_id_2):
+    """Create a word-alignment assessment for eflomal push tests."""
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="word-alignment",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+    return assessment.id
+
+
+@pytest.fixture(scope="module")
+def test_eflomal_assessment_unpushed_id(
+    test_db_session, test_revision_id, test_revision_id_2
+):
+    """Create a word-alignment assessment with no eflomal results pushed."""
+    assessment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="word-alignment",
+        status="running",
+    )
+    test_db_session.add(assessment)
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
     return assessment.id
 
 

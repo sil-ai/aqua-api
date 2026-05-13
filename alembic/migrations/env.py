@@ -1,8 +1,10 @@
 import asyncio
+import logging
 import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from sqlalchemy import pool
@@ -34,7 +36,9 @@ load_dotenv()
 DATABASE_URL = os.getenv("AQUA_DB")
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-print(DATABASE_URL)
+parsed = urlparse(DATABASE_URL)
+port_str = f":{parsed.port}" if parsed.port is not None else ""
+logging.info(f"Database: {parsed.scheme}://{parsed.hostname}{port_str}{parsed.path}")
 
 
 # this is the Alembic Config object, which provides

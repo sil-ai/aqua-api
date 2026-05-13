@@ -1,18 +1,27 @@
 # test_agent_routes.py
-from database.models import AgentCritiqueIssue, AgentWordAlignment
+import unicodedata
+
+from database.models import (
+    AgentCritiqueIssue,
+    AgentLexemeCard,
+    AgentLexemeCardExample,
+    AgentWordAlignment,
+)
 
 prefix = "v3"
 
 
-def test_add_word_alignment_success(client, regular_token1, db_session):
+def test_add_word_alignment_success(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test successfully adding a word alignment entry"""
 
     # Prepare request data
     alignment_data = {
         "source_word": "love",
         "target_word": "upendo",
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
         "is_human_verified": False,
     }
 
@@ -29,8 +38,8 @@ def test_add_word_alignment_success(client, regular_token1, db_session):
     # Check response fields
     assert response_data["source_word"] == "love"
     assert response_data["target_word"] == "upendo"
-    assert response_data["source_language"] == "eng"
-    assert response_data["target_language"] == "swh"
+    assert response_data["source_version_id"] == test_version_id
+    assert response_data["target_version_id"] == test_version_id_2
     assert response_data["is_human_verified"] is False
     assert response_data["id"] is not None
     assert response_data["created_at"] is not None
@@ -47,19 +56,21 @@ def test_add_word_alignment_success(client, regular_token1, db_session):
     assert alignment is not None
     assert alignment.source_word == "love"
     assert alignment.target_word == "upendo"
-    assert alignment.source_language == "eng"
-    assert alignment.target_language == "swh"
+    assert alignment.source_version_id == test_version_id
+    assert alignment.target_version_id == test_version_id_2
     assert alignment.is_human_verified is False
 
 
-def test_add_word_alignment_human_verified(client, regular_token1, db_session):
+def test_add_word_alignment_human_verified(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test adding a human-verified word alignment"""
 
     alignment_data = {
         "source_word": "peace",
         "target_word": "amani",
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
         "is_human_verified": True,
     }
 
@@ -83,14 +94,14 @@ def test_add_word_alignment_human_verified(client, regular_token1, db_session):
     assert alignment.is_human_verified is True
 
 
-def test_add_word_alignment_unauthorized(client):
+def test_add_word_alignment_unauthorized(client, test_version_id, test_version_id_2):
     """Test that unauthorized requests are rejected"""
 
     alignment_data = {
         "source_word": "love",
         "target_word": "amor",
-        "source_language": "eng",
-        "target_language": "spa",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
     }
 
     # Make request without auth token
@@ -102,14 +113,16 @@ def test_add_word_alignment_unauthorized(client):
     assert response.status_code == 401
 
 
-def test_add_word_alignment_missing_fields(client, regular_token1):
+def test_add_word_alignment_missing_fields(
+    client, regular_token1, test_version_id, test_version_id_2
+):
     """Test that requests with missing required fields are rejected"""
 
     # Missing target_word
     alignment_data = {
         "source_word": "love",
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
     }
 
     response = client.post(
@@ -121,7 +134,9 @@ def test_add_word_alignment_missing_fields(client, regular_token1):
     assert response.status_code == 422  # Unprocessable Entity
 
 
-def test_add_word_alignment_different_languages(client, regular_token1, db_session):
+def test_add_word_alignment_different_languages(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test adding word alignment with different language pair."""
     response = client.post(
         "/v3/agent/word-alignment",
@@ -129,8 +144,8 @@ def test_add_word_alignment_different_languages(client, regular_token1, db_sessi
         json={
             "source_word": "kitabu",
             "target_word": "book",
-            "source_language": "swh",
-            "target_language": "eng",
+            "source_version_id": test_version_id_2,
+            "target_version_id": test_version_id,
             "is_human_verified": True,
         },
     )
@@ -139,12 +154,14 @@ def test_add_word_alignment_different_languages(client, regular_token1, db_sessi
     data = response.json()
     assert data["source_word"] == "kitabu"
     assert data["target_word"] == "book"
-    assert data["source_language"] == "swh"
-    assert data["target_language"] == "eng"
+    assert data["source_version_id"] == test_version_id_2
+    assert data["target_version_id"] == test_version_id
     assert data["is_human_verified"] is True
 
 
-def test_get_word_alignments_by_source_words(client, regular_token1, db_session):
+def test_get_word_alignments_by_source_words(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test getting word alignments filtered by source words."""
     # Add some test data
     client.post(
@@ -153,8 +170,8 @@ def test_get_word_alignments_by_source_words(client, regular_token1, db_session)
         json={
             "source_word": "book",
             "target_word": "kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     client.post(
@@ -163,14 +180,14 @@ def test_get_word_alignments_by_source_words(client, regular_token1, db_session)
         json={
             "source_word": "house",
             "target_word": "nyumba",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
     # Get alignments by source words
     response = client.get(
-        "/v3/agent/word-alignment?source_language=eng&target_language=swh&source_words=book,house",
+        f"/v3/agent/word-alignment?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_words=book,house",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -182,7 +199,7 @@ def test_get_word_alignments_by_source_words(client, regular_token1, db_session)
 
 
 def test_get_word_alignments_by_source_words_filtered(
-    client, regular_token1, db_session
+    client, regular_token1, db_session, test_version_id, test_version_id_2
 ):
     """Test getting word alignments filtered by specific source words."""
     # Add test data
@@ -192,8 +209,8 @@ def test_get_word_alignments_by_source_words_filtered(
         json={
             "source_word": "book",
             "target_word": "kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     client.post(
@@ -202,8 +219,8 @@ def test_get_word_alignments_by_source_words_filtered(
         json={
             "source_word": "house",
             "target_word": "nyumba",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     client.post(
@@ -212,14 +229,14 @@ def test_get_word_alignments_by_source_words_filtered(
         json={
             "source_word": "car",
             "target_word": "gari",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
     # Filter by specific source words
     response = client.get(
-        "/v3/agent/word-alignment?source_language=eng&target_language=swh&source_words=book,house",
+        f"/v3/agent/word-alignment?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_words=book,house",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -231,7 +248,9 @@ def test_get_word_alignments_by_source_words_filtered(
     assert not any(a["source_word"] == "car" for a in data)
 
 
-def test_get_word_alignments_by_target_words(client, regular_token1, db_session):
+def test_get_word_alignments_by_target_words(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test getting word alignments by searching target words."""
     # Add test data
     client.post(
@@ -240,8 +259,8 @@ def test_get_word_alignments_by_target_words(client, regular_token1, db_session)
         json={
             "source_word": "book",
             "target_word": "kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     client.post(
@@ -250,14 +269,14 @@ def test_get_word_alignments_by_target_words(client, regular_token1, db_session)
         json={
             "source_word": "house",
             "target_word": "nyumba",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
     # Filter by target words
     response = client.get(
-        "/v3/agent/word-alignment?source_language=eng&target_language=swh&target_words=kitabu",
+        f"/v3/agent/word-alignment?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_words=kitabu",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -267,7 +286,9 @@ def test_get_word_alignments_by_target_words(client, regular_token1, db_session)
     assert any(a["target_word"] == "kitabu" for a in data)
 
 
-def test_get_word_alignments_by_language_pair(client, regular_token1, db_session):
+def test_get_word_alignments_by_language_pair(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test getting word alignments filtered by language pair with source words."""
     # Add test data with different language pairs
     client.post(
@@ -276,8 +297,8 @@ def test_get_word_alignments_by_language_pair(client, regular_token1, db_session
         json={
             "source_word": "book",
             "target_word": "kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     client.post(
@@ -286,14 +307,14 @@ def test_get_word_alignments_by_language_pair(client, regular_token1, db_session
         json={
             "source_word": "book",
             "target_word": "ɓuuɗu",
-            "source_language": "eng",
-            "target_language": "ngq",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
-    # Filter by language pair and source word
+    # Filter by version pair and source word
     response = client.get(
-        "/v3/agent/word-alignment?source_language=eng&target_language=ngq&source_words=book",
+        f"/v3/agent/word-alignment?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_words=book",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -301,13 +322,13 @@ def test_get_word_alignments_by_language_pair(client, regular_token1, db_session
     data = response.json()
     assert len(data) >= 1
     for alignment in data:
-        assert alignment["source_language"] == "eng"
-        assert alignment["target_language"] == "ngq"
+        assert alignment["source_version_id"] == test_version_id
+        assert alignment["target_version_id"] == test_version_id_2
         assert alignment["source_word"] == "book"
 
 
 def test_get_word_alignments_both_source_and_target_words(
-    client, regular_token1, db_session
+    client, regular_token1, db_session, test_version_id, test_version_id_2
 ):
     """Test getting word alignments with both source and target word filters."""
     # Add test data
@@ -317,8 +338,8 @@ def test_get_word_alignments_both_source_and_target_words(
         json={
             "source_word": "book",
             "target_word": "kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     client.post(
@@ -327,8 +348,8 @@ def test_get_word_alignments_both_source_and_target_words(
         json={
             "source_word": "book",
             "target_word": "ɓuuɗu",
-            "source_language": "eng",
-            "target_language": "ngq",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     client.post(
@@ -337,14 +358,14 @@ def test_get_word_alignments_both_source_and_target_words(
         json={
             "source_word": "house",
             "target_word": "nyumba",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
     # Filter by both source and target words
     response = client.get(
-        "/v3/agent/word-alignment?source_language=eng&target_language=swh&source_words=book&target_words=nyumba",
+        f"/v3/agent/word-alignment?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_words=book&target_words=nyumba",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -356,10 +377,12 @@ def test_get_word_alignments_both_source_and_target_words(
     assert any(a["target_word"] == "nyumba" for a in data)
 
 
-def test_get_word_alignments_empty_results(client, regular_token1, db_session):
+def test_get_word_alignments_empty_results(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test getting word alignments with no matching results."""
     response = client.get(
-        "/v3/agent/word-alignment?source_language=eng&target_language=swh&source_words=nonexistent",
+        f"/v3/agent/word-alignment?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_words=nonexistent",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -369,10 +392,12 @@ def test_get_word_alignments_empty_results(client, regular_token1, db_session):
     assert len(data) == 0
 
 
-def test_get_word_alignments_missing_words(client, regular_token1, db_session):
+def test_get_word_alignments_missing_words(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test that getting word alignments requires at least one word filter."""
     response = client.get(
-        "/v3/agent/word-alignment?source_language=eng&target_language=swh",
+        f"/v3/agent/word-alignment?source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -391,22 +416,24 @@ def test_get_word_alignments_missing_languages(client, regular_token1, db_sessio
     assert response.status_code == 422  # Validation error for missing required params
 
 
-def test_get_word_alignments_unauthorized(client):
+def test_get_word_alignments_unauthorized(client, test_version_id, test_version_id_2):
     """Test that getting word alignments requires authentication."""
     response = client.get(
-        "/v3/agent/word-alignment?source_language=eng&target_language=swh&source_words=book"
+        f"/v3/agent/word-alignment?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_words=book"
     )
 
     assert response.status_code == 401
 
 
-def test_add_word_alignment_with_score(client, regular_token1, db_session):
+def test_add_word_alignment_with_score(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test adding a word alignment with a score field."""
     alignment_data = {
         "source_word": "faith",
         "target_word": "imani",
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
         "score": 0.87,
         "is_human_verified": False,
     }
@@ -433,13 +460,15 @@ def test_add_word_alignment_with_score(client, regular_token1, db_session):
     assert alignment.score == 0.87
 
 
-def test_add_word_alignment_default_score(client, regular_token1, db_session):
+def test_add_word_alignment_default_score(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test that score defaults to 0.0 when not provided."""
     alignment_data = {
         "source_word": "grace",
         "target_word": "neema",
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
     }
 
     response = client.post(
@@ -453,11 +482,13 @@ def test_add_word_alignment_default_score(client, regular_token1, db_session):
     assert data["score"] == 0.0
 
 
-def test_bulk_word_alignment_insert(client, regular_token1, db_session):
+def test_bulk_word_alignment_insert(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test bulk inserting new word alignments."""
     bulk_data = {
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
         "alignments": [
             {"source_word": "water", "target_word": "maji", "score": 0.95},
             {"source_word": "fire", "target_word": "moto", "score": 0.92},
@@ -482,12 +513,14 @@ def test_bulk_word_alignment_insert(client, regular_token1, db_session):
     assert scores["earth"] == 0.88
 
 
-def test_bulk_word_alignment_upsert(client, regular_token1, db_session):
+def test_bulk_word_alignment_upsert(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test that bulk endpoint updates existing alignments."""
     # First, insert some alignments
     initial_data = {
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
         "alignments": [
             {"source_word": "sky", "target_word": "anga", "score": 0.70},
             {"source_word": "cloud", "target_word": "wingu", "score": 0.75},
@@ -505,8 +538,8 @@ def test_bulk_word_alignment_upsert(client, regular_token1, db_session):
 
     # Now upsert with updated scores and a new alignment
     update_data = {
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
         "alignments": [
             {"source_word": "sky", "target_word": "anga", "score": 0.95},  # Update
             {"source_word": "cloud", "target_word": "wingu", "score": 0.90},  # Update
@@ -535,11 +568,13 @@ def test_bulk_word_alignment_upsert(client, regular_token1, db_session):
     assert results["cloud"]["id"] == initial_ids["cloud"]
 
 
-def test_bulk_word_alignment_empty(client, regular_token1):
+def test_bulk_word_alignment_empty(
+    client, regular_token1, test_version_id, test_version_id_2
+):
     """Test bulk endpoint with empty alignments list."""
     bulk_data = {
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
         "alignments": [],
     }
 
@@ -553,13 +588,15 @@ def test_bulk_word_alignment_empty(client, regular_token1):
     assert response.json() == []
 
 
-def test_get_all_word_alignments(client, regular_token1, db_session):
+def test_get_all_word_alignments(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test getting all word alignments for a language pair."""
     # Insert some alignments with different scores using swh->eng direction
     # to differentiate from other tests that use eng->swh
     bulk_data = {
-        "source_language": "swh",
-        "target_language": "eng",
+        "source_version_id": test_version_id_2,
+        "target_version_id": test_version_id,
         "alignments": [
             {"source_word": "habari", "target_word": "hello", "score": 0.99},
             {"source_word": "kwaheri", "target_word": "goodbye", "score": 0.95},
@@ -576,7 +613,7 @@ def test_get_all_word_alignments(client, regular_token1, db_session):
 
     # Get all alignments
     response = client.get(
-        f"{prefix}/agent/word-alignment/all?source_language=swh&target_language=eng",
+        f"{prefix}/agent/word-alignment/all?source_version_id={test_version_id_2}&target_version_id={test_version_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -589,13 +626,15 @@ def test_get_all_word_alignments(client, regular_token1, db_session):
     assert scores == sorted(scores, reverse=True)
 
 
-def test_get_all_word_alignments_with_pagination(client, regular_token1, db_session):
+def test_get_all_word_alignments_with_pagination(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test getting word alignments with pagination."""
     # First, clear any existing eng->swh alignments that might interfere
     # by using unique source words
     bulk_data = {
-        "source_language": "eng",
-        "target_language": "swh",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
         "alignments": [
             {"source_word": "pagination_one", "target_word": "moja_pag", "score": 0.91},
             {
@@ -626,7 +665,7 @@ def test_get_all_word_alignments_with_pagination(client, regular_token1, db_sess
 
     # Get page 1 with page_size=2 - filter by looking at results
     response = client.get(
-        f"{prefix}/agent/word-alignment/all?source_language=eng&target_language=swh&page=1&page_size=2",
+        f"{prefix}/agent/word-alignment/all?source_version_id={test_version_id}&target_version_id={test_version_id_2}&page=1&page_size=2",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -638,7 +677,7 @@ def test_get_all_word_alignments_with_pagination(client, regular_token1, db_sess
 
     # Get page 2
     response = client.get(
-        f"{prefix}/agent/word-alignment/all?source_language=eng&target_language=swh&page=2&page_size=2",
+        f"{prefix}/agent/word-alignment/all?source_version_id={test_version_id}&target_version_id={test_version_id_2}&page=2&page_size=2",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -649,10 +688,12 @@ def test_get_all_word_alignments_with_pagination(client, regular_token1, db_sess
     assert data[0]["score"] >= data[1]["score"]
 
 
-def test_get_all_word_alignments_invalid_page(client, regular_token1):
+def test_get_all_word_alignments_invalid_page(
+    client, regular_token1, test_version_id, test_version_id_2
+):
     """Test that invalid page parameter returns error."""
     response = client.get(
-        f"{prefix}/agent/word-alignment/all?source_language=eng&target_language=swh&page=0&page_size=10",
+        f"{prefix}/agent/word-alignment/all?source_version_id={test_version_id}&target_version_id={test_version_id_2}&page=0&page_size=10",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -660,10 +701,12 @@ def test_get_all_word_alignments_invalid_page(client, regular_token1):
     assert "Page must be >= 1" in response.json()["detail"]
 
 
-def test_get_all_word_alignments_unauthorized(client):
+def test_get_all_word_alignments_unauthorized(
+    client, test_version_id, test_version_id_2
+):
     """Test that getting all word alignments requires authentication."""
     response = client.get(
-        f"{prefix}/agent/word-alignment/all?source_language=eng&target_language=swh"
+        f"{prefix}/agent/word-alignment/all?source_version_id={test_version_id}&target_version_id={test_version_id_2}"
     )
 
     assert response.status_code == 401
@@ -672,7 +715,14 @@ def test_get_all_word_alignments_unauthorized(client):
 # Lexeme Card Tests
 
 
-def test_add_lexeme_card_success(client, regular_token1, db_session, test_revision_id):
+def test_add_lexeme_card_success(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
     """Test successfully adding a lexeme card with all fields."""
     response = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
@@ -680,8 +730,8 @@ def test_add_lexeme_card_success(client, regular_token1, db_session, test_revisi
         json={
             "source_lemma": "love",
             "target_lemma": "upendo",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "noun",
             "surface_forms": ["upendo", "mapendo"],  # Target language (Swahili) forms
             "senses": [
@@ -700,8 +750,8 @@ def test_add_lexeme_card_success(client, regular_token1, db_session, test_revisi
     data = response.json()
     assert data["source_lemma"] == "love"
     assert data["target_lemma"] == "upendo"
-    assert data["source_language"] == "eng"
-    assert data["target_language"] == "swh"
+    assert data["source_version_id"] == test_version_id
+    assert data["target_version_id"] == test_version_id_2
     assert data["pos"] == "noun"
     assert len(data["surface_forms"]) == 2
     assert len(data["senses"]) == 2
@@ -713,7 +763,12 @@ def test_add_lexeme_card_success(client, regular_token1, db_session, test_revisi
 
 
 def test_add_lexeme_card_minimal_fields(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test adding a lexeme card with only required fields."""
     response = client.post(
@@ -721,16 +776,16 @@ def test_add_lexeme_card_minimal_fields(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
     assert response.status_code == 200
     data = response.json()
     assert data["target_lemma"] == "kitabu"
-    assert data["source_language"] == "eng"
-    assert data["target_language"] == "swh"
+    assert data["source_version_id"] == test_version_id
+    assert data["target_version_id"] == test_version_id_2
     assert data["source_lemma"] is None
     assert data["pos"] is None
     assert data["surface_forms"] is None
@@ -740,7 +795,12 @@ def test_add_lexeme_card_minimal_fields(
 
 
 def test_add_lexeme_card_with_pos_and_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test adding a lexeme card with part of speech and surface forms."""
     response = client.post(
@@ -749,8 +809,8 @@ def test_add_lexeme_card_with_pos_and_forms(
         json={
             "source_lemma": "run",
             "target_lemma": "kimbia",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "surface_forms": [
                 "kimbia",
@@ -772,7 +832,12 @@ def test_add_lexeme_card_with_pos_and_forms(
 
 
 def test_add_lexeme_card_with_source_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test adding a lexeme card with source surface forms."""
     response = client.post(
@@ -781,8 +846,8 @@ def test_add_lexeme_card_with_source_surface_forms(
         json={
             "source_lemma": "love",
             "target_lemma": "kupenda",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "surface_forms": [
                 "kupenda",
@@ -815,7 +880,12 @@ def test_add_lexeme_card_with_source_surface_forms(
 
 
 def test_add_lexeme_card_with_senses(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test adding a lexeme card with multiple senses."""
     response = client.post(
@@ -823,8 +893,8 @@ def test_add_lexeme_card_with_senses(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "mti",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "senses": [
                 {
                     "definition": "a woody perennial plant",
@@ -843,14 +913,16 @@ def test_add_lexeme_card_with_senses(
     assert data["senses"][1]["definition"] == "a wooden structure"
 
 
-def test_add_lexeme_card_unauthorized(client, test_revision_id):
+def test_add_lexeme_card_unauthorized(
+    client, test_revision_id, test_version_id, test_version_id_2
+):
     """Test that adding a lexeme card requires authentication."""
     response = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         json={
             "target_lemma": "test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
@@ -858,7 +930,7 @@ def test_add_lexeme_card_unauthorized(client, test_revision_id):
 
 
 def test_add_lexeme_card_missing_required_fields(
-    client, regular_token1, db_session, test_revision_id
+    client, regular_token1, db_session, test_revision_id, test_version_id
 ):
     """Test that adding a lexeme card without required fields fails."""
     response = client.post(
@@ -866,33 +938,299 @@ def test_add_lexeme_card_missing_required_fields(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "source_lemma": "test",
-            "source_language": "eng",
-            # Missing target_lemma and target_language
+            "source_version_id": test_version_id,
+            # Missing target_lemma and target_version_id
         },
     )
 
     assert response.status_code == 422  # Validation error
 
 
-def test_add_lexeme_card_invalid_language(
+def test_add_lexeme_card_revision_not_in_version_pair(
     client, regular_token1, db_session, test_revision_id
 ):
-    """Test that adding a lexeme card with invalid language code fails."""
+    """Lexeme card whose revision_id isn't in (source_version_id, target_version_id) returns 422."""
     response = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "test",
-            "source_language": "invalid",
-            "target_language": "codes",
+            "source_version_id": 999999,
+            "target_version_id": 999998,
         },
     )
 
-    assert response.status_code == 500  # Database foreign key constraint error
+    # The revision-pair invariant check rejects the request before it reaches
+    # the FK constraint — explicit 422 with a clear error beats a 500 from PG.
+    assert response.status_code == 422
+    assert "version pair" in response.json()["detail"].lower()
+
+
+def test_add_lexeme_card_without_revision_id_succeeds(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """A card with no examples may omit revision_id — it is purely version-keyed."""
+    response = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "water",
+            "target_lemma": "no_rev_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "senses": [{"definition": "the clear liquid", "examples": []}],
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["target_lemma"] == "no_rev_lemma"
+    assert data["examples"] == []
+
+
+def test_add_lexeme_card_examples_without_revision_id_fails(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """Sending examples without a revision_id is rejected — the examples table is revision-keyed."""
+    response = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "needs_rev_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "examples": [{"source": "water", "target": "maji"}],
+        },
+    )
+
+    assert response.status_code == 422
+    assert "revision_id" in response.json()["detail"].lower()
+
+
+def test_add_lexeme_card_examples_with_unknown_revision_id_fails(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """A revision_id pointing to a nonexistent revision still returns 404 when supplied."""
+    response = client.post(
+        "/v3/agent/lexeme-card?revision_id=999999",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "bogus_rev_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "examples": [{"source": "water", "target": "maji"}],
+        },
+    )
+
+    assert response.status_code == 404
+    assert "999999" in response.json()["detail"]
+
+
+def test_add_lexeme_card_unknown_version_id_without_revision_id_returns_404(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+):
+    """Without revision_id, an unknown version_id must surface as 404 — not a 500 from FK violation."""
+    response = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "bogus_version_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": 999998,
+        },
+    )
+
+    assert response.status_code == 404
+    assert "999998" in response.json()["detail"]
+
+
+def test_add_lexeme_card_empty_examples_without_revision_id_succeeds(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """An explicit empty `examples` list is treated as 'no examples' — no revision_id needed."""
+    response = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "empty_examples_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "examples": [],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["examples"] == []
+
+
+def test_add_lexeme_card_sense_examples_without_revision_id_succeeds(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """Sense-level examples live in the senses JSONB column and aren't revision-scoped."""
+    response = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "sense_examples_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "senses": [
+                {
+                    "definition": "to drink",
+                    "examples": ["I drink water", "She drinks tea"],
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["senses"][0]["examples"] == ["I drink water", "She drinks tea"]
+    assert data["examples"] == []
+
+
+def test_add_lexeme_card_upsert_replace_no_revision_preserves_prior_examples(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """replace_existing=true upsert without revision_id must NOT touch prior-revision examples."""
+    target_lemma = "preserve_replace_lemma"
+
+    # Seed: create the card with one example bound to test_revision_id.
+    seed = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "examples": [{"source": "I drink", "target": "Ninakunywa"}],
+        },
+    )
+    assert seed.status_code == 200
+    assert len(seed.json()["examples"]) == 1
+
+    # Re-POST the same card without a revision_id and with replace_existing=true.
+    # Without a revision context, the examples table must be left alone, and
+    # the response must surface examples=[] (no scope to fetch from).
+    upsert = client.post(
+        "/v3/agent/lexeme-card?replace_existing=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "pos": "verb",
+        },
+    )
+    assert upsert.status_code == 200
+    assert upsert.json()["examples"] == []
+    assert upsert.json()["pos"] == "verb"
+
+    # Re-fetch with the original revision_id: the seeded example is still there.
+    refetch = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert refetch.status_code == 200
+    assert len(refetch.json()["examples"]) == 1
+    assert refetch.json()["examples"][0]["target"] == "Ninakunywa"
+
+
+def test_add_lexeme_card_upsert_append_no_revision_preserves_prior_examples(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Append-mode upsert without revision_id must NOT drop prior-revision examples."""
+    target_lemma = "preserve_append_lemma"
+
+    seed = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "surface_forms": ["original_form"],
+            "examples": [{"source": "I drink", "target": "Ninakunywa"}],
+        },
+    )
+    assert seed.status_code == 200
+    assert len(seed.json()["examples"]) == 1
+
+    # Append-mode upsert (replace_existing default false) without revision_id.
+    upsert = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "surface_forms": ["appended_form"],
+        },
+    )
+    assert upsert.status_code == 200
+    assert upsert.json()["examples"] == []
+    assert "appended_form" in upsert.json()["surface_forms"]
+    assert "original_form" in upsert.json()["surface_forms"]
+
+    refetch = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": target_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert refetch.status_code == 200
+    assert len(refetch.json()["examples"]) == 1
+    assert refetch.json()["examples"][0]["target"] == "Ninakunywa"
 
 
 def test_add_lexeme_card_different_languages(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test adding lexeme cards with different language pairs."""
     response = client.post(
@@ -901,8 +1239,8 @@ def test_add_lexeme_card_different_languages(
         json={
             "source_lemma": "water",
             "target_lemma": "njam",
-            "source_language": "eng",
-            "target_language": "ngq",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "noun",
             "confidence": 0.88,
         },
@@ -912,13 +1250,18 @@ def test_add_lexeme_card_different_languages(
     data = response.json()
     assert data["source_lemma"] == "water"
     assert data["target_lemma"] == "njam"
-    assert data["source_language"] == "eng"
-    assert data["target_language"] == "ngq"
+    assert data["source_version_id"] == test_version_id
+    assert data["target_version_id"] == test_version_id_2
     assert data["confidence"] == 0.88
 
 
 def test_get_lexeme_cards_by_language_pair(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test getting lexeme cards filtered by language pair."""
     # Add test data
@@ -928,8 +1271,8 @@ def test_get_lexeme_cards_by_language_pair(
         json={
             "source_lemma": "book",
             "target_lemma": "kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.95,
         },
     )
@@ -939,15 +1282,15 @@ def test_get_lexeme_cards_by_language_pair(
         json={
             "source_lemma": "house",
             "target_lemma": "nyumba",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.88,
         },
     )
 
     # Get lexeme cards by language pair
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -962,7 +1305,12 @@ def test_get_lexeme_cards_by_language_pair(
 
 
 def test_get_lexeme_cards_ordered_by_confidence(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that lexeme cards are returned ordered by confidence descending."""
     # Add test data with different confidence scores
@@ -971,8 +1319,8 @@ def test_get_lexeme_cards_ordered_by_confidence(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "low_conf",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.60,
         },
     )
@@ -981,8 +1329,8 @@ def test_get_lexeme_cards_ordered_by_confidence(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "high_conf",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.95,
         },
     )
@@ -991,15 +1339,15 @@ def test_get_lexeme_cards_ordered_by_confidence(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "med_conf",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.75,
         },
     )
 
     # Get all cards
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1021,7 +1369,12 @@ def test_get_lexeme_cards_ordered_by_confidence(
 
 
 def test_get_lexeme_cards_by_source_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test getting lexeme cards filtered by source lemma."""
     # Add test data
@@ -1031,8 +1384,8 @@ def test_get_lexeme_cards_by_source_lemma(
         json={
             "source_lemma": "run",
             "target_lemma": "kimbia",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
         },
     )
@@ -1042,15 +1395,15 @@ def test_get_lexeme_cards_by_source_lemma(
         json={
             "source_lemma": "walk",
             "target_lemma": "tembea",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
         },
     )
 
     # Filter by source lemma
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=run",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=run",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1061,7 +1414,12 @@ def test_get_lexeme_cards_by_source_lemma(
 
 
 def test_get_lexeme_cards_by_target_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test getting lexeme cards filtered by target lemma."""
     # Add test data
@@ -1071,14 +1429,14 @@ def test_get_lexeme_cards_by_target_lemma(
         json={
             "source_lemma": "love",
             "target_lemma": "upendo",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
     # Filter by target lemma
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upendo",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=upendo",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1088,7 +1446,152 @@ def test_get_lexeme_cards_by_target_lemma(
     assert all(card["target_lemma"] == "upendo" for card in data)
 
 
-def test_get_lexeme_cards_by_pos(client, regular_token1, db_session, test_revision_id):
+def test_get_lexeme_cards_by_target_words(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Test filtering lexeme cards by comma-separated target_words."""
+    # Add test data with unique lemmas for this test
+    for lemma in ["tw_maji", "tw_moto", "tw_ardhi"]:
+        client.post(
+            f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+            json={
+                "source_lemma": f"src_{lemma}",
+                "target_lemma": lemma,
+                "source_version_id": test_version_id,
+                "target_version_id": test_version_id_2,
+            },
+        )
+
+    # Filter by two of three target words
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_words=tw_maji,tw_moto",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    lemmas = {card["target_lemma"] for card in data}
+    assert "tw_maji" in lemmas
+    assert "tw_moto" in lemmas
+    assert "tw_ardhi" not in lemmas
+
+
+def test_get_lexeme_cards_target_words_surface_forms(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Test that target_words also matches surface_forms."""
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "run_tw_sf",
+            "target_lemma": "kimbia_tw_sf",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "surface_forms": ["anakimbia_tw_sf", "walikimbia_tw_sf"],
+        },
+    )
+
+    # Search by a surface form, not the lemma
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_words=anakimbia_tw_sf",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) >= 1
+    assert any(card["target_lemma"] == "kimbia_tw_sf" for card in data)
+
+
+def test_get_lexeme_cards_target_words_case_insensitive(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Test that target_words matching is case-insensitive."""
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "god_tw_ci",
+            "target_lemma": "tw_mungu",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_words=TW_MUNGU",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert any(card["target_lemma"] == "tw_mungu" for card in data)
+
+
+def test_get_lexeme_cards_target_words_conflicts_with_target_word(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
+    """Test that using both target_word and target_words returns 400."""
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=foo&target_words=bar",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "Cannot use both" in response.json()["detail"]
+
+
+def test_get_lexeme_cards_target_words_all_blank_returns_400(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
+    """Test that target_words with only blanks/commas returns 400."""
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_words=%20,%20,",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "no valid words" in response.json()["detail"]
+
+
+def test_get_lexeme_cards_target_words_empty_string_returns_400(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
+    """Test that target_words with an explicit empty value returns 400."""
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_words=",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 400
+    assert "no valid words" in response.json()["detail"]
+
+
+def test_get_lexeme_cards_by_pos(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
     """Test getting lexeme cards filtered by part of speech."""
     # Add test data
     client.post(
@@ -1096,8 +1599,8 @@ def test_get_lexeme_cards_by_pos(client, regular_token1, db_session, test_revisi
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "verb_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
         },
     )
@@ -1106,15 +1609,15 @@ def test_get_lexeme_cards_by_pos(client, regular_token1, db_session, test_revisi
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "noun_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "noun",
         },
     )
 
     # Filter by POS
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&pos=verb",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&pos=verb",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1125,7 +1628,12 @@ def test_get_lexeme_cards_by_pos(client, regular_token1, db_session, test_revisi
 
 
 def test_get_lexeme_cards_combined_filters(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test getting lexeme cards with multiple filters combined."""
     # Add test data
@@ -1135,8 +1643,8 @@ def test_get_lexeme_cards_combined_filters(
         json={
             "source_lemma": "eat",
             "target_lemma": "kula",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "confidence": 0.92,
         },
@@ -1147,8 +1655,8 @@ def test_get_lexeme_cards_combined_filters(
         json={
             "source_lemma": "eat",
             "target_lemma": "chakula",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "noun",
             "confidence": 0.85,
         },
@@ -1156,7 +1664,7 @@ def test_get_lexeme_cards_combined_filters(
 
     # Filter by source lemma and POS
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=eat&pos=verb",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=eat&pos=verb",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1168,10 +1676,12 @@ def test_get_lexeme_cards_combined_filters(
         assert card["pos"] == "verb"
 
 
-def test_get_lexeme_cards_empty_results(client, regular_token1, db_session):
+def test_get_lexeme_cards_empty_results(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test getting lexeme cards with no matching results."""
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=nonexistent",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=nonexistent",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1194,17 +1704,22 @@ def test_get_lexeme_cards_missing_languages(client, regular_token1, db_session):
     assert response.status_code == 422  # Validation error for missing required params
 
 
-def test_get_lexeme_cards_unauthorized(client):
+def test_get_lexeme_cards_unauthorized(client, test_version_id, test_version_id_2):
     """Test that getting lexeme cards requires authentication."""
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh"
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}"
     )
 
     assert response.status_code == 401
 
 
 def test_get_lexeme_cards_surface_forms_filtering(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that target_word matches both surface_forms and target_lemma."""
     # Add card 1: has "cheza" in surface_forms
@@ -1214,8 +1729,8 @@ def test_get_lexeme_cards_surface_forms_filtering(
         json={
             "source_lemma": "play",
             "target_lemma": "kucheza",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["cheza", "anacheza"],
             "confidence": 0.9,
         },
@@ -1230,8 +1745,8 @@ def test_get_lexeme_cards_surface_forms_filtering(
         json={
             "source_lemma": "dance",
             "target_lemma": "cheza",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["dansa", "anadansa"],
             "confidence": 0.8,
         },
@@ -1246,8 +1761,8 @@ def test_get_lexeme_cards_surface_forms_filtering(
         json={
             "source_lemma": "game",
             "target_lemma": "mchezo",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["mchezo"],
             "examples": [{"source": "Let's play", "target": "Tunacheza sana"}],
             "confidence": 0.85,
@@ -1259,7 +1774,7 @@ def test_get_lexeme_cards_surface_forms_filtering(
     # target_word=cheza should match card1 (surface_forms) and card2 (target_lemma)
     # but NOT card3 (only in example text)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=cheza",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=cheza",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
@@ -1271,7 +1786,12 @@ def test_get_lexeme_cards_surface_forms_filtering(
 
 
 def test_check_word_matches_target_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test checking if a word matches a target lemma."""
     # Add test data
@@ -1280,14 +1800,14 @@ def test_check_word_matches_target_lemma(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
     # Check if word exists
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=kitabu&source_language=eng&target_language=swh",
+        f"/v3/agent/lexeme-card/check-word?word=kitabu&source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1298,7 +1818,12 @@ def test_check_word_matches_target_lemma(
 
 
 def test_check_word_matches_surface_form(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test checking if a word matches a surface form."""
     # Add test data with surface forms (use unique target_lemma to avoid conflicts)
@@ -1307,8 +1832,8 @@ def test_check_word_matches_surface_form(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "penda_surface_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": [
                 "penda_surface_test",
                 "anapenda_surface_test",
@@ -1320,7 +1845,7 @@ def test_check_word_matches_surface_form(
 
     # Check if surface form exists
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=anapenda_surface_test&source_language=eng&target_language=swh",
+        f"/v3/agent/lexeme-card/check-word?word=anapenda_surface_test&source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1331,7 +1856,12 @@ def test_check_word_matches_surface_form(
 
 
 def test_check_word_case_insensitive(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that word checking is case-insensitive."""
     # Add test data
@@ -1340,15 +1870,15 @@ def test_check_word_case_insensitive(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "Kitabu",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["Kitabu", "Vitabu"],  # Target language (Swahili) forms
         },
     )
 
     # Check with different case
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=kitabu&source_language=eng&target_language=swh",
+        f"/v3/agent/lexeme-card/check-word?word=kitabu&source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1359,7 +1889,7 @@ def test_check_word_case_insensitive(
 
     # Check surface form with different case
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=VITABU&source_language=eng&target_language=swh",
+        f"/v3/agent/lexeme-card/check-word?word=VITABU&source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1369,10 +1899,12 @@ def test_check_word_case_insensitive(
     assert data["count"] >= 1
 
 
-def test_check_word_not_found(client, regular_token1, db_session):
+def test_check_word_not_found(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test checking a word that doesn't exist."""
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=nonexistentword&source_language=eng&target_language=swh",
+        f"/v3/agent/lexeme-card/check-word?word=nonexistentword&source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1383,7 +1915,12 @@ def test_check_word_not_found(client, regular_token1, db_session):
 
 
 def test_check_word_multiple_matches(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test checking a word that appears in multiple lexeme cards."""
     # Add multiple cards with a shared surface form (use unique target_lemmas)
@@ -1392,8 +1929,8 @@ def test_check_word_multiple_matches(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "kimbia_multi_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["shared_form_multi", "anakimbia_multi"],
         },
     )
@@ -1402,15 +1939,15 @@ def test_check_word_multiple_matches(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "kukimbia_multi_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["kukimbia_multi", "shared_form_multi"],
         },
     )
 
     # Check word that appears in multiple cards
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=shared_form_multi&source_language=eng&target_language=swh",
+        f"/v3/agent/lexeme-card/check-word?word=shared_form_multi&source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -1420,47 +1957,42 @@ def test_check_word_multiple_matches(
     assert data["count"] >= 2
 
 
-def test_check_word_filters_by_language(
-    client, regular_token1, db_session, test_revision_id
+def test_check_word_filters_by_version_pair(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
-    """Test that word checking filters by language pair."""
-    # Add card for eng-swh
+    """Word check filters by source/target version_id pair."""
+    # Add card for (test_version_id, test_version_id_2) — the one we'll search for.
     client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
-            "target_lemma": "test_eng_swh",
-            "source_language": "eng",
-            "target_language": "swh",
-        },
-    )
-    # Add card for eng-ngq
-    client.post(
-        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={
-            "target_lemma": "test_eng_ngq",
-            "source_language": "eng",
-            "target_language": "ngq",
+            "target_lemma": "test_pair_match",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
-    # Check word only exists in eng-swh
+    # Word exists in the (test_version_id, test_version_id_2) pair
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=test_eng_swh&source_language=eng&target_language=swh",
+        f"/v3/agent/lexeme-card/check-word?word=test_pair_match&source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-
     assert response.status_code == 200
     data = response.json()
     assert data["count"] >= 1
 
-    # Check same word doesn't appear in eng-ngq
+    # Same word should not appear when querying a different version pair
+    # (target swapped to source). The card is keyed on the ordered pair, so
+    # a flipped query returns zero results.
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=test_eng_swh&source_language=eng&target_language=ngq",
+        f"/v3/agent/lexeme-card/check-word?word=test_pair_match&source_version_id={test_version_id_2}&target_version_id={test_version_id}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-
     assert response.status_code == 200
     data = response.json()
     assert data["count"] == 0
@@ -1476,10 +2008,10 @@ def test_check_word_missing_parameters(client, regular_token1, db_session):
     assert response.status_code == 422  # Validation error
 
 
-def test_check_word_unauthorized(client):
+def test_check_word_unauthorized(client, test_version_id, test_version_id_2):
     """Test that checking word requires authentication."""
     response = client.get(
-        "/v3/agent/lexeme-card/check-word?word=test&source_language=eng&target_language=swh"
+        f"/v3/agent/lexeme-card/check-word?word=test&source_version_id={test_version_id}&target_version_id={test_version_id_2}"
     )
 
     assert response.status_code == 401
@@ -1489,7 +2021,12 @@ def test_check_word_unauthorized(client):
 
 
 def test_add_lexeme_card_upsert_append_default(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that posting duplicate lexeme card appends by default (replace_existing=False)."""
     # Add initial card
@@ -1499,8 +2036,8 @@ def test_add_lexeme_card_upsert_append_default(
         json={
             "source_lemma": "walk",
             "target_lemma": "tembea",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "surface_forms": ["tembea", "anatembea"],  # Target language (Swahili) forms
             "senses": [{"definition": "move on foot", "examples": ["I walk daily"]}],
@@ -1523,8 +2060,8 @@ def test_add_lexeme_card_upsert_append_default(
         json={
             "source_lemma": "walk",
             "target_lemma": "tembea",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "surface_forms": [
                 "wanatembea",
@@ -1566,8 +2103,122 @@ def test_add_lexeme_card_upsert_append_default(
     assert data2["confidence"] == 0.90
 
 
+def test_add_lexeme_card_create_with_intra_payload_duplicates(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Creating a new card with duplicate examples in a single payload must not 500."""
+    payload = {
+        "source_lemma": "jump",
+        "target_lemma": "ruka",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
+        "pos": "verb",
+        "examples": [
+            {"source": "I jump", "target": "Naruka"},
+            {"source": "I jump", "target": "Naruka"},  # duplicate
+            {"source": "We jump", "target": "Tunaruka"},
+        ],
+    }
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response.status_code == 200
+    data = response.json()
+    example_pairs = {(e["source"], e["target"]) for e in data["examples"]}
+    assert example_pairs == {("I jump", "Naruka"), ("We jump", "Tunaruka")}
+
+
+def test_add_lexeme_card_upsert_append_duplicate_examples_no_500(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Regression for #517: appending examples that already exist for the same
+    (lexeme_card_id, revision_id, source_text, target_text) must not 500 on the
+    unique constraint — duplicates should be silently skipped."""
+    payload = {
+        "source_lemma": "run",
+        "target_lemma": "kimbia",
+        "source_version_id": test_version_id,
+        "target_version_id": test_version_id_2,
+        "pos": "verb",
+        "surface_forms": ["kimbia"],
+        "examples": [
+            {"source": "I run", "target": "Nakimbia"},
+            {"source": "We run", "target": "Tunakimbia"},
+        ],
+    }
+
+    # First POST creates the card and inserts the two examples.
+    response1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response1.status_code == 200
+    assert len(response1.json()["examples"]) == 2
+
+    # Second POST with the same examples plus a new one should NOT 500.
+    # The existing (source, target) pairs must be silently skipped.
+    payload["examples"] = [
+        {"source": "I run", "target": "Nakimbia"},  # duplicate
+        {"source": "We run", "target": "Tunakimbia"},  # duplicate
+        {"source": "They run", "target": "Wanakimbia"},  # new
+    ]
+    response2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response2.status_code == 200
+    data2 = response2.json()
+    assert len(data2["examples"]) == 3
+    example_pairs = {(e["source"], e["target"]) for e in data2["examples"]}
+    assert example_pairs == {
+        ("I run", "Nakimbia"),
+        ("We run", "Tunakimbia"),
+        ("They run", "Wanakimbia"),
+    }
+
+    # A payload containing internal duplicates must also be tolerated.
+    payload["examples"] = [
+        {"source": "She runs", "target": "Anakimbia"},
+        {"source": "She runs", "target": "Anakimbia"},
+    ]
+    response3 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json=payload,
+    )
+    assert response3.status_code == 200
+    data3 = response3.json()
+    example_pairs = {(e["source"], e["target"]) for e in data3["examples"]}
+    assert len(data3["examples"]) == 4
+    assert example_pairs == {
+        ("I run", "Nakimbia"),
+        ("We run", "Tunakimbia"),
+        ("They run", "Wanakimbia"),
+        ("She runs", "Anakimbia"),
+    }
+
+
 def test_add_lexeme_card_upsert_append_explicit(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test explicitly setting replace_existing=false appends data."""
     # Add initial card
@@ -1577,8 +2228,8 @@ def test_add_lexeme_card_upsert_append_explicit(
         json={
             "source_lemma": "sing",
             "target_lemma": "imba",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["imba", "anaimba"],  # Target language (Swahili) forms
             "senses": [{"definition": "produce musical sounds"}],
             "examples": [{"source": "I sing", "target": "Naimba"}],
@@ -1595,8 +2246,8 @@ def test_add_lexeme_card_upsert_append_explicit(
         json={
             "source_lemma": "sing",
             "target_lemma": "imba",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["wanaimba", "aliimba"],  # Target language (Swahili) forms
             "senses": [{"definition": "vocalize melodically"}],
             "examples": [{"source": "She sings", "target": "Anaimba"}],
@@ -1613,7 +2264,12 @@ def test_add_lexeme_card_upsert_append_explicit(
 
 
 def test_add_lexeme_card_upsert_replace(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that replace_existing=true replaces list fields."""
     # Add initial card
@@ -1623,8 +2279,8 @@ def test_add_lexeme_card_upsert_replace(
         json={
             "source_lemma": "dance",
             "target_lemma": "cheza",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "surface_forms": [
                 "cheza",
@@ -1651,8 +2307,8 @@ def test_add_lexeme_card_upsert_replace(
         json={
             "source_lemma": "dance",
             "target_lemma": "cheza",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "surface_forms": [
                 "cheza",
@@ -1695,7 +2351,12 @@ def test_add_lexeme_card_upsert_replace(
 
 
 def test_add_lexeme_card_upsert_source_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that source_surface_forms are properly merged on upsert."""
     # Add initial card with source_surface_forms
@@ -1705,8 +2366,8 @@ def test_add_lexeme_card_upsert_source_surface_forms(
         json={
             "source_lemma": "write",
             "target_lemma": "andika",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "surface_forms": ["andika", "anaandika"],
             "source_surface_forms": ["write", "writes", "writing"],
@@ -1726,8 +2387,8 @@ def test_add_lexeme_card_upsert_source_surface_forms(
         json={
             "source_lemma": "write",
             "target_lemma": "andika",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "source_surface_forms": ["write", "wrote", "written"],  # "write" overlaps
         },
     )
@@ -1752,8 +2413,8 @@ def test_add_lexeme_card_upsert_source_surface_forms(
         json={
             "source_lemma": "write",
             "target_lemma": "andika",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "source_surface_forms": ["write", "wrote"],  # Replace with just 2 forms
         },
     )
@@ -1766,7 +2427,12 @@ def test_add_lexeme_card_upsert_source_surface_forms(
 
 
 def test_add_lexeme_card_upsert_append_deduplicates_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that appending surface forms deduplicates entries."""
     # Add initial card
@@ -1776,8 +2442,8 @@ def test_add_lexeme_card_upsert_append_deduplicates_surface_forms(
         json={
             "source_lemma": "jump",
             "target_lemma": "ruka",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": [
                 "ruka",
                 "anaruka",
@@ -1793,8 +2459,8 @@ def test_add_lexeme_card_upsert_append_deduplicates_surface_forms(
         json={
             "source_lemma": "jump",
             "target_lemma": "ruka",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": [
                 "ruka",
                 "aliruka",
@@ -1812,7 +2478,12 @@ def test_add_lexeme_card_upsert_append_deduplicates_surface_forms(
 
 
 def test_add_lexeme_card_upsert_append_with_none_values(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test appending when some fields are None."""
     # Add initial card with None values
@@ -1822,8 +2493,8 @@ def test_add_lexeme_card_upsert_append_with_none_values(
         json={
             "source_lemma": "sleep",
             "target_lemma": "lala",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": None,
             "senses": [{"definition": "rest with eyes closed"}],
             "examples": None,
@@ -1840,8 +2511,8 @@ def test_add_lexeme_card_upsert_append_with_none_values(
         json={
             "source_lemma": "sleep",
             "target_lemma": "lala",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["lala", "analala"],  # Target language (Swahili) forms
             "senses": None,
             "examples": [{"source": "I sleep", "target": "Nalala"}],
@@ -1861,7 +2532,12 @@ def test_add_lexeme_card_upsert_append_with_none_values(
 
 
 def test_add_lexeme_card_upsert_replace_with_none_values(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test replacing when new data has None values."""
     # Add initial card
@@ -1871,8 +2547,8 @@ def test_add_lexeme_card_upsert_replace_with_none_values(
         json={
             "source_lemma": "eat",
             "target_lemma": "kula",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": [
                 "kula",
                 "anakula",
@@ -1893,8 +2569,8 @@ def test_add_lexeme_card_upsert_replace_with_none_values(
         json={
             "source_lemma": "eat",
             "target_lemma": "kula",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": None,
             "senses": None,
             "examples": None,
@@ -1916,7 +2592,12 @@ def test_add_lexeme_card_upsert_replace_with_none_values(
 
 
 def test_add_lexeme_card_upsert_updates_last_updated(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that updating a card updates the last_updated timestamp."""
     import time
@@ -1928,8 +2609,8 @@ def test_add_lexeme_card_upsert_updates_last_updated(
         json={
             "source_lemma": "fly",
             "target_lemma": "ruka_timestamp_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
@@ -1947,8 +2628,8 @@ def test_add_lexeme_card_upsert_updates_last_updated(
         json={
             "source_lemma": "fly",
             "target_lemma": "ruka_timestamp_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.88,
         },
     )
@@ -1963,11 +2644,16 @@ def test_add_lexeme_card_upsert_updates_last_updated(
 
 
 def test_add_lexeme_card_upsert_different_unique_keys(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that cards with different unique constraint values are treated separately.
 
-    Uniqueness is determined by (target_lemma, source_language, target_language).
+    Uniqueness is determined by (target_lemma, source_version_id, target_version_id).
     """
     # Add card 1: eng->swh (use unique target_lemma to avoid conflicts with other tests)
     response1 = client.post(
@@ -1976,8 +2662,8 @@ def test_add_lexeme_card_upsert_different_unique_keys(
         json={
             "source_lemma": "book",
             "target_lemma": "kitabu_unique_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["kitabu"],
         },
     )
@@ -1992,8 +2678,8 @@ def test_add_lexeme_card_upsert_different_unique_keys(
         json={
             "source_lemma": "book",
             "target_lemma": "buku_unique_test",  # Different target_lemma
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["buku"],
         },
     )
@@ -2004,7 +2690,7 @@ def test_add_lexeme_card_upsert_different_unique_keys(
     # Should be different cards
     assert card1_id != card2_id
 
-    # Add card 3 with different source_language (different unique key)
+    # Add card 3 with different source_version_id (different unique key)
     # Using swh->eng instead of eng->swh
     response3 = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
@@ -2012,8 +2698,8 @@ def test_add_lexeme_card_upsert_different_unique_keys(
         json={
             "source_lemma": "kitabu",
             "target_lemma": "kitabu_unique_test",  # Same target_lemma as card 1
-            "source_language": "swh",  # Different source_language
-            "target_language": "eng",  # Different target_language
+            "source_version_id": test_version_id_2,  # Different source_version_id
+            "target_version_id": test_version_id,  # Different target_version_id
             "surface_forms": ["kitabu"],
         },
     )
@@ -2026,7 +2712,12 @@ def test_add_lexeme_card_upsert_different_unique_keys(
 
 
 def test_add_lexeme_card_upsert_empty_lists(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test appending with empty lists."""
     # Add initial card (use unique target_lemma to avoid conflicts with other tests)
@@ -2036,8 +2727,8 @@ def test_add_lexeme_card_upsert_empty_lists(
         json={
             "source_lemma": "play",
             "target_lemma": "cheza_empty_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["cheza", "anacheza"],  # Target language (Swahili) forms
             "senses": [{"definition": "engage in activity"}],
         },
@@ -2053,8 +2744,8 @@ def test_add_lexeme_card_upsert_empty_lists(
         json={
             "source_lemma": "play",
             "target_lemma": "cheza_empty_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": [],  # Empty list
             "senses": [],  # Empty list
             "examples": [],  # Empty list
@@ -2071,7 +2762,13 @@ def test_add_lexeme_card_upsert_empty_lists(
 
 
 def test_add_lexeme_card_multiple_revisions(
-    client, regular_token1, db_session, test_revision_id, test_revision_id_2
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_revision_id_2,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that examples are properly isolated by revision_id."""
     # Add lexeme card with examples for revision 1
@@ -2081,8 +2778,8 @@ def test_add_lexeme_card_multiple_revisions(
         json={
             "source_lemma": "house",
             "target_lemma": "nyumba",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "noun",
             "surface_forms": ["nyumba", "nyumba"],
             "senses": [{"definition": "dwelling place"}],
@@ -2110,8 +2807,8 @@ def test_add_lexeme_card_multiple_revisions(
         json={
             "source_lemma": "house",
             "target_lemma": "nyumba",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "examples": [
                 {"source": "A red house", "target": "Nyumba nyekundu"},
                 {"source": "Small house", "target": "Nyumba ndogo"},
@@ -2135,7 +2832,7 @@ def test_add_lexeme_card_multiple_revisions(
     # Query the card - should now get examples from ALL revisions the user has access to
     # Since testuser1 has access to both revision 1 and revision 2, we should see all 5 examples
     response3 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=nyumba",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=nyumba",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2159,7 +2856,12 @@ def test_add_lexeme_card_multiple_revisions(
 
 
 def test_get_lexeme_cards_by_source_word_in_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test searching for source_word that matches source_lemma."""
     # Add test data
@@ -2169,15 +2871,15 @@ def test_get_lexeme_cards_by_source_word_in_lemma(
         json={
             "source_lemma": "walk",
             "target_lemma": "tembea",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.90,
         },
     )
 
     # Search by source_word matching source_lemma
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=walk",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=walk",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2188,7 +2890,12 @@ def test_get_lexeme_cards_by_source_word_in_lemma(
 
 
 def test_get_lexeme_cards_by_target_word_in_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test searching for target_word that matches target_lemma."""
     # Add test data
@@ -2198,15 +2905,15 @@ def test_get_lexeme_cards_by_target_word_in_lemma(
         json={
             "source_lemma": "sing",
             "target_lemma": "imba",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.85,
         },
     )
 
     # Search by target_word matching target_lemma
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=imba",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=imba",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2217,7 +2924,12 @@ def test_get_lexeme_cards_by_target_word_in_lemma(
 
 
 def test_get_lexeme_cards_by_source_word_in_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test searching for source_word that matches source_surface_forms."""
     # Add test data with source_surface_forms
@@ -2227,8 +2939,8 @@ def test_get_lexeme_cards_by_source_word_in_surface_forms(
         json={
             "source_lemma": "love_sf_test",
             "target_lemma": "penda_sf_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "source_surface_forms": ["loves_sf", "loved_sf", "loving_sf"],
             "confidence": 0.95,
         },
@@ -2236,7 +2948,7 @@ def test_get_lexeme_cards_by_source_word_in_surface_forms(
 
     # Search by source_word matching a source_surface_form
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=loves_sf",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=loves_sf",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2248,7 +2960,12 @@ def test_get_lexeme_cards_by_source_word_in_surface_forms(
 
 
 def test_get_lexeme_cards_by_target_word_in_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test searching for target_word that matches surface_forms."""
     # Add test data with surface_forms
@@ -2258,8 +2975,8 @@ def test_get_lexeme_cards_by_target_word_in_surface_forms(
         json={
             "source_lemma": "peace",
             "target_lemma": "amani_sf_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["amani_sf", "maamani_sf"],
             "confidence": 0.88,
         },
@@ -2267,7 +2984,7 @@ def test_get_lexeme_cards_by_target_word_in_surface_forms(
 
     # Search by target_word matching a surface_form
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=amani_sf",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=amani_sf",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2279,7 +2996,12 @@ def test_get_lexeme_cards_by_target_word_in_surface_forms(
 
 
 def test_get_lexeme_cards_word_search_or_logic(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that word search matches EITHER lemma OR surface_forms (OR logic)."""
     # Add card 1: source_lemma matches "jog_or_test"
@@ -2289,8 +3011,8 @@ def test_get_lexeme_cards_word_search_or_logic(
         json={
             "source_lemma": "jog_or_test",
             "target_lemma": "kimbia_or_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.90,
         },
     )
@@ -2302,8 +3024,8 @@ def test_get_lexeme_cards_word_search_or_logic(
         json={
             "source_lemma": "sprint_or_test",
             "target_lemma": "kukimbia_or_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "source_surface_forms": ["jog_or_test", "sprints_or"],
             "confidence": 0.85,
         },
@@ -2311,7 +3033,7 @@ def test_get_lexeme_cards_word_search_or_logic(
 
     # Search for "jog_or_test" - should find both cards (first by lemma, second by surface_forms)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=jog_or_test",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=jog_or_test",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2324,7 +3046,12 @@ def test_get_lexeme_cards_word_search_or_logic(
 
 
 def test_get_lexeme_cards_word_search_case_insensitive(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that word search is case-insensitive for lemma and surface_forms."""
     # Add test data with mixed-case surface_forms
@@ -2334,8 +3061,8 @@ def test_get_lexeme_cards_word_search_case_insensitive(
         json={
             "source_lemma": "Lord",
             "target_lemma": "Bwana",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "source_surface_forms": ["LORD", "Lord"],
             "surface_forms": ["BWANA", "Bwana"],
             "confidence": 0.92,
@@ -2344,7 +3071,7 @@ def test_get_lexeme_cards_word_search_case_insensitive(
 
     # Search for lowercase "lord" — should match "Lord" lemma (case-insensitive)
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=lord",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=lord",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2356,7 +3083,7 @@ def test_get_lexeme_cards_word_search_case_insensitive(
 
     # Search for lowercase "bwana" — should match "bwana" target_lemma (normalized to lowercase)
     response2 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=bwana",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=bwana",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2368,7 +3095,12 @@ def test_get_lexeme_cards_word_search_case_insensitive(
 
 
 def test_get_lexeme_cards_word_search_partial_match(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that partial word matches do NOT return results (exact match only)."""
     # Add test data
@@ -2378,8 +3110,8 @@ def test_get_lexeme_cards_word_search_partial_match(
         json={
             "source_lemma": "rejoice",
             "target_lemma": "furaha_partial",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "source_surface_forms": ["rejoicing", "rejoiced"],
             "confidence": 0.87,
         },
@@ -2387,7 +3119,7 @@ def test_get_lexeme_cards_word_search_partial_match(
 
     # Search for "rejoic" (partial) - should NOT match "rejoice", "rejoicing", or "rejoiced"
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=rejoic",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=rejoic",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2405,6 +3137,8 @@ def test_get_lexeme_cards_word_search_respects_user_access(
     db_session,
     test_revision_id,
     test_revision_id_2,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that search finds cards by lemma/surface_forms, but examples are filtered by user access.
 
@@ -2419,8 +3153,8 @@ def test_get_lexeme_cards_word_search_respects_user_access(
         json={
             "source_lemma": "access_test_joy",
             "target_lemma": "furaha_access",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "examples": [
                 {
                     "source": "great joy came",
@@ -2439,8 +3173,8 @@ def test_get_lexeme_cards_word_search_respects_user_access(
         json={
             "source_lemma": "access_test_joy",
             "target_lemma": "furaha_access",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "examples": [
                 {
                     "source": "amazing joy happened",
@@ -2453,7 +3187,7 @@ def test_get_lexeme_cards_word_search_respects_user_access(
 
     # testuser1 searches by lemma — should find the card with examples from BOTH revisions
     response_user1 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=access_test_joy",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=access_test_joy",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response_user1.status_code == 200
@@ -2464,7 +3198,7 @@ def test_get_lexeme_cards_word_search_respects_user_access(
 
     # testuser2 searches by same lemma — should find the card but with NO examples
     response_user2 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=access_test_joy",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=access_test_joy",
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
     assert response_user2.status_code == 200
@@ -2475,7 +3209,12 @@ def test_get_lexeme_cards_word_search_respects_user_access(
 
 
 def test_get_lexeme_cards_combined_word_and_pos_filter(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test combining word search with other filters like POS."""
     # Add verb
@@ -2485,8 +3224,8 @@ def test_get_lexeme_cards_combined_word_and_pos_filter(
         json={
             "source_lemma": "praise_test_verb",
             "target_lemma": "sifa_verb",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "examples": [
                 {"source": "they praise_test_verb God", "target": "wanamsifa Mungu"},
@@ -2502,8 +3241,8 @@ def test_get_lexeme_cards_combined_word_and_pos_filter(
         json={
             "source_lemma": "praise_test_noun",
             "target_lemma": "sifa_noun",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "noun",
             "examples": [
                 {"source": "give praise_test_noun to Him", "target": "mpe sifa"},
@@ -2514,7 +3253,7 @@ def test_get_lexeme_cards_combined_word_and_pos_filter(
 
     # Search for the verb specifically
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=praise_test_verb&pos=verb",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=praise_test_verb&pos=verb",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2528,7 +3267,12 @@ def test_get_lexeme_cards_combined_word_and_pos_filter(
 
 
 def test_get_lexeme_cards_word_search_no_matches(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test word search with no matching results."""
     # Add test data that won't match
@@ -2538,8 +3282,8 @@ def test_get_lexeme_cards_word_search_no_matches(
         json={
             "source_lemma": "hope",
             "target_lemma": "tumaini",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "examples": [
                 {"source": "I have hope", "target": "Nina tumaini"},
             ],
@@ -2549,7 +3293,7 @@ def test_get_lexeme_cards_word_search_no_matches(
 
     # Search for word that doesn't exist
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=xyznonexistent",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=xyznonexistent",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2562,7 +3306,12 @@ def test_get_lexeme_cards_word_search_no_matches(
 
 
 def test_get_lexeme_cards_both_source_and_target_word(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test searching with both source_word and target_word."""
     # Add test data with unique words to avoid contamination
@@ -2572,8 +3321,8 @@ def test_get_lexeme_cards_both_source_and_target_word(
         json={
             "source_lemma": "agape_love",
             "target_lemma": "penda_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "examples": [
                 {"source": "I agape_love mercy", "target": "Napenda_test rehema"},
             ],
@@ -2583,7 +3332,7 @@ def test_get_lexeme_cards_both_source_and_target_word(
 
     # Search by both source and target word
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=agape_love&target_word=penda_test",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=agape_love&target_word=penda_test",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2596,7 +3345,12 @@ def test_get_lexeme_cards_both_source_and_target_word(
 
 
 def test_get_lexeme_cards_source_word_matches_source_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that source_word=running finds card with source_surface_forms containing 'running'."""
     client.post(
@@ -2605,15 +3359,15 @@ def test_get_lexeme_cards_source_word_matches_source_surface_forms(
         json={
             "source_lemma": "run_new_test",
             "target_lemma": "kimbia_new_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "source_surface_forms": ["runs_new", "running_new", "ran_new"],
             "confidence": 0.91,
         },
     )
 
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=running_new",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=running_new",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2624,7 +3378,12 @@ def test_get_lexeme_cards_source_word_matches_source_surface_forms(
 
 
 def test_get_lexeme_cards_target_word_matches_target_lemma_without_flag(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that target_word=upendo_nf finds card with target_lemma='upendo_nf'."""
     client.post(
@@ -2633,15 +3392,15 @@ def test_get_lexeme_cards_target_word_matches_target_lemma_without_flag(
         json={
             "source_lemma": "love_nf",
             "target_lemma": "upendo_nf",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.88,
         },
     )
 
     # Should find by target_lemma
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upendo_nf",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=upendo_nf",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2652,7 +3411,12 @@ def test_get_lexeme_cards_target_word_matches_target_lemma_without_flag(
 
 
 def test_get_lexeme_cards_target_word_case_insensitive_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that 'upendo_ci' matches 'Upendo_ci' target_lemma (case-insensitive)."""
     client.post(
@@ -2661,14 +3425,14 @@ def test_get_lexeme_cards_target_word_case_insensitive_lemma(
         json={
             "source_lemma": "love_ci",
             "target_lemma": "Upendo_ci",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.85,
         },
     )
 
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upendo_ci",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=upendo_ci",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2679,7 +3443,12 @@ def test_get_lexeme_cards_target_word_case_insensitive_lemma(
 
 
 def test_get_lexeme_cards_source_word_case_insensitive_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that 'love_ci2' matches 'Love_ci2' source_lemma (case-insensitive)."""
     client.post(
@@ -2688,14 +3457,14 @@ def test_get_lexeme_cards_source_word_case_insensitive_lemma(
         json={
             "source_lemma": "Love_ci2",
             "target_lemma": "upendo_ci2",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.85,
         },
     )
 
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=love_ci2",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=love_ci2",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2706,7 +3475,12 @@ def test_get_lexeme_cards_source_word_case_insensitive_lemma(
 
 
 def test_get_lexeme_cards_no_example_text_search(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that a word only in example text is NOT found by word search."""
     client.post(
@@ -2715,8 +3489,8 @@ def test_get_lexeme_cards_no_example_text_search(
         json={
             "source_lemma": "test_no_ex_search",
             "target_lemma": "hakuna_ex_search",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "examples": [
                 {
                     "source": "unique_example_word_xyz in a sentence",
@@ -2729,7 +3503,7 @@ def test_get_lexeme_cards_no_example_text_search(
 
     # Search for a word that only appears in example text
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=unique_example_word_xyz",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=unique_example_word_xyz",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2740,7 +3514,12 @@ def test_get_lexeme_cards_no_example_text_search(
 
 
 def test_get_lexeme_cards_source_and_target_word_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that both source_word and target_word can match via surface forms (AND semantics)."""
     client.post(
@@ -2749,8 +3528,8 @@ def test_get_lexeme_cards_source_and_target_word_surface_forms(
         json={
             "source_lemma": "run_both_sf",
             "target_lemma": "kimbia_both_sf",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "source_surface_forms": ["running_both", "runs_both"],
             "surface_forms": ["anakimbia_both", "kukimbia_both"],
             "confidence": 0.90,
@@ -2759,7 +3538,7 @@ def test_get_lexeme_cards_source_and_target_word_surface_forms(
 
     # Both source and target match via surface_forms
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=running_both&target_word=anakimbia_both",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=running_both&target_word=anakimbia_both",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2770,7 +3549,7 @@ def test_get_lexeme_cards_source_and_target_word_surface_forms(
 
     # Source matches but target does NOT — should not be found
     response2 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=running_both&target_word=nonexistent_sf",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=running_both&target_word=nonexistent_sf",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2781,7 +3560,12 @@ def test_get_lexeme_cards_source_and_target_word_surface_forms(
 
 
 def test_get_lexeme_cards_null_source_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that a card with NULL source_lemma is found via source_surface_forms match."""
     client.post(
@@ -2789,15 +3573,15 @@ def test_get_lexeme_cards_null_source_lemma(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "kupata_null_src",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "source_surface_forms": ["get_null_src", "gets_null_src"],
             "confidence": 0.70,
         },
     )
 
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=get_null_src",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=get_null_src",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -2809,7 +3593,12 @@ def test_get_lexeme_cards_null_source_lemma(
 
 
 def test_get_lexeme_cards_empty_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that a card with empty/NULL surface_forms only matches via lemma."""
     client.post(
@@ -2818,8 +3607,8 @@ def test_get_lexeme_cards_empty_surface_forms(
         json={
             "source_lemma": "empty_sf_source",
             "target_lemma": "empty_sf_target",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": [],
             "source_surface_forms": [],
             "confidence": 0.65,
@@ -2828,7 +3617,7 @@ def test_get_lexeme_cards_empty_surface_forms(
 
     # Should find by lemma
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=empty_sf_source",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=empty_sf_source",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
@@ -2838,7 +3627,7 @@ def test_get_lexeme_cards_empty_surface_forms(
 
     # Should NOT find by a non-matching word (empty surface_forms won't help)
     response2 = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&source_word=nonexistent_empty_sf",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&source_word=nonexistent_empty_sf",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response2.status_code == 200
@@ -2848,7 +3637,12 @@ def test_get_lexeme_cards_empty_surface_forms(
 
 
 def test_get_lexeme_cards_word_filter_respects_language_pair(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that word filtering with surface_forms does not leak cards from other language pairs.
 
@@ -2864,8 +3658,8 @@ def test_get_lexeme_cards_word_filter_respects_language_pair(
         json={
             "source_lemma": "cross_src_eng",
             "target_lemma": shared_word,
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": [shared_word, "crosslang_form_swh"],
             "source_surface_forms": [shared_word, "crosslang_src_form"],
             "confidence": 0.9,
@@ -2880,8 +3674,8 @@ def test_get_lexeme_cards_word_filter_respects_language_pair(
         json={
             "source_lemma": "cross_src_swh",
             "target_lemma": "crosslang_other",
-            "source_language": "swh",
-            "target_language": "eng",
+            "source_version_id": test_version_id_2,
+            "target_version_id": test_version_id,
             "surface_forms": [shared_word, "crosslang_form_eng"],
             "source_surface_forms": [shared_word],
             "confidence": 0.85,
@@ -2891,7 +3685,7 @@ def test_get_lexeme_cards_word_filter_respects_language_pair(
 
     # Query eng->swh with target_word matching the shared word
     response = client.get(
-        f"/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word={shared_word}",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word={shared_word}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
@@ -2903,41 +3697,50 @@ def test_get_lexeme_cards_word_filter_respects_language_pair(
     ), f"Expected to find card with target_lemma='{shared_word}' in eng->swh results"
     # Should only return the eng->swh card, NOT the swh->eng card
     for card in data:
-        assert card["source_language"] == "eng", (
-            f"Expected source_language='eng', got '{card['source_language']}' "
+        assert card["source_version_id"] == test_version_id, (
+            f"Expected source_version_id={test_version_id}, "
+            f"got {card['source_version_id']} "
             f"(target_lemma='{card['target_lemma']}')"
         )
-        assert card["target_language"] == "swh", (
-            f"Expected target_language='swh', got '{card['target_language']}' "
+        assert card["target_version_id"] == test_version_id_2, (
+            f"Expected target_version_id={test_version_id_2}, "
+            f"got {card['target_version_id']} "
             f"(target_lemma='{card['target_lemma']}')"
         )
 
-    # Query swh->eng with source_word matching the shared word
+    # Query the reversed pair with source_word matching the shared word
     response2 = client.get(
-        f"/v3/agent/lexeme-card?source_language=swh&target_language=eng&source_word={shared_word}",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id_2}&target_version_id={test_version_id}&source_word={shared_word}",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response2.status_code == 200
     data2 = response2.json()
     # Verify the correct card IS present (guards against false pass on empty results)
-    assert len(data2) >= 1, "Expected at least one swh->eng card to be returned"
+    assert len(data2) >= 1, "Expected at least one reversed-pair card to be returned"
     assert any(
         c["source_lemma"] == "cross_src_swh" for c in data2
-    ), "Expected to find card with source_lemma='cross_src_swh' in swh->eng results"
-    # Should only return the swh->eng card, NOT the eng->swh card
+    ), "Expected to find card with source_lemma='cross_src_swh' in reversed-pair results"
+    # Should only return the reversed-pair card, NOT the original-direction card
     for card in data2:
-        assert card["source_language"] == "swh", (
-            f"Expected source_language='swh', got '{card['source_language']}' "
+        assert card["source_version_id"] == test_version_id_2, (
+            f"Expected source_version_id={test_version_id_2}, "
+            f"got {card['source_version_id']} "
             f"(target_lemma='{card['target_lemma']}')"
         )
-        assert card["target_language"] == "eng", (
-            f"Expected target_language='eng', got '{card['target_language']}' "
+        assert card["target_version_id"] == test_version_id, (
+            f"Expected target_version_id={test_version_id}, "
+            f"got {card['target_version_id']} "
             f"(target_lemma='{card['target_lemma']}')"
         )
 
 
 def test_add_lexeme_card_alignment_scores_sorted_descending(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that alignment_scores are sorted by value in descending order."""
     # Post a lexeme card with unsorted alignment_scores
@@ -2947,8 +3750,8 @@ def test_add_lexeme_card_alignment_scores_sorted_descending(
         json={
             "source_lemma": "test_alignment_sort",
             "target_lemma": "sorted_target",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "alignment_scores": {"a": 0.3, "b": 0.9, "c": 0.5, "d": 0.1},
         },
     )
@@ -2971,8 +3774,8 @@ def test_add_lexeme_card_alignment_scores_sorted_descending(
         json={
             "source_lemma": "test_alignment_sort",
             "target_lemma": "sorted_target",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "alignment_scores": {"x": 0.2, "y": 0.8, "z": 0.5},
         },
     )
@@ -2989,7 +3792,12 @@ def test_add_lexeme_card_alignment_scores_sorted_descending(
 
 
 def test_add_lexeme_card_duplicate_target_lemma_different_source_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test POST returns 409 when target_lemma exists with different source_lemma."""
     # Create first card
@@ -2999,8 +3807,8 @@ def test_add_lexeme_card_duplicate_target_lemma_different_source_lemma(
         json={
             "source_lemma": "first_source",
             "target_lemma": "unique_target",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response1.status_code == 200
@@ -3013,8 +3821,8 @@ def test_add_lexeme_card_duplicate_target_lemma_different_source_lemma(
         json={
             "source_lemma": "different_source",  # Different source_lemma
             "target_lemma": "unique_target",  # Same target_lemma
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
@@ -3025,7 +3833,12 @@ def test_add_lexeme_card_duplicate_target_lemma_different_source_lemma(
 
 
 def test_add_lexeme_card_duplicate_same_source_lemma_upserts(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test POST with same source_lemma and target_lemma upserts (updates existing)."""
     # Create first card
@@ -3035,8 +3848,8 @@ def test_add_lexeme_card_duplicate_same_source_lemma_upserts(
         json={
             "source_lemma": "same_source",
             "target_lemma": "same_target",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.5,
         },
     )
@@ -3050,8 +3863,8 @@ def test_add_lexeme_card_duplicate_same_source_lemma_upserts(
         json={
             "source_lemma": "same_source",  # Same
             "target_lemma": "same_target",  # Same
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.9,  # Updated value
         },
     )
@@ -3063,7 +3876,12 @@ def test_add_lexeme_card_duplicate_same_source_lemma_upserts(
 
 
 def test_patch_lexeme_card_cannot_change_target_lemma_to_duplicate(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH returns 409 when trying to change target_lemma to existing value."""
     # Create first card
@@ -3072,8 +3890,8 @@ def test_patch_lexeme_card_cannot_change_target_lemma_to_duplicate(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "existing_lemma",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response1.status_code == 200
@@ -3085,8 +3903,8 @@ def test_patch_lexeme_card_cannot_change_target_lemma_to_duplicate(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "other_lemma",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response2.status_code == 200
@@ -3107,7 +3925,12 @@ def test_patch_lexeme_card_cannot_change_target_lemma_to_duplicate(
 
 
 def test_patch_lexeme_card_can_keep_same_target_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH allows keeping the same target_lemma (no false positive)."""
     # Create a card
@@ -3116,8 +3939,8 @@ def test_patch_lexeme_card_can_keep_same_target_lemma(
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "target_lemma": "keep_this",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.5,
         },
     )
@@ -3142,7 +3965,12 @@ def test_patch_lexeme_card_can_keep_same_target_lemma(
 
 
 def test_patch_lexeme_card_by_id_append_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH by ID with list_mode=append adds surface forms."""
     # Create initial card
@@ -3152,8 +3980,8 @@ def test_patch_lexeme_card_by_id_append_surface_forms(
         json={
             "source_lemma": "patch_test",
             "target_lemma": "kipimo",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["kipimo", "vipimo"],
         },
     )
@@ -3177,7 +4005,12 @@ def test_patch_lexeme_card_by_id_append_surface_forms(
 
 
 def test_patch_lexeme_card_by_id_replace_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH by ID with list_mode=replace overwrites surface forms."""
     # Create initial card
@@ -3187,8 +4020,8 @@ def test_patch_lexeme_card_by_id_replace_surface_forms(
         json={
             "source_lemma": "patch_replace_test",
             "target_lemma": "badilisha",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["badilisha", "anabadilisha", "walibadilisha"],
         },
     )
@@ -3211,7 +4044,12 @@ def test_patch_lexeme_card_by_id_replace_surface_forms(
 
 
 def test_patch_lexeme_card_by_id_merge_surface_forms(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH by ID with list_mode=merge deduplicates case-insensitively."""
     # Create initial card
@@ -3221,8 +4059,8 @@ def test_patch_lexeme_card_by_id_merge_surface_forms(
         json={
             "source_lemma": "merge_test",
             "target_lemma": "unganisha",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "surface_forms": ["Unganisha", "anaunganisha"],
         },
     )
@@ -3249,7 +4087,12 @@ def test_patch_lexeme_card_by_id_merge_surface_forms(
 
 
 def test_patch_lexeme_card_by_id_scalar_fields(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH by ID updates scalar fields only when provided."""
     # Create initial card
@@ -3259,8 +4102,8 @@ def test_patch_lexeme_card_by_id_scalar_fields(
         json={
             "source_lemma": "scalar_test",
             "target_lemma": "skala",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "noun",
             "confidence": 0.5,
             "english_lemma": "scale",
@@ -3288,7 +4131,12 @@ def test_patch_lexeme_card_by_id_scalar_fields(
 
 
 def test_patch_lexeme_card_by_id_alignment_scores_merge(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH by ID merges alignment_scores and removes keys with null values."""
     # Create initial card
@@ -3298,8 +4146,8 @@ def test_patch_lexeme_card_by_id_alignment_scores_merge(
         json={
             "source_lemma": "align_test",
             "target_lemma": "pangilia",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "alignment_scores": {"word1": 0.8, "word2": 0.5, "word3": 0.3},
         },
     )
@@ -3325,7 +4173,12 @@ def test_patch_lexeme_card_by_id_alignment_scores_merge(
 
 
 def test_patch_lexeme_card_by_id_examples_with_revision(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH by ID adds examples with revision_id."""
     # Create initial card
@@ -3335,8 +4188,8 @@ def test_patch_lexeme_card_by_id_examples_with_revision(
         json={
             "source_lemma": "example_test",
             "target_lemma": "mfano",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "examples": [{"source": "First example", "target": "Mfano wa kwanza"}],
         },
     )
@@ -3366,7 +4219,12 @@ def test_patch_lexeme_card_by_id_examples_with_revision(
 
 
 def test_patch_lexeme_card_by_id_examples_missing_revision_id(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH by ID fails when examples are provided without revision_id."""
     # Create initial card
@@ -3376,8 +4234,8 @@ def test_patch_lexeme_card_by_id_examples_missing_revision_id(
         json={
             "source_lemma": "fail_example_test",
             "target_lemma": "mfano_fail",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response.status_code == 200
@@ -3424,7 +4282,12 @@ def test_patch_lexeme_card_by_id_unauthorized(client, test_revision_id):
 
 
 def test_patch_lexeme_card_by_lemma_success(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH by lemma lookup works correctly."""
     # Create initial card
@@ -3434,8 +4297,8 @@ def test_patch_lexeme_card_by_lemma_success(
         json={
             "source_lemma": "lemma_lookup_test",
             "target_lemma": "tafuta",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.6,
         },
     )
@@ -3445,8 +4308,8 @@ def test_patch_lexeme_card_by_lemma_success(
     patch_response = client.patch(
         "/v3/agent/lexeme-card"
         "?target_lemma=tafuta"
-        "&source_language=eng"
-        "&target_language=swh"
+        f"&source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}"
         "&source_lemma=lemma_lookup_test",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
@@ -3462,13 +4325,15 @@ def test_patch_lexeme_card_by_lemma_success(
     assert len(data["surface_forms"]) == 2
 
 
-def test_patch_lexeme_card_by_lemma_not_found(client, regular_token1, db_session):
+def test_patch_lexeme_card_by_lemma_not_found(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Test PATCH by lemma lookup returns 404 for non-existent card."""
     patch_response = client.patch(
         "/v3/agent/lexeme-card"
         "?target_lemma=nonexistent"
-        "&source_language=eng"
-        "&target_language=swh",
+        f"&source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
             "confidence": 0.5,
@@ -3479,7 +4344,12 @@ def test_patch_lexeme_card_by_lemma_not_found(client, regular_token1, db_session
 
 
 def test_patch_lexeme_card_by_lemma_without_source_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test PATCH by lemma lookup works when source_lemma is not provided."""
     # Create initial card WITH a source_lemma
@@ -3489,8 +4359,8 @@ def test_patch_lexeme_card_by_lemma_without_source_lemma(
         json={
             "source_lemma": "some_source",  # Card has source_lemma
             "target_lemma": "lengo_bila",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.6,
         },
     )
@@ -3500,8 +4370,8 @@ def test_patch_lexeme_card_by_lemma_without_source_lemma(
     patch_response = client.patch(
         "/v3/agent/lexeme-card"
         "?target_lemma=lengo_bila"
-        "&source_language=eng"
-        "&target_language=swh",
+        f"&source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}",
         # Note: no source_lemma parameter
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={
@@ -3516,11 +4386,16 @@ def test_patch_lexeme_card_by_lemma_without_source_lemma(
 
 
 def test_post_lexeme_card_duplicate_returns_409_conflict(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test POST returns 409 Conflict when trying to create a duplicate card.
 
-    Uniqueness is determined by (target_lemma, source_language, target_language).
+    Uniqueness is determined by (target_lemma, source_version_id, target_version_id).
     """
     # Create first card (use unique target_lemma to avoid conflicts with other tests)
     response1 = client.post(
@@ -3529,8 +4404,8 @@ def test_post_lexeme_card_duplicate_returns_409_conflict(
         json={
             "source_lemma": "source_one",
             "target_lemma": "shared_target_conflict_test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response1.status_code == 200
@@ -3544,8 +4419,8 @@ def test_post_lexeme_card_duplicate_returns_409_conflict(
         json={
             "source_lemma": "source_two",  # Different source_lemma
             "target_lemma": "shared_target_conflict_test",  # Same target_lemma
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
@@ -3557,7 +4432,12 @@ def test_post_lexeme_card_duplicate_returns_409_conflict(
 
 
 def test_patch_lexeme_card_omitted_fields_unchanged(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that omitted fields are not changed by PATCH."""
     # Create initial card with all fields
@@ -3567,8 +4447,8 @@ def test_patch_lexeme_card_omitted_fields_unchanged(
         json={
             "source_lemma": "omit_test",
             "target_lemma": "acha",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "confidence": 0.75,
             "english_lemma": "leave",
@@ -3604,7 +4484,12 @@ def test_patch_lexeme_card_omitted_fields_unchanged(
 
 
 def test_patch_lexeme_card_explicit_null_clears_field(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """Test that explicitly setting a field to null clears it."""
     # Create initial card
@@ -3614,8 +4499,8 @@ def test_patch_lexeme_card_explicit_null_clears_field(
         json={
             "source_lemma": "null_test",
             "target_lemma": "futa",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "pos": "verb",
             "english_lemma": "clear",
         },
@@ -4750,7 +5635,12 @@ def test_replacement_missing_draft_text_returns_422(
 
 
 def test_post_lexeme_card_without_is_user_edit_has_null_last_user_edit(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """POST without is_user_edit should create card with last_user_edit=NULL."""
     response = client.post(
@@ -4759,8 +5649,8 @@ def test_post_lexeme_card_without_is_user_edit_has_null_last_user_edit(
         json={
             "source_lemma": "house",
             "target_lemma": "nyumba_lue_test_null",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response.status_code == 200
@@ -4769,7 +5659,12 @@ def test_post_lexeme_card_without_is_user_edit_has_null_last_user_edit(
 
 
 def test_post_lexeme_card_with_is_user_edit_sets_last_user_edit(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """POST with is_user_edit=true should create card with last_user_edit set."""
     response = client.post(
@@ -4778,8 +5673,8 @@ def test_post_lexeme_card_with_is_user_edit_sets_last_user_edit(
         json={
             "source_lemma": "tree",
             "target_lemma": "mti_lue_test_set",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response.status_code == 200
@@ -4788,7 +5683,12 @@ def test_post_lexeme_card_with_is_user_edit_sets_last_user_edit(
 
 
 def test_post_lexeme_card_upsert_with_is_user_edit_updates_last_user_edit(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """POST upsert with is_user_edit=true should update last_user_edit."""
     # Create card without is_user_edit
@@ -4798,8 +5698,8 @@ def test_post_lexeme_card_upsert_with_is_user_edit_updates_last_user_edit(
         json={
             "source_lemma": "water",
             "target_lemma": "maji_lue_test_upsert",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response1.status_code == 200
@@ -4812,8 +5712,8 @@ def test_post_lexeme_card_upsert_with_is_user_edit_updates_last_user_edit(
         json={
             "source_lemma": "water",
             "target_lemma": "maji_lue_test_upsert",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.95,
         },
     )
@@ -4823,7 +5723,12 @@ def test_post_lexeme_card_upsert_with_is_user_edit_updates_last_user_edit(
 
 
 def test_patch_lexeme_card_without_is_user_edit_leaves_last_user_edit_unchanged(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """PATCH without is_user_edit should not update last_user_edit."""
     # Create card without is_user_edit
@@ -4833,8 +5738,8 @@ def test_patch_lexeme_card_without_is_user_edit_leaves_last_user_edit_unchanged(
         json={
             "source_lemma": "fire",
             "target_lemma": "moto_lue_test_patch_null",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response1.status_code == 200
@@ -4852,7 +5757,12 @@ def test_patch_lexeme_card_without_is_user_edit_leaves_last_user_edit_unchanged(
 
 
 def test_patch_lexeme_card_with_is_user_edit_updates_last_user_edit(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """PATCH with is_user_edit=true should update last_user_edit."""
     # Create card without is_user_edit
@@ -4862,8 +5772,8 @@ def test_patch_lexeme_card_with_is_user_edit_updates_last_user_edit(
         json={
             "source_lemma": "earth",
             "target_lemma": "ardhi_lue_test_patch_set",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response1.status_code == 200
@@ -4881,7 +5791,12 @@ def test_patch_lexeme_card_with_is_user_edit_updates_last_user_edit(
 
 
 def test_get_lexeme_cards_includes_last_user_edit(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """GET response should include last_user_edit field."""
     # Create card with is_user_edit=true
@@ -4891,13 +5806,13 @@ def test_get_lexeme_cards_includes_last_user_edit(
         json={
             "source_lemma": "wind",
             "target_lemma": "upepo_lue_test_get",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
     response = client.get(
-        "/v3/agent/lexeme-card?source_language=eng&target_language=swh&target_word=upepo_lue_test_get",
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}&target_version_id={test_version_id_2}&target_word=upepo_lue_test_get",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
@@ -4912,7 +5827,12 @@ def test_get_lexeme_cards_includes_last_user_edit(
 
 
 def test_post_lexeme_card_normalizes_target_lemma_to_lowercase(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """POST should normalize target_lemma to lowercase."""
     response = client.post(
@@ -4921,8 +5841,8 @@ def test_post_lexeme_card_normalizes_target_lemma_to_lowercase(
         json={
             "source_lemma": "run",
             "target_lemma": "Kimbia_CI_Test",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert response.status_code == 200
@@ -4931,7 +5851,12 @@ def test_post_lexeme_card_normalizes_target_lemma_to_lowercase(
 
 
 def test_post_lexeme_card_case_insensitive_duplicate_returns_upsert(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """POST with same target_lemma but different case should upsert, not create duplicate."""
     # Create first card
@@ -4941,8 +5866,8 @@ def test_post_lexeme_card_case_insensitive_duplicate_returns_upsert(
         json={
             "source_lemma": "walk",
             "target_lemma": "tembea_ci_dup",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.5,
         },
     )
@@ -4956,8 +5881,8 @@ def test_post_lexeme_card_case_insensitive_duplicate_returns_upsert(
         json={
             "source_lemma": "walk",
             "target_lemma": "Tembea_CI_Dup",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
             "confidence": 0.9,
         },
     )
@@ -4967,7 +5892,12 @@ def test_post_lexeme_card_case_insensitive_duplicate_returns_upsert(
 
 
 def test_post_lexeme_card_case_insensitive_different_source_lemma_returns_409(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """POST with same target_lemma (different case) but different source_lemma should return 409."""
     # Create first card
@@ -4977,8 +5907,8 @@ def test_post_lexeme_card_case_insensitive_different_source_lemma_returns_409(
         json={
             "source_lemma": "run",
             "target_lemma": "kimbia_ci_409",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
@@ -4989,15 +5919,20 @@ def test_post_lexeme_card_case_insensitive_different_source_lemma_returns_409(
         json={
             "source_lemma": "sprint",
             "target_lemma": "Kimbia_CI_409",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     assert resp2.status_code == 409
 
 
 def test_patch_lexeme_card_by_lemma_case_insensitive_lookup(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """PATCH by lemma should find the card regardless of case."""
     # Create card
@@ -5007,14 +5942,14 @@ def test_patch_lexeme_card_by_lemma_case_insensitive_lookup(
         json={
             "source_lemma": "eat",
             "target_lemma": "kula_ci_patch",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
     # PATCH using different case
     resp = client.patch(
-        "/v3/agent/lexeme-card?target_lemma=KULA_CI_PATCH&source_language=eng&target_language=swh",
+        f"/v3/agent/lexeme-card?target_lemma=KULA_CI_PATCH&source_version_id={test_version_id}&target_version_id={test_version_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
         json={"confidence": 0.99},
     )
@@ -5023,7 +5958,12 @@ def test_patch_lexeme_card_by_lemma_case_insensitive_lookup(
 
 
 def test_patch_lexeme_card_normalizes_target_lemma(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """PATCH should normalize target_lemma to lowercase when changing it."""
     # Create card
@@ -5033,8 +5973,8 @@ def test_patch_lexeme_card_normalizes_target_lemma(
         json={
             "source_lemma": "drink",
             "target_lemma": "kunywa_ci_norm",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     card_id = resp1.json()["id"]
@@ -5050,7 +5990,12 @@ def test_patch_lexeme_card_normalizes_target_lemma(
 
 
 def test_patch_lexeme_card_case_insensitive_duplicate_check(
-    client, regular_token1, db_session, test_revision_id
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
 ):
     """PATCH should reject target_lemma change that creates case-insensitive duplicate."""
     # Create two cards
@@ -5060,8 +6005,8 @@ def test_patch_lexeme_card_case_insensitive_duplicate_check(
         json={
             "source_lemma": "sit",
             "target_lemma": "keti_ci_a",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
     card_a_id = resp1.json()["id"]
@@ -5072,8 +6017,8 @@ def test_patch_lexeme_card_case_insensitive_duplicate_check(
         json={
             "source_lemma": "stand",
             "target_lemma": "keti_ci_b",
-            "source_language": "eng",
-            "target_language": "swh",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
         },
     )
 
@@ -5106,22 +6051,24 @@ def _raw_psycopg2(statements):
         conn.close()
 
 
-def test_deduplicate_lexeme_cards_dry_run(client, regular_token1):
+def test_deduplicate_lexeme_cards_dry_run(
+    client, regular_token1, test_version_id, test_version_id_2
+):
     """Deduplicate dry_run should report duplicates without deleting."""
     # Drop unique index, insert case-variant duplicates
     _raw_psycopg2(
         [
-            "DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v3",
-            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_language, target_language, confidence, created_at, last_updated) "
-            "VALUES ('go', 'enda_dedup_dry', 'eng', 'swh', 0.5, now(), now())",
-            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_language, target_language, confidence, created_at, last_updated) "
-            "VALUES ('go', 'Enda_Dedup_Dry', 'eng', 'swh', 0.9, now(), now())",
+            "DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v4",
+            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_version_id, target_version_id, confidence, created_at, last_updated) "
+            f"VALUES ('go', 'enda_dedup_dry', {test_version_id}, {test_version_id_2}, 0.5, now(), now())",
+            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_version_id, target_version_id, confidence, created_at, last_updated) "
+            f"VALUES ('go', 'Enda_Dedup_Dry', {test_version_id}, {test_version_id_2}, 0.9, now(), now())",
         ]
     )
 
     try:
         resp = client.post(
-            "/v3/agent/lexeme-card/deduplicate?source_language=eng&target_language=swh&dry_run=true",
+            f"/v3/agent/lexeme-card/deduplicate?source_version_id={test_version_id}&target_version_id={test_version_id_2}&dry_run=true",
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
         assert resp.status_code == 200
@@ -5137,7 +6084,10 @@ def test_deduplicate_lexeme_cards_dry_run(client, regular_token1):
         )
         cur = conn.cursor()
         cur.execute(
-            "SELECT COUNT(*) FROM agent_lexeme_cards WHERE LOWER(target_lemma) = 'enda_dedup_dry' AND source_language = 'eng' AND target_language = 'swh'"
+            "SELECT COUNT(*) FROM agent_lexeme_cards "
+            "WHERE LOWER(target_lemma) = 'enda_dedup_dry' "
+            f"AND source_version_id = {test_version_id} "
+            f"AND target_version_id = {test_version_id_2}"
         )
         assert cur.fetchone()[0] == 2
         cur.close()
@@ -5145,29 +6095,34 @@ def test_deduplicate_lexeme_cards_dry_run(client, regular_token1):
     finally:
         _raw_psycopg2(
             [
-                "DELETE FROM agent_lexeme_cards WHERE LOWER(target_lemma) = 'enda_dedup_dry' AND source_language = 'eng' AND target_language = 'swh'",
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_lexeme_cards_unique_v3 "
-                "ON agent_lexeme_cards (LOWER(target_lemma), source_language, target_language)",
+                "DELETE FROM agent_lexeme_cards "
+                "WHERE LOWER(target_lemma) = 'enda_dedup_dry' "
+                f"AND source_version_id = {test_version_id} "
+                f"AND target_version_id = {test_version_id_2}",
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_lexeme_cards_unique_v4 "
+                "ON agent_lexeme_cards (LOWER(target_lemma), source_version_id, target_version_id)",
             ]
         )
 
 
-def test_deduplicate_lexeme_cards_merge(client, regular_token1):
+def test_deduplicate_lexeme_cards_merge(
+    client, regular_token1, test_version_id, test_version_id_2
+):
     """Deduplicate with dry_run=false should merge duplicates."""
     # Drop unique index, insert case-variant duplicates
     _raw_psycopg2(
         [
-            "DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v3",
-            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_language, target_language, confidence, surface_forms, created_at, last_updated) "
-            "VALUES ('come', 'kuja_dedup_merge', 'eng', 'swh', 0.5, '[\"kuja\", \"anakuja\"]'::jsonb, now(), now())",
-            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_language, target_language, confidence, surface_forms, created_at, last_updated) "
-            "VALUES ('come', 'Kuja_Dedup_Merge', 'eng', 'swh', 0.9, '[\"Kuja\", \"walikuja\"]'::jsonb, now(), now())",
+            "DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v4",
+            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_version_id, target_version_id, confidence, surface_forms, created_at, last_updated) "
+            f"VALUES ('come', 'kuja_dedup_merge', {test_version_id}, {test_version_id_2}, 0.5, '[\"kuja\", \"anakuja\"]'::jsonb, now(), now())",
+            "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_version_id, target_version_id, confidence, surface_forms, created_at, last_updated) "
+            f"VALUES ('come', 'Kuja_Dedup_Merge', {test_version_id}, {test_version_id_2}, 0.9, '[\"Kuja\", \"walikuja\"]'::jsonb, now(), now())",
         ]
     )
 
     try:
         resp = client.post(
-            "/v3/agent/lexeme-card/deduplicate?source_language=eng&target_language=swh&dry_run=false",
+            f"/v3/agent/lexeme-card/deduplicate?source_version_id={test_version_id}&target_version_id={test_version_id_2}&dry_run=false",
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
         assert resp.status_code == 200
@@ -5185,7 +6140,9 @@ def test_deduplicate_lexeme_cards_merge(client, regular_token1):
         cur = conn.cursor()
         cur.execute(
             "SELECT COUNT(*), MAX(confidence) FROM agent_lexeme_cards "
-            "WHERE LOWER(target_lemma) = 'kuja_dedup_merge' AND source_language = 'eng' AND target_language = 'swh'"
+            "WHERE LOWER(target_lemma) = 'kuja_dedup_merge' "
+            f"AND source_version_id = {test_version_id} "
+            f"AND target_version_id = {test_version_id_2}"
         )
         count, max_conf = cur.fetchone()
         assert count == 1
@@ -5195,19 +6152,223 @@ def test_deduplicate_lexeme_cards_merge(client, regular_token1):
     finally:
         _raw_psycopg2(
             [
-                "DELETE FROM agent_lexeme_cards WHERE LOWER(target_lemma) = 'kuja_dedup_merge' AND source_language = 'eng' AND target_language = 'swh'",
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_lexeme_cards_unique_v3 "
-                "ON agent_lexeme_cards (LOWER(target_lemma), source_language, target_language)",
+                "DELETE FROM agent_lexeme_cards "
+                "WHERE LOWER(target_lemma) = 'kuja_dedup_merge' "
+                f"AND source_version_id = {test_version_id} "
+                f"AND target_version_id = {test_version_id_2}",
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_lexeme_cards_unique_v4 "
+                "ON agent_lexeme_cards (LOWER(target_lemma), source_version_id, target_version_id)",
             ]
         )
 
 
-def test_deduplicate_no_duplicates(client, regular_token1, db_session):
+def test_deduplicate_no_duplicates(
+    client, regular_token1, db_session, test_version_id, test_version_id_2
+):
     """Deduplicate should return zeros when no duplicates exist."""
     resp = client.post(
-        "/v3/agent/lexeme-card/deduplicate?source_language=eng&target_language=swh&dry_run=true",
+        f"/v3/agent/lexeme-card/deduplicate?source_version_id={test_version_id}&target_version_id={test_version_id_2}&dry_run=true",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["duplicates_found"] == 0
+
+
+def test_post_lexeme_card_nfc_normalizes_text_fields(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """NFD-encoded text fields are stored as NFC in lexeme cards."""
+
+    # NFD form: 'a' + combining acute accent
+    nfd_lemma = "a\u0301pelile"
+    nfc_lemma = unicodedata.normalize("NFC", nfd_lemma)
+    assert nfd_lemma != nfc_lemma  # Different byte sequences
+
+    nfd_surface = "wa\u0301pelile"
+    nfc_surface = unicodedata.normalize("NFC", nfd_surface)
+
+    nfd_source_lemma = "cre\u0301er"
+    nfc_source_lemma = unicodedata.normalize("NFC", nfd_source_lemma)
+
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": nfd_source_lemma,
+            "target_lemma": nfd_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "surface_forms": [nfd_surface],
+            "source_surface_forms": [nfd_source_lemma],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    # target_lemma is also lowercased
+    assert data["target_lemma"] == nfc_lemma.lower()
+    assert data["source_lemma"] == nfc_source_lemma
+    assert data["surface_forms"] == [nfc_surface]
+    assert data["source_surface_forms"] == [nfc_source_lemma]
+
+
+def test_patch_lexeme_card_nfc_normalizes_text_fields(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """PATCH endpoint NFC-normalizes text fields in updates."""
+
+    # First create a card with NFC text
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "build",
+            "target_lemma": "nfc_patch_test",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # Patch with NFD-encoded values
+    nfd_surface = "a\u0301pelile"
+    nfc_surface = unicodedata.normalize("NFC", nfd_surface)
+
+    response = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "surface_forms": [nfd_surface],
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["surface_forms"] == [nfc_surface]
+
+
+def test_post_lexeme_card_nfd_nfc_treated_as_same_lemma(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """NFD and NFC forms of the same target_lemma should be treated as duplicates."""
+
+    nfd_lemma = "a\u0301pelile_dedup"
+    nfc_lemma = unicodedata.normalize("NFC", nfd_lemma)
+
+    # Create card with NFD lemma
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "create",
+            "target_lemma": nfd_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert response.status_code == 200
+
+    # Create card with NFC lemma — should upsert, not create a new one
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "create",
+            "target_lemma": nfc_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.99,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    # Should have updated the existing card, not created a new one
+    assert data["confidence"] == 0.99
+
+
+def test_delete_lexeme_card_success(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Test DELETE removes a lexeme card and its examples via cascade."""
+    # Create a card with examples
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "remove",
+            "target_lemma": "delete_test_target",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "examples": [
+                {"source_text": "remove this", "target_text": "ondoa hii"},
+            ],
+        },
+    )
+    assert response.status_code == 200
+    card_id = response.json()["id"]
+
+    # Verify examples exist in DB before delete
+    examples_before = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .all()
+    )
+    assert len(examples_before) > 0
+
+    # Delete the card
+    delete_response = client.delete(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert delete_response.status_code == 204
+
+    # Verify card is gone from DB
+    db_session.expire_all()
+    card = (
+        db_session.query(AgentLexemeCard).filter(AgentLexemeCard.id == card_id).first()
+    )
+    assert card is None
+
+    # Verify examples were cascade-deleted
+    examples_after = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .all()
+    )
+    assert len(examples_after) == 0
+
+
+def test_delete_lexeme_card_not_found(client, regular_token1):
+    """Test DELETE returns 404 for non-existent card."""
+    response = client.delete(
+        "/v3/agent/lexeme-card/999999",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_delete_lexeme_card_unauthorized(client):
+    """Test DELETE requires authentication."""
+    response = client.delete("/v3/agent/lexeme-card/1")
+    assert response.status_code == 401

@@ -308,3 +308,110 @@ def test_get_revision(client, regular_token1, regular_token2, db_session):
     # remove 5 revisions
     for revision in listed_revisions:
         delete_revision(client, regular_token2, revision["id"])
+
+
+def _post_revision_with_payload(client, token, version_id, payload: bytes):
+    headers = {"Authorization": f"Bearer {token}"}
+    test_revision = {"version_id": version_id, "name": "Bad Revision"}
+    files = {"file": ("upload.txt", payload, "text/plain")}
+    return client.post(
+        f"{prefix}/revision", params=test_revision, files=files, headers=headers
+    )
+
+
+def test_upload_revision_empty_file_no_orphan(client, regular_token1, db_session):
+    """An empty / whitespace-only file must 400 and leave no BibleRevision row."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    before = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+
+    response = _post_revision_with_payload(
+        client, regular_token1, version_id, b"\n\n   \n"
+    )
+    assert response.status_code == 400
+
+    db_session.expire_all()
+    after = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+    assert after == before, "rollback should leave no orphan BibleRevision row"
+
+
+def test_upload_revision_wrong_line_count_no_orphan(client, regular_token1, db_session):
+    """A file with the wrong number of lines must 400 and leave no orphan row."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    before = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+
+    # Three lines is far from the expected 41,899.
+    response = _post_revision_with_payload(
+        client,
+        regular_token1,
+        version_id,
+        b"In the beginning\nGod created\nthe heavens\n",
+    )
+    assert response.status_code == 400
+
+    db_session.expire_all()
+    after = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.bible_version_id == version_id)
+        .count()
+    )
+    assert after == before, "rollback should leave no orphan BibleRevision row"
+
+
+def test_upload_revision_persists_verses(client, regular_token1, db_session):
+    """End-to-end: a successful upload commits both the revision and its verses."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    db_session.expire_all()
+    assert revision_exists(db_session, revision_id)
+    assert count_verses_in_revision(db_session, revision_id) > 0
+
+
+def test_upload_revision_blank_lines_not_inserted(client, regular_token1, db_session):
+    """Files commonly have many lines that are just '\\n' for untranslated
+    verses. After splitlines() those become empty strings, and they must
+    never be persisted as VerseText rows — only the real verses should be
+    inserted, regardless of how many blank lines surround them.
+    """
+    version_id = create_bible_version(client, regular_token1, db_session)
+
+    # 41,899 lines: real text on the first three (GEN 1:1, 1:2, 1:3),
+    # blank everywhere else (most as `\n`, plus a few whitespace-only
+    # variants to lock in the "drop pure whitespace" behaviour too).
+    real_text = ["In the beginning", "And the earth", "And God said"]
+    blank_variants = ["", "   ", "\t"]
+    lines = list(real_text)
+    for i in range(41899 - len(real_text)):
+        lines.append(blank_variants[i % len(blank_variants)])
+    payload = ("\n".join(lines) + "\n").encode("utf-8")
+    assert payload.count(b"\n") == 41899
+
+    response = _post_revision_with_payload(client, regular_token1, version_id, payload)
+    assert response.status_code == 200
+    revision_id = response.json()["id"]
+
+    db_session.expire_all()
+    assert revision_exists(db_session, revision_id)
+
+    # Exactly the three real verses, identified by their vref slots — no
+    # ghost rows from the ~41,896 blank/whitespace lines.
+    rows = (
+        db_session.query(VerseText)
+        .filter(VerseText.revision_id == revision_id)
+        .order_by(VerseText.verse_reference)
+        .all()
+    )
+    assert [r.verse_reference for r in rows] == ["GEN 1:1", "GEN 1:2", "GEN 1:3"]
+    assert [r.text for r in rows] == real_text

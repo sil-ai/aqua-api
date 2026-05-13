@@ -17,6 +17,7 @@ from sqlalchemy.sql import select
 
 from database.dependencies import get_db
 from database.models import (
+    AlignmentThresholdScores,
     AlignmentTopSourceScores,
     Assessment,
     AssessmentResult,
@@ -48,6 +49,17 @@ class aggType(Enum):
     chapter = "chapter"
     book = "book"
     text = "text"
+
+
+class AlignmentScoreType(str, Enum):
+    top = "top"
+    threshold = "threshold"
+
+
+_ALIGNMENT_SCORE_MODELS = {
+    AlignmentScoreType.top: AlignmentTopSourceScores,
+    AlignmentScoreType.threshold: AlignmentThresholdScores,
+}
 
 
 async def validate_parameters(
@@ -225,51 +237,146 @@ async def build_results_query(
     )
 
 
-async def build_ngrams_query(
+# Process-local memoization of `ngrams_table` total counts, keyed by
+# `assessment_id` and only populated for assessments in `status='finished'`
+# state. The intended contract (#651) is that finished ngrams assessments
+# don't grow new rows — a rerun produces a new assessment row instead.
+#
+# That contract is *policy, not enforcement*: `push_ngrams` and
+# `delete_ngrams` (results_push_routes.py) take only an authorization
+# dependency, with no terminal-status guard. Soft-delete
+# (`Assessment.deleted=True`) likewise leaves `status` unchanged and is
+# not visible to the auth check. So out-of-band writes against a
+# finished assessment, or reads against a soft-deleted one, can serve a
+# stale count for up to the TTL. The 1h TTL is the only safeguard
+# against those cases — we accept that bound rather than coupling this
+# cache to every assessment write path.
+#
+# Concurrent requests for the same uncached assessment_id race to
+# populate the entry; both writes produce identical counts so the final
+# state is correct. With multiple worker processes behind a load
+# balancer, each worker keeps its own dict — so a paginating client
+# striped across workers may observe `total_count` flap by a row or two
+# during the window where one worker is warm and another isn't. That
+# matches the "ngrams shouldn't grow on a finished assessment" contract
+# above; if it ever drifts in production, this comment is the place to
+# revisit.
+#
+# Eviction is lazy: an entry is only removed when its key is re-accessed
+# after expiry. The dict size is therefore bounded by "unique finished
+# assessment_ids queried by this worker since startup," not by the TTL.
+# At 12-ish bytes per entry this stays sub-1MB even at 100k assessments,
+# which is small enough that we don't bother with a background sweep.
+_NGRAMS_TOTAL_COUNT_TTL_SECONDS = 3600
+_ngrams_total_count_cache: Dict[int, Tuple[int, float]] = {}
+
+
+async def _get_ngrams_total_count(assessment_id: int, db: AsyncSession) -> int:
+    cached = _ngrams_total_count_cache.get(assessment_id)
+    if cached is not None:
+        count, expires_at = cached
+        if expires_at > time.monotonic():
+            return count
+        del _ngrams_total_count_cache[assessment_id]
+
+    # One round-trip: fetch the count alongside the assessment status
+    # so we can decide whether to cache without a second query.
+    # `is_user_authorized_for_assessment` short-circuits True for
+    # admins without verifying the row exists, so we still need to
+    # handle a missing assessment here.
+    count_subq = (
+        select(func.count())
+        .select_from(NgramsTable)
+        .where(NgramsTable.assessment_id == assessment_id)
+        .scalar_subquery()
+    )
+    row = (
+        await db.execute(
+            select(count_subq.label("count"), Assessment.status).where(
+                Assessment.id == assessment_id
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Assessment {assessment_id} not found",
+        )
+
+    count, assessment_status = row
+    if assessment_status == "finished":
+        _ngrams_total_count_cache[assessment_id] = (
+            count,
+            time.monotonic() + _NGRAMS_TOTAL_COUNT_TTL_SECONDS,
+        )
+    return count
+
+
+async def fetch_ngrams_page(
     assessment_id: int,
     page: Optional[int],
     page_size: Optional[int],
     db: AsyncSession,
-):
+) -> Tuple[List[dict], int]:
+    """Return a page of n-gram results for an assessment, plus the total count.
+
+    Two-step query: first paginate `ngrams_table` (cheap — index on
+    `assessment_id`, primary-key ordering), then fetch vrefs for just
+    that page from `ngram_vref_table`. The previous single-query form
+    `JOIN ... GROUP BY ... ORDER BY ... LIMIT` forced Postgres to
+    aggregate the entire assessment corpus before LIMIT could be
+    applied, so every page paid for the whole table — see #648.
     """
-    Builds a query to fetch n-gram results for an assessment.
-
-    Args:
-        assessment_id (int): The ID of the assessment to fetch n-gram results for.
-        page (Optional[int]): The page number for pagination. Default is None.
-        page_size (Optional[int]): The number of results per page. Default is None.
-        db (Session): The database session object to execute queries against.
-
-    Returns:
-        Tuple: A tuple containing the base query object and the count query object.
-    """
-
-    # Select ngrams and their corresponding vrefs
-    base_query = (
+    ngrams_query = (
         select(
             NgramsTable.id,
             NgramsTable.assessment_id,
             NgramsTable.ngram,
             NgramsTable.ngram_size,
-            func.array_agg(NgramVrefTable.vref).label("vrefs"),
         )
-        .join(NgramVrefTable, NgramVrefTable.ngram_id == NgramsTable.id)
         .where(NgramsTable.assessment_id == assessment_id)
-        .group_by(NgramsTable.id)
         .order_by(NgramsTable.id)
     )
-
-    # Apply pagination
     if page is not None and page_size is not None:
-        base_query = base_query.offset((page - 1) * page_size).limit(page_size)
+        ngrams_query = ngrams_query.offset((page - 1) * page_size).limit(page_size)
 
-    count_query = (
-        select(func.count())
-        .select_from(NgramsTable)
-        .where(NgramsTable.assessment_id == assessment_id)
-    )
+    ngram_rows = (await db.execute(ngrams_query)).all()
+    ngram_ids = [r.id for r in ngram_rows]
 
-    return base_query, count_query
+    vrefs_by_id: dict = {}
+    if ngram_ids:
+        vref_rows = (
+            await db.execute(
+                select(NgramVrefTable.ngram_id, NgramVrefTable.vref).where(
+                    NgramVrefTable.ngram_id.in_(ngram_ids)
+                )
+            )
+        ).all()
+        for r in vref_rows:
+            vrefs_by_id.setdefault(r.ngram_id, []).append(r.vref)
+
+    rows = [
+        {
+            "id": r.id,
+            "assessment_id": r.assessment_id,
+            "ngram": r.ngram,
+            "ngram_size": r.ngram_size,
+            "vrefs": vrefs_by_id.get(r.id, []),
+        }
+        for r in ngram_rows
+    ]
+
+    # `total_count` counts every ngram for the assessment, regardless of
+    # whether it has any vrefs attached. The previous query used INNER
+    # JOIN, which silently dropped vrefless ngrams from results while
+    # this same count still included them — an inconsistency the new
+    # leaf-pagination flow makes explicit (a vrefless ngram now appears
+    # with `vrefs=[]` instead of vanishing). vrefless ngrams aren't
+    # expected in normal training output but aren't schema-prevented
+    # either, so we lean toward visibility over the old hidden-skip.
+    total_count = await _get_ngrams_total_count(assessment_id, db)
+
+    return rows, total_count
 
 
 async def build_text_lengths_query(
@@ -477,8 +584,11 @@ async def build_text_lengths_query(
     return base_query, final_count_query
 
 
-def build_vector_literal(query_vector: np.ndarray) -> str:
-    return f"'[{','.join(f'{x:.6f}' for x in query_vector.tolist())}]'::vector"
+def build_vector_literal(query_vector) -> str:
+    values = (
+        query_vector.tolist() if hasattr(query_vector, "tolist") else list(query_vector)
+    )
+    return f"'[{','.join(f'{x:.6f}' for x in values)}]'::vector"
 
 
 async def build_tfidf_similarity_query(
@@ -641,8 +751,12 @@ async def get_result(
 )
 async def get_ngrams_result(
     assessment_id: int,
-    page: Optional[int] = None,
-    page_size: Optional[int] = None,
+    page: Optional[int] = Query(default=None, ge=1),
+    # Cap page_size at 10_000 — the vref lookup turns each page into an
+    # `IN (id, id, ...)` query, and we don't want one client request to
+    # produce a SQL statement big enough to strain the DB or hit
+    # Postgres' bind-parameter limits.
+    page_size: Optional[int] = Query(default=None, ge=1, le=10_000),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -666,30 +780,18 @@ async def get_ngrams_result(
         A dictionary containing the list of results and the total count of results.
     """
     request_start = time.perf_counter()
+    await validate_parameters(None, None, None, None, page, page_size)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to see this assessment",
         )
 
-    # ✅ Build and execute the query for ngrams
-    query, count_query = await build_ngrams_query(assessment_id, page, page_size, db)
+    result_data, total_count = await fetch_ngrams_page(
+        assessment_id, page, page_size, db
+    )
 
-    result_data, total_count = await execute_query(query, count_query, db)
-
-    # ✅ Process and format the results
-    result_list = [
-        NgramResult(
-            id=row.id,
-            assessment_id=row.assessment_id,
-            ngram=row.ngram,
-            ngram_size=row.ngram_size,
-            vrefs=(
-                row.vrefs if row.vrefs is not None else []
-            ),  # Ensure it's always a list
-        )
-        for row in result_data
-    ]
+    result_list = [NgramResult(**row) for row in result_data]
 
     duration = round(time.perf_counter() - request_start, 2)
     logger.info(
@@ -1928,6 +2030,10 @@ async def get_alignment_scores(
     verse: Optional[int] = None,
     page: Optional[int] = None,
     page_size: Optional[int] = None,
+    score_type: AlignmentScoreType = Query(
+        AlignmentScoreType.top,
+        description="Which alignment score table to read from: 'top' (top-source scores, default) or 'threshold' (threshold scores).",
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -1948,6 +2054,9 @@ async def get_alignment_scores(
         The page of results to return. If set, page_size must also be set.
     page_size : int, optional
         The number of results to return per page. If set, page must also be set.
+    score_type : AlignmentScoreType, optional
+        Which alignment score table to read from. Defaults to ``top`` (top-source
+        scores). Pass ``threshold`` to read alignment threshold scores instead.
 
     Returns
     -------
@@ -1963,16 +2072,15 @@ async def get_alignment_scores(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User not authorized to see this assessment",
         )
+    score_model = _ALIGNMENT_SCORE_MODELS[score_type]
     # Initialize base query with dynamic filtering based on input parameters
-    base_query = select(AlignmentTopSourceScores).where(
-        AlignmentTopSourceScores.assessment_id == assessment_id
-    )
+    base_query = select(score_model).where(score_model.assessment_id == assessment_id)
     if book is not None:
-        base_query = base_query.where(AlignmentTopSourceScores.book == book)
+        base_query = base_query.where(score_model.book == book)
         if chapter is not None:
-            base_query = base_query.where(AlignmentTopSourceScores.chapter == chapter)
+            base_query = base_query.where(score_model.chapter == chapter)
             if verse is not None:
-                base_query = base_query.where(AlignmentTopSourceScores.verse == verse)
+                base_query = base_query.where(score_model.verse == verse)
 
     # Pagination logic
     if page is not None and page_size is not None:
@@ -1990,29 +2098,6 @@ async def get_alignment_scores(
     result_data = await db.execute(base_query_paginated)
     result_data = result_data.scalars().all()
 
-    result_list = []
-    for row in result_data:
-        # Constructing the verse reference string
-        vref = f"{row.book}"
-        if hasattr(row, "chapter") and row.chapter is not None:
-            vref += f" {row.chapter}"
-            if hasattr(row, "verse") and row.verse is not None:
-                vref += f":{row.verse}"
-        # Building the Result object
-        result_obj = WordAlignment(
-            id=row.id if hasattr(row, "id") else None,
-            assessment_id=row.assessment_id if hasattr(row, "assessment_id") else None,
-            vref=vref,
-            source=str(row.source) if hasattr(row, "source") else None,
-            target=str(row.target) if hasattr(row, "target") else None,
-            score=row.score,
-            flag=row.flag if hasattr(row, "flag") else None,
-            note=row.note if hasattr(row, "note") else None,
-            hide=row.hide if hasattr(row, "hide") else None,
-        )
-        # Add the Result object to the result list
-        result_list.append(result_obj)
-
     duration = round(time.perf_counter() - request_start, 2)
     logger.info(
         f"get_alignment_scores completed in {duration}s",
@@ -2025,8 +2110,9 @@ async def get_alignment_scores(
             "verse": verse,
             "page": page,
             "page_size": page_size,
+            "score_type": score_type.value,
             "total_count": total_count,
-            "results_returned": len(result_list),
+            "results_returned": len(result_data),
             "duration_s": duration,
         },
     )
