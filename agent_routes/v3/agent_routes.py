@@ -22,6 +22,8 @@ from database.models import (
     AgentWordAlignment,
     BibleRevision,
     BibleVersion,
+    BibleVersionAccess,
+    UserGroup,
 )
 from database.models import UserDB as UserModel
 from models import (
@@ -40,10 +42,7 @@ from models import (
     ListMode,
 )
 from security_routes.auth_routes import get_current_user
-from security_routes.utilities import (
-    get_authorized_revision_ids,
-    is_user_authorized_for_assessment,
-)
+from security_routes.utilities import is_user_authorized_for_assessment
 from utils.logging_config import setup_logger
 
 container_id = socket.gethostname()
@@ -908,7 +907,7 @@ async def _apply_lexeme_card_patch(
     card: AgentLexemeCard,
     patch_data: LexemeCardPatch,
     list_mode: ListMode,
-    authorized_revision_ids: set[int],
+    current_user: UserModel,
     db: AsyncSession,
     is_user_edit: bool = False,
 ) -> LexemeCardOut:
@@ -1053,30 +1052,44 @@ async def _apply_lexeme_card_patch(
                 .on_conflict_do_nothing()
             )
 
-    # Update last_updated timestamp
-    card.last_updated = func.now()
+    # Update timestamps client-side so we don't need an extra DB round-trip
+    # to read them back after commit (the async session has expire_on_commit=False).
+    now = datetime.datetime.utcnow()
+    card.last_updated = now
     if is_user_edit:
-        card.last_user_edit = func.now()
+        card.last_user_edit = now
 
     await db.commit()
-    await db.refresh(card)
 
-    # Query examples for authorized revisions
-    examples_list = []
-    if authorized_revision_ids:
-        examples_query = (
-            select(AgentLexemeCardExample)
-            .where(
-                AgentLexemeCardExample.lexeme_card_id == card.id,
-                AgentLexemeCardExample.revision_id.in_(authorized_revision_ids),
+    # Query examples filtered to revisions the user is authorized to see.
+    # Authorization is pushed into SQL as a subquery rather than being
+    # materialised into a Python set and bound as a giant IN-list — that
+    # was the cause of the multi-second latency on this endpoint for users
+    # with access to many revisions. For admins, no filter is needed.
+    examples_query = (
+        select(AgentLexemeCardExample)
+        .where(AgentLexemeCardExample.lexeme_card_id == card.id)
+        .order_by(AgentLexemeCardExample.id)
+    )
+    if not current_user.is_admin:
+        authorized_revisions_subq = (
+            select(BibleRevision.id)
+            .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
+            .join(
+                BibleVersionAccess,
+                BibleVersionAccess.bible_version_id == BibleVersion.id,
             )
-            .order_by(AgentLexemeCardExample.id)
+            .join(UserGroup, UserGroup.group_id == BibleVersionAccess.group_id)
+            .where(UserGroup.user_id == current_user.id)
         )
-        examples_result = await db.execute(examples_query)
-        examples_objs = examples_result.scalars().all()
-        examples_list = [
-            {"source": ex.source_text, "target": ex.target_text} for ex in examples_objs
-        ]
+        examples_query = examples_query.where(
+            AgentLexemeCardExample.revision_id.in_(authorized_revisions_subq),
+        )
+    examples_result = await db.execute(examples_query)
+    examples_list = [
+        {"source": ex.source_text, "target": ex.target_text}
+        for ex in examples_result.scalars().all()
+    ]
 
     # Build response
     card_dict = {
@@ -1142,9 +1155,6 @@ async def patch_lexeme_card_by_id(
     try:
         from sqlalchemy import select
 
-        # Get authorized revision IDs for filtering examples
-        authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
-
         # Fetch the card
         query = select(AgentLexemeCard).where(AgentLexemeCard.id == card_id)
         result = await db.execute(query)
@@ -1157,7 +1167,7 @@ async def patch_lexeme_card_by_id(
             )
 
         result_card = await _apply_lexeme_card_patch(
-            card, patch_data, list_mode, authorized_revision_ids, db, is_user_edit
+            card, patch_data, list_mode, current_user, db, is_user_edit
         )
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
@@ -1228,9 +1238,6 @@ async def patch_lexeme_card_by_lemma(
     try:
         from sqlalchemy import select
 
-        # Get authorized revision IDs for filtering examples
-        authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
-
         # Fetch the card by lemma lookup (case-insensitive)
         # Build query with required fields
         from sqlalchemy.sql import func as sql_func
@@ -1267,7 +1274,7 @@ async def patch_lexeme_card_by_lemma(
         card = cards[0]
 
         result_card = await _apply_lexeme_card_patch(
-            card, patch_data, list_mode, authorized_revision_ids, db, is_user_edit
+            card, patch_data, list_mode, current_user, db, is_user_edit
         )
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
@@ -1787,12 +1794,6 @@ async def get_lexeme_cards(
         examples_by_card: dict[int, list[dict]] = {cid: [] for cid in card_ids}
 
         if card_ids:
-            from database.models import (
-                BibleVersion,
-                BibleVersionAccess,
-                UserGroup,
-            )
-
             examples_conditions = [
                 AgentLexemeCardExample.lexeme_card_id.in_(card_ids),
             ]

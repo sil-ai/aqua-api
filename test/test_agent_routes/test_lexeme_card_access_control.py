@@ -399,3 +399,119 @@ def test_lexeme_card_isolated_across_versions_with_same_iso_language(
     assert hit.status_code == 200
     assert len(hit.json()) == 1
     assert hit.json()[0]["target_lemma"] == target_lemma
+
+
+def test_patch_lexeme_card_filters_examples_by_user_access(
+    client, regular_token1, regular_token2, admin_token, db_session
+):
+    """
+    The PATCH response must scope examples to revisions the requesting user
+    can access, matching the GET handler's behaviour. Each regular user only
+    sees their own revision's examples in the PATCH response; admin sees all.
+    """
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    user2 = db_session.query(UserDB).filter(UserDB.username == "testuser2").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+    group2 = db_session.query(Group).filter(Group.name == "Group2").first()
+
+    version_a = BibleVersion(
+        name="patch_acl_version_a",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="PAVA",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    version_b = BibleVersion(
+        name="patch_acl_version_b",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="PAVB",
+        owner_id=user2.id,
+        is_reference=False,
+    )
+    db_session.add_all([version_a, version_b])
+    db_session.commit()
+
+    revision_a = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_a.id,
+        published=False,
+        machine_translation=True,
+    )
+    revision_b = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_b.id,
+        published=False,
+        machine_translation=True,
+    )
+    db_session.add_all([revision_a, revision_b])
+    db_session.commit()
+    revision_a_id = revision_a.id
+    revision_b_id = revision_b.id
+
+    db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=version_a.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=version_b.id, group_id=group2.id),
+        ]
+    )
+    db_session.commit()
+
+    # User 1 creates the card with one example sourced from revision_a
+    create_resp = client.post(
+        f"/v3/agent/lexeme-card?revision_id={revision_a_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "sun",
+            "target_lemma": "jua",
+            "source_version_id": version_a.id,
+            "target_version_id": version_b.id,
+            "examples": [{"source": "the sun", "target": "jua"}],
+        },
+    )
+    assert create_resp.status_code == 200
+    card_id = create_resp.json()["id"]
+
+    # User 2 PATCHes the same card to add an example from revision_b. Their
+    # response must only contain the example they're authorized to see — not
+    # user 1's example from revision_a.
+    patch_resp_user2 = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=merge",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+        json={
+            "examples": [
+                {
+                    "source": "bright sun",
+                    "target": "jua kali",
+                    "revision_id": revision_b_id,
+                }
+            ],
+        },
+    )
+    assert patch_resp_user2.status_code == 200
+    user2_examples = patch_resp_user2.json()["examples"]
+    assert len(user2_examples) == 1
+    assert user2_examples[0]["source"] == "bright sun"
+
+    # User 1 PATCHes; they should see only the revision_a example.
+    patch_resp_user1 = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=merge",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"confidence": 0.9},
+    )
+    assert patch_resp_user1.status_code == 200
+    user1_examples = patch_resp_user1.json()["examples"]
+    assert len(user1_examples) == 1
+    assert user1_examples[0]["source"] == "the sun"
+
+    # Admin PATCH sees both examples.
+    patch_resp_admin = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=merge",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"confidence": 0.95},
+    )
+    assert patch_resp_admin.status_code == 200
+    admin_examples = patch_resp_admin.json()["examples"]
+    admin_sources = {ex["source"] for ex in admin_examples}
+    assert admin_sources == {"the sun", "bright sun"}
