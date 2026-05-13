@@ -1,5 +1,7 @@
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    CHAR,
+    DDL,
     TIMESTAMP,
     Boolean,
     CheckConstraint,
@@ -15,6 +17,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.declarative import declarative_base
@@ -458,6 +461,13 @@ class AgentLexemeCard(Base):
     target_lemma = Column(Text, nullable=False)
     source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
     target_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
+    # Pivot-language card identity: the ISO 639-3 code of the source language
+    # the canonical card was built against. Auto-filled from source_version_id
+    # by a BEFORE INSERT/UPDATE trigger if callers omit it.
+    source_language_iso = Column(CHAR(3), nullable=False)
+    # Opaque token bumped when the canonical card-builder rebuilds the card.
+    # Nullable forever; only the most recent build sets it.
+    build_version = Column(Text, nullable=True)
     pos = Column(Text)
     surface_forms = Column(JSONB)  # JSON array of target language surface forms
     source_surface_forms = Column(JSONB)  # JSON array of source language surface forms
@@ -471,12 +481,13 @@ class AgentLexemeCard(Base):
     last_user_edit = Column(TIMESTAMP, nullable=True)
 
     __table_args__ = (
-        # Case-insensitive unique constraint to prevent duplicate cards
-        # Each LOWER(target_lemma) can only have one card per version pair
+        # Case-insensitive language-keyed unique constraint (pivot-language
+        # architecture): one canonical card per (lemma, source language,
+        # target revision's version). Replaces the older version-keyed v4.
         Index(
-            "ix_agent_lexeme_cards_unique_v4",
+            "ix_agent_lexeme_cards_unique_v5",
             func.lower(target_lemma),
-            "source_version_id",
+            "source_language_iso",
             "target_version_id",
             unique=True,
         ),
@@ -557,6 +568,126 @@ class AgentLexemeCardExample(Base):
     # Relationships
     lexeme_card = relationship("AgentLexemeCard", back_populates="examples_rel")
     revision = relationship("BibleRevision")
+
+
+class CardTranslation(Base):
+    """Cheap MT-derived translation of a canonical lexeme card.
+
+    Canonical card content stays on AgentLexemeCard; this table only
+    carries the per-output-language overlay (source-side lemma, surface
+    forms, senses) plus build-version provenance so consumers can detect
+    when a translation is stale relative to its parent card.
+    """
+
+    __tablename__ = "card_translations"
+
+    id = Column(Integer, primary_key=True)
+    card_id = Column(
+        Integer,
+        ForeignKey("agent_lexeme_cards.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    language_iso = Column(CHAR(3), nullable=False)
+    source_lemma = Column(Text, nullable=True)
+    source_surface_forms = Column(JSONB, nullable=True)
+    senses = Column(JSONB, nullable=True)
+    parent_build_version = Column(Text, nullable=True)
+    build_version = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+    last_updated = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_card_translations_unique",
+            "card_id",
+            "language_iso",
+            unique=True,
+        ),
+        Index("ix_card_translations_card_id", "card_id"),
+    )
+
+    card = relationship("AgentLexemeCard")
+    examples = relationship(
+        "CardTranslationExample",
+        back_populates="card_translation",
+        cascade="all, delete-orphan",
+    )
+
+
+class CardTranslationExample(Base):
+    """Per-example translation of a card example.
+
+    The canonical AgentLexemeCardExample owns the target-language text;
+    this row stores only the MT'd source-side text. Reading the full
+    translated example means joining example_id back to
+    agent_lexeme_card_examples for the target text.
+    """
+
+    __tablename__ = "card_translation_examples"
+
+    id = Column(Integer, primary_key=True)
+    card_translation_id = Column(
+        Integer,
+        ForeignKey("card_translations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    example_id = Column(
+        Integer,
+        ForeignKey("agent_lexeme_card_examples.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_text = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_card_translation_examples_unique",
+            "card_translation_id",
+            "example_id",
+            unique=True,
+        ),
+        Index(
+            "ix_card_translation_examples_translation",
+            "card_translation_id",
+        ),
+    )
+
+    card_translation = relationship("CardTranslation", back_populates="examples")
+    example = relationship("AgentLexemeCardExample")
+
+
+# Auto-fill trigger for agent_lexeme_cards.source_language_iso.
+# Defined here as well as in the alembic migration so test DBs (which
+# bootstrap via Base.metadata.create_all rather than alembic) get it on
+# table creation. Production picks it up from the migration.
+_LEXEME_CARD_FILL_LANG_FN = DDL(
+    """
+    CREATE OR REPLACE FUNCTION fill_lexeme_card_source_language_iso()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        IF NEW.source_language_iso IS NULL AND NEW.source_version_id IS NOT NULL THEN
+            SELECT iso_language INTO NEW.source_language_iso
+            FROM bible_version WHERE id = NEW.source_version_id;
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    """
+)
+
+_LEXEME_CARD_FILL_LANG_TRIGGER = DDL(
+    """
+    DROP TRIGGER IF EXISTS trg_fill_lexeme_card_source_language_iso
+        ON agent_lexeme_cards;
+    CREATE TRIGGER trg_fill_lexeme_card_source_language_iso
+    BEFORE INSERT OR UPDATE OF source_version_id ON agent_lexeme_cards
+    FOR EACH ROW
+    EXECUTE FUNCTION fill_lexeme_card_source_language_iso();
+    """
+)
+
+event.listen(AgentLexemeCard.__table__, "after_create", _LEXEME_CARD_FILL_LANG_FN)
+event.listen(AgentLexemeCard.__table__, "after_create", _LEXEME_CARD_FILL_LANG_TRIGGER)
 
 
 class AgentWordAlignment(Base):

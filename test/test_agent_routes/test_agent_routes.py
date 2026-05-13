@@ -6058,7 +6058,7 @@ def test_deduplicate_lexeme_cards_dry_run(
     # Drop unique index, insert case-variant duplicates
     _raw_psycopg2(
         [
-            "DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v4",
+            "DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v5",
             "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_version_id, target_version_id, confidence, created_at, last_updated) "
             f"VALUES ('go', 'enda_dedup_dry', {test_version_id}, {test_version_id_2}, 0.5, now(), now())",
             "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_version_id, target_version_id, confidence, created_at, last_updated) "
@@ -6099,8 +6099,8 @@ def test_deduplicate_lexeme_cards_dry_run(
                 "WHERE LOWER(target_lemma) = 'enda_dedup_dry' "
                 f"AND source_version_id = {test_version_id} "
                 f"AND target_version_id = {test_version_id_2}",
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_lexeme_cards_unique_v4 "
-                "ON agent_lexeme_cards (LOWER(target_lemma), source_version_id, target_version_id)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_lexeme_cards_unique_v5 "
+                "ON agent_lexeme_cards (LOWER(target_lemma), source_language_iso, target_version_id)",
             ]
         )
 
@@ -6112,7 +6112,7 @@ def test_deduplicate_lexeme_cards_merge(
     # Drop unique index, insert case-variant duplicates
     _raw_psycopg2(
         [
-            "DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v4",
+            "DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v5",
             "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_version_id, target_version_id, confidence, surface_forms, created_at, last_updated) "
             f"VALUES ('come', 'kuja_dedup_merge', {test_version_id}, {test_version_id_2}, 0.5, '[\"kuja\", \"anakuja\"]'::jsonb, now(), now())",
             "INSERT INTO agent_lexeme_cards (source_lemma, target_lemma, source_version_id, target_version_id, confidence, surface_forms, created_at, last_updated) "
@@ -6156,8 +6156,8 @@ def test_deduplicate_lexeme_cards_merge(
                 "WHERE LOWER(target_lemma) = 'kuja_dedup_merge' "
                 f"AND source_version_id = {test_version_id} "
                 f"AND target_version_id = {test_version_id_2}",
-                "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_lexeme_cards_unique_v4 "
-                "ON agent_lexeme_cards (LOWER(target_lemma), source_version_id, target_version_id)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS ix_agent_lexeme_cards_unique_v5 "
+                "ON agent_lexeme_cards (LOWER(target_lemma), source_language_iso, target_version_id)",
             ]
         )
 
