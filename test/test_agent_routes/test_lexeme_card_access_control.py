@@ -515,3 +515,268 @@ def test_patch_lexeme_card_filters_examples_by_user_access(
     admin_examples = patch_resp_admin.json()["examples"]
     admin_sources = {ex["source"] for ex in admin_examples}
     assert admin_sources == {"the sun", "bright sun"}
+
+
+def test_patch_lexeme_card_by_lemma_filters_examples_by_user_access(
+    client, regular_token1, regular_token2, admin_token, db_session
+):
+    """
+    The by-lemma PATCH endpoint funnels through the same _apply_lexeme_card_patch
+    helper as the by-id endpoint. Pin its access-control behaviour separately so
+    a future refactor that diverges the two endpoints doesn't slip past CI.
+    """
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    user2 = db_session.query(UserDB).filter(UserDB.username == "testuser2").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+    group2 = db_session.query(Group).filter(Group.name == "Group2").first()
+
+    version_a = BibleVersion(
+        name="patch_lemma_acl_version_a",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="PLVA",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    version_b = BibleVersion(
+        name="patch_lemma_acl_version_b",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="PLVB",
+        owner_id=user2.id,
+        is_reference=False,
+    )
+    db_session.add_all([version_a, version_b])
+    db_session.commit()
+
+    revision_a = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_a.id,
+        published=False,
+        machine_translation=True,
+    )
+    revision_b = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_b.id,
+        published=False,
+        machine_translation=True,
+    )
+    db_session.add_all([revision_a, revision_b])
+    db_session.commit()
+    revision_a_id = revision_a.id
+    revision_b_id = revision_b.id
+
+    db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=version_a.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=version_b.id, group_id=group2.id),
+        ]
+    )
+    db_session.commit()
+
+    target_lemma = "moon_by_lemma_acl"
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={revision_a_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "moon",
+            "target_lemma": target_lemma,
+            "source_version_id": version_a.id,
+            "target_version_id": version_b.id,
+            "examples": [{"source": "the moon", "target": "mwezi"}],
+        },
+    )
+
+    patch_url = (
+        f"/v3/agent/lexeme-card?target_lemma={target_lemma}"
+        f"&source_version_id={version_a.id}&target_version_id={version_b.id}"
+        "&list_mode=merge"
+    )
+
+    resp_user2 = client.patch(
+        patch_url,
+        headers={"Authorization": f"Bearer {regular_token2}"},
+        json={
+            "examples": [
+                {
+                    "source": "full moon",
+                    "target": "mwezi mzima",
+                    "revision_id": revision_b_id,
+                }
+            ],
+        },
+    )
+    assert resp_user2.status_code == 200
+    user2_examples = resp_user2.json()["examples"]
+    assert {ex["source"] for ex in user2_examples} == {"full moon"}
+
+    resp_user1 = client.patch(
+        patch_url,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"confidence": 0.9},
+    )
+    assert resp_user1.status_code == 200
+    user1_examples = resp_user1.json()["examples"]
+    assert {ex["source"] for ex in user1_examples} == {"the moon"}
+
+    resp_admin = client.patch(
+        patch_url,
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"confidence": 0.95},
+    )
+    assert resp_admin.status_code == 200
+    admin_sources = {ex["source"] for ex in resp_admin.json()["examples"]}
+    assert admin_sources == {"the moon", "full moon"}
+
+
+def test_patch_lexeme_card_dedupes_examples_when_user_in_multiple_groups(
+    client, regular_token1, admin_token, db_session
+):
+    """
+    A user belonging to multiple groups, both of which grant access to the
+    same BibleVersion, must not see duplicate examples in the PATCH response.
+    The authorized-revisions subquery uses DISTINCT and PostgreSQL's
+    IN(subquery) is a semi-join, so duplicates are deduplicated naturally —
+    this test pins that behaviour against a future refactor (e.g., switching
+    to an explicit JOIN form that could multiply rows).
+    """
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+
+    extra_group = Group(name="ExtraGroupForUser1")
+    db_session.add(extra_group)
+    db_session.commit()
+
+    from database.models import UserGroup as UserGroupModel
+
+    db_session.add(UserGroupModel(user_id=user1.id, group_id=extra_group.id))
+    db_session.commit()
+
+    version_a = BibleVersion(
+        name="multigroup_version_a",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="MGVA",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    version_b = BibleVersion(
+        name="multigroup_version_b",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="MGVB",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    db_session.add_all([version_a, version_b])
+    db_session.commit()
+
+    revision_a = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_a.id,
+        published=False,
+        machine_translation=True,
+    )
+    db_session.add(revision_a)
+    db_session.commit()
+    revision_a_id = revision_a.id
+
+    db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=version_a.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=version_a.id, group_id=extra_group.id),
+        ]
+    )
+    db_session.commit()
+
+    create_resp = client.post(
+        f"/v3/agent/lexeme-card?revision_id={revision_a_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "star",
+            "target_lemma": "nyota_multigroup",
+            "source_version_id": version_a.id,
+            "target_version_id": version_b.id,
+            "examples": [
+                {"source": "bright star", "target": "nyota angavu"},
+                {"source": "north star", "target": "nyota ya kaskazini"},
+            ],
+        },
+    )
+    assert create_resp.status_code == 200
+    card_id = create_resp.json()["id"]
+
+    patch_resp = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=merge",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"confidence": 0.9},
+    )
+    assert patch_resp.status_code == 200
+    examples = patch_resp.json()["examples"]
+    assert len(examples) == 2
+    assert {ex["source"] for ex in examples} == {"bright star", "north star"}
+
+
+def test_patch_lexeme_card_bumps_last_updated_timestamp(
+    client, admin_token, db_session
+):
+    """
+    PATCH must move last_updated forward. The timestamp is set client-side
+    rather than via func.now(); a regression that drops the assignment would
+    cause last_updated to stay frozen at the create-time value.
+    """
+    import time as _time
+
+    admin = db_session.query(UserDB).filter(UserDB.username == "admin").first()
+    version_a = BibleVersion(
+        name="last_updated_version_a",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="LUVA",
+        owner_id=admin.id,
+        is_reference=False,
+    )
+    version_b = BibleVersion(
+        name="last_updated_version_b",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="LUVB",
+        owner_id=admin.id,
+        is_reference=False,
+    )
+    db_session.add_all([version_a, version_b])
+    db_session.commit()
+
+    revision_a = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_a.id,
+        published=False,
+        machine_translation=True,
+    )
+    db_session.add(revision_a)
+    db_session.commit()
+
+    create_resp = client.post(
+        f"/v3/agent/lexeme-card?revision_id={revision_a.id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={
+            "source_lemma": "tree",
+            "target_lemma": "mti_last_updated",
+            "source_version_id": version_a.id,
+            "target_version_id": version_b.id,
+        },
+    )
+    assert create_resp.status_code == 200
+    card_id = create_resp.json()["id"]
+    original_last_updated = create_resp.json()["last_updated"]
+
+    _time.sleep(0.05)
+
+    patch_resp = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}?list_mode=merge",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"confidence": 0.5},
+    )
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["last_updated"] != original_last_updated
+    assert patch_resp.json()["last_updated"] > original_last_updated

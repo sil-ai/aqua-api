@@ -1054,9 +1054,9 @@ async def _apply_lexeme_card_patch(
                 .on_conflict_do_nothing()
             )
 
-    # Update timestamps client-side so we don't need an extra DB round-trip
-    # to read them back after commit (the async session has expire_on_commit=False).
-    now = datetime.datetime.utcnow()
+    # Set timestamps client-side so we don't need a post-commit refresh
+    # round-trip. The TIMESTAMP columns are naive UTC; the DB runs on UTC.
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
     card.last_updated = now
     if is_user_edit:
         card.last_user_edit = now
@@ -1076,6 +1076,7 @@ async def _apply_lexeme_card_patch(
     if not current_user.is_admin:
         authorized_revisions_subq = (
             select(BibleRevision.id)
+            .distinct()
             .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
             .join(
                 BibleVersionAccess,
