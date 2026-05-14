@@ -1151,3 +1151,133 @@ def test_patch_affix_position_change_with_no_collision(
     assert resp.status_code == 200
     assert resp.json()["position"] == "infix"
     _cleanup(db_session)
+
+
+def test_patch_affix_empty_body_is_noop(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    affix_id = _post_one_and_get_id(
+        client,
+        headers,
+        TEST_ISO,
+        "akha-",
+        "prefix",
+        "past",
+        examples=["akhatenda"],
+        n_runs=3,
+    )
+    before = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers).json()[
+        "affixes"
+    ][0]
+
+    resp = client.patch(f"/{prefix}/affixes/{affix_id}", json={}, headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["form"] == before["form"]
+    assert body["position"] == before["position"]
+    assert body["gloss"] == before["gloss"]
+    assert body["examples"] == before["examples"]
+    assert body["n_runs"] == before["n_runs"]
+    _cleanup(db_session)
+
+
+def test_patch_affix_idempotent(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    affix_id = _post_one_and_get_id(
+        client, headers, TEST_ISO, "-ile", "suffix", "perfect"
+    )
+    payload = {"gloss": "perfect", "n_runs": 5}
+    first = client.patch(f"/{prefix}/affixes/{affix_id}", json=payload, headers=headers)
+    second = client.patch(
+        f"/{prefix}/affixes/{affix_id}", json=payload, headers=headers
+    )
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["gloss"] == second.json()["gloss"] == "perfect"
+    assert first.json()["n_runs"] == second.json()["n_runs"] == 5
+    _cleanup(db_session)
+
+
+def test_patch_affix_source_model_only(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    affix_id = _post_one_and_get_id(
+        client, headers, TEST_ISO, "akha-", "prefix", "past"
+    )
+    resp = client.patch(
+        f"/{prefix}/affixes/{affix_id}",
+        json={"source_model": "gpt-5-pro"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["source_model"] == "gpt-5-pro"
+    _cleanup(db_session)
+
+
+def test_patch_affix_n_runs_null_ignored(client, regular_token1, db_session):
+    """`n_runs: null` is ignored — the NOT NULL column keeps its existing value."""
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    affix_id = _post_one_and_get_id(
+        client, headers, TEST_ISO, "akha-", "prefix", "past", n_runs=4
+    )
+    resp = client.patch(
+        f"/{prefix}/affixes/{affix_id}",
+        json={"n_runs": None, "source_model": "gpt-5-pro"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["n_runs"] == 4
+    assert body["source_model"] == "gpt-5-pro"
+    _cleanup(db_session)
+
+
+def test_put_affixes_overwrites_gloss_on_cross_revision_collision(
+    client, regular_token1, test_revision_id, db_session
+):
+    """PUT scoped to rev2 overwrites the gloss of an unscoped row at the same
+    (form, position) — authoritative replace under the new
+    (iso, form, position) unique key."""
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "akha-", "position": "prefix", "gloss": "past"},
+            ],
+        },
+        headers=headers,
+    )
+
+    resp = client.put(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "revision_id": test_revision_id,
+            "affixes": [
+                {"form": "akha-", "position": "prefix", "gloss": "perfective"},
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    listing = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers).json()
+    assert listing["total"] == 1
+    assert listing["affixes"][0]["gloss"] == "perfective"
+    assert listing["affixes"][0]["first_seen_revision_id"] == test_revision_id
+    _cleanup(db_session)

@@ -1777,6 +1777,16 @@ class AffixPatch(BaseModel):
     n_runs: Optional[int] = Field(default=None, ge=1, le=32767)
     source_model: Optional[str] = None
 
+    @field_validator("form", "gloss", mode="after")
+    @classmethod
+    def _nfc_strip(cls, v):
+        if v is None:
+            return v
+        v = unicodedata.normalize("NFC", v).strip()
+        if not v:
+            raise ValueError("must not be empty after NFC + strip")
+        return v
+
 
 class WordIndexRequest(BaseModel):
     iso_639_3: str = Field(..., min_length=3, max_length=3)

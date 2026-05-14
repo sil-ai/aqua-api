@@ -99,6 +99,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Lossy: rows merged in upgrade() cannot be restored. Restores the old
+    # 4-column unique index so the schema lines up, but any polysemy rows
+    # that existed before upgrade are permanently gone.
     op.drop_index(
         "ux_language_affixes_iso_form_position",
         table_name="language_affixes",

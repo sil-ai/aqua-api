@@ -94,6 +94,25 @@ async def commit_affixes(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
+    """Bulk upsert of language affixes, keyed on (iso, form, position).
+
+    Same gloss → idempotent upsert of examples/n_runs/source_model.
+    Different gloss for an existing (form, position) → **409** with body:
+
+        {"detail": {"message": ..., "conflicts": [
+            {"form", "position", "submitted_gloss",
+             "existing_id", "existing_gloss"}, ...
+        ]}}
+
+    A single conflict aborts the whole batch — there are no partial inserts.
+    Callers should PATCH /v3/affixes/{existing_id} to update the stored row.
+
+    The SELECT-then-INSERT pattern has a small race window: a concurrent
+    writer can land between the conflict check and the upsert. The
+    on_conflict_do_update clause omits `gloss` from set_, so a racing
+    same-key insert with a different gloss is silently dropped rather than
+    overwriting the stored gloss.
+    """
     request_start = time.perf_counter()
     iso = payload.iso_639_3
 
@@ -448,6 +467,16 @@ async def patch_affix(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
+    """Partial update of a single affix by id.
+
+    Only provided fields are updated; an empty body is a no-op that returns
+    the unchanged row. NFC normalization is applied to `form` and `gloss` by
+    Pydantic validators; both must be non-empty after strip.
+
+    Returns **409** with `{"detail": {"message", "existing_id"}}` if changing
+    `form` and/or `position` would collide with another row in the same
+    language.
+    """
     request_start = time.perf_counter()
 
     result = await db.execute(select(LanguageAffix).where(LanguageAffix.id == affix_id))
@@ -460,25 +489,9 @@ async def patch_affix(
 
     provided = patch.model_fields_set
 
-    new_form = affix.form
-    if "form" in provided:
-        new_form = _normalize(patch.form)
-        if not new_form:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Affix form must not be empty",
-            )
-
+    new_form = patch.form if "form" in provided else affix.form
     new_position = patch.position if "position" in provided else affix.position
-
-    new_gloss = affix.gloss
-    if "gloss" in provided:
-        new_gloss = _normalize(patch.gloss)
-        if not new_gloss:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Affix gloss must not be empty",
-            )
+    new_gloss = patch.gloss if "gloss" in provided else affix.gloss
 
     if (new_form, new_position) != (affix.form, affix.position):
         dup_result = await db.execute(
@@ -508,7 +521,10 @@ async def patch_affix(
         affix.gloss = new_gloss
         if "examples" in provided:
             affix.examples = patch.examples
-        if "n_runs" in provided:
+        # n_runs is NOT NULL; a caller that sends `"n_runs": null` is
+        # asking to clear a non-clearable column — treat that the same
+        # as omitting the field.
+        if "n_runs" in provided and patch.n_runs is not None:
             affix.n_runs = patch.n_runs
         if "source_model" in provided:
             affix.source_model = patch.source_model
