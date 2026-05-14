@@ -6,6 +6,8 @@ from database.models import (
     AgentLexemeCard,
     AgentLexemeCardExample,
     AgentWordAlignment,
+    CardTranslation,
+    CardTranslationExample,
 )
 
 prefix = "v3"
@@ -6372,3 +6374,1082 @@ def test_delete_lexeme_card_unauthorized(client):
     """Test DELETE requires authentication."""
     response = client.delete("/v3/agent/lexeme-card/1")
     assert response.status_code == 401
+
+
+# --------------------------------------------------------------------------
+# Card translation endpoints (pivot-language architecture, issue #669)
+# --------------------------------------------------------------------------
+
+
+def _create_card_with_examples(
+    client,
+    token,
+    *,
+    target_lemma,
+    source_lemma,
+    revision_id,
+    source_version_id,
+    target_version_id,
+    examples=None,
+):
+    """Helper: POST a canonical card with one or more examples and return
+    its id."""
+    if examples is None:
+        examples = [{"source": "hello world", "target": "habari ya dunia"}]
+    response = client.post(
+        f"/v3/agent/lexeme-card?revision_id={revision_id}",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "source_lemma": source_lemma,
+            "target_lemma": target_lemma,
+            "source_version_id": source_version_id,
+            "target_version_id": target_version_id,
+            "examples": examples,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["id"]
+
+
+def test_add_card_translation_insert_success(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """POST a translation for a card and verify the row + examples are persisted."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_insert_lemma",
+        source_lemma="trans_insert_source",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[
+            {"source": "first source", "target": "first target"},
+            {"source": "second source", "target": "second target"},
+        ],
+    )
+
+    example_rows = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .order_by(AgentLexemeCardExample.id)
+        .all()
+    )
+    assert len(example_rows) == 2
+    example_id_1 = example_rows[0].id
+    example_id_2 = example_rows[1].id
+
+    response = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "kupenda",
+            "source_surface_forms": ["kupenda", "anapenda"],
+            "senses": [{"definition": "kuwa na hisia ya upendo"}],
+            "parent_build_version": "v1",
+            "build_version": "swh-v1",
+            "examples": [
+                {"example_id": example_id_1, "source_text": "chanzo cha kwanza"},
+                {"example_id": example_id_2, "source_text": "chanzo cha pili"},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["card_id"] == card_id
+    assert data["language_iso"] == "swh"
+    assert data["source_lemma"] == "kupenda"
+    assert data["source_surface_forms"] == ["kupenda", "anapenda"]
+    assert data["senses"] == [{"definition": "kuwa na hisia ya upendo"}]
+    assert data["parent_build_version"] == "v1"
+    assert data["build_version"] == "swh-v1"
+    assert len(data["examples"]) == 2
+    assert {e["example_id"] for e in data["examples"]} == {example_id_1, example_id_2}
+
+
+def test_add_card_translation_upserts_existing(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """POSTing twice updates the existing row and replaces examples wholesale."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_upsert_lemma",
+        source_lemma="trans_upsert_source",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[
+            {"source": "alpha src", "target": "alpha tgt"},
+            {"source": "beta src", "target": "beta tgt"},
+            {"source": "gamma src", "target": "gamma tgt"},
+        ],
+    )
+    example_rows = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .order_by(AgentLexemeCardExample.id)
+        .all()
+    )
+    ex_ids = [e.id for e in example_rows]
+
+    # Initial insert
+    first = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "first_lemma",
+            "examples": [
+                {"example_id": ex_ids[0], "source_text": "first run alpha"},
+                {"example_id": ex_ids[1], "source_text": "first run beta"},
+            ],
+        },
+    )
+    assert first.status_code == 200
+    first_id = first.json()["id"]
+
+    # Second insert: same (card_id, language_iso) → update in place,
+    # replace examples wholesale (now using ex_ids[2] only, not [0]/[1]).
+    second = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "updated_lemma",
+            "examples": [
+                {"example_id": ex_ids[2], "source_text": "second run gamma"},
+            ],
+        },
+    )
+    assert second.status_code == 200, second.text
+    second_data = second.json()
+    assert second_data["id"] == first_id  # Same row, not a new insert
+    assert second_data["source_lemma"] == "updated_lemma"
+    assert len(second_data["examples"]) == 1
+    assert second_data["examples"][0]["example_id"] == ex_ids[2]
+
+    # Verify the old example translations are gone
+    db_session.expire_all()
+    remaining = (
+        db_session.query(CardTranslationExample)
+        .filter(CardTranslationExample.card_translation_id == first_id)
+        .all()
+    )
+    assert len(remaining) == 1
+    assert remaining[0].example_id == ex_ids[2]
+
+
+def test_add_card_translation_rejects_canonical_language(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """language_iso matching the card's canonical source_language_iso is 400."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_canonical_lemma",
+        source_lemma="trans_canonical_source",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+
+    response = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "eng",  # Canonical for these test versions
+            "source_lemma": "english",
+            "examples": [],
+        },
+    )
+    assert response.status_code == 400
+    assert "canonical" in response.json()["detail"].lower()
+
+
+def test_add_card_translation_rejects_foreign_example_id(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """example_id pointing to a different card is 400."""
+    target_card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_target_card",
+        source_lemma="trans_target_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+    other_card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_other_card",
+        source_lemma="trans_other_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "foreign src", "target": "foreign tgt"}],
+    )
+    foreign_example_id = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == other_card_id)
+        .first()
+        .id
+    )
+
+    response = client.post(
+        f"/v3/agent/lexeme-card/{target_card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "kupenda",
+            "examples": [
+                {"example_id": foreign_example_id, "source_text": "haijuhi"},
+            ],
+        },
+    )
+    assert response.status_code == 400
+    assert str(foreign_example_id) in response.json()["detail"]
+
+
+def test_add_card_translation_rejects_duplicate_example_ids_in_payload(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Duplicate example_id within one payload is rejected up front (400)."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_dup_lemma",
+        source_lemma="trans_dup_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "dup src", "target": "dup tgt"}],
+    )
+    ex_id = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .first()
+        .id
+    )
+    response = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "dup_swh",
+            "examples": [
+                {"example_id": ex_id, "source_text": "first"},
+                {"example_id": ex_id, "source_text": "second"},
+            ],
+        },
+    )
+    assert response.status_code == 400
+    assert "duplicate" in response.json()["detail"].lower()
+
+
+def test_add_card_translation_card_not_found(client, regular_token1):
+    """404 when the card id does not exist."""
+    response = client.post(
+        "/v3/agent/lexeme-card/999999/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "anything",
+            "examples": [],
+        },
+    )
+    assert response.status_code == 404
+
+
+def test_add_card_translation_unauthorized(client):
+    """No bearer token → 401."""
+    response = client.post(
+        "/v3/agent/lexeme-card/1/translation",
+        json={"language_iso": "swh", "source_lemma": "x", "examples": []},
+    )
+    assert response.status_code == 401
+
+
+def test_add_card_translation_invalid_language_iso_length(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """language_iso must be exactly 3 chars (Pydantic 422)."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_iso_len_lemma",
+        source_lemma="trans_iso_len_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+    response = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "en",  # Too short
+            "source_lemma": "x",
+            "examples": [],
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_get_lexeme_card_by_id_canonical(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Single-card GET with no lang returns canonical fields."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="single_canon_lemma",
+        source_lemma="single_canon_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "canon source", "target": "canon target"}],
+    )
+    response = client.get(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == card_id
+    assert data["source_lemma"] == "single_canon_src"
+    assert data["target_lemma"] == "single_canon_lemma"
+    assert data["examples"] == [{"source": "canon source", "target": "canon target"}]
+
+
+def test_get_lexeme_card_by_id_lang_matches_canonical(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """lang == source_language_iso returns canonical, no translation lookup."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="single_lang_match_lemma",
+        source_lemma="single_lang_match_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+    response = client.get(
+        f"/v3/agent/lexeme-card/{card_id}?lang=eng",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["source_lemma"] == "single_lang_match_src"
+
+
+def test_get_lexeme_card_by_id_lang_merges_translation(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """lang != source_language_iso merges the translation into LexemeCardOut."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="single_merge_lemma",
+        source_lemma="single_merge_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[
+            {"source": "alpha en", "target": "alpha tgt"},
+            {"source": "beta en", "target": "beta tgt"},
+        ],
+    )
+    example_rows = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .order_by(AgentLexemeCardExample.id)
+        .all()
+    )
+    ex_ids = [e.id for e in example_rows]
+
+    # Create translation overlay (translate first example, leave second alone)
+    post = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "kupenda",
+            "source_surface_forms": ["kupenda"],
+            "senses": [{"definition": "kupenda definition"}],
+            "examples": [
+                {"example_id": ex_ids[0], "source_text": "alpha swh"},
+            ],
+        },
+    )
+    assert post.status_code == 200
+
+    response = client.get(
+        f"/v3/agent/lexeme-card/{card_id}?lang=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    # Source-side fields come from the translation
+    assert data["source_lemma"] == "kupenda"
+    assert data["source_surface_forms"] == ["kupenda"]
+    assert data["senses"] == [{"definition": "kupenda definition"}]
+    # Target-side fields come from the canonical card (unchanged)
+    assert data["target_lemma"] == "single_merge_lemma"
+    # The translated example has source_text overridden; the un-translated
+    # example keeps the canonical source_text.
+    sources = {ex["source"] for ex in data["examples"]}
+    targets = {ex["target"] for ex in data["examples"]}
+    assert sources == {"alpha swh", "beta en"}
+    assert targets == {"alpha tgt", "beta tgt"}
+
+
+def test_get_lexeme_card_by_id_404_when_no_translation(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """lang != source_language_iso and no translation row → 404."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="single_404_lemma",
+        source_lemma="single_404_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+    response = client.get(
+        f"/v3/agent/lexeme-card/{card_id}?lang=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+    body = response.json()
+    detail = body["detail"]
+    assert detail["card_id"] == card_id
+    assert detail["source_language_iso"] == "eng"
+
+
+def test_get_lexeme_card_by_id_card_not_found(client, regular_token1):
+    """Unknown card_id → 404."""
+    response = client.get(
+        "/v3/agent/lexeme-card/999999",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 404
+
+
+def test_get_lexeme_cards_bulk_lang_omits_missing_translation(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Bulk GET with ?lang omits cards that lack a translation in that lang."""
+    target_lemma_with = "bulk_lang_with_trans"
+    target_lemma_without = "bulk_lang_without_trans"
+
+    card_with = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma=target_lemma_with,
+        source_lemma="bulk_with_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "with en src", "target": "with tgt"}],
+    )
+    card_without = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma=target_lemma_without,
+        source_lemma="bulk_without_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "without en src", "target": "without tgt"}],
+    )
+    ex_id = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_with)
+        .first()
+        .id
+    )
+    client.post(
+        f"/v3/agent/lexeme-card/{card_with}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "bulk_with_swh",
+            "examples": [
+                {"example_id": ex_id, "source_text": "with swh src"},
+            ],
+        },
+    )
+
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}&lang=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    returned_ids = {c["id"] for c in response.json()}
+    assert card_with in returned_ids
+    assert card_without not in returned_ids
+
+    merged = next(c for c in response.json() if c["id"] == card_with)
+    assert merged["source_lemma"] == "bulk_with_swh"
+    assert merged["examples"][0]["source"] == "with swh src"
+    assert merged["examples"][0]["target"] == "with tgt"
+
+
+def test_get_lexeme_cards_bulk_no_lang_back_compat(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Bulk GET without ?lang behaves exactly as before (no translation lookup)."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="bulk_no_lang_lemma",
+        source_lemma="bulk_no_lang_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "back compat src", "target": "back compat tgt"}],
+    )
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    cards = response.json()
+    card = next(c for c in cards if c["id"] == card_id)
+    # Examples should be the canonical {source, target} shape (no extra keys).
+    assert card["examples"] == [
+        {"source": "back compat src", "target": "back compat tgt"}
+    ]
+
+
+def test_get_lexeme_cards_bulk_lang_matches_canonical(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Bulk GET with ?lang=<canonical> returns canonical for all cards (no lookups)."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="bulk_canon_lemma",
+        source_lemma="bulk_canon_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "canon en src", "target": "canon tgt"}],
+    )
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}&lang=eng",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    card = next(c for c in response.json() if c["id"] == card_id)
+    assert card["source_lemma"] == "bulk_canon_src"
+    assert card["examples"] == [{"source": "canon en src", "target": "canon tgt"}]
+
+
+def test_card_translation_cascade_delete(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Deleting the parent card cascades to card_translations + examples."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_cascade_lemma",
+        source_lemma="trans_cascade_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "cascade src", "target": "cascade tgt"}],
+    )
+    ex_id = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .first()
+        .id
+    )
+    post = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "cascade_swh",
+            "examples": [{"example_id": ex_id, "source_text": "cascade swh"}],
+        },
+    )
+    assert post.status_code == 200
+    translation_id = post.json()["id"]
+
+    # Sanity: rows exist before delete
+    db_session.expire_all()
+    assert (
+        db_session.query(CardTranslation)
+        .filter(CardTranslation.id == translation_id)
+        .first()
+        is not None
+    )
+
+    delete_response = client.delete(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert delete_response.status_code == 204
+
+    db_session.expire_all()
+    assert (
+        db_session.query(CardTranslation)
+        .filter(CardTranslation.id == translation_id)
+        .first()
+        is None
+    )
+    assert (
+        db_session.query(CardTranslationExample)
+        .filter(CardTranslationExample.card_translation_id == translation_id)
+        .first()
+        is None
+    )
+
+
+def test_add_card_translation_unknown_language_iso_returns_400(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """language_iso passing Pydantic length but absent from iso_language → 400."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_unknown_iso_lemma",
+        source_lemma="trans_unknown_iso_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+    response = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "xyz",  # Valid length, not in iso_language fixture
+            "source_lemma": "anything",
+            "examples": [],
+        },
+    )
+    # Handler catches IntegrityError from the FK violation and surfaces 400.
+    assert response.status_code == 400
+
+
+def test_add_card_translation_empty_examples_wipes_existing(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Second upsert with examples=[] removes all previously stored examples."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_wipe_lemma",
+        source_lemma="trans_wipe_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "wipe src", "target": "wipe tgt"}],
+    )
+    ex_id = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .first()
+        .id
+    )
+
+    first = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "wipe_first",
+            "examples": [{"example_id": ex_id, "source_text": "first swh"}],
+        },
+    )
+    assert first.status_code == 200
+    translation_id = first.json()["id"]
+    assert len(first.json()["examples"]) == 1
+
+    second = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "wipe_second",
+            "examples": [],  # explicit empty
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["id"] == translation_id  # same row, upsert
+    assert second.json()["examples"] == []
+
+    db_session.expire_all()
+    remaining = (
+        db_session.query(CardTranslationExample)
+        .filter(CardTranslationExample.card_translation_id == translation_id)
+        .all()
+    )
+    assert remaining == []
+
+
+def test_add_card_translation_build_version_round_trip_across_upsert(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """parent_build_version and build_version round-trip and update on upsert."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="trans_bv_lemma",
+        source_lemma="trans_bv_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+
+    first = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "bv_v1",
+            "parent_build_version": "card-v1",
+            "build_version": "swh-v1",
+            "examples": [],
+        },
+    )
+    assert first.status_code == 200
+    assert first.json()["parent_build_version"] == "card-v1"
+    assert first.json()["build_version"] == "swh-v1"
+
+    second = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "bv_v2",
+            "parent_build_version": "card-v2",
+            "build_version": "swh-v2",
+            "examples": [],
+        },
+    )
+    assert second.status_code == 200
+    assert second.json()["parent_build_version"] == "card-v2"
+    assert second.json()["build_version"] == "swh-v2"
+
+
+def test_get_lexeme_card_by_id_lang_is_case_insensitive(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """?lang=SWH (uppercase) resolves to the same translation row as ?lang=swh."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="single_case_lemma",
+        source_lemma="single_case_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+    post = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "case_swh",
+            "examples": [],
+        },
+    )
+    assert post.status_code == 200
+
+    response = client.get(
+        f"/v3/agent/lexeme-card/{card_id}?lang=SWH",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["source_lemma"] == "case_swh"
+
+
+def test_get_lexeme_cards_bulk_lang_case_insensitive_and_asserts_senses(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Bulk ?lang=SWH merges, and asserts the translation's `senses` is returned."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="bulk_senses_lemma",
+        source_lemma="bulk_senses_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "senses src", "target": "senses tgt"}],
+    )
+    client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "bulk_senses_swh",
+            "senses": [{"definition": "swh definition only"}],
+            "examples": [],
+        },
+    )
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}&lang=SWH",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    merged = next(c for c in response.json() if c["id"] == card_id)
+    assert merged["senses"] == [{"definition": "swh definition only"}]
+    assert merged["source_lemma"] == "bulk_senses_swh"
+
+
+def test_get_lexeme_card_by_id_rejects_invalid_lang_length(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """`?lang` must be exactly 3 chars (Query validation, 422)."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="single_lang_len_lemma",
+        source_lemma="single_lang_len_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+    response = client.get(
+        f"/v3/agent/lexeme-card/{card_id}?lang=en",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422
+
+
+def test_get_lexeme_cards_bulk_rejects_invalid_lang_length(
+    client,
+    regular_token1,
+    test_version_id,
+    test_version_id_2,
+):
+    """Bulk `?lang` must also be exactly 3 chars (422)."""
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}&lang=engl",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422
+
+
+def test_get_lexeme_card_by_id_access_control(
+    client,
+    regular_token1,
+    regular_token2,
+    db_session,
+):
+    """Non-admin user only sees examples from revisions they have access to.
+
+    Setup mirrors test_lexeme_card_access_control_by_user: one card, two
+    versions each owned by a different group; each user adds examples from
+    their own revision; the new single-card GET enforces the same
+    access-control filter as the bulk endpoint.
+    """
+    from datetime import date
+
+    from database.models import (
+        BibleRevision,
+        BibleVersion,
+        BibleVersionAccess,
+        Group,
+        UserDB,
+    )
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    user2 = db_session.query(UserDB).filter(UserDB.username == "testuser2").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+    group2 = db_session.query(Group).filter(Group.name == "Group2").first()
+
+    version_a = BibleVersion(
+        name="single_get_access_a",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="SGAA",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    version_b = BibleVersion(
+        name="single_get_access_b",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="SGAB",
+        owner_id=user2.id,
+        is_reference=False,
+    )
+    db_session.add_all([version_a, version_b])
+    db_session.commit()
+
+    revision_a = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_a.id,
+        published=False,
+        machine_translation=True,
+    )
+    revision_b = BibleRevision(
+        date=date.today(),
+        bible_version_id=version_b.id,
+        published=False,
+        machine_translation=True,
+    )
+    db_session.add_all([revision_a, revision_b])
+    db_session.commit()
+    revision_a_id = revision_a.id
+    revision_b_id = revision_b.id
+
+    db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=version_a.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=version_b.id, group_id=group2.id),
+        ]
+    )
+    db_session.commit()
+
+    # User1 creates the card with an example from their revision
+    response_a = client.post(
+        f"/v3/agent/lexeme-card?revision_id={revision_a_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "access_src",
+            "target_lemma": "access_tgt",
+            "source_version_id": version_a.id,
+            "target_version_id": version_b.id,
+            "examples": [{"source": "user1 src", "target": "user1 tgt"}],
+        },
+    )
+    assert response_a.status_code == 200
+    card_id = response_a.json()["id"]
+
+    # User2 adds an example from their revision to the same card
+    response_b = client.post(
+        f"/v3/agent/lexeme-card?revision_id={revision_b_id}",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+        json={
+            "source_lemma": "access_src",
+            "target_lemma": "access_tgt",
+            "source_version_id": version_a.id,
+            "target_version_id": version_b.id,
+            "examples": [{"source": "user2 src", "target": "user2 tgt"}],
+        },
+    )
+    assert response_b.status_code == 200
+
+    # User1 queries the single card → only sees their own example
+    response = client.get(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    examples = response.json()["examples"]
+    assert len(examples) == 1
+    assert examples[0]["source"] == "user1 src"
+
+    # User2 queries the same card → only sees their own example
+    response2 = client.get(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response2.status_code == 200
+    examples2 = response2.json()["examples"]
+    assert len(examples2) == 1
+    assert examples2[0]["source"] == "user2 src"

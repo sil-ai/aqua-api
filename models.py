@@ -900,6 +900,89 @@ class LexemeCardPatch(BaseModel):
     }
 
 
+class CardTranslationExampleIn(BaseModel):
+    example_id: int
+    source_text: str
+
+    @field_validator("source_text")
+    @classmethod
+    def normalize_source_text(cls, v):
+        return unicodedata.normalize("NFC", v) if v else v
+
+
+class CardTranslationIn(BaseModel):
+    """Write-side payload for a single (card, target_language) translation overlay."""
+
+    language_iso: str = Field(min_length=3, max_length=3)
+    source_lemma: Optional[str] = None
+    source_surface_forms: Optional[List[str]] = None
+    senses: Optional[List[dict]] = None
+    parent_build_version: Optional[str] = None
+    build_version: Optional[str] = None
+    examples: List[CardTranslationExampleIn] = []
+
+    @field_validator("language_iso")
+    @classmethod
+    def normalize_language_iso(cls, v):
+        return v.lower() if v else v
+
+    @field_validator("source_lemma")
+    @classmethod
+    def normalize_source_lemma(cls, v):
+        return unicodedata.normalize("NFC", v) if v else v
+
+    @field_validator("source_surface_forms")
+    @classmethod
+    def normalize_source_surface_forms(cls, v):
+        if v is None:
+            return v
+        return [unicodedata.normalize("NFC", s) if isinstance(s, str) else s for s in v]
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "language_iso": "spa",
+                "source_lemma": "camino",
+                "source_surface_forms": ["camino", "caminos"],
+                "senses": [
+                    {"definition": "camino, ruta, sendero"},
+                ],
+                "parent_build_version": "v1",
+                "build_version": "spa-v1",
+                "examples": [
+                    {
+                        "example_id": 12345,
+                        "source_text": "nos salvó al renovarnos al nacer de nuevo",
+                    },
+                ],
+            }
+        }
+    }
+
+
+class CardTranslationExampleOut(BaseModel):
+    id: int
+    example_id: int
+    source_text: str
+    created_at: Optional[datetime.datetime] = None
+
+
+class CardTranslationOut(BaseModel):
+    """Read-side shape of a stored translation overlay."""
+
+    id: int
+    card_id: int
+    language_iso: str
+    source_lemma: Optional[str] = None
+    source_surface_forms: Optional[list] = None
+    senses: Optional[list] = None
+    parent_build_version: Optional[str] = None
+    build_version: Optional[str] = None
+    created_at: Optional[datetime.datetime] = None
+    last_updated: Optional[datetime.datetime] = None
+    examples: List[CardTranslationExampleOut] = []
+
+
 class OmissionIssueIn(BaseModel):
     """Omission critique issue: source text missing from the draft."""
 
