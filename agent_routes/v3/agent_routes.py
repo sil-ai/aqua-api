@@ -1074,6 +1074,10 @@ async def _apply_lexeme_card_patch(
         .order_by(AgentLexemeCardExample.id)
     )
     if not current_user.is_admin:
+        # Scope to the card's version pair, matching the GET handler. Examples
+        # are always created with a revision in the card's language pair, so
+        # this is a no-op for valid data; it shrinks the subquery result set
+        # for users with access to many other versions.
         authorized_revisions_subq = (
             select(BibleRevision.id)
             .distinct()
@@ -1083,7 +1087,10 @@ async def _apply_lexeme_card_patch(
                 BibleVersionAccess.bible_version_id == BibleVersion.id,
             )
             .join(UserGroup, UserGroup.group_id == BibleVersionAccess.group_id)
-            .where(UserGroup.user_id == current_user.id)
+            .where(
+                UserGroup.user_id == current_user.id,
+                BibleVersion.id.in_([card.source_version_id, card.target_version_id]),
+            )
         )
         examples_query = examples_query.where(
             AgentLexemeCardExample.revision_id.in_(authorized_revisions_subq),
