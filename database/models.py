@@ -674,10 +674,16 @@ _LEXEME_CARD_FILL_LANG_FN = DDL(
     """
 )
 
-_LEXEME_CARD_FILL_LANG_TRIGGER = DDL(
+# Split into separate DROP and CREATE so each DDL string is a single
+# statement — asyncpg rejects multi-statement prepared queries, which
+# matters if a test path bootstraps via an async engine.
+_LEXEME_CARD_FILL_LANG_TRIGGER_DROP = DDL(
+    "DROP TRIGGER IF EXISTS trg_fill_lexeme_card_source_language_iso "
+    "ON agent_lexeme_cards"
+)
+
+_LEXEME_CARD_FILL_LANG_TRIGGER_CREATE = DDL(
     """
-    DROP TRIGGER IF EXISTS trg_fill_lexeme_card_source_language_iso
-        ON agent_lexeme_cards;
     CREATE TRIGGER trg_fill_lexeme_card_source_language_iso
     BEFORE INSERT OR UPDATE OF source_version_id ON agent_lexeme_cards
     FOR EACH ROW
@@ -685,8 +691,18 @@ _LEXEME_CARD_FILL_LANG_TRIGGER = DDL(
     """
 )
 
+# Listener order matters: function first, then trigger drop, then trigger create.
 event.listen(AgentLexemeCard.__table__, "after_create", _LEXEME_CARD_FILL_LANG_FN)
-event.listen(AgentLexemeCard.__table__, "after_create", _LEXEME_CARD_FILL_LANG_TRIGGER)
+event.listen(
+    AgentLexemeCard.__table__,
+    "after_create",
+    _LEXEME_CARD_FILL_LANG_TRIGGER_DROP,
+)
+event.listen(
+    AgentLexemeCard.__table__,
+    "after_create",
+    _LEXEME_CARD_FILL_LANG_TRIGGER_CREATE,
+)
 
 
 class AgentWordAlignment(Base):
