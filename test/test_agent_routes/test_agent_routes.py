@@ -7294,6 +7294,45 @@ def test_get_lexeme_cards_bulk_lang_case_insensitive_and_asserts_senses(
     assert merged["source_lemma"] == "bulk_senses_swh"
 
 
+def test_get_lexeme_card_by_id_rejects_invalid_lang_length(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """`?lang` must be exactly 3 chars (Query validation, 422)."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="single_lang_len_lemma",
+        source_lemma="single_lang_len_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+    response = client.get(
+        f"/v3/agent/lexeme-card/{card_id}?lang=en",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422
+
+
+def test_get_lexeme_cards_bulk_rejects_invalid_lang_length(
+    client,
+    regular_token1,
+    test_version_id,
+    test_version_id_2,
+):
+    """Bulk `?lang` must also be exactly 3 chars (422)."""
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}&lang=engl",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422
+
+
 def test_get_lexeme_card_by_id_access_control(
     client,
     regular_token1,

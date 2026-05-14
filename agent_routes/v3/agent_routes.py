@@ -4,6 +4,7 @@ import datetime
 import socket
 import time
 import unicodedata
+from collections import Counter
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
@@ -1692,7 +1693,7 @@ async def get_lexeme_cards(
     target_word: str = None,
     target_words: str = None,
     pos: str = None,
-    lang: str | None = None,
+    lang: str | None = Query(default=None, min_length=3, max_length=3),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -2122,9 +2123,8 @@ async def add_lexeme_card_translation(
             # Reject duplicate example_ids in the payload up front — otherwise
             # the per-row INSERT would fail on the (card_translation_id,
             # example_id) unique index with a less helpful IntegrityError.
-            duplicate_ids = sorted(
-                {eid for eid in example_ids if example_ids.count(eid) > 1}
-            )
+            counts = Counter(example_ids)
+            duplicate_ids = sorted(eid for eid, n in counts.items() if n > 1)
             if duplicate_ids:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -2281,7 +2281,7 @@ async def add_lexeme_card_translation(
 @router.get("/agent/lexeme-card/{card_id}", response_model=LexemeCardOut)
 async def get_lexeme_card_by_id(
     card_id: int,
-    lang: str | None = None,
+    lang: str | None = Query(default=None, min_length=3, max_length=3),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
