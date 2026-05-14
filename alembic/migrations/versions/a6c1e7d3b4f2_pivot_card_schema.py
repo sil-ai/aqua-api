@@ -61,8 +61,11 @@ depends_on: Union[str, Sequence[str], None] = None
 # Trigger keeps existing writers working: pre-pivot code paths insert
 # rows without source_language_iso. The trigger derives it from the
 # row's source_version_id so the NOT NULL constraint holds without app
-# changes. Mirrored in database/models.py via DDL events so test DBs
-# (which use Base.metadata.create_all, not migrations) get it too.
+# changes. The IS NULL guard means a follow-up UPDATE that swaps
+# source_version_id to a different language without also clearing
+# source_language_iso will leave the column out of sync — callers
+# updating source_version_id should set source_language_iso = NULL to
+# trigger the re-derive, or set both explicitly.
 _TRIGGER_FUNCTION_SQL = """
 CREATE OR REPLACE FUNCTION fill_lexeme_card_source_language_iso()
 RETURNS TRIGGER AS $$
@@ -76,6 +79,11 @@ END;
 $$ LANGUAGE plpgsql;
 """
 
+_TRIGGER_DROP_SQL = (
+    "DROP TRIGGER IF EXISTS trg_fill_lexeme_card_source_language_iso "
+    "ON agent_lexeme_cards"
+)
+
 _TRIGGER_CREATE_SQL = """
 CREATE TRIGGER trg_fill_lexeme_card_source_language_iso
 BEFORE INSERT OR UPDATE OF source_version_id ON agent_lexeme_cards
@@ -87,10 +95,14 @@ EXECUTE FUNCTION fill_lexeme_card_source_language_iso();
 def upgrade() -> None:
     bind = op.get_bind()
 
-    # 1. Empirical pre-check: every row must resolve to a bible_version
-    # with a populated iso_language, otherwise the backfill leaves rows
-    # with NULL source_language_iso and the NOT NULL flip below fails.
-    # Empirically zero today; abort if anything has crept in.
+    # Fail fast rather than queue behind a long-running concurrent
+    # transaction on RDS — the alter_column SET NOT NULL below takes
+    # ACCESS EXCLUSIVE and would otherwise wait indefinitely.
+    op.execute("SET LOCAL lock_timeout = '5s'")
+
+    # 1. Pre-check: every row must resolve to a bible_version with a
+    # populated iso_language, otherwise the backfill leaves rows with
+    # NULL source_language_iso and the NOT NULL flip below fails.
     orphans = bind.exec_driver_sql(
         """
         SELECT COUNT(*) FROM agent_lexeme_cards c
@@ -109,7 +121,7 @@ def upgrade() -> None:
     # 2. Add the new columns (nullable for now so we can backfill).
     op.add_column(
         "agent_lexeme_cards",
-        sa.Column("source_language_iso", sa.CHAR(3), nullable=True),
+        sa.Column("source_language_iso", sa.String(3), nullable=True),
     )
     op.add_column(
         "agent_lexeme_cards",
@@ -133,18 +145,19 @@ def upgrade() -> None:
     # set source_language_iso) keep working. Must come before any later
     # writes — including ones from concurrent rolling-deploy code paths.
     op.execute(_TRIGGER_FUNCTION_SQL)
+    op.execute(_TRIGGER_DROP_SQL)
     op.execute(_TRIGGER_CREATE_SQL)
 
-    # 6. Empirical pre-check for the constraint swap: would the
-    # language-keyed unique index create collisions? Empirically returns
-    # zero rows today; abort with a clear error if anything has changed.
+    # 6. Pre-check for the constraint swap: would the language-keyed
+    # unique index create collisions? Uses the freshly-backfilled
+    # column rather than re-joining bible_version.
     duplicates = bind.exec_driver_sql(
         """
-        SELECT bv.iso_language, c.target_version_id, LOWER(c.target_lemma),
-               COUNT(*) AS n
+        SELECT c.source_language_iso, c.target_version_id,
+               LOWER(c.target_lemma), COUNT(*) AS n
         FROM agent_lexeme_cards c
-        JOIN bible_version bv ON c.source_version_id = bv.id
-        GROUP BY bv.iso_language, c.target_version_id, LOWER(c.target_lemma)
+        GROUP BY c.source_language_iso, c.target_version_id,
+                 LOWER(c.target_lemma)
         HAVING COUNT(*) > 1
         """
     ).fetchall()
@@ -160,7 +173,9 @@ def upgrade() -> None:
         )
 
     # 7. Swap the unique index from version-keyed (v4) to language-keyed (v5).
-    op.drop_index("ix_agent_lexeme_cards_unique_v4", table_name="agent_lexeme_cards")
+    # IF EXISTS on the drop mirrors the downgrade's defensive form so the
+    # migration tolerates partial-state recoveries from prior runs.
+    op.execute("DROP INDEX IF EXISTS ix_agent_lexeme_cards_unique_v4")
     op.execute(
         """
         CREATE UNIQUE INDEX ix_agent_lexeme_cards_unique_v5
@@ -169,10 +184,9 @@ def upgrade() -> None:
         """
     )
 
-    # 8. Holder for cheap MT-derived translations of canonical cards.
-    # Canonical content stays in agent_lexeme_cards directly — the
-    # U-shaped model rejected by the issue would make canonical "just
-    # another row" here at the cost of more invasive reader changes.
+    # 8. Canonical card content stays on agent_lexeme_cards; the
+    # U-shaped alternative (canonical as just another row here) was
+    # rejected as more invasive without enough payoff.
     op.create_table(
         "card_translations",
         sa.Column("id", sa.Integer(), primary_key=True),
@@ -182,7 +196,7 @@ def upgrade() -> None:
             sa.ForeignKey("agent_lexeme_cards.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("language_iso", sa.CHAR(3), nullable=False),
+        sa.Column("language_iso", sa.String(3), nullable=False),
         sa.Column("source_lemma", sa.Text(), nullable=True),
         sa.Column(
             "source_surface_forms",
