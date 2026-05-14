@@ -1281,3 +1281,34 @@ def test_put_affixes_overwrites_gloss_on_cross_revision_collision(
     assert listing["affixes"][0]["gloss"] == "perfective"
     assert listing["affixes"][0]["first_seen_revision_id"] == test_revision_id
     _cleanup(db_session)
+
+
+def test_patch_affix_null_form_position_gloss_ignored(
+    client, regular_token1, db_session
+):
+    """Explicit JSON null for NOT NULL fields is treated as omission, not as
+    'clear the column' — avoids a 500 from a NOT NULL violation."""
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    affix_id = _post_one_and_get_id(
+        client, headers, TEST_ISO, "akha-", "prefix", "past"
+    )
+    resp = client.patch(
+        f"/{prefix}/affixes/{affix_id}",
+        json={
+            "form": None,
+            "position": None,
+            "gloss": None,
+            "source_model": "gpt-5-pro",
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["form"] == "akha-"
+    assert body["position"] == "prefix"
+    assert body["gloss"] == "past"
+    assert body["source_model"] == "gpt-5-pro"
+    _cleanup(db_session)

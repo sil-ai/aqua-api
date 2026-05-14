@@ -489,9 +489,22 @@ async def patch_affix(
 
     provided = patch.model_fields_set
 
-    new_form = patch.form if "form" in provided else affix.form
-    new_position = patch.position if "position" in provided else affix.position
-    new_gloss = patch.gloss if "gloss" in provided else affix.gloss
+    # form / position / gloss are NOT NULL on the table; if the caller sends
+    # explicit `null` for any of them, treat it the same as omission rather
+    # than letting the assignment try to write NULL and raise a 500.
+    new_form = (
+        patch.form if ("form" in provided and patch.form is not None) else affix.form
+    )
+    new_position = (
+        patch.position
+        if ("position" in provided and patch.position is not None)
+        else affix.position
+    )
+    new_gloss = (
+        patch.gloss
+        if ("gloss" in provided and patch.gloss is not None)
+        else affix.gloss
+    )
 
     if (new_form, new_position) != (affix.form, affix.position):
         dup_result = await db.execute(

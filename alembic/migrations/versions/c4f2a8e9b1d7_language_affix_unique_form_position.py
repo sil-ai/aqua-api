@@ -46,13 +46,17 @@ def upgrade() -> None:
             SET examples = (
                     SELECT COALESCE(jsonb_agg(DISTINCT elem), '[]'::jsonb)
                     FROM (
-                        SELECT jsonb_array_elements(
-                            COALESCE(a2.examples, '[]'::jsonb)
-                        ) AS elem
+                        -- Filter to rows whose examples is an actual JSONB
+                        -- array. Skip SQL NULL, JSONB 'null' literals, and
+                        -- anything scalar that would make jsonb_array_elements
+                        -- raise "cannot extract elements from a scalar".
+                        SELECT jsonb_array_elements(a2.examples) AS elem
                         FROM language_affixes a2
                         WHERE a2.iso_639_3 = w.iso_639_3
                           AND a2.form = w.form
                           AND a2.position = w.position
+                          AND a2.examples IS NOT NULL
+                          AND jsonb_typeof(a2.examples) = 'array'
                     ) sub
                 ),
                 n_runs = LEAST(
