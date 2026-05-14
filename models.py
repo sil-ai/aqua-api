@@ -1733,6 +1733,7 @@ class AffixIn(BaseModel):
 class AffixOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    id: int
     form: str
     position: AffixPosition
     gloss: str
@@ -1764,6 +1765,17 @@ class AffixCommitResponse(BaseModel):
 class AffixReplaceResponse(BaseModel):
     n_deleted: int
     n_inserted: int
+
+
+class AffixPatch(BaseModel):
+    """Partial update model for language affixes — all fields optional."""
+
+    form: Optional[str] = Field(default=None, min_length=1)
+    position: Optional[AffixPosition] = None
+    gloss: Optional[str] = Field(default=None, min_length=1)
+    examples: Optional[List[str]] = None
+    n_runs: Optional[int] = Field(default=None, ge=1, le=32767)
+    source_model: Optional[str] = None
 
 
 class WordIndexRequest(BaseModel):

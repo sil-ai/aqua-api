@@ -76,7 +76,7 @@ def test_affixes_round_trip(client, regular_token1, db_session):
     _cleanup(db_session)
 
 
-def test_affixes_polysemy_same_form_position_different_gloss(
+def test_affixes_second_gloss_for_same_form_position_returns_409(
     client, regular_token1, db_session
 ):
     _cleanup(db_session)
@@ -89,20 +89,77 @@ def test_affixes_polysemy_same_form_position_different_gloss(
             "iso_639_3": TEST_ISO,
             "affixes": [
                 {"form": "-ile", "position": "suffix", "gloss": "perfective"},
-                {"form": "-ile", "position": "suffix", "gloss": "applicative"},
-                {"form": "-ile", "position": "suffix", "gloss": "locative"},
             ],
         },
         headers=headers,
     )
     assert resp.status_code == 200
-    assert resp.json()["n_affixes_new"] == 3
 
-    resp = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers)
-    data = resp.json()
-    assert data["total"] == 3
-    glosses = {a["gloss"] for a in data["affixes"]}
-    assert glosses == {"perfective", "applicative", "locative"}
+    listing = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers).json()
+    existing_id = listing["affixes"][0]["id"]
+
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "-ile", "position": "suffix", "gloss": "applicative"},
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert "conflicts" in detail
+    assert len(detail["conflicts"]) == 1
+    conflict = detail["conflicts"][0]
+    assert conflict["form"] == "-ile"
+    assert conflict["position"] == "suffix"
+    assert conflict["submitted_gloss"] == "applicative"
+    assert conflict["existing_gloss"] == "perfective"
+    assert conflict["existing_id"] == existing_id
+
+    # The conflict aborts the whole batch — the existing row is unchanged.
+    listing = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers).json()
+    assert listing["total"] == 1
+    assert listing["affixes"][0]["gloss"] == "perfective"
+    _cleanup(db_session)
+
+
+def test_affixes_409_aborts_entire_batch(client, regular_token1, db_session):
+    """A single gloss conflict rejects the whole payload — no partial inserts."""
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "-ile", "position": "suffix", "gloss": "perfective"},
+            ],
+        },
+        headers=headers,
+    )
+
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "-ile", "position": "suffix", "gloss": "applicative"},
+                {"form": "ku-", "position": "prefix", "gloss": "infinitive"},
+            ],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 409
+
+    listing = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers).json()
+    forms = {a["form"] for a in listing["affixes"]}
+    # ku- must NOT have been inserted alongside the rejected -ile conflict.
+    assert forms == {"-ile"}
     _cleanup(db_session)
 
 
@@ -903,4 +960,194 @@ def test_put_affixes_scoped_delete_handles_conflict_with_other_revision(
     assert data["total"] == 1
     assert data["affixes"][0]["examples"] == ["akhatenda"]
     assert data["affixes"][0]["first_seen_revision_id"] == test_revision_id
+    _cleanup(db_session)
+
+
+# ── GET /affixes exposes id ─────────────────────────────────────────
+
+
+def test_get_affixes_includes_id(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": TEST_ISO,
+            "affixes": [
+                {"form": "akha-", "position": "prefix", "gloss": "past"},
+            ],
+        },
+        headers=headers,
+    )
+    listing = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers).json()
+    assert listing["total"] == 1
+    affix = listing["affixes"][0]
+    assert isinstance(affix["id"], int)
+    assert affix["id"] > 0
+    _cleanup(db_session)
+
+
+# ── PATCH /affixes/{id} ─────────────────────────────────────────────
+
+
+def _post_one_and_get_id(client, headers, iso, form, position, gloss, **extra):
+    payload = {
+        "iso_639_3": iso,
+        "affixes": [
+            {"form": form, "position": position, "gloss": gloss, **extra},
+        ],
+    }
+    client.post(f"/{prefix}/affixes", json=payload, headers=headers)
+    listing = client.get(f"/{prefix}/affixes?iso={iso}", headers=headers).json()
+    for a in listing["affixes"]:
+        if a["form"] == form and a["position"] == position:
+            return a["id"]
+    raise AssertionError(f"no affix posted for ({form}, {position})")
+
+
+def test_patch_affix_updates_gloss(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    affix_id = _post_one_and_get_id(
+        client, headers, TEST_ISO, "-ile", "suffix", "perfective"
+    )
+
+    resp = client.patch(
+        f"/{prefix}/affixes/{affix_id}",
+        json={"gloss": "perfect/past"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == affix_id
+    assert body["form"] == "-ile"
+    assert body["position"] == "suffix"
+    assert body["gloss"] == "perfect/past"
+
+    listing = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers).json()
+    assert listing["total"] == 1
+    assert listing["affixes"][0]["gloss"] == "perfect/past"
+    _cleanup(db_session)
+
+
+def test_patch_affix_updates_examples_and_n_runs(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    affix_id = _post_one_and_get_id(
+        client, headers, TEST_ISO, "-ile", "suffix", "perfect"
+    )
+
+    resp = client.patch(
+        f"/{prefix}/affixes/{affix_id}",
+        json={"examples": ["tendile", "lalile"], "n_runs": 7},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["examples"] == ["tendile", "lalile"]
+    assert body["n_runs"] == 7
+    # Untouched fields remain.
+    assert body["gloss"] == "perfect"
+    _cleanup(db_session)
+
+
+def test_patch_affix_404_when_not_found(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    resp = client.patch(
+        f"/{prefix}/affixes/999999999",
+        json={"gloss": "anything"},
+        headers=headers,
+    )
+    assert resp.status_code == 404
+    _cleanup(db_session)
+
+
+def test_patch_affix_409_on_form_position_collision(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    a_id = _post_one_and_get_id(client, headers, TEST_ISO, "-ile", "suffix", "perfect")
+    b_id = _post_one_and_get_id(client, headers, TEST_ISO, "-aka", "suffix", "habitual")
+
+    # Try to rename b to -ile/suffix, which collides with a.
+    resp = client.patch(
+        f"/{prefix}/affixes/{b_id}",
+        json={"form": "-ile"},
+        headers=headers,
+    )
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    assert detail["existing_id"] == a_id
+    _cleanup(db_session)
+
+
+def test_patch_affix_nfc_normalizes_form(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    affix_id = _post_one_and_get_id(
+        client, headers, TEST_ISO, "akha-", "prefix", "past"
+    )
+
+    decomposed = "  é-  "
+    composed = "é-"
+    resp = client.patch(
+        f"/{prefix}/affixes/{affix_id}",
+        json={"form": decomposed},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["form"] == composed
+    _cleanup(db_session)
+
+
+def test_patch_affix_empty_form_rejected(client, regular_token1, db_session):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    affix_id = _post_one_and_get_id(
+        client, headers, TEST_ISO, "akha-", "prefix", "past"
+    )
+    resp = client.patch(
+        f"/{prefix}/affixes/{affix_id}",
+        json={"form": "   "},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+    _cleanup(db_session)
+
+
+def test_patch_affix_without_token(client, db_session):
+    resp = client.patch(f"/{prefix}/affixes/1", json={"gloss": "x"})
+    assert resp.status_code == 401
+
+
+def test_patch_affix_position_change_with_no_collision(
+    client, regular_token1, db_session
+):
+    _cleanup(db_session)
+    _seed_profile(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    affix_id = _post_one_and_get_id(
+        client, headers, TEST_ISO, "akha-", "prefix", "past"
+    )
+    resp = client.patch(
+        f"/{prefix}/affixes/{affix_id}",
+        json={"position": "infix"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["position"] == "infix"
     _cleanup(db_session)

@@ -1155,11 +1155,10 @@ class LanguageAffix(Base):
         ),
         CheckConstraint("n_runs >= 1", name="ck_language_affixes_n_runs_min_1"),
         Index(
-            "ux_language_affixes_iso_form_position_gloss",
+            "ux_language_affixes_iso_form_position",
             "iso_639_3",
             "form",
             "position",
-            "gloss",
             unique=True,
         ),
         Index("ix_language_affixes_iso", "iso_639_3"),
