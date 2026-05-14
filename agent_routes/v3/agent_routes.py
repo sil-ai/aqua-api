@@ -23,9 +23,11 @@ from database.models import (
     BibleRevision,
     BibleVersion,
     BibleVersionAccess,
-    UserGroup,
 )
 from database.models import UserDB as UserModel
+from database.models import (
+    UserGroup,
+)
 from models import (
     AgentTranslationBulkRequest,
     AgentTranslationOut,
