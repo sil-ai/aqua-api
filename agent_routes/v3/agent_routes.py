@@ -1919,18 +1919,14 @@ async def get_lexeme_cards(
         # card's canonical source_language_iso, the card is omitted unless a
         # translation row exists; its source-side fields are then replaced.
         response_cards = []
-        omitted_card_ids: list[int] = []
+        omitted_for_missing_translation = 0
         for card in cards:
             requires_merge = (
                 requested_lang is not None
                 and card.source_language_iso != requested_lang
             )
             if requires_merge and card.id not in translation_by_card:
-                # Omit cards without a translation in the requested language.
-                # Tracked + logged below so a downstream pipeline that gets
-                # fewer cards than it expected can correlate the gap with
-                # cards that need derivation.
-                omitted_card_ids.append(card.id)
+                omitted_for_missing_translation += 1
                 continue
 
             if requires_merge:
@@ -1988,7 +1984,7 @@ async def get_lexeme_cards(
                 "target_words": target_words,
                 "pos": pos,
                 "lang": requested_lang,
-                "omitted_for_missing_translation": len(omitted_card_ids),
+                "omitted_for_missing_translation": omitted_for_missing_translation,
                 "duration_s": duration,
             },
         )
@@ -2110,11 +2106,7 @@ async def add_lexeme_card_translation(
                 detail=f"Lexeme card with id {card_id} not found",
             )
 
-        # Explicit .lower() on both sides: the Pydantic field normalizes the
-        # request, and the DB trigger normalizes the column, but compare
-        # case-insensitively so a stray uppercase value in either source can't
-        # silently bypass this guard.
-        if translation.language_iso.lower() == (card.source_language_iso or "").lower():
+        if translation.language_iso == card.source_language_iso:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=(
@@ -2207,53 +2199,6 @@ async def add_lexeme_card_translation(
 
         await db.commit()
 
-        # Re-fetch the row to pick up the server-side last_updated timestamp
-        # and per-example created_at values for the response.
-        translation_row = await db.scalar(
-            select(CardTranslation).where(CardTranslation.id == translation_id)
-        )
-        examples_result = await db.execute(
-            select(CardTranslationExample)
-            .where(CardTranslationExample.card_translation_id == translation_id)
-            .order_by(CardTranslationExample.id)
-        )
-        example_rows = examples_result.scalars().all()
-
-        duration = round(time.perf_counter() - request_start, 2)
-        logger.info(
-            f"add_lexeme_card_translation completed in {duration}s",
-            extra={
-                "method": "POST",
-                "path": "/agent/lexeme-card/{card_id}/translation",
-                "card_id": card_id,
-                "language_iso": translation.language_iso,
-                "example_count": len(translation.examples),
-                "duration_s": duration,
-            },
-        )
-
-        return CardTranslationOut(
-            id=translation_row.id,
-            card_id=translation_row.card_id,
-            language_iso=translation_row.language_iso,
-            source_lemma=translation_row.source_lemma,
-            source_surface_forms=translation_row.source_surface_forms,
-            senses=translation_row.senses,
-            parent_build_version=translation_row.parent_build_version,
-            build_version=translation_row.build_version,
-            created_at=translation_row.created_at,
-            last_updated=translation_row.last_updated,
-            examples=[
-                {
-                    "id": e.id,
-                    "example_id": e.example_id,
-                    "source_text": e.source_text,
-                    "created_at": e.created_at,
-                }
-                for e in example_rows
-            ],
-        )
-
     except HTTPException:
         await db.rollback()
         raise
@@ -2271,6 +2216,63 @@ async def add_lexeme_card_translation(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
         ) from e
+
+    # Post-commit: fetch the row + examples to populate server-side timestamps
+    # in the response. Errors past this point must NOT rollback (the write
+    # already landed); they surface as a 500 to the caller.
+    try:
+        from sqlalchemy import select
+
+        translation_row = await db.scalar(
+            select(CardTranslation).where(CardTranslation.id == translation_id)
+        )
+        examples_result = await db.execute(
+            select(CardTranslationExample)
+            .where(CardTranslationExample.card_translation_id == translation_id)
+            .order_by(CardTranslationExample.id)
+        )
+        example_rows = examples_result.scalars().all()
+    except SQLAlchemyError as e:
+        logger.error(f"Post-commit fetch failed for card translation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error fetching persisted translation: {str(e)}",
+        ) from e
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"add_lexeme_card_translation completed in {duration}s",
+        extra={
+            "method": "POST",
+            "path": "/agent/lexeme-card/{card_id}/translation",
+            "card_id": card_id,
+            "language_iso": translation.language_iso,
+            "example_count": len(translation.examples),
+            "duration_s": duration,
+        },
+    )
+
+    return CardTranslationOut(
+        id=translation_row.id,
+        card_id=translation_row.card_id,
+        language_iso=translation_row.language_iso,
+        source_lemma=translation_row.source_lemma,
+        source_surface_forms=translation_row.source_surface_forms,
+        senses=translation_row.senses,
+        parent_build_version=translation_row.parent_build_version,
+        build_version=translation_row.build_version,
+        created_at=translation_row.created_at,
+        last_updated=translation_row.last_updated,
+        examples=[
+            {
+                "id": e.id,
+                "example_id": e.example_id,
+                "source_text": e.source_text,
+                "created_at": e.created_at,
+            }
+            for e in example_rows
+        ],
+    )
 
 
 # Registration order matters: this parameterized GET must stay AFTER any
