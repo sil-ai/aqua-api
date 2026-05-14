@@ -463,7 +463,9 @@ class AgentLexemeCard(Base):
     # Pivot-language card identity: the ISO 639-3 code of the source language
     # the canonical card was built against. Auto-filled from source_version_id
     # by a BEFORE INSERT/UPDATE trigger if callers omit it.
-    source_language_iso = Column(String(3), nullable=False)
+    source_language_iso = Column(
+        String(3), ForeignKey("iso_language.iso639"), nullable=False
+    )
     # Opaque token bumped when the canonical card-builder rebuilds the card.
     # Nullable forever; only the most recent build sets it.
     build_version = Column(Text, nullable=True)
@@ -586,7 +588,7 @@ class CardTranslation(Base):
         ForeignKey("agent_lexeme_cards.id", ondelete="CASCADE"),
         nullable=False,
     )
-    language_iso = Column(String(3), nullable=False)
+    language_iso = Column(String(3), ForeignKey("iso_language.iso639"), nullable=False)
     source_lemma = Column(Text, nullable=True)
     source_surface_forms = Column(JSONB, nullable=True)
     senses = Column(JSONB, nullable=True)

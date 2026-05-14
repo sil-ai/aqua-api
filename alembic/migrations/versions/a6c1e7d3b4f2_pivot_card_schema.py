@@ -119,9 +119,16 @@ def upgrade() -> None:
         )
 
     # 2. Add the new columns (nullable for now so we can backfill).
+    # FK to iso_language matches the convention used by
+    # bible_version.iso_language and other ISO language columns.
     op.add_column(
         "agent_lexeme_cards",
-        sa.Column("source_language_iso", sa.String(3), nullable=True),
+        sa.Column(
+            "source_language_iso",
+            sa.String(3),
+            sa.ForeignKey("iso_language.iso639"),
+            nullable=True,
+        ),
     )
     op.add_column(
         "agent_lexeme_cards",
@@ -196,7 +203,12 @@ def upgrade() -> None:
             sa.ForeignKey("agent_lexeme_cards.id", ondelete="CASCADE"),
             nullable=False,
         ),
-        sa.Column("language_iso", sa.String(3), nullable=False),
+        sa.Column(
+            "language_iso",
+            sa.String(3),
+            sa.ForeignKey("iso_language.iso639"),
+            nullable=False,
+        ),
         sa.Column("source_lemma", sa.Text(), nullable=True),
         sa.Column(
             "source_surface_forms",
