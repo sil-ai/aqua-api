@@ -827,7 +827,9 @@ class LexemeCardOut(BaseModel):
     surface_forms: Optional[list] = None
     source_surface_forms: Optional[list] = None  # Source language surface forms
     senses: Optional[list] = None
-    examples: Optional[list] = None  # Filtered list for the requested revision_id
+    # Each example dict has shape {"id": int, "source": str, "target": str};
+    # filtered to the requested revision_id when set.
+    examples: Optional[list] = None
     confidence: Optional[float] = None
     english_lemma: Optional[str] = None
     alignment_scores: Optional[Dict[str, float]] = None
