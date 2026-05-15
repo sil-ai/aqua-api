@@ -6752,7 +6752,10 @@ def test_get_lexeme_card_by_id_canonical(
     assert data["id"] == card_id
     assert data["source_lemma"] == "single_canon_src"
     assert data["target_lemma"] == "single_canon_lemma"
-    assert data["examples"] == [{"source": "canon source", "target": "canon target"}]
+    assert len(data["examples"]) == 1
+    assert data["examples"][0]["source"] == "canon source"
+    assert data["examples"][0]["target"] == "canon target"
+    assert isinstance(data["examples"][0]["id"], int)
 
 
 def test_get_lexeme_card_by_id_lang_matches_canonical(
@@ -7007,7 +7010,10 @@ def test_get_lexeme_cards_bulk_lang_matches_canonical(
     assert response.status_code == 200
     card = next(c for c in response.json() if c["id"] == card_id)
     assert card["source_lemma"] == "bulk_canon_src"
-    assert card["examples"] == [{"source": "canon en src", "target": "canon tgt"}]
+    assert len(card["examples"]) == 1
+    assert card["examples"][0]["source"] == "canon en src"
+    assert card["examples"][0]["target"] == "canon tgt"
+    assert isinstance(card["examples"][0]["id"], int)
 
 
 def test_card_translation_cascade_delete(

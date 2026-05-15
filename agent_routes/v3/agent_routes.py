@@ -744,7 +744,7 @@ async def add_lexeme_card(
                 examples_result = await db.execute(examples_query)
                 examples_objs = examples_result.scalars().all()
                 examples_list = [
-                    {"source": ex.source_text, "target": ex.target_text}
+                    {"id": ex.id, "source": ex.source_text, "target": ex.target_text}
                     for ex in examples_objs
                 ]
 
@@ -835,7 +835,7 @@ async def add_lexeme_card(
                 examples_result = await db.execute(examples_query)
                 examples_objs = examples_result.scalars().all()
                 examples_list = [
-                    {"source": ex.source_text, "target": ex.target_text}
+                    {"id": ex.id, "source": ex.source_text, "target": ex.target_text}
                     for ex in examples_objs
                 ]
 
@@ -1102,7 +1102,7 @@ async def _apply_lexeme_card_patch(
         )
     examples_result = await db.execute(examples_query)
     examples_list = [
-        {"source": ex.source_text, "target": ex.target_text}
+        {"id": ex.id, "source": ex.source_text, "target": ex.target_text}
         for ex in examples_result.scalars().all()
     ]
 
@@ -1944,6 +1944,7 @@ async def get_lexeme_cards(
 
             examples_out = [
                 {
+                    "id": ex["id"],
                     "source": override_map.get(ex["id"], ex["source"])
                     if requires_merge
                     else ex["source"],
@@ -2385,6 +2386,7 @@ async def get_lexeme_card_by_id(
 
         examples = [
             {
+                "id": row.id,
                 "source": translated_source_by_example_id.get(row.id, row.source_text),
                 "target": row.target_text,
             }
