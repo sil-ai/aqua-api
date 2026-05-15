@@ -632,9 +632,8 @@ async def add_lexeme_card(
             existing_card.confidence = card.confidence
             existing_card.english_lemma = card.english_lemma
             existing_card.alignment_scores = sorted_alignment_scores
+            existing_card.build_version = card.build_version
             existing_card.last_updated = func.now()
-            if card.build_version is not None:
-                existing_card.build_version = card.build_version
             if is_user_edit:
                 existing_card.last_user_edit = func.now()
 

@@ -4027,6 +4027,31 @@ def test_lexeme_card_build_version_roundtrip(
     )
     assert final.json()["build_version"] == "agent-v2"
 
+    # POST upsert with build_version set overwrites the existing value
+    # (matches the convention for other scalar fields like pos/confidence).
+    upsert = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "build_ver_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+            "build_version": "agent-v3",
+        },
+    )
+    assert upsert.status_code == 200
+    assert upsert.json()["build_version"] == "agent-v3"
+
+    # PATCH with explicit null clears the field
+    cleared = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"build_version": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["build_version"] is None
+
 
 # Lexeme Card PATCH Tests
 
