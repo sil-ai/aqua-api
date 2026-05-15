@@ -632,6 +632,7 @@ async def add_lexeme_card(
             existing_card.confidence = card.confidence
             existing_card.english_lemma = card.english_lemma
             existing_card.alignment_scores = sorted_alignment_scores
+            existing_card.build_version = card.build_version
             existing_card.last_updated = func.now()
             if is_user_edit:
                 existing_card.last_user_edit = func.now()
@@ -763,6 +764,7 @@ async def add_lexeme_card(
                 "confidence": existing_card.confidence,
                 "english_lemma": existing_card.english_lemma,
                 "alignment_scores": sorted_alignment_scores,
+                "build_version": existing_card.build_version,
                 "created_at": existing_card.created_at,
                 "last_updated": existing_card.last_updated,
                 "last_user_edit": existing_card.last_user_edit,
@@ -792,6 +794,7 @@ async def add_lexeme_card(
                 confidence=card.confidence,
                 english_lemma=card.english_lemma,
                 alignment_scores=sorted_alignment_scores,
+                build_version=card.build_version,
                 last_user_edit=func.now() if is_user_edit else None,
             )
 
@@ -854,6 +857,7 @@ async def add_lexeme_card(
                 "confidence": lexeme_card.confidence,
                 "english_lemma": lexeme_card.english_lemma,
                 "alignment_scores": sorted_alignment_scores,
+                "build_version": lexeme_card.build_version,
                 "created_at": lexeme_card.created_at,
                 "last_updated": lexeme_card.last_updated,
                 "last_user_edit": lexeme_card.last_user_edit,
@@ -960,6 +964,8 @@ async def _apply_lexeme_card_patch(
         card.confidence = patch_data.confidence
     if "english_lemma" in provided_fields:
         card.english_lemma = patch_data.english_lemma
+    if "build_version" in provided_fields:
+        card.build_version = patch_data.build_version
 
     # Handle alignment_scores (dict) - merge keys, null value removes key
     if "alignment_scores" in provided_fields:
@@ -1121,6 +1127,7 @@ async def _apply_lexeme_card_patch(
         "confidence": card.confidence,
         "english_lemma": card.english_lemma,
         "alignment_scores": card.alignment_scores,
+        "build_version": card.build_version,
         "created_at": card.created_at,
         "last_updated": card.last_updated,
         "last_user_edit": card.last_user_edit,
@@ -1966,6 +1973,7 @@ async def get_lexeme_cards(
                 "confidence": card.confidence,
                 "english_lemma": card.english_lemma,
                 "alignment_scores": card.alignment_scores,
+                "build_version": card.build_version,
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
                 "last_user_edit": card.last_user_edit,
@@ -2415,6 +2423,7 @@ async def get_lexeme_card_by_id(
             "confidence": card.confidence,
             "english_lemma": card.english_lemma,
             "alignment_scores": card.alignment_scores,
+            "build_version": card.build_version,
             "created_at": card.created_at,
             "last_updated": card.last_updated,
             "last_user_edit": card.last_user_edit,
