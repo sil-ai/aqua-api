@@ -5,8 +5,9 @@ import time
 from typing import Optional, Union
 
 import fastapi
-from fastapi import Depends, HTTPException, Query, status
+from fastapi import Depends, HTTPException, Path, Query, status
 from fastapi.responses import JSONResponse
+from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
@@ -378,12 +379,14 @@ async def upsert_language_pivot(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Upsert a target -> pivot mapping. Re-POST replaces the pivot for that target.
+    """Upsert a target -> pivot mapping. Admin-only.
 
-    Standard authenticated access (not admin-only): the agent's self-bootstrap
-    flow needs to POST decisions for unknown targets. Fields omitted from the
-    payload (e.g. ``notes``) preserve their existing value on update.
+    Re-POST replaces the pivot for that target. Adding or changing a pivot
+    is a curated decision tied to licensing/quality, so it should not be done
+    autonomously by the agent. Fields omitted from the payload (e.g. ``notes``)
+    preserve their existing value on update.
     """
+    _require_admin(current_user)
     request_start = time.perf_counter()
 
     try:
@@ -458,3 +461,47 @@ async def upsert_language_pivot(
         },
     )
     return out
+
+
+@router.delete(
+    "/language-pivot/{target_iso}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={404: {"description": "No mapping exists for this target_iso"}},
+)
+async def delete_language_pivot(
+    target_iso: str = Path(..., min_length=3, max_length=3),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    _require_admin(current_user)
+    request_start = time.perf_counter()
+
+    try:
+        result = await db.execute(
+            sql_delete(LanguagePivot).where(LanguagePivot.target_iso == target_iso)
+        )
+        await db.commit()
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error("Failed to delete language pivot", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {e}",
+        ) from e
+
+    if result.rowcount == 0:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No language_pivot mapping for target_iso '{target_iso}'",
+        )
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"delete_language_pivot completed in {duration}s",
+        extra={
+            "method": "DELETE",
+            "path": f"/language-pivot/{target_iso}",
+            "target_iso": target_iso,
+            "duration_s": duration,
+        },
+    )
