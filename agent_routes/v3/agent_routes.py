@@ -26,6 +26,8 @@ from database.models import (
     BibleVersionAccess,
     CardTranslation,
     CardTranslationExample,
+    LanguagePivot,
+    PivotCandidate,
 )
 from database.models import UserDB as UserModel
 from database.models import (
@@ -1748,9 +1750,31 @@ async def get_lexeme_cards(
 
         is_admin = current_user.is_admin
 
+        # Transparent pivot routing: cards are persisted at the pivot
+        # bible_version for any target_iso registered in language_pivot. The
+        # caller's source_version_id is treated as a hint; we resolve to the
+        # pivot version when a mapping exists, falling back to the caller's
+        # source_version_id when no mapping is found.
+        target_iso_subquery = (
+            select(BibleVersion.iso_language)
+            .where(BibleVersion.id == target_version_id)
+            .scalar_subquery()
+        )
+        pivot_lookup = await db.execute(
+            select(BibleRevision.bible_version_id)
+            .select_from(LanguagePivot)
+            .join(PivotCandidate, PivotCandidate.pivot_iso == LanguagePivot.pivot_iso)
+            .join(BibleRevision, BibleRevision.id == PivotCandidate.pivot_revision_id)
+            .where(LanguagePivot.target_iso == target_iso_subquery)
+        )
+        pivot_version_id = pivot_lookup.scalar_one_or_none()
+        effective_source_version_id = (
+            pivot_version_id if pivot_version_id is not None else source_version_id
+        )
+
         # Base conditions: language pair filter
         conditions = [
-            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.source_version_id == effective_source_version_id,
             AgentLexemeCard.target_version_id == target_version_id,
         ]
 
@@ -1850,7 +1874,9 @@ async def get_lexeme_cards(
                     )
                     .where(
                         UserGroup.user_id == current_user.id,
-                        BibleVersion.id.in_([source_version_id, target_version_id]),
+                        BibleVersion.id.in_(
+                            [effective_source_version_id, target_version_id]
+                        ),
                     )
                 )
                 examples_conditions.append(
@@ -1952,9 +1978,11 @@ async def get_lexeme_cards(
             examples_out = [
                 {
                     "id": ex["id"],
-                    "source": override_map.get(ex["id"], ex["source"])
-                    if requires_merge
-                    else ex["source"],
+                    "source": (
+                        override_map.get(ex["id"], ex["source"])
+                        if requires_merge
+                        else ex["source"]
+                    ),
                     "target": ex["target"],
                 }
                 for ex in examples_by_card[card.id]
@@ -1989,6 +2017,8 @@ async def get_lexeme_cards(
                 "path": "/agent/lexeme-card",
                 "source_version_id": source_version_id,
                 "target_version_id": target_version_id,
+                "effective_source_version_id": effective_source_version_id,
+                "pivot_routed": pivot_version_id is not None,
                 "source_word": source_word,
                 "target_word": target_word,
                 "target_words": target_words,
