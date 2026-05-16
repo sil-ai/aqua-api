@@ -1409,3 +1409,56 @@ class PredictJob(Base):
         ),
         Index("ix_predict_jobs_owner_created", "owner_id", "created_at"),
     )
+
+
+class PivotCandidate(Base):
+    """Curated whitelist of pivot languages used for routing translations.
+
+    The pivot is the well-resourced language we route a target through. Choice
+    matters: Malila A/B (swh vs eng pivot) showed ~44% fewer back-translation
+    placeholders for the closer-family swh pivot.
+    """
+
+    __tablename__ = "pivot_candidate"
+
+    pivot_iso = Column(String(3), ForeignKey("iso_language.iso639"), primary_key=True)
+    pivot_revision_id = Column(Integer, ForeignKey("bible_revision.id"), nullable=False)
+    notes = Column(Text, nullable=True)
+    created_at = Column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class LanguagePivot(Base):
+    """Resolved target_iso -> pivot_iso routing decisions.
+
+    Populated by curator seed for known targets and by the agent's self-bootstrap
+    flow for unknown targets. Keyed on target_iso only: each target has one pivot.
+    """
+
+    __tablename__ = "language_pivot"
+
+    target_iso = Column(String(3), ForeignKey("iso_language.iso639"), primary_key=True)
+    pivot_iso = Column(
+        String(3),
+        ForeignKey("pivot_candidate.pivot_iso"),
+        nullable=False,
+    )
+    notes = Column(Text, nullable=True)
+    created_at = Column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (Index("ix_language_pivot_pivot_iso", "pivot_iso"),)

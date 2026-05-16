@@ -7,6 +7,7 @@ from fastapi.openapi.utils import get_openapi
 
 from agent_routes.v3.affix_routes import router as affix_router_v3
 from agent_routes.v3.agent_routes import router as agent_router_v3
+from agent_routes.v3.pivot_routes import router as pivot_router_v3
 from agent_routes.v3.tokenizer_routes import router as tokenizer_router_v3
 from assessment_routes.v3.assessment_routes import router as assessment_router_v3
 from assessment_routes.v3.eflomal_routes import router as eflomal_router_v3
@@ -110,6 +111,7 @@ def configure_routing(app):
     app.include_router(agent_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(tokenizer_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(affix_router_v3, prefix="/v3", tags=["Version 3"])
+    app.include_router(pivot_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(train_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(eflomal_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(tfidf_artifact_router_v3, prefix="/v3", tags=["Version 3"])
@@ -135,6 +137,7 @@ def configure_routing(app):
         tokenizer_router_v3, prefix="/latest", tags=["Version 3 / Latest"]
     )
     app.include_router(affix_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
+    app.include_router(pivot_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(train_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(eflomal_router_v3, prefix="/latest", tags=["Version 3 / Latest"])
     app.include_router(
