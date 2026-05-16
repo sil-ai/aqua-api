@@ -439,11 +439,6 @@ class TestListExcludesDeleted:
         assert kept_id in listed_ids
         assert deleted_id not in listed_ids
 
-        # Cleanup the surviving fixture
-        client.delete(
-            f"{prefix}/version", params={"id": kept_id}, headers=admin_headers
-        )
-
 
 class TestVersionValidation:
     def test_create_version_without_add_to_groups(self, client, regular_token1):
