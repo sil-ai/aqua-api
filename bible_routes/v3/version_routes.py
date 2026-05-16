@@ -33,7 +33,9 @@ async def list_version(
 
     # Step 1: Fetch all versions the user can access
     if current_user.is_admin:
-        result = await db.execute(select(BibleVersionModel))
+        result = await db.execute(
+            select(BibleVersionModel).where(BibleVersionModel.deleted.is_(False))
+        )
         versions = result.scalars().all()
     else:
         user_groups_subq = (

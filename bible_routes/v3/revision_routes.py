@@ -91,7 +91,8 @@ async def list_revisions(
         # Step 3: Load revisions for that version
         result = await db.execute(
             select(BibleRevisionModel).where(
-                BibleRevisionModel.bible_version_id == version_id
+                BibleRevisionModel.bible_version_id == version_id,
+                BibleRevisionModel.deleted.is_(False),
             )
         )
         revisions = result.scalars().all()
