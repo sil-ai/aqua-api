@@ -7937,6 +7937,7 @@ def test_get_lexeme_cards_pivot_routing_defaults_lang_to_source_iso(
     db_session.merge(LanguagePivot(target_iso="zga", pivot_iso="eng"))
     db_session.commit()
 
+    card_id = None
     try:
         card_id = _create_card_with_examples(
             client,
@@ -7980,18 +7981,114 @@ def test_get_lexeme_cards_pivot_routing_defaults_lang_to_source_iso(
         assert returned["examples"][0]["source"] == "default lang swh src"
         assert returned["examples"][0]["target"] == "default lang tgt"
     finally:
+        if card_id is not None:
+            client.delete(
+                f"/v3/agent/lexeme-card/{card_id}",
+                headers={"Authorization": f"Bearer {regular_token1}"},
+            )
         db_session.query(LanguagePivot).filter(
             LanguagePivot.target_iso == "zga"
         ).delete()
         db_session.query(PivotCandidate).filter(
             PivotCandidate.pivot_iso == "eng"
         ).delete()
+        db_session.delete(target)
+        db_session.delete(caller_reference)
+        db_session.commit()
+
+
+def test_get_lexeme_cards_pivot_routing_no_default_when_caller_iso_matches_pivot(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+):
+    """Pivot routing fires but caller's source iso equals the pivot's iso —
+    defaulting computes lang == canonical source_language_iso, which is a
+    no-op overlay (canonical fields returned). Guards against accidentally
+    swapping in a `CardTranslation` row when none is needed.
+    """
+    from database.models import (
+        BibleVersion,
+        LanguagePivot,
+        PivotCandidate,
+        UserDB,
+    )
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    target = BibleVersion(
+        name="noop_default_lang_target",
+        iso_language="zga",
+        iso_script="Latn",
+        abbreviation="NDLT",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    # Caller iso also "eng" — same as the pivot's iso. Defaulting still fires
+    # (different version), but the resulting overlay is a no-op.
+    caller_reference = BibleVersion(
+        name="noop_default_lang_caller",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="NDLC",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    db_session.add_all([target, caller_reference])
+    db_session.commit()
+
+    db_session.merge(
+        PivotCandidate(pivot_iso="eng", pivot_revision_id=test_revision_id)
+    )
+    db_session.commit()
+    db_session.merge(LanguagePivot(target_iso="zga", pivot_iso="eng"))
+    db_session.commit()
+
+    card_id = None
+    try:
+        card_id = _create_card_with_examples(
+            client,
+            regular_token1,
+            target_lemma="noop_default_tgt",
+            source_lemma="noop_default_eng_src",
+            revision_id=test_revision_id,
+            source_version_id=test_version_id,
+            target_version_id=target.id,
+            examples=[{"source": "noop en src", "target": "noop tgt"}],
+        )
+
+        response = client.get(
+            f"/v3/agent/lexeme-card?source_version_id={caller_reference.id}"
+            f"&target_version_id={target.id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        returned = next(c for c in response.json() if c["id"] == card_id)
+        # Canonical eng fields are returned — no translation was needed.
+        assert returned["source_lemma"] == "noop_default_eng_src"
+        assert returned["examples"][0]["source"] == "noop en src"
+    finally:
+        if card_id is not None:
+            client.delete(
+                f"/v3/agent/lexeme-card/{card_id}",
+                headers={"Authorization": f"Bearer {regular_token1}"},
+            )
+        db_session.query(LanguagePivot).filter(
+            LanguagePivot.target_iso == "zga"
+        ).delete()
+        db_session.query(PivotCandidate).filter(
+            PivotCandidate.pivot_iso == "eng"
+        ).delete()
+        db_session.delete(target)
+        db_session.delete(caller_reference)
         db_session.commit()
 
 
 def test_get_lexeme_cards_no_pivot_no_lang_returns_canonical(
     client,
     regular_token1,
+    db_session,
     test_revision_id,
     test_version_id,
     test_version_id_2,
@@ -7999,25 +8096,35 @@ def test_get_lexeme_cards_no_pivot_no_lang_returns_canonical(
     """Without pivot routing AND without lang, the response is canonical (no
     overlay). Guards against the new defaulting accidentally firing on the
     non-pivot path."""
-    card_id = _create_card_with_examples(
-        client,
-        regular_token1,
-        target_lemma="no_default_lang_tgt",
-        source_lemma="no_default_lang_eng_src",
-        revision_id=test_revision_id,
-        source_version_id=test_version_id,
-        target_version_id=test_version_id_2,
-        examples=[{"source": "canonical en src", "target": "canonical tgt"}],
-    )
-    response = client.get(
-        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
-        f"&target_version_id={test_version_id_2}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-    )
-    assert response.status_code == 200
-    returned = next(c for c in response.json() if c["id"] == card_id)
-    assert returned["source_lemma"] == "no_default_lang_eng_src"
-    assert returned["examples"][0]["source"] == "canonical en src"
+    card_id = None
+    try:
+        card_id = _create_card_with_examples(
+            client,
+            regular_token1,
+            target_lemma="no_default_lang_tgt",
+            source_lemma="no_default_lang_eng_src",
+            revision_id=test_revision_id,
+            source_version_id=test_version_id,
+            target_version_id=test_version_id_2,
+            examples=[{"source": "canonical en src", "target": "canonical tgt"}],
+        )
+        response = client.get(
+            f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+            f"&target_version_id={test_version_id_2}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200
+        matching = [c for c in response.json() if c["id"] == card_id]
+        assert len(matching) == 1
+        returned = matching[0]
+        assert returned["source_lemma"] == "no_default_lang_eng_src"
+        assert returned["examples"][0]["source"] == "canonical en src"
+    finally:
+        if card_id is not None:
+            client.delete(
+                f"/v3/agent/lexeme-card/{card_id}",
+                headers={"Authorization": f"Bearer {regular_token1}"},
+            )
 
 
 def test_get_lexeme_cards_explicit_lang_overrides_default(
@@ -8063,6 +8170,7 @@ def test_get_lexeme_cards_explicit_lang_overrides_default(
     db_session.merge(LanguagePivot(target_iso="ngq", pivot_iso="eng"))
     db_session.commit()
 
+    card_id = None
     try:
         card_id = _create_card_with_examples(
             client,
@@ -8080,17 +8188,22 @@ def test_get_lexeme_cards_explicit_lang_overrides_default(
             .first()
             .id
         )
-        # Caller iso is swh, but they explicitly ask for zga — zga should win.
-        trans = client.post(
-            f"/v3/agent/lexeme-card/{card_id}/translation",
-            headers={"Authorization": f"Bearer {regular_token1}"},
-            json={
-                "language_iso": "zga",
-                "source_lemma": "explicit_lang_zga_src",
-                "examples": [{"example_id": ex_id, "source_text": "explicit zga src"}],
-            },
-        )
-        assert trans.status_code == 200, trans.text
+        # Add both a swh translation (the would-be default) and a zga
+        # translation (the explicit ask) so we can prove the explicit one wins.
+        for iso, src_lemma, ex_source in [
+            ("swh", "explicit_lang_swh_src", "explicit swh src"),
+            ("zga", "explicit_lang_zga_src", "explicit zga src"),
+        ]:
+            trans = client.post(
+                f"/v3/agent/lexeme-card/{card_id}/translation",
+                headers={"Authorization": f"Bearer {regular_token1}"},
+                json={
+                    "language_iso": iso,
+                    "source_lemma": src_lemma,
+                    "examples": [{"example_id": ex_id, "source_text": ex_source}],
+                },
+            )
+            assert trans.status_code == 200, trans.text
 
         response = client.get(
             f"/v3/agent/lexeme-card?source_version_id={caller_reference.id}"
@@ -8100,11 +8213,19 @@ def test_get_lexeme_cards_explicit_lang_overrides_default(
         assert response.status_code == 200, response.text
         returned = next(c for c in response.json() if c["id"] == card_id)
         assert returned["source_lemma"] == "explicit_lang_zga_src"
+        assert returned["source_lemma"] != "explicit_lang_swh_src"
     finally:
+        if card_id is not None:
+            client.delete(
+                f"/v3/agent/lexeme-card/{card_id}",
+                headers={"Authorization": f"Bearer {regular_token1}"},
+            )
         db_session.query(LanguagePivot).filter(
             LanguagePivot.target_iso == "ngq"
         ).delete()
         db_session.query(PivotCandidate).filter(
             PivotCandidate.pivot_iso == "eng"
         ).delete()
+        db_session.delete(target)
+        db_session.delete(caller_reference)
         db_session.commit()

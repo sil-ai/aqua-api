@@ -1919,12 +1919,10 @@ async def get_lexeme_cards(
                     }
                 )
 
-        # Apply non-canonical language overlay when requested. If the caller
-        # did not specify lang AND pivot routing redirected the source, default
-        # to the caller's source_version_id ISO so the pivot stays invisible:
-        # the caller asked for cards "from their reference" and should see
-        # source-side fields in their reference's language, not the pivot's.
+        # Apply non-canonical language overlay when requested.
         requested_lang = lang.lower() if lang else None
+        # When pivot routing rewrote the source, default lang to the caller's
+        # source ISO so the pivot stays invisible.
         if (
             requested_lang is None
             and cards
