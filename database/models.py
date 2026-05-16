@@ -1422,7 +1422,9 @@ class PivotCandidate(Base):
     __tablename__ = "pivot_candidate"
 
     pivot_iso = Column(String(3), ForeignKey("iso_language.iso639"), primary_key=True)
-    pivot_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
+    pivot_revision_id = Column(
+        Integer, ForeignKey("bible_revision.id"), nullable=False
+    )
     notes = Column(Text, nullable=True)
     created_at = Column(
         TIMESTAMP(timezone=True), server_default=func.now(), nullable=False

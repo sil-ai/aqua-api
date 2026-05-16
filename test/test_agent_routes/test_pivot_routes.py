@@ -30,7 +30,7 @@ def _seed_profile(db_session, iso, name):
 
 
 def test_pivot_candidate_admin_create_and_list(
-    client, admin_token, regular_token1, test_version_id, db_session
+    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
@@ -39,7 +39,7 @@ def test_pivot_candidate_admin_create_and_list(
 
     payload = {
         "pivot_iso": PIVOT_ISO,
-        "pivot_version_id": test_version_id,
+        "pivot_revision_id": test_revision_id,
         "notes": "Bantu pivot",
     }
     resp = client.post(
@@ -48,6 +48,7 @@ def test_pivot_candidate_admin_create_and_list(
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["pivot_iso"] == PIVOT_ISO
+    assert body["pivot_revision_id"] == test_revision_id
     assert body["pivot_version_id"] == test_version_id
     assert body["notes"] == "Bantu pivot"
     assert body["language_profile"]["name"] == "Swahili"
@@ -60,7 +61,7 @@ def test_pivot_candidate_admin_create_and_list(
 
 
 def test_pivot_candidate_post_requires_admin(
-    client, regular_token1, test_version_id, db_session
+    client, regular_token1, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
@@ -68,21 +69,21 @@ def test_pivot_candidate_post_requires_admin(
 
     resp = client.post(
         f"/{prefix}/pivot-candidate",
-        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": test_revision_id},
         headers=headers,
     )
     assert resp.status_code == 403
     _cleanup(db_session)
 
 
-def test_pivot_candidate_rejects_unknown_version(client, admin_token, db_session):
+def test_pivot_candidate_rejects_unknown_revision(client, admin_token, db_session):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
     headers = {"Authorization": f"Bearer {admin_token}"}
 
     resp = client.post(
         f"/{prefix}/pivot-candidate",
-        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": 999_999_999},
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": 999_999_999},
         headers=headers,
     )
     assert resp.status_code == 422
@@ -90,7 +91,7 @@ def test_pivot_candidate_rejects_unknown_version(client, admin_token, db_session
 
 
 def test_pivot_candidate_upsert_replaces_notes(
-    client, admin_token, test_version_id, db_session
+    client, admin_token, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
@@ -100,7 +101,7 @@ def test_pivot_candidate_upsert_replaces_notes(
         f"/{prefix}/pivot-candidate",
         json={
             "pivot_iso": PIVOT_ISO,
-            "pivot_version_id": test_version_id,
+            "pivot_revision_id": test_revision_id,
             "notes": "first",
         },
         headers=headers,
@@ -109,7 +110,7 @@ def test_pivot_candidate_upsert_replaces_notes(
         f"/{prefix}/pivot-candidate",
         json={
             "pivot_iso": PIVOT_ISO,
-            "pivot_version_id": test_version_id,
+            "pivot_revision_id": test_revision_id,
             "notes": "second",
         },
         headers=headers,
@@ -120,7 +121,7 @@ def test_pivot_candidate_upsert_replaces_notes(
 
 
 def test_pivot_candidate_without_profile_is_omitted_from_list(
-    client, admin_token, regular_token1, test_version_id, db_session
+    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     # No LanguageProfile seeded for PIVOT_ISO
@@ -129,7 +130,7 @@ def test_pivot_candidate_without_profile_is_omitted_from_list(
 
     resp = client.post(
         f"/{prefix}/pivot-candidate",
-        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": test_revision_id},
         headers=admin_headers,
     )
     assert resp.status_code == 200
@@ -144,7 +145,7 @@ def test_pivot_candidate_without_profile_is_omitted_from_list(
 
 
 def test_language_pivot_hit(
-    client, admin_token, regular_token1, test_version_id, db_session
+    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
@@ -153,7 +154,7 @@ def test_language_pivot_hit(
 
     client.post(
         f"/{prefix}/pivot-candidate",
-        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": test_revision_id},
         headers=admin_headers,
     )
     resp = client.post(
@@ -169,6 +170,7 @@ def test_language_pivot_hit(
     body = resp.json()
     assert body["target_iso"] == TARGET_ISO
     assert body["pivot_iso"] == PIVOT_ISO
+    assert body["pivot_revision_id"] == test_revision_id
     assert body["pivot_version_id"] == test_version_id
     assert body["language_profile"]["name"] == "Swahili"
     assert body["notes"] == "Bantu pivot"
@@ -179,12 +181,13 @@ def test_language_pivot_hit(
     assert resp.status_code == 200
     body = resp.json()
     assert body["pivot_iso"] == PIVOT_ISO
+    assert body["pivot_revision_id"] == test_revision_id
     assert body["pivot_version_id"] == test_version_id
     _cleanup(db_session)
 
 
 def test_language_pivot_miss_returns_candidate_list(
-    client, admin_token, regular_token1, test_version_id, db_session
+    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
@@ -193,7 +196,7 @@ def test_language_pivot_miss_returns_candidate_list(
 
     client.post(
         f"/{prefix}/pivot-candidate",
-        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": test_revision_id},
         headers=admin_headers,
     )
 
@@ -225,7 +228,7 @@ def test_language_pivot_rejects_unknown_pivot_candidate(
 
 
 def test_language_pivot_upsert_replaces_pivot(
-    client, admin_token, regular_token1, test_version_id, db_session
+    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
@@ -236,7 +239,7 @@ def test_language_pivot_upsert_replaces_pivot(
     for iso in (PIVOT_ISO, SECOND_PIVOT_ISO):
         client.post(
             f"/{prefix}/pivot-candidate",
-            json={"pivot_iso": iso, "pivot_version_id": test_version_id},
+            json={"pivot_iso": iso, "pivot_revision_id": test_revision_id},
             headers=admin_headers,
         )
 
@@ -267,7 +270,7 @@ def test_language_pivot_upsert_replaces_pivot(
 
 
 def test_language_pivot_upsert_preserves_notes_when_omitted(
-    client, admin_token, regular_token1, test_version_id, db_session
+    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
 ):
     """Re-POST without notes must not clear an existing curator rationale."""
     _cleanup(db_session)
@@ -279,7 +282,7 @@ def test_language_pivot_upsert_preserves_notes_when_omitted(
         f"/{prefix}/pivot-candidate",
         json={
             "pivot_iso": PIVOT_ISO,
-            "pivot_version_id": test_version_id,
+            "pivot_revision_id": test_revision_id,
             "notes": "Biblica swh",
         },
         headers=admin_headers,
@@ -306,7 +309,7 @@ def test_language_pivot_upsert_preserves_notes_when_omitted(
     # Same for pivot_candidate.
     resp = client.post(
         f"/{prefix}/pivot-candidate",
-        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": test_revision_id},
         headers=admin_headers,
     )
     assert resp.status_code == 200
@@ -315,7 +318,7 @@ def test_language_pivot_upsert_preserves_notes_when_omitted(
 
 
 def test_language_pivot_rejects_unknown_target_iso(
-    client, admin_token, regular_token1, test_version_id, db_session
+    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
@@ -324,7 +327,7 @@ def test_language_pivot_rejects_unknown_target_iso(
 
     client.post(
         f"/{prefix}/pivot-candidate",
-        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": test_revision_id},
         headers=admin_headers,
     )
     resp = client.post(
@@ -337,7 +340,7 @@ def test_language_pivot_rejects_unknown_target_iso(
 
 
 def test_language_pivot_list_all(
-    client, admin_token, regular_token1, test_version_id, db_session
+    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
@@ -346,7 +349,7 @@ def test_language_pivot_list_all(
 
     client.post(
         f"/{prefix}/pivot-candidate",
-        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": test_revision_id},
         headers=admin_headers,
     )
     client.post(
@@ -361,12 +364,13 @@ def test_language_pivot_list_all(
     match = next((m for m in mappings if m["target_iso"] == TARGET_ISO), None)
     assert match is not None
     assert match["pivot_iso"] == PIVOT_ISO
+    assert match["pivot_revision_id"] == test_revision_id
     assert match["pivot_version_id"] == test_version_id
     _cleanup(db_session)
 
 
 def test_language_pivot_miss_hint_is_populated(
-    client, admin_token, regular_token1, test_version_id, db_session
+    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
@@ -375,7 +379,7 @@ def test_language_pivot_miss_hint_is_populated(
 
     client.post(
         f"/{prefix}/pivot-candidate",
-        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": test_revision_id},
         headers=admin_headers,
     )
     resp = client.get(
@@ -388,6 +392,7 @@ def test_language_pivot_miss_hint_is_populated(
         (c for c in body["candidates"] if c["pivot_iso"] == PIVOT_ISO), None
     )
     assert candidate is not None
+    assert candidate["pivot_revision_id"] == test_revision_id
     assert candidate["pivot_version_id"] == test_version_id
     _cleanup(db_session)
 
@@ -405,6 +410,6 @@ def test_language_pivot_requires_auth(client, db_session):
     assert resp.status_code == 401
     resp = client.post(
         f"/{prefix}/pivot-candidate",
-        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": 1},
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": 1},
     )
     assert resp.status_code == 401

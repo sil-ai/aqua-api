@@ -1922,7 +1922,7 @@ class MorphemeSearchResponse(BaseModel):
 
 class PivotCandidateIn(BaseModel):
     pivot_iso: str = Field(..., min_length=3, max_length=3)
-    pivot_version_id: int
+    pivot_revision_id: int
     notes: Optional[str] = None
 
 
@@ -1930,7 +1930,8 @@ class PivotCandidateOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     pivot_iso: str
-    pivot_version_id: int
+    pivot_revision_id: int
+    pivot_version_id: int  # derived via bible_revision.bible_version_id
     notes: Optional[str] = None
     language_profile: Optional[LanguageProfileOut] = None
     created_at: Optional[datetime.datetime] = None
@@ -1952,7 +1953,8 @@ class LanguagePivotOut(BaseModel):
 
     target_iso: str
     pivot_iso: str
-    pivot_version_id: int
+    pivot_revision_id: int
+    pivot_version_id: int  # derived via bible_revision.bible_version_id
     notes: Optional[str] = None
     language_profile: Optional[LanguageProfileOut] = None
     created_at: Optional[datetime.datetime] = None

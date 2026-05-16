@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
 from database.models import (
-    BibleVersion,
+    BibleRevision,
     IsoLanguage,
     LanguagePivot,
     LanguageProfile,
@@ -65,13 +65,29 @@ async def _profiles_by_iso(
     return {p.iso_639_3: p for p in result.scalars().all()}
 
 
+async def _version_ids_by_revision(
+    db: AsyncSession, revision_ids: list[int]
+) -> dict[int, int]:
+    """Map revision_id -> bible_version_id for the given revisions."""
+    if not revision_ids:
+        return {}
+    result = await db.execute(
+        select(BibleRevision.id, BibleRevision.bible_version_id).where(
+            BibleRevision.id.in_(revision_ids)
+        )
+    )
+    return {row.id: row.bible_version_id for row in result.all()}
+
+
 def _candidate_to_out(
     candidate: PivotCandidate,
+    pivot_version_id: int,
     profile: Optional[LanguageProfile],
 ) -> PivotCandidateOut:
     return PivotCandidateOut(
         pivot_iso=candidate.pivot_iso,
-        pivot_version_id=candidate.pivot_version_id,
+        pivot_revision_id=candidate.pivot_revision_id,
+        pivot_version_id=pivot_version_id,
         notes=candidate.notes,
         language_profile=(
             LanguageProfileOut.model_validate(profile) if profile is not None else None
@@ -84,12 +100,14 @@ def _candidate_to_out(
 def _mapping_to_out(
     mapping: LanguagePivot,
     candidate: PivotCandidate,
+    pivot_version_id: int,
     profile: Optional[LanguageProfile],
 ) -> LanguagePivotOut:
     return LanguagePivotOut(
         target_iso=mapping.target_iso,
         pivot_iso=mapping.pivot_iso,
-        pivot_version_id=candidate.pivot_version_id,
+        pivot_revision_id=candidate.pivot_revision_id,
+        pivot_version_id=pivot_version_id,
         notes=mapping.notes,
         language_profile=(
             LanguageProfileOut.model_validate(profile) if profile is not None else None
@@ -112,12 +130,19 @@ async def _list_candidates_with_profiles(
     if not candidates:
         return []
     profiles = await _profiles_by_iso(db, [c.pivot_iso for c in candidates])
+    version_ids = await _version_ids_by_revision(
+        db, [c.pivot_revision_id for c in candidates]
+    )
     out: list[PivotCandidateOut] = []
     for candidate in candidates:
         profile = profiles.get(candidate.pivot_iso)
         if profile is None:
             continue
-        out.append(_candidate_to_out(candidate, profile))
+        out.append(
+            _candidate_to_out(
+                candidate, version_ids[candidate.pivot_revision_id], profile
+            )
+        )
     return out
 
 
@@ -166,13 +191,16 @@ async def upsert_pivot_candidate(
                 detail=f"Unknown ISO 639-3 code '{payload.pivot_iso}'",
             )
 
-        version_exists = await db.execute(
-            select(BibleVersion.id).where(BibleVersion.id == payload.pivot_version_id)
+        revision_result = await db.execute(
+            select(BibleRevision.bible_version_id).where(
+                BibleRevision.id == payload.pivot_revision_id
+            )
         )
-        if version_exists.scalar_one_or_none() is None:
+        pivot_version_id = revision_result.scalar_one_or_none()
+        if pivot_version_id is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Unknown bible_version id {payload.pivot_version_id}",
+                detail=f"Unknown bible_revision id {payload.pivot_revision_id}",
             )
 
         sent = payload.model_dump(exclude_unset=True)
@@ -217,7 +245,9 @@ async def upsert_pivot_candidate(
             "duration_s": duration,
         },
     )
-    return _candidate_to_out(candidate, profiles.get(candidate.pivot_iso))
+    return _candidate_to_out(
+        candidate, pivot_version_id, profiles.get(candidate.pivot_iso)
+    )
 
 
 @router.get(
@@ -250,11 +280,20 @@ async def get_language_pivot(
             )
             candidate_by_iso = {c.pivot_iso: c for c in candidates.scalars().all()}
             profiles = await _profiles_by_iso(db, pivot_isos)
+            version_ids = await _version_ids_by_revision(
+                db, [c.pivot_revision_id for c in candidate_by_iso.values()]
+            )
         else:
             candidate_by_iso = {}
             profiles = {}
+            version_ids = {}
         out_list = [
-            _mapping_to_out(m, candidate_by_iso[m.pivot_iso], profiles.get(m.pivot_iso))
+            _mapping_to_out(
+                m,
+                candidate_by_iso[m.pivot_iso],
+                version_ids[candidate_by_iso[m.pivot_iso].pivot_revision_id],
+                profiles.get(m.pivot_iso),
+            )
             for m in mappings
         ]
         duration = round(time.perf_counter() - request_start, 2)
@@ -290,7 +329,13 @@ async def get_language_pivot(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Pivot mapping references missing candidate",
             )
-        out = _mapping_to_out(mapping, candidate, profiles.get(mapping.pivot_iso))
+        version_ids = await _version_ids_by_revision(db, [candidate.pivot_revision_id])
+        out = _mapping_to_out(
+            mapping,
+            candidate,
+            version_ids[candidate.pivot_revision_id],
+            profiles.get(mapping.pivot_iso),
+        )
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
             f"get_language_pivot hit in {duration}s",
@@ -383,6 +428,7 @@ async def upsert_language_pivot(
         )
         mapping = mapping_result.scalar_one()
         profiles = await _profiles_by_iso(db, [mapping.pivot_iso])
+        version_ids = await _version_ids_by_revision(db, [candidate.pivot_revision_id])
     except HTTPException:
         await db.rollback()
         raise
@@ -394,7 +440,12 @@ async def upsert_language_pivot(
             detail=f"Database error: {e}",
         ) from e
 
-    out = _mapping_to_out(mapping, candidate, profiles.get(mapping.pivot_iso))
+    out = _mapping_to_out(
+        mapping,
+        candidate,
+        version_ids[candidate.pivot_revision_id],
+        profiles.get(mapping.pivot_iso),
+    )
     duration = round(time.perf_counter() - request_start, 2)
     logger.info(
         f"upsert_language_pivot completed in {duration}s",

@@ -26,7 +26,7 @@ def upgrade() -> None:
     op.create_table(
         "pivot_candidate",
         sa.Column("pivot_iso", sa.String(length=3), nullable=False),
-        sa.Column("pivot_version_id", sa.Integer(), nullable=False),
+        sa.Column("pivot_revision_id", sa.Integer(), nullable=False),
         sa.Column("notes", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
@@ -41,7 +41,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(["pivot_iso"], ["iso_language.iso639"]),
-        sa.ForeignKeyConstraint(["pivot_version_id"], ["bible_version.id"]),
+        sa.ForeignKeyConstraint(["pivot_revision_id"], ["bible_revision.id"]),
         sa.PrimaryKeyConstraint("pivot_iso"),
     )
 
