@@ -408,11 +408,11 @@ class TestListExcludesDeleted:
             "abbreviation": "KV",
             "add_to_groups": [group_1.id],
         }
-        kept_id = (
-            client.post(f"{prefix}/version", json=kept_params, headers=regular_headers)
-            .json()
-            .get("id")
+        kept_response = client.post(
+            f"{prefix}/version", json=kept_params, headers=regular_headers
         )
+        assert kept_response.status_code == 200, kept_response.text
+        kept_id = kept_response.json()["id"]
 
         deleted_params = {
             **new_version_data,
@@ -420,13 +420,11 @@ class TestListExcludesDeleted:
             "abbreviation": "DV",
             "add_to_groups": [group_1.id],
         }
-        deleted_id = (
-            client.post(
-                f"{prefix}/version", json=deleted_params, headers=regular_headers
-            )
-            .json()
-            .get("id")
+        deleted_response = client.post(
+            f"{prefix}/version", json=deleted_params, headers=regular_headers
         )
+        assert deleted_response.status_code == 200, deleted_response.text
+        deleted_id = deleted_response.json()["id"]
 
         delete_response = client.delete(
             f"{prefix}/version", params={"id": deleted_id}, headers=admin_headers
