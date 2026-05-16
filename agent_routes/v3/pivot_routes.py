@@ -5,7 +5,7 @@ import time
 from typing import Optional, Union
 
 import fastapi
-from fastapi import Depends, HTTPException, Path, Query, Response, status
+from fastapi import Depends, HTTPException, Path, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import delete as sql_delete
 from sqlalchemy import func, select
@@ -473,11 +473,6 @@ async def delete_language_pivot(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Delete a resolved target -> pivot mapping. Admin-only.
-
-    Lets curators clear a mapping so the agent's self-bootstrap can re-run
-    its LLM picker against the candidate list on the next assessment.
-    """
     _require_admin(current_user)
     request_start = time.perf_counter()
 
@@ -505,9 +500,8 @@ async def delete_language_pivot(
         f"delete_language_pivot completed in {duration}s",
         extra={
             "method": "DELETE",
-            "path": "/language-pivot/{target_iso}",
+            "path": f"/language-pivot/{target_iso}",
             "target_iso": target_iso,
             "duration_s": duration,
         },
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

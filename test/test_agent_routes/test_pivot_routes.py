@@ -481,6 +481,7 @@ def test_language_pivot_delete_missing_returns_404(client, admin_token, db_sessi
     )
     assert resp.status_code == 404
     _cleanup(db_session)
+    _cleanup(db_session)
 
 
 def test_language_pivot_delete_requires_admin(
