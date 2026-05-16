@@ -60,6 +60,35 @@ logger = setup_logger(__name__, container_id=container_id)
 router = fastapi.APIRouter()
 
 
+async def _resolve_pivot_version_id(
+    db: AsyncSession, target_version_id: int
+) -> int | None:
+    """Return the pivot bible_version_id for the target's iso, or None.
+
+    Joins language_pivot -> pivot_candidate -> bible_revision, filtering out
+    revisions that have been soft-deleted so a withdrawn pivot revision does
+    not silently route traffic.
+    """
+    from sqlalchemy import select
+
+    target_iso_subquery = (
+        select(BibleVersion.iso_language)
+        .where(BibleVersion.id == target_version_id)
+        .scalar_subquery()
+    )
+    result = await db.execute(
+        select(BibleRevision.bible_version_id)
+        .select_from(LanguagePivot)
+        .join(PivotCandidate, PivotCandidate.pivot_iso == LanguagePivot.pivot_iso)
+        .join(BibleRevision, BibleRevision.id == PivotCandidate.pivot_revision_id)
+        .where(
+            LanguagePivot.target_iso == target_iso_subquery,
+            BibleRevision.deleted.isnot(True),
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 def sanitize_text(text: str) -> str:
     """Sanitize text fields to remove control characters.
 
@@ -1750,24 +1779,11 @@ async def get_lexeme_cards(
 
         is_admin = current_user.is_admin
 
-        # Transparent pivot routing: cards are persisted at the pivot
-        # bible_version for any target_iso registered in language_pivot. The
-        # caller's source_version_id is treated as a hint; we resolve to the
-        # pivot version when a mapping exists, falling back to the caller's
-        # source_version_id when no mapping is found.
-        target_iso_subquery = (
-            select(BibleVersion.iso_language)
-            .where(BibleVersion.id == target_version_id)
-            .scalar_subquery()
-        )
-        pivot_lookup = await db.execute(
-            select(BibleRevision.bible_version_id)
-            .select_from(LanguagePivot)
-            .join(PivotCandidate, PivotCandidate.pivot_iso == LanguagePivot.pivot_iso)
-            .join(BibleRevision, BibleRevision.id == PivotCandidate.pivot_revision_id)
-            .where(LanguagePivot.target_iso == target_iso_subquery)
-        )
-        pivot_version_id = pivot_lookup.scalar_one_or_none()
+        # Cards are persisted at the pivot bible_version for any target_iso
+        # registered in language_pivot. The caller's source_version_id is a
+        # hint; we resolve to the pivot version when a mapping exists, falling
+        # back to the caller's source_version_id otherwise.
+        pivot_version_id = await _resolve_pivot_version_id(db, target_version_id)
         effective_source_version_id = (
             pivot_version_id if pivot_version_id is not None else source_version_id
         )
@@ -2064,9 +2080,14 @@ async def check_word_in_lexeme_cards(
         # Normalize the word for case-insensitive comparison
         word_lower = word.strip().lower()
 
+        pivot_version_id = await _resolve_pivot_version_id(db, target_version_id)
+        effective_source_version_id = (
+            pivot_version_id if pivot_version_id is not None else source_version_id
+        )
+
         # Query cards matching by target_lemma (case-insensitive)
         cards_by_lemma = select(AgentLexemeCard.id).where(
-            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.source_version_id == effective_source_version_id,
             AgentLexemeCard.target_version_id == target_version_id,
             func.lower(AgentLexemeCard.target_lemma) == word_lower,
         )
@@ -2074,7 +2095,7 @@ async def check_word_in_lexeme_cards(
         # Query cards where word exists in surface_forms JSONB array (case-insensitive)
         # Use jsonb_typeof to check if it's an array, then jsonb_array_elements_text
         cards_by_surface = select(AgentLexemeCard.id).where(
-            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.source_version_id == effective_source_version_id,
             AgentLexemeCard.target_version_id == target_version_id,
             AgentLexemeCard.surface_forms.isnot(None),
             text(
@@ -2101,6 +2122,8 @@ async def check_word_in_lexeme_cards(
                 "word": word,
                 "source_version_id": source_version_id,
                 "target_version_id": target_version_id,
+                "effective_source_version_id": effective_source_version_id,
+                "pivot_routed": pivot_version_id is not None,
                 "duration_s": duration,
             },
         )
