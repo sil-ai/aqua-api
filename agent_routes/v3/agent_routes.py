@@ -1919,8 +1919,25 @@ async def get_lexeme_cards(
                     }
                 )
 
-        # Apply non-canonical language overlay when requested.
+        # Apply non-canonical language overlay when requested. If the caller
+        # did not specify lang AND pivot routing redirected the source, default
+        # to the caller's source_version_id ISO so the pivot stays invisible:
+        # the caller asked for cards "from their reference" and should see
+        # source-side fields in their reference's language, not the pivot's.
         requested_lang = lang.lower() if lang else None
+        if (
+            requested_lang is None
+            and cards
+            and cards[0].source_version_id != source_version_id
+        ):
+            source_iso_result = await db.execute(
+                select(BibleVersion.iso_language).where(
+                    BibleVersion.id == source_version_id
+                )
+            )
+            source_iso = source_iso_result.scalar_one_or_none()
+            if source_iso is not None:
+                requested_lang = source_iso.lower()
         # Per-card translation row (only loaded when needed)
         translation_by_card: dict[int, CardTranslation] = {}
         # Per-card map of example_id -> translated source_text
