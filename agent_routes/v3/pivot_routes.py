@@ -2,11 +2,13 @@ __version__ = "v3"
 
 import socket
 import time
-from typing import Optional
+from typing import Optional, Union
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import select
+from fastapi.responses import JSONResponse
+from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,51 +54,38 @@ def _require_admin(user: UserModel) -> None:
         )
 
 
-async def _candidate_with_profile(
-    db: AsyncSession, candidate: PivotCandidate
-) -> Optional[PivotCandidateOut]:
-    """Build a PivotCandidateOut, returning None if no language_profile exists.
-
-    We skip candidates with no profile so the auto-decision flow only sees
-    pivots it can actually compare against.
-    """
-    profile_result = await db.execute(
-        select(LanguageProfile).where(LanguageProfile.iso_639_3 == candidate.pivot_iso)
+async def _profiles_by_iso(
+    db: AsyncSession, isos: list[str]
+) -> dict[str, LanguageProfile]:
+    if not isos:
+        return {}
+    result = await db.execute(
+        select(LanguageProfile).where(LanguageProfile.iso_639_3.in_(isos))
     )
-    profile = profile_result.scalar_one_or_none()
-    if profile is None:
-        return None
+    return {p.iso_639_3: p for p in result.scalars().all()}
+
+
+def _candidate_to_out(
+    candidate: PivotCandidate,
+    profile: Optional[LanguageProfile],
+) -> PivotCandidateOut:
     return PivotCandidateOut(
         pivot_iso=candidate.pivot_iso,
         pivot_version_id=candidate.pivot_version_id,
         notes=candidate.notes,
-        language_profile=LanguageProfileOut.model_validate(profile),
+        language_profile=(
+            LanguageProfileOut.model_validate(profile) if profile is not None else None
+        ),
         created_at=candidate.created_at,
         updated_at=candidate.updated_at,
     )
 
 
-async def _list_candidates(db: AsyncSession) -> list[PivotCandidateOut]:
-    result = await db.execute(select(PivotCandidate).order_by(PivotCandidate.pivot_iso))
-    out: list[PivotCandidateOut] = []
-    for candidate in result.scalars().all():
-        item = await _candidate_with_profile(db, candidate)
-        if item is not None:
-            out.append(item)
-    return out
-
-
-async def _build_pivot_out(
-    db: AsyncSession, mapping: LanguagePivot
+def _mapping_to_out(
+    mapping: LanguagePivot,
+    candidate: PivotCandidate,
+    profile: Optional[LanguageProfile],
 ) -> LanguagePivotOut:
-    candidate_result = await db.execute(
-        select(PivotCandidate).where(PivotCandidate.pivot_iso == mapping.pivot_iso)
-    )
-    candidate = candidate_result.scalar_one()
-    profile_result = await db.execute(
-        select(LanguageProfile).where(LanguageProfile.iso_639_3 == mapping.pivot_iso)
-    )
-    profile = profile_result.scalar_one_or_none()
     return LanguagePivotOut(
         target_iso=mapping.target_iso,
         pivot_iso=mapping.pivot_iso,
@@ -110,13 +99,35 @@ async def _build_pivot_out(
     )
 
 
+async def _list_candidates_with_profiles(
+    db: AsyncSession,
+) -> list[PivotCandidateOut]:
+    """Return candidate list, omitting any whose pivot_iso lacks a language_profile.
+
+    The agent's auto-decision flow compares language profiles, so a candidate
+    without one isn't useful in that flow.
+    """
+    result = await db.execute(select(PivotCandidate).order_by(PivotCandidate.pivot_iso))
+    candidates = result.scalars().all()
+    if not candidates:
+        return []
+    profiles = await _profiles_by_iso(db, [c.pivot_iso for c in candidates])
+    out: list[PivotCandidateOut] = []
+    for candidate in candidates:
+        profile = profiles.get(candidate.pivot_iso)
+        if profile is None:
+            continue
+        out.append(_candidate_to_out(candidate, profile))
+    return out
+
+
 @router.get("/pivot-candidate", response_model=PivotCandidateListOut)
 async def list_pivot_candidates(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     request_start = time.perf_counter()
-    candidates = await _list_candidates(db)
+    candidates = await _list_candidates_with_profiles(db)
     duration = round(time.perf_counter() - request_start, 2)
     logger.info(
         f"list_pivot_candidates completed in {duration}s",
@@ -139,46 +150,55 @@ async def upsert_pivot_candidate(
     """Create or update a pivot candidate. Admin-only.
 
     Adding a pivot is a curated decision tied to licensing/quality, so it
-    should not be done autonomously by the agent.
+    should not be done autonomously by the agent. Fields omitted from the
+    payload (e.g. ``notes``) preserve their existing value on update.
     """
     _require_admin(current_user)
     request_start = time.perf_counter()
 
-    iso_exists = await db.execute(
-        select(IsoLanguage).where(IsoLanguage.iso639 == payload.pivot_iso)
-    )
-    if iso_exists.scalar_one_or_none() is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unknown ISO 639-3 code '{payload.pivot_iso}'",
-        )
-
-    version_exists = await db.execute(
-        select(BibleVersion.id).where(BibleVersion.id == payload.pivot_version_id)
-    )
-    if version_exists.scalar_one_or_none() is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unknown bible_version id {payload.pivot_version_id}",
-        )
-
     try:
-        existing_result = await db.execute(
+        iso_exists = await db.execute(
+            select(IsoLanguage).where(IsoLanguage.iso639 == payload.pivot_iso)
+        )
+        if iso_exists.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown ISO 639-3 code '{payload.pivot_iso}'",
+            )
+
+        version_exists = await db.execute(
+            select(BibleVersion.id).where(BibleVersion.id == payload.pivot_version_id)
+        )
+        if version_exists.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown bible_version id {payload.pivot_version_id}",
+            )
+
+        sent = payload.model_dump(exclude_unset=True)
+        sent["pivot_iso"] = payload.pivot_iso  # always identifies the row
+        update_cols = {k: v for k, v in sent.items() if k != "pivot_iso"}
+
+        stmt = pg_insert(PivotCandidate).values(**sent)
+        if update_cols:
+            on_conflict_set = {col: stmt.excluded[col] for col in update_cols}
+            on_conflict_set["updated_at"] = func.now()
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["pivot_iso"], set_=on_conflict_set
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing(index_elements=["pivot_iso"])
+        await db.execute(stmt)
+        await db.commit()
+
+        result = await db.execute(
             select(PivotCandidate).where(PivotCandidate.pivot_iso == payload.pivot_iso)
         )
-        candidate = existing_result.scalar_one_or_none()
-        if candidate is None:
-            candidate = PivotCandidate(
-                pivot_iso=payload.pivot_iso,
-                pivot_version_id=payload.pivot_version_id,
-                notes=payload.notes,
-            )
-            db.add(candidate)
-        else:
-            candidate.pivot_version_id = payload.pivot_version_id
-            candidate.notes = payload.notes
-        await db.commit()
-        await db.refresh(candidate)
+        candidate = result.scalar_one()
+        profiles = await _profiles_by_iso(db, [candidate.pivot_iso])
+    except HTTPException:
+        await db.rollback()
+        raise
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error("Failed to upsert pivot candidate", exc_info=True)
@@ -186,11 +206,6 @@ async def upsert_pivot_candidate(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {e}",
         ) from e
-
-    profile_result = await db.execute(
-        select(LanguageProfile).where(LanguageProfile.iso_639_3 == candidate.pivot_iso)
-    )
-    profile = profile_result.scalar_one_or_none()
 
     duration = round(time.perf_counter() - request_start, 2)
     logger.info(
@@ -202,21 +217,15 @@ async def upsert_pivot_candidate(
             "duration_s": duration,
         },
     )
-    return PivotCandidateOut(
-        pivot_iso=candidate.pivot_iso,
-        pivot_version_id=candidate.pivot_version_id,
-        notes=candidate.notes,
-        language_profile=(
-            LanguageProfileOut.model_validate(profile) if profile is not None else None
-        ),
-        created_at=candidate.created_at,
-        updated_at=candidate.updated_at,
-    )
+    return _candidate_to_out(candidate, profiles.get(candidate.pivot_iso))
 
 
-@router.get("/language-pivot")
+@router.get(
+    "/language-pivot",
+    response_model=Union[LanguagePivotOut, LanguagePivotListOut],
+    responses={404: {"model": LanguagePivotMissOut}},
+)
 async def get_language_pivot(
-    response: fastapi.Response,
     target_iso: Optional[str] = Query(None, min_length=3, max_length=3),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -224,8 +233,8 @@ async def get_language_pivot(
     """Resolve a target_iso to its pivot, or list all mappings.
 
     With ``target_iso``: returns the resolved mapping on hit (200) or a
-    candidate list on miss (404 body). Without ``target_iso``: lists all
-    mappings.
+    structured candidate list on miss (404 body). Without ``target_iso``:
+    lists all mappings.
     """
     request_start = time.perf_counter()
 
@@ -234,7 +243,20 @@ async def get_language_pivot(
             select(LanguagePivot).order_by(LanguagePivot.target_iso)
         )
         mappings = result.scalars().all()
-        out_list = [await _build_pivot_out(db, m) for m in mappings]
+        if mappings:
+            pivot_isos = list({m.pivot_iso for m in mappings})
+            candidates = await db.execute(
+                select(PivotCandidate).where(PivotCandidate.pivot_iso.in_(pivot_isos))
+            )
+            candidate_by_iso = {c.pivot_iso: c for c in candidates.scalars().all()}
+            profiles = await _profiles_by_iso(db, pivot_isos)
+        else:
+            candidate_by_iso = {}
+            profiles = {}
+        out_list = [
+            _mapping_to_out(m, candidate_by_iso[m.pivot_iso], profiles.get(m.pivot_iso))
+            for m in mappings
+        ]
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
             f"list_language_pivot completed in {duration}s",
@@ -253,7 +275,22 @@ async def get_language_pivot(
     mapping = mapping_result.scalar_one_or_none()
 
     if mapping is not None:
-        out = await _build_pivot_out(db, mapping)
+        candidate_result = await db.execute(
+            select(PivotCandidate).where(PivotCandidate.pivot_iso == mapping.pivot_iso)
+        )
+        candidate = candidate_result.scalar_one_or_none()
+        profiles = await _profiles_by_iso(db, [mapping.pivot_iso])
+        if candidate is None:
+            # FK should prevent this; defensively surface as 500.
+            logger.error(
+                "language_pivot row references missing pivot_candidate",
+                extra={"target_iso": target_iso, "pivot_iso": mapping.pivot_iso},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Pivot mapping references missing candidate",
+            )
+        out = _mapping_to_out(mapping, candidate, profiles.get(mapping.pivot_iso))
         duration = round(time.perf_counter() - request_start, 2)
         logger.info(
             f"get_language_pivot hit in {duration}s",
@@ -267,7 +304,7 @@ async def get_language_pivot(
         )
         return out
 
-    candidates = await _list_candidates(db)
+    candidates = await _list_candidates_with_profiles(db)
     miss = LanguagePivotMissOut(
         target_iso=target_iso,
         candidates=candidates,
@@ -284,8 +321,10 @@ async def get_language_pivot(
             "duration_s": duration,
         },
     )
-    response.status_code = status.HTTP_404_NOT_FOUND
-    return miss
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content=miss.model_dump(mode="json"),
+    )
 
 
 @router.post("/language-pivot", response_model=LanguagePivotOut)
@@ -294,47 +333,59 @@ async def upsert_language_pivot(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Upsert a target -> pivot mapping. Re-POST replaces the pivot for that target."""
+    """Upsert a target -> pivot mapping. Re-POST replaces the pivot for that target.
+
+    Standard authenticated access (not admin-only): the agent's self-bootstrap
+    flow needs to POST decisions for unknown targets. Fields omitted from the
+    payload (e.g. ``notes``) preserve their existing value on update.
+    """
     request_start = time.perf_counter()
 
-    iso_exists = await db.execute(
-        select(IsoLanguage).where(IsoLanguage.iso639 == payload.target_iso)
-    )
-    if iso_exists.scalar_one_or_none() is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unknown ISO 639-3 code '{payload.target_iso}'",
-        )
-
-    candidate_result = await db.execute(
-        select(PivotCandidate).where(PivotCandidate.pivot_iso == payload.pivot_iso)
-    )
-    if candidate_result.scalar_one_or_none() is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"pivot_iso '{payload.pivot_iso}' is not a registered pivot "
-                "candidate. POST it to /pivot-candidate first."
-            ),
-        )
-
     try:
-        existing_result = await db.execute(
+        iso_exists = await db.execute(
+            select(IsoLanguage).where(IsoLanguage.iso639 == payload.target_iso)
+        )
+        if iso_exists.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown ISO 639-3 code '{payload.target_iso}'",
+            )
+
+        candidate_result = await db.execute(
+            select(PivotCandidate).where(PivotCandidate.pivot_iso == payload.pivot_iso)
+        )
+        candidate = candidate_result.scalar_one_or_none()
+        if candidate is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"pivot_iso '{payload.pivot_iso}' is not a registered pivot "
+                    "candidate. POST it to /pivot-candidate first."
+                ),
+            )
+
+        sent = payload.model_dump(exclude_unset=True)
+        sent["target_iso"] = payload.target_iso
+        sent["pivot_iso"] = payload.pivot_iso
+        update_cols = {k: v for k, v in sent.items() if k != "target_iso"}
+
+        stmt = pg_insert(LanguagePivot).values(**sent)
+        on_conflict_set = {col: stmt.excluded[col] for col in update_cols}
+        on_conflict_set["updated_at"] = func.now()
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["target_iso"], set_=on_conflict_set
+        )
+        await db.execute(stmt)
+        await db.commit()
+
+        mapping_result = await db.execute(
             select(LanguagePivot).where(LanguagePivot.target_iso == payload.target_iso)
         )
-        mapping = existing_result.scalar_one_or_none()
-        if mapping is None:
-            mapping = LanguagePivot(
-                target_iso=payload.target_iso,
-                pivot_iso=payload.pivot_iso,
-                notes=payload.notes,
-            )
-            db.add(mapping)
-        else:
-            mapping.pivot_iso = payload.pivot_iso
-            mapping.notes = payload.notes
-        await db.commit()
-        await db.refresh(mapping)
+        mapping = mapping_result.scalar_one()
+        profiles = await _profiles_by_iso(db, [mapping.pivot_iso])
+    except HTTPException:
+        await db.rollback()
+        raise
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error("Failed to upsert language pivot", exc_info=True)
@@ -343,7 +394,7 @@ async def upsert_language_pivot(
             detail=f"Database error: {e}",
         ) from e
 
-    out = await _build_pivot_out(db, mapping)
+    out = _mapping_to_out(mapping, candidate, profiles.get(mapping.pivot_iso))
     duration = round(time.perf_counter() - request_start, 2)
     logger.info(
         f"upsert_language_pivot completed in {duration}s",

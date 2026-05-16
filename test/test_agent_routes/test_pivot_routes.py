@@ -5,18 +5,21 @@ from database.models import LanguagePivot, LanguageProfile, PivotCandidate
 prefix = "v3"
 
 PIVOT_ISO = "swh"
-TARGET_ISO = "eng"
+SECOND_PIVOT_ISO = "ngq"
+TARGET_ISO = "zga"
+
+_ALL_TEST_ISOS = [PIVOT_ISO, SECOND_PIVOT_ISO, TARGET_ISO]
 
 
 def _cleanup(db_session):
     db_session.query(LanguagePivot).filter(
-        LanguagePivot.target_iso.in_([TARGET_ISO, PIVOT_ISO])
+        LanguagePivot.target_iso.in_(_ALL_TEST_ISOS)
     ).delete(synchronize_session="fetch")
     db_session.query(PivotCandidate).filter(
-        PivotCandidate.pivot_iso.in_([PIVOT_ISO, TARGET_ISO])
+        PivotCandidate.pivot_iso.in_(_ALL_TEST_ISOS)
     ).delete(synchronize_session="fetch")
     db_session.query(LanguageProfile).filter(
-        LanguageProfile.iso_639_3.in_([PIVOT_ISO, TARGET_ISO])
+        LanguageProfile.iso_639_3.in_(_ALL_TEST_ISOS)
     ).delete(synchronize_session="fetch")
     db_session.commit()
 
@@ -226,43 +229,110 @@ def test_language_pivot_upsert_replaces_pivot(
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
-    _seed_profile(db_session, TARGET_ISO, "English")
+    _seed_profile(db_session, SECOND_PIVOT_ISO, "Ngq")
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
     user_headers = {"Authorization": f"Bearer {regular_token1}"}
 
-    # Register two pivot candidates: swh and eng (using TARGET_ISO as a second
-    # candidate for upsert symmetry).
-    for iso in (PIVOT_ISO, TARGET_ISO):
+    for iso in (PIVOT_ISO, SECOND_PIVOT_ISO):
         client.post(
             f"/{prefix}/pivot-candidate",
             json={"pivot_iso": iso, "pivot_version_id": test_version_id},
             headers=admin_headers,
         )
 
-    # First mapping: target=eng -> pivot=swh. Then replace with pivot=eng.
-    # We use TARGET_ISO/PIVOT_ISO names loosely here — both ISOs are valid
-    # iso_language rows in the test fixture, and the upsert needs a distinct
-    # target/pivot pair to flip between.
-    target = "eng"
     client.post(
         f"/{prefix}/language-pivot",
-        json={"target_iso": target, "pivot_iso": PIVOT_ISO},
+        json={"target_iso": TARGET_ISO, "pivot_iso": PIVOT_ISO, "notes": "v1"},
         headers=user_headers,
     )
     resp = client.post(
         f"/{prefix}/language-pivot",
-        json={"target_iso": target, "pivot_iso": target, "notes": "self"},
+        json={
+            "target_iso": TARGET_ISO,
+            "pivot_iso": SECOND_PIVOT_ISO,
+            "notes": "v2",
+        },
         headers=user_headers,
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["pivot_iso"] == target
-    assert resp.json()["notes"] == "self"
+    assert resp.json()["pivot_iso"] == SECOND_PIVOT_ISO
+    assert resp.json()["notes"] == "v2"
 
     resp = client.get(
-        f"/{prefix}/language-pivot?target_iso={target}", headers=user_headers
+        f"/{prefix}/language-pivot?target_iso={TARGET_ISO}", headers=user_headers
     )
     assert resp.status_code == 200
-    assert resp.json()["pivot_iso"] == target
+    assert resp.json()["pivot_iso"] == SECOND_PIVOT_ISO
+    _cleanup(db_session)
+
+
+def test_language_pivot_upsert_preserves_notes_when_omitted(
+    client, admin_token, regular_token1, test_version_id, db_session
+):
+    """Re-POST without notes must not clear an existing curator rationale."""
+    _cleanup(db_session)
+    _seed_profile(db_session, PIVOT_ISO, "Swahili")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    user_headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/pivot-candidate",
+        json={
+            "pivot_iso": PIVOT_ISO,
+            "pivot_version_id": test_version_id,
+            "notes": "Biblica swh",
+        },
+        headers=admin_headers,
+    )
+    client.post(
+        f"/{prefix}/language-pivot",
+        json={
+            "target_iso": TARGET_ISO,
+            "pivot_iso": PIVOT_ISO,
+            "notes": "curator rationale",
+        },
+        headers=user_headers,
+    )
+
+    # Re-POST without notes — should keep "curator rationale".
+    resp = client.post(
+        f"/{prefix}/language-pivot",
+        json={"target_iso": TARGET_ISO, "pivot_iso": PIVOT_ISO},
+        headers=user_headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["notes"] == "curator rationale"
+
+    # Same for pivot_candidate.
+    resp = client.post(
+        f"/{prefix}/pivot-candidate",
+        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        headers=admin_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["notes"] == "Biblica swh"
+    _cleanup(db_session)
+
+
+def test_language_pivot_rejects_unknown_target_iso(
+    client, admin_token, regular_token1, test_version_id, db_session
+):
+    _cleanup(db_session)
+    _seed_profile(db_session, PIVOT_ISO, "Swahili")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    user_headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/pivot-candidate",
+        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        headers=admin_headers,
+    )
+    resp = client.post(
+        f"/{prefix}/language-pivot",
+        json={"target_iso": "xxx", "pivot_iso": PIVOT_ISO},
+        headers=user_headers,
+    )
+    assert resp.status_code == 422
     _cleanup(db_session)
 
 
@@ -288,9 +358,37 @@ def test_language_pivot_list_all(
     resp = client.get(f"/{prefix}/language-pivot", headers=user_headers)
     assert resp.status_code == 200
     mappings = resp.json()["mappings"]
-    assert any(
-        m["target_iso"] == TARGET_ISO and m["pivot_iso"] == PIVOT_ISO for m in mappings
+    match = next((m for m in mappings if m["target_iso"] == TARGET_ISO), None)
+    assert match is not None
+    assert match["pivot_iso"] == PIVOT_ISO
+    assert match["pivot_version_id"] == test_version_id
+    _cleanup(db_session)
+
+
+def test_language_pivot_miss_hint_is_populated(
+    client, admin_token, regular_token1, test_version_id, db_session
+):
+    _cleanup(db_session)
+    _seed_profile(db_session, PIVOT_ISO, "Swahili")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    user_headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/pivot-candidate",
+        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": test_version_id},
+        headers=admin_headers,
     )
+    resp = client.get(
+        f"/{prefix}/language-pivot?target_iso={TARGET_ISO}", headers=user_headers
+    )
+    assert resp.status_code == 404
+    body = resp.json()
+    assert isinstance(body.get("hint"), str) and body["hint"]
+    candidate = next(
+        (c for c in body["candidates"] if c["pivot_iso"] == PIVOT_ISO), None
+    )
+    assert candidate is not None
+    assert candidate["pivot_version_id"] == test_version_id
     _cleanup(db_session)
 
 
@@ -301,5 +399,12 @@ def test_language_pivot_requires_auth(client, db_session):
     resp = client.post(
         f"/{prefix}/language-pivot",
         json={"target_iso": TARGET_ISO, "pivot_iso": PIVOT_ISO},
+    )
+    assert resp.status_code == 401
+    resp = client.get(f"/{prefix}/pivot-candidate")
+    assert resp.status_code == 401
+    resp = client.post(
+        f"/{prefix}/pivot-candidate",
+        json={"pivot_iso": PIVOT_ISO, "pivot_version_id": 1},
     )
     assert resp.status_code == 401
