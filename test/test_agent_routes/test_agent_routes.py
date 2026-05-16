@@ -7677,35 +7677,48 @@ def test_get_lexeme_cards_no_pivot_falls_back_to_source_version(
     db_session.add(decoy_revision)
     db_session.commit()
 
-    card_id = _create_card_with_examples(
-        client,
-        regular_token1,
-        target_lemma="no_pivot_route_tgt",
-        source_lemma="no_pivot_route_src",
-        revision_id=test_revision_id,
-        source_version_id=test_version_id,
-        target_version_id=test_version_id_2,
-        examples=[{"source": "no pivot src", "target": "no pivot tgt"}],
-    )
-    decoy_card_id = _create_card_with_examples(
-        client,
-        regular_token1,
-        target_lemma="no_pivot_decoy_tgt",
-        source_lemma="no_pivot_decoy_src",
-        revision_id=decoy_revision.id,
-        source_version_id=decoy_source.id,
-        target_version_id=test_version_id_2,
-        examples=[{"source": "decoy src", "target": "decoy tgt"}],
-    )
-    response = client.get(
-        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
-        f"&target_version_id={test_version_id_2}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-    )
-    assert response.status_code == 200
-    returned_ids = {c["id"] for c in response.json()}
-    assert card_id in returned_ids
-    assert decoy_card_id not in returned_ids
+    card_id = None
+    decoy_card_id = None
+    try:
+        card_id = _create_card_with_examples(
+            client,
+            regular_token1,
+            target_lemma="no_pivot_route_tgt",
+            source_lemma="no_pivot_route_src",
+            revision_id=test_revision_id,
+            source_version_id=test_version_id,
+            target_version_id=test_version_id_2,
+            examples=[{"source": "no pivot src", "target": "no pivot tgt"}],
+        )
+        decoy_card_id = _create_card_with_examples(
+            client,
+            regular_token1,
+            target_lemma="no_pivot_decoy_tgt",
+            source_lemma="no_pivot_decoy_src",
+            revision_id=decoy_revision.id,
+            source_version_id=decoy_source.id,
+            target_version_id=test_version_id_2,
+            examples=[{"source": "decoy src", "target": "decoy tgt"}],
+        )
+        response = client.get(
+            f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+            f"&target_version_id={test_version_id_2}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200
+        returned_ids = {c["id"] for c in response.json()}
+        assert card_id in returned_ids
+        assert decoy_card_id not in returned_ids
+    finally:
+        for cid in (card_id, decoy_card_id):
+            if cid is not None:
+                client.delete(
+                    f"/v3/agent/lexeme-card/{cid}",
+                    headers={"Authorization": f"Bearer {regular_token1}"},
+                )
+        db_session.delete(decoy_revision)
+        db_session.delete(decoy_source)
+        db_session.commit()
 
 
 def test_get_lexeme_cards_pivot_routing_with_lang_overlay(
