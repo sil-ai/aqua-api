@@ -379,12 +379,14 @@ async def upsert_language_pivot(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Upsert a target -> pivot mapping. Re-POST replaces the pivot for that target.
+    """Upsert a target -> pivot mapping. Admin-only.
 
-    Standard authenticated access (not admin-only): the agent's self-bootstrap
-    flow needs to POST decisions for unknown targets. Fields omitted from the
-    payload (e.g. ``notes``) preserve their existing value on update.
+    Re-POST replaces the pivot for that target. Adding or changing a pivot
+    is a curated decision tied to licensing/quality, so it should not be done
+    autonomously by the agent. Fields omitted from the payload (e.g. ``notes``)
+    preserve their existing value on update.
     """
+    _require_admin(current_user)
     request_start = time.perf_counter()
 
     try:

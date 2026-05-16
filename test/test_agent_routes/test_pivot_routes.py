@@ -164,7 +164,7 @@ def test_language_pivot_hit(
             "pivot_iso": PIVOT_ISO,
             "notes": "Bantu pivot",
         },
-        headers=user_headers,
+        headers=admin_headers,
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -213,10 +213,10 @@ def test_language_pivot_miss_returns_candidate_list(
 
 
 def test_language_pivot_rejects_unknown_pivot_candidate(
-    client, regular_token1, db_session
+    client, admin_token, db_session
 ):
     _cleanup(db_session)
-    headers = {"Authorization": f"Bearer {regular_token1}"}
+    headers = {"Authorization": f"Bearer {admin_token}"}
 
     resp = client.post(
         f"/{prefix}/language-pivot",
@@ -224,6 +224,28 @@ def test_language_pivot_rejects_unknown_pivot_candidate(
         headers=headers,
     )
     assert resp.status_code == 422
+    _cleanup(db_session)
+
+
+def test_language_pivot_post_requires_admin(
+    client, admin_token, regular_token1, test_revision_id, db_session
+):
+    _cleanup(db_session)
+    _seed_profile(db_session, PIVOT_ISO, "Swahili")
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    user_headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    client.post(
+        f"/{prefix}/pivot-candidate",
+        json={"pivot_iso": PIVOT_ISO, "pivot_revision_id": test_revision_id},
+        headers=admin_headers,
+    )
+    resp = client.post(
+        f"/{prefix}/language-pivot",
+        json={"target_iso": TARGET_ISO, "pivot_iso": PIVOT_ISO},
+        headers=user_headers,
+    )
+    assert resp.status_code == 403
     _cleanup(db_session)
 
 
@@ -246,7 +268,7 @@ def test_language_pivot_upsert_replaces_pivot(
     client.post(
         f"/{prefix}/language-pivot",
         json={"target_iso": TARGET_ISO, "pivot_iso": PIVOT_ISO, "notes": "v1"},
-        headers=user_headers,
+        headers=admin_headers,
     )
     resp = client.post(
         f"/{prefix}/language-pivot",
@@ -255,7 +277,7 @@ def test_language_pivot_upsert_replaces_pivot(
             "pivot_iso": SECOND_PIVOT_ISO,
             "notes": "v2",
         },
-        headers=user_headers,
+        headers=admin_headers,
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["pivot_iso"] == SECOND_PIVOT_ISO
@@ -294,14 +316,14 @@ def test_language_pivot_upsert_preserves_notes_when_omitted(
             "pivot_iso": PIVOT_ISO,
             "notes": "curator rationale",
         },
-        headers=user_headers,
+        headers=admin_headers,
     )
 
     # Re-POST without notes — should keep "curator rationale".
     resp = client.post(
         f"/{prefix}/language-pivot",
         json={"target_iso": TARGET_ISO, "pivot_iso": PIVOT_ISO},
-        headers=user_headers,
+        headers=admin_headers,
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["notes"] == "curator rationale"
@@ -333,7 +355,7 @@ def test_language_pivot_rejects_unknown_target_iso(
     resp = client.post(
         f"/{prefix}/language-pivot",
         json={"target_iso": "xxx", "pivot_iso": PIVOT_ISO},
-        headers=user_headers,
+        headers=admin_headers,
     )
     assert resp.status_code == 422
     _cleanup(db_session)
@@ -355,7 +377,7 @@ def test_language_pivot_list_all(
     client.post(
         f"/{prefix}/language-pivot",
         json={"target_iso": TARGET_ISO, "pivot_iso": PIVOT_ISO},
-        headers=user_headers,
+        headers=admin_headers,
     )
 
     resp = client.get(f"/{prefix}/language-pivot", headers=user_headers)
@@ -433,7 +455,7 @@ def test_language_pivot_delete_success(
     client.post(
         f"/{prefix}/language-pivot",
         json={"target_iso": TARGET_ISO, "pivot_iso": PIVOT_ISO},
-        headers=user_headers,
+        headers=admin_headers,
     )
 
     resp = client.delete(
@@ -450,9 +472,7 @@ def test_language_pivot_delete_success(
     _cleanup(db_session)
 
 
-def test_language_pivot_delete_missing_returns_404(
-    client, admin_token, db_session
-):
+def test_language_pivot_delete_missing_returns_404(client, admin_token, db_session):
     _cleanup(db_session)
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -479,12 +499,10 @@ def test_language_pivot_delete_requires_admin(
     client.post(
         f"/{prefix}/language-pivot",
         json={"target_iso": TARGET_ISO, "pivot_iso": PIVOT_ISO},
-        headers=user_headers,
+        headers=admin_headers,
     )
 
-    resp = client.delete(
-        f"/{prefix}/language-pivot/{TARGET_ISO}", headers=user_headers
-    )
+    resp = client.delete(f"/{prefix}/language-pivot/{TARGET_ISO}", headers=user_headers)
     assert resp.status_code == 403
 
     # Row should still exist.
@@ -512,7 +530,7 @@ def test_language_pivot_delete_does_not_remove_candidate(
     client.post(
         f"/{prefix}/language-pivot",
         json={"target_iso": TARGET_ISO, "pivot_iso": PIVOT_ISO},
-        headers=user_headers,
+        headers=admin_headers,
     )
 
     resp = client.delete(
