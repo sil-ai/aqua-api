@@ -7550,3 +7550,337 @@ def test_get_lexeme_card_by_id_access_control(
     examples2 = response2.json()["examples"]
     assert len(examples2) == 1
     assert examples2[0]["source"] == "user2 src"
+
+
+def test_get_lexeme_cards_pivot_routing(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+):
+    """Cards persisted at the pivot version are returned when the UI queries
+    with a different source_version_id but the same target.
+
+    Scenario mirrors the issue: target language has a language_pivot row, so
+    cards live at (pivot_version_id, target_version_id). The UI's call uses
+    its own reference (different bible_version) as source_version_id; the
+    endpoint should still resolve and return the cards.
+    """
+    from database.models import (
+        BibleVersion,
+        LanguagePivot,
+        PivotCandidate,
+        UserDB,
+    )
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    target = BibleVersion(
+        name="pivot_routing_target",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="PVTT",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    ui_reference = BibleVersion(
+        name="pivot_routing_ui_ref",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="PVUR",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    db_session.add_all([target, ui_reference])
+    db_session.commit()
+
+    db_session.merge(
+        PivotCandidate(pivot_iso="eng", pivot_revision_id=test_revision_id)
+    )
+    db_session.commit()
+    db_session.merge(LanguagePivot(target_iso="swh", pivot_iso="eng"))
+    db_session.commit()
+
+    try:
+        card_id = _create_card_with_examples(
+            client,
+            regular_token1,
+            target_lemma="pivot_route_tgt",
+            source_lemma="pivot_route_src",
+            revision_id=test_revision_id,
+            source_version_id=test_version_id,  # pivot version
+            target_version_id=target.id,
+            examples=[{"source": "pivot src", "target": "pivot tgt"}],
+        )
+
+        response = client.get(
+            f"/v3/agent/lexeme-card?source_version_id={ui_reference.id}"
+            f"&target_version_id={target.id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        cards = response.json()
+        returned_ids = {c["id"] for c in cards}
+        assert card_id in returned_ids
+        # Every returned card must be at the resolved pivot version, never at
+        # the caller's source_version_id — catches a bug that unions both.
+        for c in cards:
+            assert c["source_version_id"] == test_version_id
+
+        returned = next(c for c in cards if c["id"] == card_id)
+        assert returned["source_lemma"] == "pivot_route_src"
+    finally:
+        db_session.query(LanguagePivot).filter(
+            LanguagePivot.target_iso == "swh"
+        ).delete()
+        db_session.query(PivotCandidate).filter(
+            PivotCandidate.pivot_iso == "eng"
+        ).delete()
+        db_session.commit()
+
+
+def test_get_lexeme_cards_no_pivot_falls_back_to_source_version(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """With no language_pivot row for the target, the endpoint queries the
+    user's source_version_id directly. Verifies a card sitting only at the
+    caller's source_version_id is returned, while a decoy card at a different
+    source_version_id (same target) is not — proving the source filter was
+    honored and the endpoint did not silently substitute another version.
+    """
+    from datetime import date
+
+    from database.models import BibleRevision, BibleVersion, UserDB
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    decoy_source = BibleVersion(
+        name="no_pivot_decoy_src",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="NPDS",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    db_session.add(decoy_source)
+    db_session.commit()
+    decoy_revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=decoy_source.id,
+        published=False,
+        machine_translation=True,
+    )
+    db_session.add(decoy_revision)
+    db_session.commit()
+
+    card_id = None
+    decoy_card_id = None
+    try:
+        card_id = _create_card_with_examples(
+            client,
+            regular_token1,
+            target_lemma="no_pivot_route_tgt",
+            source_lemma="no_pivot_route_src",
+            revision_id=test_revision_id,
+            source_version_id=test_version_id,
+            target_version_id=test_version_id_2,
+            examples=[{"source": "no pivot src", "target": "no pivot tgt"}],
+        )
+        decoy_card_id = _create_card_with_examples(
+            client,
+            regular_token1,
+            target_lemma="no_pivot_decoy_tgt",
+            source_lemma="no_pivot_decoy_src",
+            revision_id=decoy_revision.id,
+            source_version_id=decoy_source.id,
+            target_version_id=test_version_id_2,
+            examples=[{"source": "decoy src", "target": "decoy tgt"}],
+        )
+        response = client.get(
+            f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+            f"&target_version_id={test_version_id_2}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200
+        returned_ids = {c["id"] for c in response.json()}
+        assert card_id in returned_ids
+        assert decoy_card_id not in returned_ids
+    finally:
+        for cid in (card_id, decoy_card_id):
+            if cid is not None:
+                client.delete(
+                    f"/v3/agent/lexeme-card/{cid}",
+                    headers={"Authorization": f"Bearer {regular_token1}"},
+                )
+        db_session.delete(decoy_revision)
+        db_session.delete(decoy_source)
+        db_session.commit()
+
+
+def test_get_lexeme_cards_pivot_routing_with_lang_overlay(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+):
+    """Pivot routing + ?lang overlay: cards live at the pivot version with
+    eng as canonical; ?lang=swh returns them with the swh translation merged.
+    """
+    from database.models import (
+        BibleVersion,
+        LanguagePivot,
+        PivotCandidate,
+        UserDB,
+    )
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    target = BibleVersion(
+        name="pivot_lang_overlay_target",
+        iso_language="ngq",
+        iso_script="Latn",
+        abbreviation="PLOT",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    ui_reference = BibleVersion(
+        name="pivot_lang_overlay_ui_ref",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="PLOU",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    db_session.add_all([target, ui_reference])
+    db_session.commit()
+
+    db_session.merge(
+        PivotCandidate(pivot_iso="eng", pivot_revision_id=test_revision_id)
+    )
+    db_session.commit()
+    db_session.merge(LanguagePivot(target_iso="ngq", pivot_iso="eng"))
+    db_session.commit()
+
+    try:
+        card_id = _create_card_with_examples(
+            client,
+            regular_token1,
+            target_lemma="pivot_overlay_tgt",
+            source_lemma="pivot_overlay_eng_src",
+            revision_id=test_revision_id,
+            source_version_id=test_version_id,
+            target_version_id=target.id,
+            examples=[{"source": "overlay en src", "target": "overlay tgt"}],
+        )
+        ex_id = (
+            db_session.query(AgentLexemeCardExample)
+            .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+            .first()
+            .id
+        )
+        trans = client.post(
+            f"/v3/agent/lexeme-card/{card_id}/translation",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+            json={
+                "language_iso": "swh",
+                "source_lemma": "pivot_overlay_swh_src",
+                "examples": [{"example_id": ex_id, "source_text": "overlay swh src"}],
+            },
+        )
+        assert trans.status_code == 200, trans.text
+
+        response = client.get(
+            f"/v3/agent/lexeme-card?source_version_id={ui_reference.id}"
+            f"&target_version_id={target.id}&lang=swh",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        returned = next(c for c in response.json() if c["id"] == card_id)
+        assert returned["source_lemma"] == "pivot_overlay_swh_src"
+        assert returned["examples"][0]["source"] == "overlay swh src"
+        assert returned["examples"][0]["target"] == "overlay tgt"
+    finally:
+        db_session.query(LanguagePivot).filter(
+            LanguagePivot.target_iso == "ngq"
+        ).delete()
+        db_session.query(PivotCandidate).filter(
+            PivotCandidate.pivot_iso == "eng"
+        ).delete()
+        db_session.commit()
+
+
+def test_check_word_in_lexeme_cards_pivot_routing(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+):
+    """check-word also routes through the pivot — otherwise a UI that knows
+    only the user's reference would get count=0 for any pivot-routed target.
+    """
+    from database.models import (
+        BibleVersion,
+        LanguagePivot,
+        PivotCandidate,
+        UserDB,
+    )
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    target = BibleVersion(
+        name="check_word_pivot_target",
+        iso_language="zga",
+        iso_script="Latn",
+        abbreviation="CWPT",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    ui_reference = BibleVersion(
+        name="check_word_pivot_ui_ref",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="CWPU",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    db_session.add_all([target, ui_reference])
+    db_session.commit()
+
+    db_session.merge(
+        PivotCandidate(pivot_iso="eng", pivot_revision_id=test_revision_id)
+    )
+    db_session.commit()
+    db_session.merge(LanguagePivot(target_iso="zga", pivot_iso="eng"))
+    db_session.commit()
+
+    try:
+        _create_card_with_examples(
+            client,
+            regular_token1,
+            target_lemma="check_word_pivot_lemma",
+            source_lemma="check_word_pivot_src",
+            revision_id=test_revision_id,
+            source_version_id=test_version_id,  # pivot version
+            target_version_id=target.id,
+            examples=[{"source": "cw pivot src", "target": "cw pivot tgt"}],
+        )
+
+        response = client.get(
+            f"/v3/agent/lexeme-card/check-word?word=check_word_pivot_lemma"
+            f"&source_version_id={ui_reference.id}&target_version_id={target.id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["count"] == 1
+    finally:
+        db_session.query(LanguagePivot).filter(
+            LanguagePivot.target_iso == "zga"
+        ).delete()
+        db_session.query(PivotCandidate).filter(
+            PivotCandidate.pivot_iso == "eng"
+        ).delete()
+        db_session.commit()

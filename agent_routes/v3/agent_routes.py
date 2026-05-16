@@ -26,6 +26,8 @@ from database.models import (
     BibleVersionAccess,
     CardTranslation,
     CardTranslationExample,
+    LanguagePivot,
+    PivotCandidate,
 )
 from database.models import UserDB as UserModel
 from database.models import (
@@ -56,6 +58,34 @@ container_id = socket.gethostname()
 logger = setup_logger(__name__, container_id=container_id)
 
 router = fastapi.APIRouter()
+
+
+def _effective_source_version_expr(source_version_id: int, target_version_id: int):
+    """SQL expression: pivot bible_version_id for the target's iso, else source_version_id.
+
+    Joins language_pivot -> pivot_candidate -> bible_revision (excluding
+    soft-deleted revisions so a withdrawn pivot can't silently route). Folded
+    into the caller's query so the hot path makes no extra round-trip.
+    """
+    from sqlalchemy import func, select
+
+    target_iso_subquery = (
+        select(BibleVersion.iso_language)
+        .where(BibleVersion.id == target_version_id)
+        .scalar_subquery()
+    )
+    pivot_version_subquery = (
+        select(BibleRevision.bible_version_id)
+        .select_from(LanguagePivot)
+        .join(PivotCandidate, PivotCandidate.pivot_iso == LanguagePivot.pivot_iso)
+        .join(BibleRevision, BibleRevision.id == PivotCandidate.pivot_revision_id)
+        .where(
+            LanguagePivot.target_iso == target_iso_subquery,
+            BibleRevision.deleted.isnot(True),
+        )
+        .scalar_subquery()
+    )
+    return func.coalesce(pivot_version_subquery, source_version_id)
 
 
 def sanitize_text(text: str) -> str:
@@ -1748,9 +1778,17 @@ async def get_lexeme_cards(
 
         is_admin = current_user.is_admin
 
+        # Cards are persisted at the pivot bible_version for any target_iso
+        # registered in language_pivot. The caller's source_version_id is a
+        # hint; the SQL expression below resolves to the pivot version when a
+        # mapping exists, else the caller's source_version_id.
+        effective_source_version = _effective_source_version_expr(
+            source_version_id, target_version_id
+        )
+
         # Base conditions: language pair filter
         conditions = [
-            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.source_version_id == effective_source_version,
             AgentLexemeCard.target_version_id == target_version_id,
         ]
 
@@ -1850,7 +1888,9 @@ async def get_lexeme_cards(
                     )
                     .where(
                         UserGroup.user_id == current_user.id,
-                        BibleVersion.id.in_([source_version_id, target_version_id]),
+                        BibleVersion.id.in_(
+                            [effective_source_version, target_version_id]
+                        ),
                     )
                 )
                 examples_conditions.append(
@@ -1952,9 +1992,11 @@ async def get_lexeme_cards(
             examples_out = [
                 {
                     "id": ex["id"],
-                    "source": override_map.get(ex["id"], ex["source"])
-                    if requires_merge
-                    else ex["source"],
+                    "source": (
+                        override_map.get(ex["id"], ex["source"])
+                        if requires_merge
+                        else ex["source"]
+                    ),
                     "target": ex["target"],
                 }
                 for ex in examples_by_card[card.id]
@@ -1982,6 +2024,10 @@ async def get_lexeme_cards(
             response_cards.append(LexemeCardOut.model_validate(card_dict))
 
         duration = round(time.perf_counter() - request_start, 2)
+        # Effective source can be observed from any returned card. If no
+        # cards came back we leave it unset rather than spending an extra
+        # round-trip just to log it.
+        effective_source_version_id = cards[0].source_version_id if cards else None
         logger.info(
             f"get_lexeme_cards completed in {duration}s",
             extra={
@@ -1989,6 +2035,11 @@ async def get_lexeme_cards(
                 "path": "/agent/lexeme-card",
                 "source_version_id": source_version_id,
                 "target_version_id": target_version_id,
+                "effective_source_version_id": effective_source_version_id,
+                "pivot_routed": (
+                    effective_source_version_id is not None
+                    and effective_source_version_id != source_version_id
+                ),
                 "source_word": source_word,
                 "target_word": target_word,
                 "target_words": target_words,
@@ -2034,9 +2085,13 @@ async def check_word_in_lexeme_cards(
         # Normalize the word for case-insensitive comparison
         word_lower = word.strip().lower()
 
+        effective_source_version = _effective_source_version_expr(
+            source_version_id, target_version_id
+        )
+
         # Query cards matching by target_lemma (case-insensitive)
         cards_by_lemma = select(AgentLexemeCard.id).where(
-            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.source_version_id == effective_source_version,
             AgentLexemeCard.target_version_id == target_version_id,
             func.lower(AgentLexemeCard.target_lemma) == word_lower,
         )
@@ -2044,7 +2099,7 @@ async def check_word_in_lexeme_cards(
         # Query cards where word exists in surface_forms JSONB array (case-insensitive)
         # Use jsonb_typeof to check if it's an array, then jsonb_array_elements_text
         cards_by_surface = select(AgentLexemeCard.id).where(
-            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.source_version_id == effective_source_version,
             AgentLexemeCard.target_version_id == target_version_id,
             AgentLexemeCard.surface_forms.isnot(None),
             text(
