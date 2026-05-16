@@ -292,13 +292,12 @@ def test_language_pivot_upsert_replaces_pivot(
 
 
 def test_language_pivot_upsert_preserves_notes_when_omitted(
-    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
+    client, admin_token, test_revision_id, test_version_id, db_session
 ):
     """Re-POST without notes must not clear an existing curator rationale."""
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
-    user_headers = {"Authorization": f"Bearer {regular_token1}"}
 
     client.post(
         f"/{prefix}/pivot-candidate",
@@ -340,12 +339,11 @@ def test_language_pivot_upsert_preserves_notes_when_omitted(
 
 
 def test_language_pivot_rejects_unknown_target_iso(
-    client, admin_token, regular_token1, test_revision_id, test_version_id, db_session
+    client, admin_token, test_revision_id, test_version_id, db_session
 ):
     _cleanup(db_session)
     _seed_profile(db_session, PIVOT_ISO, "Swahili")
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
-    user_headers = {"Authorization": f"Bearer {regular_token1}"}
 
     client.post(
         f"/{prefix}/pivot-candidate",
