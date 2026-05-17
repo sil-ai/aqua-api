@@ -383,6 +383,12 @@ class PredictInput(BaseModel):
     apps: Optional[List[str]] = None
     include_translation: bool = False
     include_critique: bool = False
+    # Agent-only: friendly name of a caller-selectable model defined in
+    # the agent's models.selectable_models config. Forwarded as-is to
+    # the agent Modal function, which rejects unknown names. Ignored
+    # by other apps. When omitted (default), agent uses the deploy-time
+    # default model.
+    model: Optional[str] = None
 
     model_config = {
         "json_schema_extra": {
