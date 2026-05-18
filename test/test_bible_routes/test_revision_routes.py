@@ -379,6 +379,46 @@ def test_upload_revision_persists_verses(client, regular_token1, db_session):
     assert count_verses_in_revision(db_session, revision_id) > 0
 
 
+def test_list_revisions_excludes_deleted_when_version_id_given(
+    client, regular_token1, db_session
+):
+    """GET /revision?version_id=X must hide soft-deleted revisions.
+
+    The unfiltered path filters on `deleted.is_(False)`; the version-scoped
+    path used to skip that filter and leak deleted rows.
+    """
+    version_id = create_bible_version(client, regular_token1, db_session)
+    kept_id = upload_revision(client, regular_token1, version_id)
+    deleted_id = upload_revision(client, regular_token1, version_id)
+
+    assert delete_revision(client, regular_token1, deleted_id) == 200
+
+    status_code, listed = list_revision(client, regular_token1, version_id)
+    assert status_code == 200
+    listed_ids = {r["id"] for r in listed}
+    assert kept_id in listed_ids
+    assert deleted_id not in listed_ids
+
+
+def test_list_all_revisions_admin_excludes_deleted(
+    client, admin_token, regular_token1, db_session
+):
+    """Admin GET /revision (no version_id) must hide soft-deleted revisions.
+
+    The admin shortcut in get_authorized_revision_ids returns every revision
+    id, including deleted ones. Exclusion relies on the SELECT in
+    list_revisions filtering by `deleted.is_(False)` before the intersection.
+    Lock that behaviour in.
+    """
+    version_id = create_bible_version(client, regular_token1, db_session)
+    deleted_id = upload_revision(client, regular_token1, version_id)
+    assert delete_revision(client, regular_token1, deleted_id) == 200
+
+    status_code, listed = list_revision(client, admin_token)
+    assert status_code == 200
+    assert deleted_id not in {r["id"] for r in listed}
+
+
 def test_upload_revision_blank_lines_not_inserted(client, regular_token1, db_session):
     """Files commonly have many lines that are just '\\n' for untranslated
     verses. After splitlines() those become empty strings, and they must

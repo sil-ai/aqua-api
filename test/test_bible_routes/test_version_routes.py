@@ -388,6 +388,56 @@ class TestAdminFlow:
         assert version_in_db_2 is None
 
 
+class TestListExcludesDeleted:
+    def test_admin_list_excludes_deleted_versions(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        """GET /version as admin must hide soft-deleted versions.
+
+        The non-admin path filters on `deleted.is_(False)`; the admin path
+        used to skip that filter and leak deleted rows.
+        """
+        group_1 = db_session.query(Group).filter_by(name="Group1").first()
+        assert group_1 is not None
+        regular_headers = {"Authorization": f"Bearer {regular_token1}"}
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        kept_params = {
+            **new_version_data,
+            "name": "Kept Version",
+            "abbreviation": "KV",
+            "add_to_groups": [group_1.id],
+        }
+        kept_response = client.post(
+            f"{prefix}/version", json=kept_params, headers=regular_headers
+        )
+        assert kept_response.status_code == 200, kept_response.text
+        kept_id = kept_response.json()["id"]
+
+        deleted_params = {
+            **new_version_data,
+            "name": "Doomed Version",
+            "abbreviation": "DV",
+            "add_to_groups": [group_1.id],
+        }
+        deleted_response = client.post(
+            f"{prefix}/version", json=deleted_params, headers=regular_headers
+        )
+        assert deleted_response.status_code == 200, deleted_response.text
+        deleted_id = deleted_response.json()["id"]
+
+        delete_response = client.delete(
+            f"{prefix}/version", params={"id": deleted_id}, headers=admin_headers
+        )
+        assert delete_response.status_code == 200
+
+        list_response = client.get(f"{prefix}/version", headers=admin_headers)
+        assert list_response.status_code == 200
+        listed_ids = {v["id"] for v in list_response.json()}
+        assert kept_id in listed_ids
+        assert deleted_id not in listed_ids
+
+
 class TestVersionValidation:
     def test_create_version_without_add_to_groups(self, client, regular_token1):
         """Test that creating a version without add_to_groups fails with 422."""
