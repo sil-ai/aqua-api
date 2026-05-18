@@ -6123,6 +6123,122 @@ def test_patch_lexeme_card_case_insensitive_duplicate_check(
     assert resp.status_code == 409
 
 
+def test_post_lexeme_card_normalizes_source_lemma_to_lowercase(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """POST should store source_lemma as lowercase regardless of input case."""
+    resp = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "God_SrcCase",
+            "target_lemma": "mungu_srccase",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["source_lemma"] == "god_srccase"
+
+
+def test_post_lexeme_card_case_only_source_lemma_diff_is_upsert(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """POST with same target_lemma and case-only-different source_lemma should
+    upsert, not 409. Regression test for the case-sensitivity asymmetry where
+    'God' (existing) vs 'god' (incoming) silently 409'd proper nouns."""
+    resp1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "Lord_SrcUpsert",
+            "target_lemma": "bwana_srcupsert",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+        },
+    )
+    assert resp1.status_code == 200
+    card_id = resp1.json()["id"]
+
+    resp2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "lord_srcupsert",
+            "target_lemma": "bwana_srcupsert",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.9,
+        },
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["id"] == card_id
+    assert resp2.json()["confidence"] == 0.9
+
+
+def test_patch_lexeme_card_by_lemma_source_lemma_case_insensitive(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """PATCH by lemma should match source_lemma case-insensitively when the
+    stored value is mixed case (e.g. legacy rows that predate the backfill)."""
+    # Insert a legacy-style mixed-case source_lemma directly, bypassing the
+    # Pydantic validator that now lowercases on the way in.
+    import psycopg2
+
+    conn = psycopg2.connect(
+        "dbname=dbname user=dbuser password=dbpassword host=localhost"
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "INSERT INTO agent_lexeme_cards "
+            "(source_lemma, target_lemma, source_version_id, target_version_id, "
+            " confidence, created_at, last_updated) "
+            "VALUES (%s, %s, %s, %s, %s, now(), now()) RETURNING id",
+            (
+                "Jesus_LegacyCase",
+                "yesu_legacycase",
+                test_version_id,
+                test_version_id_2,
+                0.5,
+            ),
+        )
+        legacy_id = cur.fetchone()[0]
+    finally:
+        cur.close()
+        conn.close()
+
+    # PATCH using lowercased source_lemma — must still find the mixed-case row
+    resp = client.patch(
+        f"/v3/agent/lexeme-card?target_lemma=yesu_legacycase"
+        f"&source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}"
+        f"&source_lemma=jesus_legacycase",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"confidence": 0.95},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["id"] == legacy_id
+    assert resp.json()["confidence"] == 0.95
+
+
 # ── Deduplicate endpoint tests ──────────────────────────────────
 
 

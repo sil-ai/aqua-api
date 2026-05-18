@@ -644,8 +644,17 @@ async def add_lexeme_card(
         existing_card = result.scalar_one_or_none()
 
         if existing_card:
-            # If source_lemma differs, reject with 409 and tell them to use PATCH
-            if existing_card.source_lemma != card.source_lemma:
+            # Compare lowercased forms so legacy mixed-case rows don't 409 against
+            # a validator-normalized incoming value.
+            existing_source_lc = (
+                existing_card.source_lemma.lower()
+                if existing_card.source_lemma
+                else None
+            )
+            incoming_source_lc = (
+                card.source_lemma.lower() if card.source_lemma else None
+            )
+            if existing_source_lc != incoming_source_lc:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={
@@ -1302,7 +1311,9 @@ async def patch_lexeme_card_by_lemma(
 
         # Only filter by source_lemma if explicitly provided
         if source_lemma is not None:
-            query = query.where(AgentLexemeCard.source_lemma == source_lemma)
+            query = query.where(
+                sql_func.lower(AgentLexemeCard.source_lemma) == source_lemma.lower()
+            )
 
         result = await db.execute(query)
         cards = result.scalars().all()

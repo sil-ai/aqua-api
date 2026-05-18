@@ -757,7 +757,7 @@ class LexemeCardIn(BaseModel):
     @field_validator("source_lemma")
     @classmethod
     def normalize_source_lemma(cls, v):
-        return unicodedata.normalize("NFC", v) if v else v
+        return unicodedata.normalize("NFC", v).lower() if v else v
 
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
@@ -872,7 +872,7 @@ class LexemeCardPatch(BaseModel):
     @field_validator("source_lemma")
     @classmethod
     def normalize_source_lemma(cls, v):
-        return unicodedata.normalize("NFC", v) if v else v
+        return unicodedata.normalize("NFC", v).lower() if v else v
 
     pos: Optional[str] = None
     confidence: Optional[float] = None
