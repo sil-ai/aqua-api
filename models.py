@@ -383,6 +383,11 @@ class PredictInput(BaseModel):
     apps: Optional[List[str]] = None
     include_translation: bool = False
     include_critique: bool = False
+    # Agent-only override for the LLM the agent should use. The allowlist
+    # lives in the agent's separate Modal repo (models.selectable_models in
+    # its config.yaml), so we can't validate the name here — agent rejects
+    # unknown names server-side. max_length caps abuse at this boundary.
+    model: Optional[str] = Field(default=None, max_length=200)
 
     model_config = {
         "json_schema_extra": {
@@ -398,9 +403,10 @@ class PredictInput(BaseModel):
                 "reference_id": 2,
                 "source_version_id": 1,
                 "target_version_id": 2,
-                "apps": ["ngrams", "tfidf"],
+                "apps": ["ngrams", "tfidf", "agent"],
                 "include_translation": False,
                 "include_critique": False,
+                "model": "claude-opus-4-7",
             }
         }
     }
