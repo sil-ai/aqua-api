@@ -403,7 +403,7 @@ class PredictInput(BaseModel):
                 "reference_id": 2,
                 "source_version_id": 1,
                 "target_version_id": 2,
-                "apps": ["ngrams", "tfidf"],
+                "apps": ["ngrams", "tfidf", "agent"],
                 "include_translation": False,
                 "include_critique": False,
                 "model": "claude-opus-4-7",
