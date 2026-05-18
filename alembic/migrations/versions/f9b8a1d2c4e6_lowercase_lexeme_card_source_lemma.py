@@ -10,13 +10,15 @@ variants like "God"/"god" inconsistently. There is no uniqueness constraint
 involving source_lemma, so this is a straight backfill with no merge logic.
 """
 
+from typing import Sequence, Union
+
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "f9b8a1d2c4e6"
-down_revision = "d7a3f9b1c5e2"
-branch_labels = None
-depends_on = None
+revision: str = "f9b8a1d2c4e6"
+down_revision: Union[str, None] = "d7a3f9b1c5e2"
+branch_labels: Union[str, Sequence[str], None] = None
+depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:

@@ -6190,7 +6190,6 @@ def test_post_lexeme_card_case_only_source_lemma_diff_is_upsert(
 def test_patch_lexeme_card_by_lemma_source_lemma_case_insensitive(
     client,
     regular_token1,
-    db_session,
     test_revision_id,
     test_version_id,
     test_version_id_2,
@@ -6199,31 +6198,19 @@ def test_patch_lexeme_card_by_lemma_source_lemma_case_insensitive(
     stored value is mixed case (e.g. legacy rows that predate the backfill)."""
     # Insert a legacy-style mixed-case source_lemma directly, bypassing the
     # Pydantic validator that now lowercases on the way in.
-    import psycopg2
-
-    conn = psycopg2.connect(
-        "dbname=dbname user=dbuser password=dbpassword host=localhost"
-    )
-    conn.autocommit = True
-    cur = conn.cursor()
-    try:
-        cur.execute(
-            "INSERT INTO agent_lexeme_cards "
-            "(source_lemma, target_lemma, source_version_id, target_version_id, "
-            " confidence, created_at, last_updated) "
-            "VALUES (%s, %s, %s, %s, %s, now(), now()) RETURNING id",
-            (
-                "Jesus_LegacyCase",
-                "yesu_legacycase",
-                test_version_id,
-                test_version_id_2,
-                0.5,
-            ),
-        )
-        legacy_id = cur.fetchone()[0]
-    finally:
-        cur.close()
-        conn.close()
+    legacy_id = _raw_psycopg2_fetchone(
+        "INSERT INTO agent_lexeme_cards "
+        "(source_lemma, target_lemma, source_version_id, target_version_id, "
+        " confidence, created_at, last_updated) "
+        "VALUES (%s, %s, %s, %s, %s, now(), now()) RETURNING id",
+        (
+            "Jesus_LegacyCase",
+            "yesu_legacycase",
+            test_version_id,
+            test_version_id_2,
+            0.5,
+        ),
+    )[0]
 
     # PATCH using lowercased source_lemma — must still find the mixed-case row
     resp = client.patch(
@@ -6237,6 +6224,77 @@ def test_patch_lexeme_card_by_lemma_source_lemma_case_insensitive(
     assert resp.status_code == 200
     assert resp.json()["id"] == legacy_id
     assert resp.json()["confidence"] == 0.95
+
+
+def test_patch_lexeme_card_by_lemma_without_source_lemma_param(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """PATCH by lemma must not crash when source_lemma is omitted (None path).
+    Regression guard for the `if source_lemma is not None:` filter — without
+    that guard, sql_func.lower(None) would explode."""
+    client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "sleep_noparam",
+            "target_lemma": "lala_noparam",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+        },
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card?target_lemma=lala_noparam"
+        f"&source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"confidence": 0.88},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["confidence"] == 0.88
+
+
+def test_post_lexeme_card_both_source_lemmas_none_is_upsert(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """POST should upsert (not 409) when both existing and incoming source_lemma
+    are None. Pins down the None×None branch in the case-insensitive comparison."""
+    resp1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "nullsrc_upsert",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.4,
+        },
+    )
+    assert resp1.status_code == 200
+    card_id = resp1.json()["id"]
+    assert resp1.json()["source_lemma"] is None
+
+    resp2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "nullsrc_upsert",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.99,
+        },
+    )
+    assert resp2.status_code == 200
+    assert resp2.json()["id"] == card_id
+    assert resp2.json()["confidence"] == 0.99
 
 
 # ── Deduplicate endpoint tests ──────────────────────────────────
@@ -6254,6 +6312,23 @@ def _raw_psycopg2(statements):
     try:
         for sql in statements:
             cur.execute(sql)
+    finally:
+        cur.close()
+        conn.close()
+
+
+def _raw_psycopg2_fetchone(sql, params=None):
+    """Execute a single parameterised SQL statement and return one row."""
+    import psycopg2
+
+    conn = psycopg2.connect(
+        "dbname=dbname user=dbuser password=dbpassword host=localhost"
+    )
+    conn.autocommit = True
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, params)
+        return cur.fetchone()
     finally:
         cur.close()
         conn.close()

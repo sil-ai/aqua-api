@@ -941,6 +941,9 @@ class CardTranslationIn(BaseModel):
     def normalize_language_iso(cls, v):
         return v.lower() if v else v
 
+    # Unlike LexemeCardIn.source_lemma (lowercased to match target_lemma's
+    # case-insensitive uniqueness), card_translations.source_lemma has no
+    # lookup-key role, so casing is preserved.
     @field_validator("source_lemma")
     @classmethod
     def normalize_source_lemma(cls, v):

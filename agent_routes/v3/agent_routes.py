@@ -644,8 +644,7 @@ async def add_lexeme_card(
         existing_card = result.scalar_one_or_none()
 
         if existing_card:
-            # Compare lowercased forms so legacy mixed-case rows don't 409 against
-            # a validator-normalized incoming value.
+            # Legacy rows may predate the source_lemma backfill.
             existing_source_lc = (
                 existing_card.source_lemma.lower()
                 if existing_card.source_lemma
@@ -1549,9 +1548,10 @@ async def deduplicate_lexeme_cards(
                     if not winner.english_lemma and loser.english_lemma:
                         winner.english_lemma = loser.english_lemma
 
-                    # source_lemma: prefer winner's
+                    # source_lemma: prefer winner's. Lowercase on adopt so a
+                    # pre-backfill mixed-case loser doesn't re-introduce uppercase.
                     if not winner.source_lemma and loser.source_lemma:
-                        winner.source_lemma = loser.source_lemma
+                        winner.source_lemma = loser.source_lemma.lower()
 
                     # Timestamps: keep earliest created_at, latest last_updated, latest last_user_edit
                     if loser.created_at and (
