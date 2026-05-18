@@ -383,12 +383,11 @@ class PredictInput(BaseModel):
     apps: Optional[List[str]] = None
     include_translation: bool = False
     include_critique: bool = False
-    # Agent-only: friendly name of a caller-selectable model defined in
-    # the agent's models.selectable_models config. Forwarded as-is to
-    # the agent Modal function, which rejects unknown names. Ignored
-    # by other apps. When omitted (default), agent uses the deploy-time
-    # default model.
-    model: Optional[str] = None
+    # Agent-only override for the LLM the agent should use. The allowlist
+    # lives in the agent's separate Modal repo (models.selectable_models in
+    # its config.yaml), so we can't validate the name here — agent rejects
+    # unknown names server-side. max_length caps abuse at this boundary.
+    model: Optional[str] = Field(default=None, max_length=200)
 
     model_config = {
         "json_schema_extra": {
@@ -407,6 +406,7 @@ class PredictInput(BaseModel):
                 "apps": ["ngrams", "tfidf"],
                 "include_translation": False,
                 "include_critique": False,
+                "model": "claude-opus-4-7",
             }
         }
     }
