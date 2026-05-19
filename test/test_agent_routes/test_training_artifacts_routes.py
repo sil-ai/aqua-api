@@ -851,3 +851,109 @@ def test_delete_training_artifacts_admin_gets_404_for_unknown_version(
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert resp.status_code == 404, resp.text
+
+
+def test_delete_training_artifacts_does_not_touch_lexeme_cards(
+    client, regular_token1, test_revision_id, db_session
+):
+    """The DELETE clears tokenizer artifacts only — agent_lexeme_card
+    rows belonging to the same version stay intact (they have their
+    own DELETE endpoint per the Phase 4 contract). Pins this invariant
+    so a future refactor that adds an accidental cascade through some
+    relationship would be caught immediately."""
+    from database.models import AgentLexemeCard
+
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.flush()
+    db_session.add(
+        TrainingArtifact(target_version_id=version_id, grammar_sketch="to-be-cleared")
+    )
+    db_session.add(
+        AgentLexemeCard(
+            target_lemma="staysput",
+            source_version_id=version_id,
+            target_version_id=version_id,
+            source_language_iso=iso,
+        )
+    )
+    db_session.commit()
+
+    resp = client.delete(
+        f"/{prefix}/tokenizer/training-artifacts/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["training_artifacts_deleted"] == 1
+
+    db_session.expire_all()
+    card = (
+        db_session.query(AgentLexemeCard)
+        .filter(AgentLexemeCard.target_lemma == "staysput")
+        .one_or_none()
+    )
+    assert card is not None, "Lexeme card was incorrectly deleted by the rebuild DELETE"
+
+    db_session.query(AgentLexemeCard).filter(
+        AgentLexemeCard.target_lemma == "staysput"
+    ).delete()
+    db_session.commit()
+    _cleanup(db_session, version_id, iso)
+
+
+def test_delete_training_artifacts_cascades_to_word_morpheme_index(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Deleting a version-stamped morpheme cascades through
+    `word_morpheme_index.morpheme_id` (declared `ondelete=CASCADE`).
+    The DELETE response count reflects morpheme deletions only — but
+    dependent index rows must also go, or queries against them
+    post-rebuild would return ghosts. Pins the cascade behavior so an
+    FK weakening (CASCADE → SET NULL / DEFAULT) would fail here."""
+    from database.models import WordMorphemeIndex
+
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.flush()
+    morpheme = LanguageMorpheme(
+        iso_639_3=iso,
+        morpheme="indexed",
+        morpheme_class="LEXICAL",
+        target_version_id=version_id,
+    )
+    db_session.add(morpheme)
+    db_session.flush()
+    db_session.add(
+        WordMorphemeIndex(
+            iso_639_3=iso,
+            word="indexed-word",
+            morpheme_id=morpheme.id,
+            position=0,
+            total_morphemes=1,
+        )
+    )
+    db_session.commit()
+    morpheme_id = morpheme.id
+
+    resp = client.delete(
+        f"/{prefix}/tokenizer/training-artifacts/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["morphemes_deleted"] == 1
+
+    db_session.expire_all()
+    assert (
+        db_session.query(WordMorphemeIndex)
+        .filter(WordMorphemeIndex.morpheme_id == morpheme_id)
+        .count()
+        == 0
+    ), "WordMorphemeIndex rows should cascade-delete with the morpheme"
+
+    _cleanup(db_session, version_id, iso)
