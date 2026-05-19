@@ -199,42 +199,27 @@ async def get_training_artifacts(
     """Version-keyed read for tokenizer training artifacts.
 
     Prefers the per-version `training_artifacts` row; falls back to the
-    iso-keyed `language_profiles.grammar_sketch` when either no
-    version-keyed row exists OR the version-keyed row exists but its
-    `grammar_sketch` is NULL (in which case the version-keyed
-    `source_model` is still surfaced for provenance). Phase 2 of issue
-    #687. Callers should treat the returned `source` field as advisory:
-    it indicates which store satisfied the grammar_sketch read so we
-    can monitor cutover progress.
-
-    Status codes:
-    - 200: artifact found (either version- or iso-keyed)
-    - 403: caller is not authorized for this version — also returned
-      for non-existent version_ids when the caller is a regular user,
-      so unauthorized callers can't enumerate valid versions
-    - 404: admin caller requesting a version_id that doesn't exist
-      (admins bypass the auth helper, so they reach the lookup)
+    iso-keyed `language_profiles.grammar_sketch` if no version-keyed row
+    exists yet (Phase 2 of issue #687). Callers should treat the returned
+    `source` field as advisory: it indicates which store satisfied the
+    read so we can monitor cutover progress.
     """
     request_start = time.perf_counter()
-
-    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to access this bible_version",
-        )
 
     version_lookup = await db.execute(
         select(BibleVersion.iso_language).where(BibleVersion.id == version_id)
     )
     iso = version_lookup.scalar_one_or_none()
     if iso is None:
-        # Reachable only by admins — non-admins are filtered out by the
-        # auth check above (which requires an existing BibleVersionAccess
-        # row). Returning 404 here is safe because the caller is already
-        # authorized to enumerate.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No bible_version with id {version_id}",
+        )
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
         )
 
     artifact_result = await db.execute(
@@ -254,11 +239,7 @@ async def get_training_artifacts(
     else:
         # Fall back to the language-keyed grammar_sketch. We only return
         # 404 when neither store has data; an empty version-keyed row
-        # with a populated iso-keyed row is a valid fallback hit. If the
-        # version-keyed row exists with a NULL grammar_sketch but a
-        # non-NULL source_model, surface the source_model even though
-        # the sketch came from the fallback — losing provenance silently
-        # would mask whichever model wrote the empty artifacts row.
+        # with a populated iso-keyed row is a valid fallback hit.
         profile_result = await db.execute(
             select(
                 LanguageProfile.grammar_sketch,
@@ -279,7 +260,7 @@ async def get_training_artifacts(
             target_version_id=version_id,
             iso_639_3=iso,
             grammar_sketch=profile_row.grammar_sketch,
-            source_model=artifact.source_model if artifact is not None else None,
+            source_model=None,
             source="language_profile",
             created_at=profile_row.created_at,
             updated_at=profile_row.updated_at,
@@ -322,21 +303,8 @@ async def get_morphemes_by_version(
     version's ISO. NULL-stamped rows are treated as "shared across
     versions of the ISO" until Phase 5 splits them into per-version
     rows. (Phase 2 of issue #687.)
-
-    Status codes:
-    - 200: returns the soft union (may be empty)
-    - 403: caller is not authorized for this version — also returned
-      for non-existent version_ids when the caller is a regular user,
-      so unauthorized callers can't enumerate valid versions
-    - 404: admin caller requesting a version_id that doesn't exist
     """
     request_start = time.perf_counter()
-
-    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to access this bible_version",
-        )
 
     version_lookup = await db.execute(
         select(BibleVersion.iso_language).where(BibleVersion.id == version_id)
@@ -346,6 +314,12 @@ async def get_morphemes_by_version(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No bible_version with id {version_id}",
+        )
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
         )
 
     query = select(LanguageMorpheme).where(

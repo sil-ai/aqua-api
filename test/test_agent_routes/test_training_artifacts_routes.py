@@ -33,14 +33,10 @@ def _resolve_iso(db_session, version_id):
     )
 
 
-def _cleanup(db_session, version_id, iso, extra_version_ids=()):
-    # Tests that seed rows for additional versions can pass their IDs in
-    # `extra_version_ids` so the corresponding training_artifacts rows
-    # are also cleaned up.
-    cleanup_version_ids = [version_id, *extra_version_ids]
+def _cleanup(db_session, version_id, iso):
     db_session.query(TrainingArtifact).filter(
-        TrainingArtifact.target_version_id.in_(cleanup_version_ids)
-    ).delete(synchronize_session="fetch")
+        TrainingArtifact.target_version_id == version_id
+    ).delete()
     db_session.query(LanguageAffix).filter(LanguageAffix.iso_639_3 == iso).delete()
     db_session.query(LanguageMorpheme).filter(
         LanguageMorpheme.iso_639_3 == iso
@@ -115,8 +111,7 @@ def test_training_artifacts_falls_back_when_version_row_has_null_sketch(
     client, regular_token1, test_revision_id, db_session
 ):
     """A training_artifacts row that exists but has grammar_sketch=NULL
-    should trigger fallback to the language-keyed sketch — and crucially
-    must surface the version-keyed source_model so provenance isn't lost."""
+    should still trigger fallback to the language-keyed sketch."""
     version_id = _resolve_version_id(db_session, test_revision_id)
     iso = _resolve_iso(db_session, version_id)
     _cleanup(db_session, version_id, iso)
@@ -126,11 +121,7 @@ def test_training_artifacts_falls_back_when_version_row_has_null_sketch(
     )
     db_session.flush()
     db_session.add(
-        TrainingArtifact(
-            target_version_id=version_id,
-            grammar_sketch=None,
-            source_model="provenance-model",
-        ),
+        TrainingArtifact(target_version_id=version_id, grammar_sketch=None),
     )
     db_session.commit()
 
@@ -142,9 +133,6 @@ def test_training_artifacts_falls_back_when_version_row_has_null_sketch(
     body = resp.json()
     assert body["grammar_sketch"] == "legacy"
     assert body["source"] == "language_profile"
-    # Even though the sketch came from the fallback, the version-keyed
-    # source_model must be preserved.
-    assert body["source_model"] == "provenance-model"
 
     _cleanup(db_session, version_id, iso)
 
@@ -163,16 +151,14 @@ def test_training_artifacts_404_when_neither_store_has_data(
     assert resp.status_code == 404, resp.text
 
 
-def test_training_artifacts_403_when_version_unknown(
+def test_training_artifacts_404_when_version_unknown(
     client, regular_token1, db_session
 ):
-    """Unknown version_id returns 403, not 404 — same response code as
-    "not authorized" so callers can't enumerate valid version_ids."""
     resp = client.get(
         f"/{prefix}/tokenizer/training-artifacts/999999999",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 404, resp.text
 
 
 def test_training_artifacts_403_when_user_lacks_version_access(
@@ -243,7 +229,7 @@ def test_morphemes_by_version_excludes_other_versions(
     version's results, even though they share the ISO."""
     version_id = _resolve_version_id(db_session, test_revision_id)
     iso = _resolve_iso(db_session, version_id)
-    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
+    _cleanup(db_session, version_id, iso)
 
     db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
     db_session.flush()
@@ -273,7 +259,7 @@ def test_morphemes_by_version_excludes_other_versions(
     forms = {m["morpheme"] for m in resp.json()["morphemes"]}
     assert forms == {"mine"}
 
-    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
+    _cleanup(db_session, version_id, iso)
 
 
 def test_morphemes_by_version_403_when_user_lacks_version_access(
@@ -287,14 +273,14 @@ def test_morphemes_by_version_403_when_user_lacks_version_access(
     assert resp.status_code == 403, resp.text
 
 
-def test_morphemes_by_version_403_when_version_unknown(
+def test_morphemes_by_version_404_when_version_unknown(
     client, regular_token1, db_session
 ):
     resp = client.get(
         f"/{prefix}/tokenizer/morphemes-by-version/999999999",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 404, resp.text
 
 
 # ---- /affixes-by-version/{version_id} --------------------------------------
@@ -351,7 +337,7 @@ def test_affixes_by_version_excludes_other_versions(
 ):
     version_id = _resolve_version_id(db_session, test_revision_id)
     iso = _resolve_iso(db_session, version_id)
-    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
+    _cleanup(db_session, version_id, iso)
 
     db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
     db_session.flush()
@@ -383,7 +369,7 @@ def test_affixes_by_version_excludes_other_versions(
     forms = {a["form"] for a in resp.json()["affixes"]}
     assert forms == {"mine-"}
 
-    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
+    _cleanup(db_session, version_id, iso)
 
 
 def test_affixes_by_version_position_filter(
@@ -438,11 +424,11 @@ def test_affixes_by_version_403_when_user_lacks_version_access(
     assert resp.status_code == 403, resp.text
 
 
-def test_affixes_by_version_403_when_version_unknown(
+def test_affixes_by_version_404_when_version_unknown(
     client, regular_token1, db_session
 ):
     resp = client.get(
         f"/{prefix}/affixes-by-version/999999999",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 404, resp.text

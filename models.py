@@ -1776,16 +1776,11 @@ class TrainingArtifactOut(BaseModel):
     iso_639_3: str
     grammar_sketch: Optional[str] = None
     source_model: Optional[str] = None
-    # `source` indicates which store satisfied the grammar_sketch read:
-    # "training_artifacts" = the version-keyed row supplied grammar_sketch.
-    # "language_profile"   = grammar_sketch came from the iso-keyed
-    #                         language_profiles row. This covers two cases:
-    #                         (a) no training_artifacts row exists for this
-    #                         version yet, and (b) a training_artifacts row
-    #                         exists but its grammar_sketch is NULL. In case
-    #                         (b), `source_model` is still surfaced from the
-    #                         version-keyed row even though the sketch fell
-    #                         back, so provenance isn't lost.
+    # `source` indicates which store the row was read from:
+    # "training_artifacts" = the version-keyed row was used directly.
+    # "language_profile"   = fell back to the iso-keyed grammar_sketch on
+    #                         language_profiles because no training_artifacts
+    #                         row existed for this version yet.
     source: Literal["training_artifacts", "language_profile"]
     created_at: Optional[datetime.datetime] = None
     updated_at: Optional[datetime.datetime] = None
