@@ -18,6 +18,7 @@ This migration:
    fan-out to every non-deleted `bible_version` of that ISO, so reads in
    Phase 2 see no functional change.
 """
+
 from typing import Sequence, Union
 
 import sqlalchemy as sa
