@@ -647,11 +647,11 @@ async def add_lexeme_card(
             # Legacy rows may predate the source_lemma backfill.
             existing_source_lc = (
                 existing_card.source_lemma.lower()
-                if existing_card.source_lemma
+                if existing_card.source_lemma is not None
                 else None
             )
             incoming_source_lc = (
-                card.source_lemma.lower() if card.source_lemma else None
+                card.source_lemma.lower() if card.source_lemma is not None else None
             )
             if existing_source_lc != incoming_source_lc:
                 raise HTTPException(
@@ -664,7 +664,8 @@ async def add_lexeme_card(
                         "existing_source_lemma": existing_card.source_lemma,
                     },
                 )
-            # Otherwise, update the existing card (same source_lemma)
+            # Migrate any pre-backfill mixed-case value to the validator-normalized form.
+            existing_card.source_lemma = card.source_lemma
             # Update existing card
             existing_card.pos = card.pos
             existing_card.confidence = card.confidence

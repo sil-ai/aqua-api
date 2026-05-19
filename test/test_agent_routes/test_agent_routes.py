@@ -6259,6 +6259,46 @@ def test_patch_lexeme_card_by_lemma_without_source_lemma_param(
     assert resp.json()["confidence"] == 0.88
 
 
+def test_post_lexeme_card_upsert_normalizes_legacy_mixed_case_source_lemma(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """When a legacy mixed-case source_lemma row exists and a POST comes in with
+    the lowercased form, the upsert should rewrite the stored value to lowercase
+    so clients never see pre-backfill casing leaking back out."""
+    legacy_id = _raw_psycopg2_fetchone(
+        "INSERT INTO agent_lexeme_cards "
+        "(source_lemma, target_lemma, source_version_id, target_version_id, "
+        " confidence, created_at, last_updated) "
+        "VALUES (%s, %s, %s, %s, %s, now(), now()) RETURNING id",
+        (
+            "Spirit_LegacyUpsert",
+            "roho_legacyupsert",
+            test_version_id,
+            test_version_id_2,
+            0.3,
+        ),
+    )[0]
+
+    resp = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "spirit_legacyupsert",
+            "target_lemma": "roho_legacyupsert",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.95,
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["id"] == legacy_id
+    assert resp.json()["source_lemma"] == "spirit_legacyupsert"
+
+
 def test_post_lexeme_card_both_source_lemmas_none_is_upsert(
     client,
     regular_token1,
