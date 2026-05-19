@@ -1791,6 +1791,21 @@ class TrainingArtifactOut(BaseModel):
     updated_at: Optional[datetime.datetime] = None
 
 
+class TrainingArtifactsDeleteResponse(BaseModel):
+    """Row counts deleted by DELETE /v3/tokenizer/training-artifacts/{version_id}.
+
+    The DELETE only touches rows version-stamped to this version_id;
+    legacy `target_version_id IS NULL` rows and rows stamped to other
+    versions of the same ISO are left intact. Lexeme cards are also
+    untouched — they have their own DELETE endpoint.
+    """
+
+    target_version_id: int
+    training_artifacts_deleted: int
+    affixes_deleted: int
+    morphemes_deleted: int
+
+
 class TokenizerRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
