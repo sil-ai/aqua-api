@@ -203,23 +203,30 @@ async def get_training_artifacts(
     exists yet (Phase 2 of issue #687). Callers should treat the returned
     `source` field as advisory: it indicates which store satisfied the
     read so we can monitor cutover progress.
+
+    Returns 403 for both "not authorized" and "no such version" so a
+    caller can't enumerate valid version_ids from outside their group.
     """
     request_start = time.perf_counter()
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
 
     version_lookup = await db.execute(
         select(BibleVersion.iso_language).where(BibleVersion.id == version_id)
     )
     iso = version_lookup.scalar_one_or_none()
     if iso is None:
+        # Reachable only by admins — non-admins are filtered out by the
+        # auth check above (which requires an existing BibleVersionAccess
+        # row). Returning 404 here is safe because the caller is already
+        # authorized to enumerate.
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No bible_version with id {version_id}",
-        )
-
-    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to access this bible_version",
         )
 
     artifact_result = await db.execute(
@@ -239,7 +246,11 @@ async def get_training_artifacts(
     else:
         # Fall back to the language-keyed grammar_sketch. We only return
         # 404 when neither store has data; an empty version-keyed row
-        # with a populated iso-keyed row is a valid fallback hit.
+        # with a populated iso-keyed row is a valid fallback hit. If the
+        # version-keyed row exists with a NULL grammar_sketch but a
+        # non-NULL source_model, surface the source_model even though
+        # the sketch came from the fallback — losing provenance silently
+        # would mask whichever model wrote the empty artifacts row.
         profile_result = await db.execute(
             select(
                 LanguageProfile.grammar_sketch,
@@ -260,7 +271,7 @@ async def get_training_artifacts(
             target_version_id=version_id,
             iso_639_3=iso,
             grammar_sketch=profile_row.grammar_sketch,
-            source_model=None,
+            source_model=artifact.source_model if artifact is not None else None,
             source="language_profile",
             created_at=profile_row.created_at,
             updated_at=profile_row.updated_at,
@@ -303,8 +314,17 @@ async def get_morphemes_by_version(
     version's ISO. NULL-stamped rows are treated as "shared across
     versions of the ISO" until Phase 5 splits them into per-version
     rows. (Phase 2 of issue #687.)
+
+    Returns 403 for both "not authorized" and "no such version" so a
+    caller can't enumerate valid version_ids from outside their group.
     """
     request_start = time.perf_counter()
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
 
     version_lookup = await db.execute(
         select(BibleVersion.iso_language).where(BibleVersion.id == version_id)
@@ -314,12 +334,6 @@ async def get_morphemes_by_version(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No bible_version with id {version_id}",
-        )
-
-    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to access this bible_version",
         )
 
     query = select(LanguageMorpheme).where(
