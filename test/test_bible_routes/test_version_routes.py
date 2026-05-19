@@ -535,6 +535,42 @@ class TestIncludeDeleted:
         assert deleted_id not in by_id
         assert by_id[kept_id]["deleted"] is False
 
+    def test_admin_include_deleted_handles_null_deleted_column(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        # BibleVersion.deleted is a nullable Boolean column; legacy rows may
+        # have NULL. Force one row to NULL and confirm the response coerces
+        # it to False rather than 500ing on Pydantic validation.
+        group_1 = db_session.query(Group).filter_by(name="Group1").first()
+        regular_headers = {"Authorization": f"Bearer {regular_token1}"}
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        legacy_params = {
+            **new_version_data,
+            "name": "Legacy Version",
+            "abbreviation": "LV",
+            "add_to_groups": [group_1.id],
+        }
+        legacy_id = client.post(
+            f"{prefix}/version", json=legacy_params, headers=regular_headers
+        ).json()["id"]
+
+        legacy_row = (
+            db_session.query(BibleVersionModel).filter_by(id=legacy_id).first()
+        )
+        legacy_row.deleted = None
+        db_session.commit()
+
+        list_response = client.get(
+            f"{prefix}/version",
+            params={"include_deleted": "true"},
+            headers=admin_headers,
+        )
+        assert list_response.status_code == 200, list_response.text
+        by_id = {v["id"]: v for v in list_response.json()}
+        assert legacy_id in by_id
+        assert by_id[legacy_id]["deleted"] is False
+
 
 class TestVersionValidation:
     def test_create_version_without_add_to_groups(self, client, regular_token1):
