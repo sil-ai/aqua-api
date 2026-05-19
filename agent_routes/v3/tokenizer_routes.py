@@ -199,13 +199,21 @@ async def get_training_artifacts(
     """Version-keyed read for tokenizer training artifacts.
 
     Prefers the per-version `training_artifacts` row; falls back to the
-    iso-keyed `language_profiles.grammar_sketch` if no version-keyed row
-    exists yet (Phase 2 of issue #687). Callers should treat the returned
-    `source` field as advisory: it indicates which store satisfied the
-    read so we can monitor cutover progress.
+    iso-keyed `language_profiles.grammar_sketch` when either no
+    version-keyed row exists OR the version-keyed row exists but its
+    `grammar_sketch` is NULL (in which case the version-keyed
+    `source_model` is still surfaced for provenance). Phase 2 of issue
+    #687. Callers should treat the returned `source` field as advisory:
+    it indicates which store satisfied the grammar_sketch read so we
+    can monitor cutover progress.
 
-    Returns 403 for both "not authorized" and "no such version" so a
-    caller can't enumerate valid version_ids from outside their group.
+    Status codes:
+    - 200: artifact found (either version- or iso-keyed)
+    - 403: caller is not authorized for this version — also returned
+      for non-existent version_ids when the caller is a regular user,
+      so unauthorized callers can't enumerate valid versions
+    - 404: admin caller requesting a version_id that doesn't exist
+      (admins bypass the auth helper, so they reach the lookup)
     """
     request_start = time.perf_counter()
 
@@ -315,8 +323,12 @@ async def get_morphemes_by_version(
     versions of the ISO" until Phase 5 splits them into per-version
     rows. (Phase 2 of issue #687.)
 
-    Returns 403 for both "not authorized" and "no such version" so a
-    caller can't enumerate valid version_ids from outside their group.
+    Status codes:
+    - 200: returns the soft union (may be empty)
+    - 403: caller is not authorized for this version — also returned
+      for non-existent version_ids when the caller is a regular user,
+      so unauthorized callers can't enumerate valid versions
+    - 404: admin caller requesting a version_id that doesn't exist
     """
     request_start = time.perf_counter()
 

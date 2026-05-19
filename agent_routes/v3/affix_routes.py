@@ -60,8 +60,12 @@ async def get_affixes_by_version(
     versions of the ISO" until Phase 5 splits them into per-version
     rows. (Phase 2 of issue #687.)
 
-    Returns 403 for both "not authorized" and "no such version" so a
-    caller can't enumerate valid version_ids from outside their group.
+    Status codes:
+    - 200: returns the soft union (may be empty)
+    - 403: caller is not authorized for this version — also returned
+      for non-existent version_ids when the caller is a regular user,
+      so unauthorized callers can't enumerate valid versions
+    - 404: admin caller requesting a version_id that doesn't exist
     """
     request_start = time.perf_counter()
 
