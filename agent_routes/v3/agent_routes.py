@@ -1898,7 +1898,7 @@ async def get_lexeme_cards(
                 # caller passed source_version_id, all returned cards share
                 # the same (pivot-resolved) source, so this is a single id;
                 # when omitted, multi-pivot result sets fall out naturally.
-                source_versions_for_auth = sorted(
+                source_versions_for_auth = list(
                     {card.source_version_id for card in cards}
                 )
                 authorized_lang_revisions = (
