@@ -1112,6 +1112,11 @@ class LanguageMorpheme(Base):
         nullable=True,
     )
     first_seen_at = Column(TIMESTAMP, server_default=func.now())
+    target_version_id = Column(
+        Integer,
+        ForeignKey("bible_version.id", ondelete="CASCADE"),
+        nullable=True,
+    )
 
     __table_args__ = (
         Index(
@@ -1120,8 +1125,15 @@ class LanguageMorpheme(Base):
             "morpheme",
             unique=True,
         ),
+        Index(
+            "ux_language_morphemes_version_morpheme",
+            "target_version_id",
+            "morpheme",
+            unique=True,
+        ),
         Index("ix_language_morphemes_iso", "iso_639_3"),
         Index("ix_language_morphemes_iso_class", "iso_639_3", "morpheme_class"),
+        Index("ix_language_morphemes_target_version_id", "target_version_id"),
     )
 
 
@@ -1147,6 +1159,11 @@ class LanguageAffix(Base):
     )
     first_seen_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    target_version_id = Column(
+        Integer,
+        ForeignKey("bible_version.id", ondelete="CASCADE"),
+        nullable=True,
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -1161,9 +1178,32 @@ class LanguageAffix(Base):
             "position",
             unique=True,
         ),
+        Index(
+            "ux_language_affixes_version_form_position_gloss",
+            "target_version_id",
+            "form",
+            "position",
+            "gloss",
+            unique=True,
+        ),
         Index("ix_language_affixes_iso", "iso_639_3"),
         Index("ix_language_affixes_iso_position", "iso_639_3", "position"),
+        Index("ix_language_affixes_target_version_id", "target_version_id"),
     )
+
+
+class TrainingArtifact(Base):
+    __tablename__ = "training_artifacts"
+
+    target_version_id = Column(
+        Integer,
+        ForeignKey("bible_version.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    grammar_sketch = Column(Text, nullable=True)
+    source_model = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
 
 
 class TokenizerRun(Base):

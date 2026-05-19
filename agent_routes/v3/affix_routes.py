@@ -135,11 +135,15 @@ async def commit_affixes(
             ),
         )
 
+    target_version_id: Optional[int] = None
     if payload.revision_id is not None:
-        revision_exists = await db.execute(
-            select(BibleRevision.id).where(BibleRevision.id == payload.revision_id)
+        revision_lookup = await db.execute(
+            select(BibleRevision.bible_version_id).where(
+                BibleRevision.id == payload.revision_id
+            )
         )
-        if revision_exists.scalar_one_or_none() is None:
+        target_version_id = revision_lookup.scalar_one_or_none()
+        if target_version_id is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Unknown revision_id {payload.revision_id}",
@@ -268,6 +272,7 @@ async def commit_affixes(
                         "n_runs": fields["n_runs"],
                         "source_model": payload.source_model,
                         "first_seen_revision_id": payload.revision_id,
+                        "target_version_id": target_version_id,
                     }
                 )
 
@@ -277,14 +282,21 @@ async def commit_affixes(
                 # rejected mismatched glosses above, so leaving the stored
                 # gloss in place is correct even if a concurrent writer
                 # raced in between the select and the insert.
+                set_values = {
+                    "examples": stmt.excluded.examples,
+                    "n_runs": stmt.excluded.n_runs,
+                    "source_model": stmt.excluded.source_model,
+                    "updated_at": func.now(),
+                }
+                # First-writer-wins for target_version_id: only stamp it on
+                # rows where it's currently NULL (Phase 1 backfill semantics).
+                if target_version_id is not None:
+                    set_values["target_version_id"] = func.coalesce(
+                        LanguageAffix.target_version_id, stmt.excluded.target_version_id
+                    )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["iso_639_3", "form", "position"],
-                    set_={
-                        "examples": stmt.excluded.examples,
-                        "n_runs": stmt.excluded.n_runs,
-                        "source_model": stmt.excluded.source_model,
-                        "updated_at": func.now(),
-                    },
+                    set_=set_values,
                 )
                 await db.execute(stmt)
 
@@ -351,11 +363,15 @@ async def replace_affixes(
             ),
         )
 
+    target_version_id: Optional[int] = None
     if payload.revision_id is not None:
-        revision_exists = await db.execute(
-            select(BibleRevision.id).where(BibleRevision.id == payload.revision_id)
+        revision_lookup = await db.execute(
+            select(BibleRevision.bible_version_id).where(
+                BibleRevision.id == payload.revision_id
+            )
         )
-        if revision_exists.scalar_one_or_none() is None:
+        target_version_id = revision_lookup.scalar_one_or_none()
+        if target_version_id is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Unknown revision_id {payload.revision_id}",
@@ -408,6 +424,7 @@ async def replace_affixes(
                     "n_runs": fields["n_runs"],
                     "source_model": payload.source_model,
                     "first_seen_revision_id": payload.revision_id,
+                    "target_version_id": target_version_id,
                 }
                 for (form, position), fields in incoming.items()
             ]
@@ -416,16 +433,21 @@ async def replace_affixes(
             # scope with the same (form, position), authoritatively overwrite
             # gloss too. This is the one path that may change an existing
             # row's gloss without an explicit PATCH.
+            replace_set = {
+                "gloss": stmt.excluded.gloss,
+                "examples": stmt.excluded.examples,
+                "n_runs": stmt.excluded.n_runs,
+                "source_model": stmt.excluded.source_model,
+                "first_seen_revision_id": stmt.excluded.first_seen_revision_id,
+                "updated_at": func.now(),
+            }
+            # PUT overwrites target_version_id authoritatively when caller
+            # supplies a revision; otherwise preserve any prior stamp.
+            if target_version_id is not None:
+                replace_set["target_version_id"] = stmt.excluded.target_version_id
             stmt = stmt.on_conflict_do_update(
                 index_elements=["iso_639_3", "form", "position"],
-                set_={
-                    "gloss": stmt.excluded.gloss,
-                    "examples": stmt.excluded.examples,
-                    "n_runs": stmt.excluded.n_runs,
-                    "source_model": stmt.excluded.source_model,
-                    "first_seen_revision_id": stmt.excluded.first_seen_revision_id,
-                    "updated_at": func.now(),
-                },
+                set_=replace_set,
             )
             await db.execute(stmt)
             n_inserted = len(rows)
