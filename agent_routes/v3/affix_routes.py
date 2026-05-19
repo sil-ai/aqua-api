@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.dependencies import get_db
 from database.models import (
     BibleRevision,
+    BibleVersion,
     IsoLanguage,
     LanguageAffix,
     LanguageProfile,
@@ -29,6 +30,7 @@ from models import (
     AffixReplaceResponse,
 )
 from security_routes.auth_routes import get_current_user
+from security_routes.utilities import is_user_authorized_for_bible_version
 from utils.logging_config import setup_logger
 
 container_id = socket.gethostname()
@@ -41,6 +43,73 @@ def _normalize(value: str) -> str:
     # NFC + strip only — no casefold. Affix forms and glosses are
     # case-sensitive linguistic annotations, unlike morphemes.
     return unicodedata.normalize("NFC", value).strip()
+
+
+@router.get("/affixes-by-version/{version_id}", response_model=AffixListOut)
+async def get_affixes_by_version(
+    version_id: int,
+    position: Optional[str] = Query(None, pattern="^(prefix|suffix|infix)$"),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Version-keyed read for language affixes.
+
+    Returns the soft union of rows version-stamped for this version
+    *and* legacy rows with `target_version_id IS NULL` that share the
+    version's ISO. NULL-stamped rows are treated as "shared across
+    versions of the ISO" until Phase 5 splits them into per-version
+    rows. (Phase 2 of issue #687.)
+    """
+    request_start = time.perf_counter()
+
+    version_lookup = await db.execute(
+        select(BibleVersion.iso_language).where(BibleVersion.id == version_id)
+    )
+    iso = version_lookup.scalar_one_or_none()
+    if iso is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No bible_version with id {version_id}",
+        )
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
+
+    query = select(LanguageAffix).where(
+        LanguageAffix.iso_639_3 == iso,
+        or_(
+            LanguageAffix.target_version_id == version_id,
+            LanguageAffix.target_version_id.is_(None),
+        ),
+    )
+    if position is not None:
+        query = query.where(LanguageAffix.position == position)
+    query = query.order_by(LanguageAffix.id)
+
+    result = await db.execute(query)
+    rows = result.scalars().all()
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_affixes_by_version completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/affixes-by-version/{version_id}",
+            "version_id": version_id,
+            "iso": iso,
+            "position": position,
+            "count": len(rows),
+            "duration_s": duration,
+        },
+    )
+    return AffixListOut(
+        iso_639_3=iso,
+        total=len(rows),
+        affixes=[AffixOut.model_validate(a) for a in rows],
+    )
 
 
 @router.get("/affixes", response_model=AffixListOut)

@@ -1769,6 +1769,23 @@ class MorphemeListOut(BaseModel):
     morphemes: List[MorphemeOut]
 
 
+class TrainingArtifactOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    target_version_id: int
+    iso_639_3: str
+    grammar_sketch: Optional[str] = None
+    source_model: Optional[str] = None
+    # `source` indicates which store the row was read from:
+    # "training_artifacts" = the version-keyed row was used directly.
+    # "language_profile"   = fell back to the iso-keyed grammar_sketch on
+    #                         language_profiles because no training_artifacts
+    #                         row existed for this version yet.
+    source: Literal["training_artifacts", "language_profile"]
+    created_at: Optional[datetime.datetime] = None
+    updated_at: Optional[datetime.datetime] = None
+
+
 class TokenizerRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
