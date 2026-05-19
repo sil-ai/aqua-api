@@ -59,8 +59,21 @@ async def get_affixes_by_version(
     version's ISO. NULL-stamped rows are treated as "shared across
     versions of the ISO" until Phase 5 splits them into per-version
     rows. (Phase 2 of issue #687.)
+
+    Status codes:
+    - 200: returns the soft union (may be empty)
+    - 403: caller is not authorized for this version — also returned
+      for non-existent version_ids when the caller is a regular user,
+      so unauthorized callers can't enumerate valid versions
+    - 404: admin caller requesting a version_id that doesn't exist
     """
     request_start = time.perf_counter()
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
 
     version_lookup = await db.execute(
         select(BibleVersion.iso_language).where(BibleVersion.id == version_id)
@@ -70,12 +83,6 @@ async def get_affixes_by_version(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No bible_version with id {version_id}",
-        )
-
-    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User not authorized to access this bible_version",
         )
 
     query = select(LanguageAffix).where(
