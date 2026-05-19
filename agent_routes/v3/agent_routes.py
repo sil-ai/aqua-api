@@ -644,8 +644,16 @@ async def add_lexeme_card(
         existing_card = result.scalar_one_or_none()
 
         if existing_card:
-            # If source_lemma differs, reject with 409 and tell them to use PATCH
-            if existing_card.source_lemma != card.source_lemma:
+            # Legacy rows may predate the source_lemma backfill.
+            existing_source_lc = (
+                existing_card.source_lemma.lower()
+                if existing_card.source_lemma is not None
+                else None
+            )
+            incoming_source_lc = (
+                card.source_lemma.lower() if card.source_lemma is not None else None
+            )
+            if existing_source_lc != incoming_source_lc:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail={
@@ -656,7 +664,8 @@ async def add_lexeme_card(
                         "existing_source_lemma": existing_card.source_lemma,
                     },
                 )
-            # Otherwise, update the existing card (same source_lemma)
+            # Migrate any pre-backfill mixed-case value to the validator-normalized form.
+            existing_card.source_lemma = card.source_lemma
             # Update existing card
             existing_card.pos = card.pos
             existing_card.confidence = card.confidence
@@ -1302,7 +1311,9 @@ async def patch_lexeme_card_by_lemma(
 
         # Only filter by source_lemma if explicitly provided
         if source_lemma is not None:
-            query = query.where(AgentLexemeCard.source_lemma == source_lemma)
+            query = query.where(
+                sql_func.lower(AgentLexemeCard.source_lemma) == source_lemma.lower()
+            )
 
         result = await db.execute(query)
         cards = result.scalars().all()
@@ -1538,9 +1549,10 @@ async def deduplicate_lexeme_cards(
                     if not winner.english_lemma and loser.english_lemma:
                         winner.english_lemma = loser.english_lemma
 
-                    # source_lemma: prefer winner's
+                    # source_lemma: prefer winner's. Lowercase on adopt so a
+                    # pre-backfill mixed-case loser doesn't re-introduce uppercase.
                     if not winner.source_lemma and loser.source_lemma:
-                        winner.source_lemma = loser.source_lemma
+                        winner.source_lemma = loser.source_lemma.lower()
 
                     # Timestamps: keep earliest created_at, latest last_updated, latest last_user_edit
                     if loser.created_at and (
