@@ -229,7 +229,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "god",
             "target": "dios",
             "score": 0.9,
-            "vref": "GEN 1:2",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 2,
@@ -242,7 +242,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "god",
             "target": "dios",
             "score": 0.88,
-            "vref": "GEN 1:3",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 3,
@@ -255,7 +255,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "god",
             "target": "señor",
             "score": 0.15,
-            "vref": "GEN 1:4",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 4,
@@ -269,7 +269,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "created",
             "target": "creó",
             "score": 0.92,
-            "vref": "GEN 1:1",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 1,
@@ -282,7 +282,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "created",
             "target": "creó",
             "score": 0.89,
-            "vref": "GEN 1:5",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 5,
@@ -295,7 +295,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "created",
             "target": "hizo",
             "score": 0.1,
-            "vref": "GEN 1:6",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 6,
@@ -309,7 +309,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "heaven",
             "target": "cielo",
             "score": 0.75,
-            "vref": "GEN 1:1",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 1,
@@ -322,7 +322,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "heaven",
             "target": "cielo",
             "score": 0.8,
-            "vref": "GEN 1:7",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 7,
@@ -335,7 +335,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "heaven",
             "target": "cielos",
             "score": 0.2,
-            "vref": "GEN 1:8",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 8,
@@ -348,7 +348,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "heaven",
             "target": "cielo",
             "score": 0.78,
-            "vref": "GEN 1:9",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 9,
@@ -362,7 +362,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "earth",
             "target": "tierra",
             "score": 0.95,
-            "vref": "GEN 1:1",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 1,
@@ -375,7 +375,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "earth",
             "target": "tierra",
             "score": 0.93,
-            "vref": "GEN 1:10",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 10,
@@ -389,7 +389,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "beginning",
             "target": "principio",
             "score": 0.85,
-            "vref": "GEN 1:1",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 1,
@@ -402,7 +402,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "beginning",
             "target": "comienzo",
             "score": 0.15,
-            "vref": "GEN 1:1",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 1,
@@ -416,7 +416,7 @@ def alignment_data(test_db_session, assessments_dataset):
             "source": "rare",
             "target": "raro",
             "score": 0.5,
-            "vref": "GEN 1:11",
+            "vref": None,
             "book": "GEN",
             "chapter": 1,
             "verse": 11,
@@ -436,7 +436,7 @@ def alignment_data(test_db_session, assessments_dataset):
                     "source": "god",
                     "target": "dios",
                     "score": 0.87,
-                    "vref": f"GEN 1:{verse}",
+                    "vref": None,
                     "book": "GEN",
                     "chapter": 1,
                     "verse": verse,
@@ -449,7 +449,7 @@ def alignment_data(test_db_session, assessments_dataset):
                     "source": "created",
                     "target": "creó",
                     "score": 0.90,
-                    "vref": f"GEN 1:{verse}",
+                    "vref": None,
                     "book": "GEN",
                     "chapter": 1,
                     "verse": verse,
@@ -462,7 +462,7 @@ def alignment_data(test_db_session, assessments_dataset):
                     "source": "earth",
                     "target": "tierra",
                     "score": 0.94,
-                    "vref": f"GEN 1:{verse}",
+                    "vref": None,
                     "book": "GEN",
                     "chapter": 1,
                     "verse": verse,
@@ -474,7 +474,6 @@ def alignment_data(test_db_session, assessments_dataset):
         )
 
     for data in alignment_data:
-        data["vref"] = None
         test_db_session.add(AlignmentTopSourceScores(**data))
 
     test_db_session.commit()
@@ -1840,27 +1839,69 @@ def test_ngrams_result_pagination_bounds_rejected(
     assert response.status_code == 422, reason
 
 
+def _make_ngrams_assessment(
+    db_session, assessments_dataset, status="finished", seed_ngrams=()
+):
+    """Create a fresh ngrams Assessment + optional seed rows.
+
+    Returns the assessment_id. Use this in tests that *mutate* the
+    ngrams dataset (insert/delete rows, modify counts) so they don't
+    contaminate the module-scoped `ngrams_dataset` fixture and create
+    order-dependent assertions.
+    """
+    from database.models import NgramsTable, NgramVrefTable
+
+    assessment = Assessment(
+        revision_id=assessments_dataset.revision_id,
+        reference_id=assessments_dataset.reference_id,
+        type="ngrams",
+        status=status,
+        assessment_version="1",
+    )
+    db_session.add(assessment)
+    db_session.flush()
+    for ngram, size, vrefs in seed_ngrams:
+        ng = NgramsTable(assessment_id=assessment.id, ngram=ngram, ngram_size=size)
+        db_session.add(ng)
+        db_session.flush()
+        for v in vrefs:
+            db_session.add(NgramVrefTable(ngram_id=ng.id, vref=v))
+    db_session.commit()
+    return assessment.id
+
+
 def test_ngrams_result_includes_vrefless_ngram(
-    client, regular_token1, test_db_session, ngrams_dataset
+    client, regular_token1, test_db_session, assessments_dataset
 ):
     """A ngram with no rows in ngram_vref_table now appears in results
     with `vrefs=[]` instead of being silently dropped (the old INNER
     JOIN behaviour). Pinned because the docstring on fetch_ngrams_page
     promises this contract — switching back to INNER JOIN would be a
-    silent regression that callers couldn't easily notice."""
+    silent regression that callers couldn't easily notice.
+
+    Uses its own per-test assessment instead of the shared
+    `ngrams_dataset` fixture so the orphan row doesn't leak into
+    sibling tests' count assertions.
+    """
     from database.models import NgramsTable
 
-    assessment_id, seeds = ngrams_dataset
+    # One regular ngram so the assessment isn't entirely orphan-only.
+    assessment_id = _make_ngrams_assessment(
+        test_db_session,
+        assessments_dataset,
+        seed_ngrams=[("the lord", 2, ["GEN 1:1"])],
+    )
 
     # Add a vrefless ngram. The schema permits it (no NOT NULL on the
     # vref relationship from this side; ngrams_table doesn't require
     # at-least-one ngram_vref_table row).
-    orphan = NgramsTable(
-        assessment_id=assessment_id,
-        ngram="orphan_ngram_with_no_vrefs",
-        ngram_size=4,
+    test_db_session.add(
+        NgramsTable(
+            assessment_id=assessment_id,
+            ngram="orphan_ngram_with_no_vrefs",
+            ngram_size=4,
+        )
     )
-    test_db_session.add(orphan)
     test_db_session.commit()
 
     response = client.get(
@@ -1874,15 +1915,13 @@ def test_ngrams_result_includes_vrefless_ngram(
     by_ngram = {r["ngram"]: r for r in body["results"]}
     assert "orphan_ngram_with_no_vrefs" in by_ngram
     assert by_ngram["orphan_ngram_with_no_vrefs"]["vrefs"] == []
-    # And total_count includes the orphan, so len(results) == total_count
-    # in the unpaginated case — the inconsistency the old INNER JOIN
-    # produced is gone.
-    assert body["total_count"] == len(seeds) + 1
+    # total_count includes both the regular ngram and the orphan.
+    assert body["total_count"] == 2
     assert len(body["results"]) == body["total_count"]
 
 
 def test_ngrams_result_caches_total_count_for_finished_assessment(
-    client, regular_token1, test_db_session, ngrams_dataset
+    client, regular_token1, test_db_session, assessments_dataset
 ):
     """For a `status='finished'` assessment, total_count is memoized
     per-worker by assessment_id (see #651). Once the cache is warm,
@@ -1890,13 +1929,24 @@ def test_ngrams_result_caches_total_count_for_finished_assessment(
     until the entry is invalidated — which is the intended behaviour
     because counts on finished assessments are immutable by contract
     (a rerun produces a new assessment row, not new rows on the old
-    one)."""
+    one).
+
+    Uses its own per-test assessment so the cache-probe row doesn't
+    leak into sibling tests.
+    """
     from assessment_routes.v3.results_query_routes import (
         _ngrams_total_count_cache,
     )
     from database.models import NgramsTable
 
-    assessment_id, _ = ngrams_dataset
+    assessment_id = _make_ngrams_assessment(
+        test_db_session,
+        assessments_dataset,
+        seed_ngrams=[
+            ("the lord", 2, ["GEN 1:1"]),
+            ("of god", 2, ["GEN 1:2"]),
+        ],
+    )
 
     # Prime the cache.
     primed = client.get(
@@ -1906,6 +1956,7 @@ def test_ngrams_result_caches_total_count_for_finished_assessment(
     )
     assert primed.status_code == 200, primed.text
     primed_count = primed.json()["total_count"]
+    assert primed_count == 2
     assert assessment_id in _ngrams_total_count_cache
 
     # Insert a row behind the cache's back.
@@ -1969,31 +2020,20 @@ def test_ngrams_result_does_not_cache_in_progress_assessment(
     from assessment_routes.v3.results_query_routes import (
         _ngrams_total_count_cache,
     )
-    from database.models import NgramsTable
 
-    in_progress = Assessment(
-        revision_id=assessments_dataset.revision_id,
-        reference_id=assessments_dataset.reference_id,
-        type="ngrams",
+    in_progress_id = _make_ngrams_assessment(
+        test_db_session,
+        assessments_dataset,
         status="queued",
-        assessment_version="1",
+        seed_ngrams=[("probe_in_progress", 1, [])],
     )
-    test_db_session.add(in_progress)
-    test_db_session.commit()
-    test_db_session.refresh(in_progress)
-    test_db_session.add(
-        NgramsTable(
-            assessment_id=in_progress.id, ngram="probe_in_progress", ngram_size=1
-        )
-    )
-    test_db_session.commit()
 
     response = client.get(
         "/v3/ngrams_result",
-        params={"assessment_id": in_progress.id},
+        params={"assessment_id": in_progress_id},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200, response.text
     assert response.json()["total_count"] == 1
     # Must not have been memoized — only finished assessments are cached.
-    assert in_progress.id not in _ngrams_total_count_cache
+    assert in_progress_id not in _ngrams_total_count_cache
