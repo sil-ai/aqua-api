@@ -8519,15 +8519,35 @@ def test_get_lexeme_cards_bulk_missing_overlay_logs_counter(
     ]
     assert completion_calls, "expected get_lexeme_cards completion log"
     extra = completion_calls[-1].kwargs.get("extra", {})
-    assert (
-        extra.get("missing_translation_overlay", 0) >= 2
-    ), f"counter should reflect ≥2 cards without an overlay, got extra={extra!r}"
+    # The test_version_id pair is shared with other tests in this module, so
+    # the response may include cards beyond the three created here. Compare
+    # the log counter against the response itself: every card with
+    # has_translation_overlay=False must be counted, and the counter must
+    # match the response exactly (no under- or over-count).
+    response_cards = response.json()
+    response_missing = sum(
+        1 for c in response_cards if c.get("has_translation_overlay") is False
+    )
+    assert response_missing >= 2, (
+        "expected at least 2 cards in response without an overlay "
+        f"(our own card_without_a and card_without_b), got {response_missing}"
+    )
+    assert extra.get("missing_translation_overlay") == response_missing, (
+        f"log counter ({extra.get('missing_translation_overlay')}) must match "
+        f"the count of has_translation_overlay=False cards in the response "
+        f"({response_missing}); extra={extra!r}"
+    )
     assert extra.get("lang") == "swh"
     assert extra.get("lang_auto_derived") is False
 
     # Sanity: the response contains all three of our cards.
-    returned_ids = {c["id"] for c in response.json()}
+    returned_ids = {c["id"] for c in response_cards}
     assert {card_with, card_without_a, card_without_b}.issubset(returned_ids)
+    # And our specific without-overlay cards are flagged.
+    by_id = {c["id"]: c for c in response_cards}
+    assert by_id[card_with]["has_translation_overlay"] is True
+    assert by_id[card_without_a]["has_translation_overlay"] is False
+    assert by_id[card_without_b]["has_translation_overlay"] is False
 
 
 def test_get_lexeme_card_by_id_lang_matches_canonical_iso_returns_200(

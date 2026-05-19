@@ -1772,15 +1772,22 @@ async def get_lexeme_cards(
     - lang: str (optional) - ISO 639-3 code for the desired source-side language.
       When omitted or equal to the cards' canonical source_language_iso, returns
       cards in their canonical shape (back-compat). When it differs, source-side
-      fields (source_lemma, source_surface_forms, senses, per-example source_text)
+      fields (source_lemma, source_surface_forms, senses, examples[].source)
       are replaced by the matching card_translations row. Cards without a
       translation in the requested language are still returned, with the
-      source-side overlay fields set to null, example source_text omitted, and
-      ``has_translation_overlay=False``, so the UI can render the target side
-      and indicate the overlay is missing. (Note: the single-card by-id
+      source-side overlay fields set to null, examples[].source set to null,
+      and ``has_translation_overlay=False``, so the UI can render the target
+      side and indicate the overlay is missing. (Note: the single-card by-id
       endpoint returns 404 in that same situation — it's the derivation
       trigger. Callers iterating the bulk list should check
       ``has_translation_overlay`` before clicking through to by-id.)
+
+      When ``lang`` is omitted but a ``source_version_id`` is also provided and
+      pivot routing rewrites the source, ``lang`` is auto-derived from the
+      caller's ``source_version_id`` ISO so the pivot stays invisible. In that
+      case the overlay logic above applies as if ``lang`` had been passed
+      explicitly; the structured log payload includes ``lang_auto_derived=True``
+      so dashboards can distinguish UI-driven misses from pivot-driven ones.
 
     Returns:
     - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending).
