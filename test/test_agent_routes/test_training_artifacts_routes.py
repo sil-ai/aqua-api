@@ -596,3 +596,364 @@ def test_affixes_by_version_empty_result(
     body = resp.json()
     assert body["total"] == 0
     assert body["affixes"] == []
+
+
+# ---- DELETE /tokenizer/training-artifacts/{version_id} (Phase 4) ----------
+
+
+def test_delete_training_artifacts_clears_version_stamped_rows(
+    client, regular_token1, test_revision_id, db_session
+):
+    """All three kinds of agent-discovered artifacts (the per-version
+    training_artifacts row, version-stamped affixes, version-stamped
+    morphemes) are deleted atomically. Returns row counts."""
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.flush()
+    db_session.add(
+        TrainingArtifact(
+            target_version_id=version_id,
+            grammar_sketch="to-be-cleared",
+            source_model="gpt-5-mini",
+        )
+    )
+    db_session.add_all(
+        [
+            LanguageMorpheme(
+                iso_639_3=iso,
+                morpheme="m1",
+                morpheme_class="LEXICAL",
+                target_version_id=version_id,
+            ),
+            LanguageMorpheme(
+                iso_639_3=iso,
+                morpheme="m2",
+                morpheme_class="GRAMMATICAL",
+                target_version_id=version_id,
+            ),
+        ]
+    )
+    db_session.add_all(
+        [
+            LanguageAffix(
+                iso_639_3=iso,
+                form="a1-",
+                position="prefix",
+                gloss="g1",
+                target_version_id=version_id,
+            ),
+            LanguageAffix(
+                iso_639_3=iso,
+                form="-a2",
+                position="suffix",
+                gloss="g2",
+                target_version_id=version_id,
+            ),
+            LanguageAffix(
+                iso_639_3=iso,
+                form="a3-",
+                position="prefix",
+                gloss="g3",
+                target_version_id=version_id,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    resp = client.delete(
+        f"/{prefix}/tokenizer/training-artifacts/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body == {
+        "target_version_id": version_id,
+        "training_artifacts_deleted": 1,
+        "affixes_deleted": 3,
+        "morphemes_deleted": 2,
+    }
+
+    db_session.expire_all()
+    assert (
+        db_session.query(TrainingArtifact)
+        .filter(TrainingArtifact.target_version_id == version_id)
+        .count()
+        == 0
+    )
+    assert (
+        db_session.query(LanguageMorpheme)
+        .filter(LanguageMorpheme.target_version_id == version_id)
+        .count()
+        == 0
+    )
+    assert (
+        db_session.query(LanguageAffix)
+        .filter(LanguageAffix.target_version_id == version_id)
+        .count()
+        == 0
+    )
+
+    _cleanup(db_session, version_id, iso)
+
+
+def test_delete_training_artifacts_preserves_null_and_other_version_rows(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id_2,
+    db_session,
+):
+    """Legacy `target_version_id IS NULL` rows and rows stamped to
+    other versions of the same ISO must NOT be touched — they belong
+    to the soft-union for all versions of the ISO and to other versions
+    respectively. Only version-stamped rows for the target version go."""
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
+
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.flush()
+    db_session.add_all(
+        [
+            LanguageMorpheme(
+                iso_639_3=iso,
+                morpheme="version_stamped",
+                morpheme_class="LEXICAL",
+                target_version_id=version_id,
+            ),
+            LanguageMorpheme(
+                iso_639_3=iso,
+                morpheme="legacy_null",
+                morpheme_class="LEXICAL",
+                target_version_id=None,
+            ),
+            LanguageMorpheme(
+                iso_639_3=iso,
+                morpheme="other_version",
+                morpheme_class="LEXICAL",
+                target_version_id=test_version_id_2,
+            ),
+        ]
+    )
+    db_session.add_all(
+        [
+            LanguageAffix(
+                iso_639_3=iso,
+                form="v-",
+                position="prefix",
+                gloss="versioned",
+                target_version_id=version_id,
+            ),
+            LanguageAffix(
+                iso_639_3=iso,
+                form="-n",
+                position="suffix",
+                gloss="legacy",
+                target_version_id=None,
+            ),
+            LanguageAffix(
+                iso_639_3=iso,
+                form="o-",
+                position="prefix",
+                gloss="other",
+                target_version_id=test_version_id_2,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    resp = client.delete(
+        f"/{prefix}/tokenizer/training-artifacts/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["affixes_deleted"] == 1
+    assert body["morphemes_deleted"] == 1
+    assert body["training_artifacts_deleted"] == 0  # no row was created above
+
+    db_session.expire_all()
+    morphemes = {
+        row.morpheme
+        for row in db_session.query(LanguageMorpheme).filter(
+            LanguageMorpheme.iso_639_3 == iso
+        )
+    }
+    assert morphemes == {"legacy_null", "other_version"}
+    affixes = {
+        row.form
+        for row in db_session.query(LanguageAffix).filter(
+            LanguageAffix.iso_639_3 == iso
+        )
+    }
+    assert affixes == {"-n", "o-"}
+
+    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
+
+
+def test_delete_training_artifacts_idempotent_when_nothing_exists(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Calling DELETE on a version with no artifacts returns 200 with
+    zero counts — rebuild semantics are 'ensure nothing exists', not
+    'something was there'."""
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    resp = client.delete(
+        f"/{prefix}/tokenizer/training-artifacts/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "target_version_id": version_id,
+        "training_artifacts_deleted": 0,
+        "affixes_deleted": 0,
+        "morphemes_deleted": 0,
+    }
+
+
+def test_delete_training_artifacts_403_when_user_lacks_version_access(
+    client, regular_token2, test_revision_id, db_session
+):
+    """A user without access to the version can't clear its artifacts.
+    Same 403-for-unknown-version pattern as the Phase 2 GET endpoints."""
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    resp = client.delete(
+        f"/{prefix}/tokenizer/training-artifacts/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_delete_training_artifacts_403_when_version_unknown(
+    client, regular_token1, db_session
+):
+    resp = client.delete(
+        f"/{prefix}/tokenizer/training-artifacts/999999999",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_delete_training_artifacts_admin_gets_404_for_unknown_version(
+    client, admin_token, db_session
+):
+    """Admins bypass the auth helper, so they reach the version lookup
+    and get a real 404 for non-existent versions — matches the Phase 2
+    GET endpoint behavior."""
+    resp = client.delete(
+        f"/{prefix}/tokenizer/training-artifacts/999999999",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_delete_training_artifacts_does_not_touch_lexeme_cards(
+    client, regular_token1, test_revision_id, db_session
+):
+    """The DELETE clears tokenizer artifacts only — agent_lexeme_card
+    rows belonging to the same version stay intact (they have their
+    own DELETE endpoint per the Phase 4 contract). Pins this invariant
+    so a future refactor that adds an accidental cascade through some
+    relationship would be caught immediately."""
+    from database.models import AgentLexemeCard
+
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.flush()
+    db_session.add(
+        TrainingArtifact(target_version_id=version_id, grammar_sketch="to-be-cleared")
+    )
+    db_session.add(
+        AgentLexemeCard(
+            target_lemma="staysput",
+            source_version_id=version_id,
+            target_version_id=version_id,
+            source_language_iso=iso,
+        )
+    )
+    db_session.commit()
+
+    resp = client.delete(
+        f"/{prefix}/tokenizer/training-artifacts/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["training_artifacts_deleted"] == 1
+
+    db_session.expire_all()
+    card = (
+        db_session.query(AgentLexemeCard)
+        .filter(AgentLexemeCard.target_lemma == "staysput")
+        .one_or_none()
+    )
+    assert card is not None, "Lexeme card was incorrectly deleted by the rebuild DELETE"
+
+    db_session.query(AgentLexemeCard).filter(
+        AgentLexemeCard.target_lemma == "staysput"
+    ).delete()
+    db_session.commit()
+    _cleanup(db_session, version_id, iso)
+
+
+def test_delete_training_artifacts_cascades_to_word_morpheme_index(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Deleting a version-stamped morpheme cascades through
+    `word_morpheme_index.morpheme_id` (declared `ondelete=CASCADE`).
+    The DELETE response count reflects morpheme deletions only — but
+    dependent index rows must also go, or queries against them
+    post-rebuild would return ghosts. Pins the cascade behavior so an
+    FK weakening (CASCADE → SET NULL / DEFAULT) would fail here."""
+    from database.models import WordMorphemeIndex
+
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.flush()
+    morpheme = LanguageMorpheme(
+        iso_639_3=iso,
+        morpheme="indexed",
+        morpheme_class="LEXICAL",
+        target_version_id=version_id,
+    )
+    db_session.add(morpheme)
+    db_session.flush()
+    db_session.add(
+        WordMorphemeIndex(
+            iso_639_3=iso,
+            word="indexed-word",
+            morpheme_id=morpheme.id,
+            position=0,
+            total_morphemes=1,
+        )
+    )
+    db_session.commit()
+    morpheme_id = morpheme.id
+
+    resp = client.delete(
+        f"/{prefix}/tokenizer/training-artifacts/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["morphemes_deleted"] == 1
+
+    db_session.expire_all()
+    assert (
+        db_session.query(WordMorphemeIndex)
+        .filter(WordMorphemeIndex.morpheme_id == morpheme_id)
+        .count()
+        == 0
+    ), "WordMorphemeIndex rows should cascade-delete with the morpheme"
+
+    _cleanup(db_session, version_id, iso)

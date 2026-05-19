@@ -19,6 +19,7 @@ from database.models import (
     BibleRevision,
     BibleVersion,
     IsoLanguage,
+    LanguageAffix,
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
@@ -46,6 +47,7 @@ from models import (
     TokenizerRunOut,
     TokenizerRunRequest,
     TrainingArtifactOut,
+    TrainingArtifactsDeleteResponse,
     WordIndexRequest,
     WordIndexResponse,
 )
@@ -294,6 +296,103 @@ async def get_training_artifacts(
             "version_id": version_id,
             "iso": iso,
             "source": response.source,
+            "duration_s": duration,
+        },
+    )
+    return response
+
+
+@router.delete(
+    "/tokenizer/training-artifacts/{version_id}",
+    response_model=TrainingArtifactsDeleteResponse,
+)
+async def delete_training_artifacts(
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Clear agent-discovered tokenizer artifacts for a single bible_version.
+
+    Deletes (atomically, in one transaction):
+    - the `training_artifacts` row for this version (per-version
+      grammar_sketch / source_model)
+    - `language_affixes` rows where `target_version_id == version_id`
+    - `language_morphemes` rows where `target_version_id == version_id`
+
+    Legacy `target_version_id IS NULL` rows and rows stamped to other
+    versions of the same ISO are left intact, so other versions'
+    soft-union reads stay consistent. Lexeme cards are also untouched
+    — they have their own DELETE endpoint.
+
+    This is the primitive that backs aqua-assessments' `build_mode=
+    "rebuild"`: clear the version-scoped artifacts, then re-run `auto`
+    against a fresh slate. (Phase 4 of issue #687.)
+
+    Status codes:
+    - 200: returns row counts deleted (zeros if nothing existed —
+      idempotent)
+    - 403: caller is not authorized for this version — also returned
+      for non-existent version_ids when the caller is a regular user
+      (consistent with the GET endpoints; prevents enumeration)
+    - 404: admin caller requesting a version_id that doesn't exist
+    """
+    request_start = time.perf_counter()
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
+
+    version_lookup = await db.execute(
+        select(BibleVersion.id).where(BibleVersion.id == version_id)
+    )
+    if version_lookup.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No bible_version with id {version_id}",
+        )
+
+    try:
+        artifact_result = await db.execute(
+            delete(TrainingArtifact).where(
+                TrainingArtifact.target_version_id == version_id
+            )
+        )
+        affix_result = await db.execute(
+            delete(LanguageAffix).where(LanguageAffix.target_version_id == version_id)
+        )
+        morpheme_result = await db.execute(
+            delete(LanguageMorpheme).where(
+                LanguageMorpheme.target_version_id == version_id
+            )
+        )
+        await db.commit()
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error("Failed to delete training artifacts", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {e}",
+        ) from e
+
+    response = TrainingArtifactsDeleteResponse(
+        target_version_id=version_id,
+        training_artifacts_deleted=artifact_result.rowcount or 0,
+        affixes_deleted=affix_result.rowcount or 0,
+        morphemes_deleted=morpheme_result.rowcount or 0,
+    )
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"delete_training_artifacts completed in {duration}s",
+        extra={
+            "method": "DELETE",
+            "path": "/tokenizer/training-artifacts/{version_id}",
+            "version_id": version_id,
+            "training_artifacts_deleted": response.training_artifacts_deleted,
+            "affixes_deleted": response.affixes_deleted,
+            "morphemes_deleted": response.morphemes_deleted,
             "duration_s": duration,
         },
     )
