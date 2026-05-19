@@ -22,6 +22,7 @@ from database.models import (
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
+    TrainingArtifacts,
 )
 from database.models import UserDB as UserModel
 from database.models import (
@@ -133,6 +134,28 @@ async def upsert_language_profile(
         },
     )
     return LanguageProfileOut.model_validate(profile)
+
+
+async def _upsert_training_artifacts(
+    db: AsyncSession,
+    target_version_id: int,
+    grammar_sketch: str,
+    source_model: Optional[str],
+) -> None:
+    stmt = pg_insert(TrainingArtifacts).values(
+        target_version_id=target_version_id,
+        grammar_sketch=grammar_sketch,
+        source_model=source_model,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["target_version_id"],
+        set_={
+            "grammar_sketch": stmt.excluded.grammar_sketch,
+            "source_model": stmt.excluded.source_model,
+            "updated_at": datetime.datetime.utcnow(),
+        },
+    )
+    await db.execute(stmt)
 
 
 async def _upsert_profile(
@@ -272,10 +295,13 @@ async def commit_tokenizer_run(
             detail=f"Unknown ISO 639-3 code '{iso}'",
         )
 
-    revision_exists = await db.execute(
-        select(BibleRevision.id).where(BibleRevision.id == payload.revision_id)
+    revision_lookup = await db.execute(
+        select(BibleRevision.bible_version_id).where(
+            BibleRevision.id == payload.revision_id
+        )
     )
-    if revision_exists.scalar_one_or_none() is None:
+    target_version_id = revision_lookup.scalar_one_or_none()
+    if target_version_id is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Unknown revision_id {payload.revision_id}",
@@ -284,6 +310,13 @@ async def commit_tokenizer_run(
     try:
         if payload.profile is not None:
             await _upsert_profile(db, iso, payload.profile)
+            if payload.profile.grammar_sketch is not None:
+                await _upsert_training_artifacts(
+                    db,
+                    target_version_id=target_version_id,
+                    grammar_sketch=payload.profile.grammar_sketch,
+                    source_model=payload.source_model,
+                )
         else:
             existing = await db.execute(
                 select(LanguageProfile.iso_639_3).where(
@@ -354,6 +387,7 @@ async def commit_tokenizer_run(
                             "morpheme": morpheme,
                             "morpheme_class": cls,
                             "first_seen_revision_id": payload.revision_id,
+                            "target_version_id": target_version_id,
                         }
                     )
 

@@ -3,9 +3,11 @@
 import unicodedata
 
 from database.models import (
+    BibleRevision,
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
+    TrainingArtifacts,
     VerseMorphemeIndex,
     VerseText,
     WordMorphemeIndex,
@@ -41,6 +43,15 @@ def _cleanup(db_session):
         db_session.query(LanguageProfile).filter(
             LanguageProfile.iso_639_3 == iso
         ).delete()
+    db_session.commit()
+
+
+def _cleanup_training_artifacts(db_session, version_ids):
+    if not version_ids:
+        return
+    db_session.query(TrainingArtifacts).filter(
+        TrainingArtifacts.target_version_id.in_(version_ids)
+    ).delete(synchronize_session="fetch")
     db_session.commit()
 
 
@@ -1159,4 +1170,144 @@ def test_word_index_idempotency(client, regular_token1, test_revision_id, db_ses
     assert resp2.json() == data1
 
     _cleanup_verses(db_session, vt_objs)
+    _cleanup(db_session)
+
+
+def _resolve_version_id(db_session, revision_id):
+    return (
+        db_session.query(BibleRevision.bible_version_id)
+        .filter(BibleRevision.id == revision_id)
+        .scalar()
+    )
+
+
+def test_tokenizer_run_populates_target_version_id(
+    client, regular_token1, test_revision_id, db_session
+):
+    """commit_tokenizer_run dual-writes target_version_id on new morpheme rows
+    (Phase 1 of issue #687)."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    expected_version_id = _resolve_version_id(db_session, test_revision_id)
+    assert expected_version_id is not None
+
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [{"morpheme": "alpha", "morpheme_class": "LEXICAL"}],
+            profile={"name": "Swahili"},
+        ),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    row = (
+        db_session.query(LanguageMorpheme)
+        .filter(
+            LanguageMorpheme.iso_639_3 == TEST_ISO,
+            LanguageMorpheme.morpheme == "alpha",
+        )
+        .one()
+    )
+    assert row.target_version_id == expected_version_id
+
+    _cleanup(db_session)
+
+
+def test_tokenizer_run_dual_writes_training_artifacts(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Posting a tokenizer run with a grammar_sketch upserts a training_artifacts
+    row keyed on the bible_version of the revision."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    db_session.query(TrainingArtifacts).filter(
+        TrainingArtifacts.target_version_id == version_id
+    ).delete()
+    db_session.commit()
+
+    profile = {"name": "Swahili", "grammar_sketch": "draft v1"}
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [{"morpheme": "beta", "morpheme_class": "LEXICAL"}],
+            profile=profile,
+        ),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    artifact = (
+        db_session.query(TrainingArtifacts)
+        .filter(TrainingArtifacts.target_version_id == version_id)
+        .one()
+    )
+    assert artifact.grammar_sketch == "draft v1"
+    assert artifact.source_model == "gpt-5-mini"
+
+    # A second run with a refreshed sketch upserts in place.
+    profile2 = {"name": "Swahili", "grammar_sketch": "draft v2"}
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [{"morpheme": "gamma", "morpheme_class": "LEXICAL"}],
+            profile=profile2,
+        ),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    refreshed = (
+        db_session.query(TrainingArtifacts)
+        .filter(TrainingArtifacts.target_version_id == version_id)
+        .one()
+    )
+    assert refreshed.grammar_sketch == "draft v2"
+
+    db_session.query(TrainingArtifacts).filter(
+        TrainingArtifacts.target_version_id == version_id
+    ).delete()
+    db_session.commit()
+    _cleanup(db_session)
+
+
+def test_tokenizer_run_no_grammar_sketch_skips_training_artifacts(
+    client, regular_token1, test_revision_id, db_session
+):
+    """When the run's profile has no grammar_sketch, no training_artifacts row
+    is created — the dual-write is opt-in on grammar_sketch."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    db_session.query(TrainingArtifacts).filter(
+        TrainingArtifacts.target_version_id == version_id
+    ).delete()
+    db_session.commit()
+
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [{"morpheme": "delta", "morpheme_class": "LEXICAL"}],
+            profile={"name": "Swahili"},
+        ),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    assert (
+        db_session.query(TrainingArtifacts)
+        .filter(TrainingArtifacts.target_version_id == version_id)
+        .one_or_none()
+        is None
+    )
+
     _cleanup(db_session)
