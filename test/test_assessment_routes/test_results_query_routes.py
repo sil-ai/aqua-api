@@ -1,3 +1,6 @@
+import dataclasses
+from datetime import date
+
 import pandas as pd
 import pytest
 
@@ -14,54 +17,105 @@ from database.models import (
 )
 
 
-def setup_assessments_results(db_session):
-    """Setup reference data and ISO codes."""
-    # Check if data is already loaded
-    existing_assessment = db_session.query(Assessment).first()
-    if existing_assessment:
-        return existing_assessment.id
+@dataclasses.dataclass(frozen=True)
+class AssessmentsDataset:
+    """IDs of the rows created by the `assessments_dataset` fixture.
 
-    # Load data from CSV files for assessments and assessment results
-    assessment_df = pd.read_csv("fixtures/assessments.txt", sep="\t")
-    assessment_result_df = pd.read_json(
+    Tests reference these instead of hardcoding the fixture-file IDs the
+    previous setup helper used (115/505/138/772/3863). Auto-incremented
+    IDs are robust to whatever state earlier test modules left the
+    bible_version / bible_revision / assessment sequences in.
+    """
+
+    assessment_id: int
+    revision_id: int
+    reference_id: int
+    revision_version_id: int
+    reference_version_id: int
+
+
+@pytest.fixture(scope="module")
+def assessments_dataset(test_db_session):
+    """Word-alignment assessment + ~2150 AssessmentResult rows from
+    fixtures/assessment_results.json, with auto-incremented IDs.
+
+    Module-scoped so the JSON load only runs once per test module. Tests
+    are read-only against this dataset; if a test needs to mutate, it
+    should create its own assessment.
+    """
+    user = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group = test_db_session.query(Group).first()
+
+    revision_version = BibleVersion(
+        name="Ngoreme",
+        iso_language="ngq",
+        iso_script="Latn",
+        abbreviation="ngq-ngqNT",
+        owner_id=user.id if user else None,
+    )
+    reference_version = BibleVersion(
+        name="Swahili Neno (reference)",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="system_swh-ONEN",
+        owner_id=user.id if user else None,
+    )
+    test_db_session.add_all([revision_version, reference_version])
+    test_db_session.flush()
+
+    revision = BibleRevision(
+        date=date(2023, 1, 23),
+        bible_version_id=revision_version.id,
+        published=False,
+    )
+    reference = BibleRevision(
+        date=date(2023, 2, 3),
+        bible_version_id=reference_version.id,
+        published=True,
+    )
+    test_db_session.add_all([revision, reference])
+    test_db_session.flush()
+
+    assessment = Assessment(
+        revision_id=revision.id,
+        reference_id=reference.id,
+        type="word-alignment",
+        status="finished",
+    )
+    test_db_session.add(assessment)
+    test_db_session.flush()
+
+    test_db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=revision_version.id, group_id=group.id),
+            BibleVersionAccess(
+                bible_version_id=reference_version.id, group_id=group.id
+            ),
+        ]
+    )
+
+    # Remap assessment_id; drop fixture row IDs so auto-increment handles
+    # them, avoiding any collision with assessment_result_id_seq state.
+    result_df = pd.read_json(
         "fixtures/assessment_results.json", orient="records", lines=True
     )
-    revision_df = pd.read_csv("fixtures/revision_for_assessment.txt", sep="\t")
-    version_df = pd.read_csv("fixtures/version_for_assessment.txt", sep="\t")
+    result_df = result_df.drop(columns=["id"], errors="ignore")
+    result_df["assessment_id"] = assessment.id
+    for _, row in result_df.iterrows():
+        test_db_session.add(AssessmentResult(**row.to_dict()))
+    test_db_session.commit()
 
-    user = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
-    user_id = user.id if user else None
-    version_df["owner_id"] = user_id
-    # Populate assessment and assessment results tables
-    for _, row in version_df.iterrows():
-        db_session.add(BibleVersion(**row.to_dict()))
-    for _, row in revision_df.iterrows():
-        db_session.add(BibleRevision(**row.to_dict()))
-    for _, row in assessment_df.iterrows():
-        db_session.add(Assessment(**row.to_dict()))
-    for _, row in assessment_result_df.iterrows():
-        db_session.add(AssessmentResult(**row.to_dict()))
-    db_session.commit()
-
-    # Add access from group 1 to the bible version in bible version access
-    group = db_session.query(Group.id).first()
-
-    revision_access = BibleVersionAccess(bible_version_id=115, group_id=group[0])
-    db_session.add(revision_access)
-
-    reference_access = BibleVersionAccess(bible_version_id=505, group_id=group[0])
-
-    assessments = db_session.query(Assessment.id).first()
-    first_assessment_id = assessments[0]
-
-    db_session.add(reference_access)
-    db_session.commit()
-
-    return first_assessment_id
+    return AssessmentsDataset(
+        assessment_id=assessment.id,
+        revision_id=revision.id,
+        reference_id=reference.id,
+        revision_version_id=revision_version.id,
+        reference_version_id=reference_version.id,
+    )
 
 
-def test_regular_user_flow(client, regular_token1, regular_token2, test_db_session):
-    first_assessment_id = setup_assessments_results(test_db_session)
+def test_regular_user_flow(client, regular_token1, regular_token2, assessments_dataset):
+    first_assessment_id = assessments_dataset.assessment_id
     params = {
         "assessment_id": first_assessment_id,
         "aggregate": "chapter",
@@ -145,21 +199,16 @@ def test_regular_user_flow(client, regular_token1, regular_token2, test_db_sessi
     assert response.status_code == 403
 
 
-def setup_alignment_data(db_session, assessment_id):
-    """Setup alignment top source scores data for testing textalignmentmatches."""
-    # Check if alignment data already exists for this assessment
-    existing_data = (
-        db_session.query(AlignmentTopSourceScores)
-        .filter(AlignmentTopSourceScores.assessment_id == assessment_id)
-        .first()
-    )
+@pytest.fixture(scope="module")
+def alignment_data(test_db_session, assessments_dataset):
+    """AlignmentTopSourceScores rows for the assessments_dataset assessment.
 
-    if existing_data:
-        return  # Data already set up
-
-    # Create realistic alignment data with multiple source words and their targets
-    # This simulates word alignment scores from a word-alignment assessment
-
+    Realistic word-alignment shape: a handful of source words with one
+    or more target translations and scores. Padded with extra rows so
+    each well-supported word clears the min_support filter the API
+    applies (~20.0 score sum). Returns the dataset for convenience.
+    """
+    assessment_id = assessments_dataset.assessment_id
     alignment_data = [
         # Word "god" aligns strongly to "dios" and weakly to "señor"
         {
@@ -424,29 +473,21 @@ def setup_alignment_data(db_session, assessment_id):
             ]
         )
 
-    # Set all vrefs to None to avoid foreign key constraint issues with test data
     for data in alignment_data:
         data["vref"] = None
-        db_session.add(AlignmentTopSourceScores(**data))
+        test_db_session.add(AlignmentTopSourceScores(**data))
 
-    db_session.commit()
+    test_db_session.commit()
+    return assessments_dataset
 
 
-def test_textalignmentmatches_basic(client, regular_token1, test_db_session):
+def test_textalignmentmatches_basic(client, regular_token1, alignment_data):
     """Test basic functionality of the textalignmentmatches endpoint."""
-    first_assessment_id = setup_assessments_results(test_db_session)
-    setup_alignment_data(test_db_session, first_assessment_id)
-
-    # Get revision_id and reference_id from the assessment
-    assessment = (
-        test_db_session.query(Assessment)
-        .filter(Assessment.id == first_assessment_id)
-        .first()
-    )
+    first_assessment_id = alignment_data.assessment_id
 
     params = {
-        "revision_id": assessment.revision_id,
-        "reference_id": assessment.reference_id,
+        "revision_id": alignment_data.revision_id,
+        "reference_id": alignment_data.reference_id,
     }
 
     response = client.get(
@@ -487,21 +528,14 @@ def test_textalignmentmatches_basic(client, regular_token1, test_db_session):
         assert result["support_hits"] >= 0
 
 
-def test_textalignmentmatches_top_k_parameter(client, regular_token1, test_db_session):
+def test_textalignmentmatches_top_k_parameter(client, regular_token1, alignment_data):
     """Test that the top_k parameter correctly limits results per source word."""
-    first_assessment_id = setup_assessments_results(test_db_session)
-    setup_alignment_data(test_db_session, first_assessment_id)
-
-    assessment = (
-        test_db_session.query(Assessment)
-        .filter(Assessment.id == first_assessment_id)
-        .first()
-    )
+    first_assessment_id = alignment_data.assessment_id
 
     # Test with top_k=1 (only best match per source)
     params = {
-        "revision_id": assessment.revision_id,
-        "reference_id": assessment.reference_id,
+        "revision_id": alignment_data.revision_id,
+        "reference_id": alignment_data.reference_id,
         "top_k": 1,
     }
 
@@ -535,22 +569,15 @@ def test_textalignmentmatches_top_k_parameter(client, regular_token1, test_db_se
 
 
 def test_textalignmentmatches_min_support_filter(
-    client, regular_token1, test_db_session
+    client, regular_token1, alignment_data
 ):
     """Test that min_support parameter filters out low-support source words."""
-    first_assessment_id = setup_assessments_results(test_db_session)
-    setup_alignment_data(test_db_session, first_assessment_id)
-
-    assessment = (
-        test_db_session.query(Assessment)
-        .filter(Assessment.id == first_assessment_id)
-        .first()
-    )
+    first_assessment_id = alignment_data.assessment_id
 
     # Test with very high min_support - should get fewer results
     params = {
-        "revision_id": assessment.revision_id,
-        "reference_id": assessment.reference_id,
+        "revision_id": alignment_data.revision_id,
+        "reference_id": alignment_data.reference_id,
         "min_support": 100.0,  # High threshold
     }
 
@@ -583,22 +610,15 @@ def test_textalignmentmatches_min_support_filter(
 
 
 def test_textalignmentmatches_min_probability_filter(
-    client, regular_token1, test_db_session
+    client, regular_token1, alignment_data
 ):
     """Test that min_probability parameter filters out low-probability alignments."""
-    first_assessment_id = setup_assessments_results(test_db_session)
-    setup_alignment_data(test_db_session, first_assessment_id)
-
-    assessment = (
-        test_db_session.query(Assessment)
-        .filter(Assessment.id == first_assessment_id)
-        .first()
-    )
+    first_assessment_id = alignment_data.assessment_id
 
     # Test with high min_probability
     params = {
-        "revision_id": assessment.revision_id,
-        "reference_id": assessment.reference_id,
+        "revision_id": alignment_data.revision_id,
+        "reference_id": alignment_data.reference_id,
         "min_probability": 0.7,
     }
 
@@ -617,21 +637,14 @@ def test_textalignmentmatches_min_probability_filter(
 
 
 def test_textalignmentmatches_authorization(
-    client, regular_token1, regular_token2, test_db_session
+    client, regular_token1, regular_token2, alignment_data
 ):
     """Test that authorization is properly enforced."""
-    first_assessment_id = setup_assessments_results(test_db_session)
-    setup_alignment_data(test_db_session, first_assessment_id)
-
-    assessment = (
-        test_db_session.query(Assessment)
-        .filter(Assessment.id == first_assessment_id)
-        .first()
-    )
+    first_assessment_id = alignment_data.assessment_id
 
     params = {
-        "revision_id": assessment.revision_id,
-        "reference_id": assessment.reference_id,
+        "revision_id": alignment_data.revision_id,
+        "reference_id": alignment_data.reference_id,
     }
 
     # First user should have access
@@ -652,10 +665,9 @@ def test_textalignmentmatches_authorization(
 
 
 def test_textalignmentmatches_no_assessment_found(
-    client, regular_token1, test_db_session
+    client, regular_token1, assessments_dataset
 ):
     """Test that 404 is returned when no matching assessment exists."""
-    setup_assessments_results(test_db_session)
 
     # Use non-existent revision/reference combination
     params = {
@@ -673,20 +685,13 @@ def test_textalignmentmatches_no_assessment_found(
     assert "No completed word-alignment assessment found" in response.json()["detail"]
 
 
-def test_textalignmentmatches_strength_metrics(client, regular_token1, test_db_session):
+def test_textalignmentmatches_strength_metrics(client, regular_token1, alignment_data):
     """Test that strength metrics are calculated and present in results."""
-    first_assessment_id = setup_assessments_results(test_db_session)
-    setup_alignment_data(test_db_session, first_assessment_id)
-
-    assessment = (
-        test_db_session.query(Assessment)
-        .filter(Assessment.id == first_assessment_id)
-        .first()
-    )
+    first_assessment_id = alignment_data.assessment_id
 
     params = {
-        "revision_id": assessment.revision_id,
-        "reference_id": assessment.reference_id,
+        "revision_id": alignment_data.revision_id,
+        "reference_id": alignment_data.reference_id,
     }
 
     response = client.get(
@@ -713,16 +718,10 @@ def test_textalignmentmatches_strength_metrics(client, regular_token1, test_db_s
         assert isinstance(result["strength_confidence"], (int, float))
 
 
-def setup_threshold_score_data(db_session, assessment_id):
-    """Insert a small set of alignment_threshold_scores rows for an assessment."""
-    existing = (
-        db_session.query(AlignmentThresholdScores)
-        .filter(AlignmentThresholdScores.assessment_id == assessment_id)
-        .first()
-    )
-    if existing:
-        return  # Data already set up
-
+@pytest.fixture(scope="module")
+def threshold_score_data(test_db_session, assessments_dataset):
+    """AlignmentThresholdScores rows for the assessments_dataset assessment."""
+    assessment_id = assessments_dataset.assessment_id
     threshold_rows = [
         {
             "assessment_id": assessment_id,
@@ -752,19 +751,23 @@ def setup_threshold_score_data(db_session, assessment_id):
         },
     ]
     for row in threshold_rows:
-        db_session.add(AlignmentThresholdScores(**row))
-    db_session.commit()
+        test_db_session.add(AlignmentThresholdScores(**row))
+    test_db_session.commit()
+    return assessments_dataset
 
 
 def test_alignmentscores_score_type(
-    client, regular_token1, regular_token2, test_db_session
+    client,
+    regular_token1,
+    regular_token2,
+    test_db_session,
+    alignment_data,
+    threshold_score_data,
 ):
     """`/v3/alignmentscores` returns top-source rows by default and threshold rows
     when score_type=threshold; book/chapter/verse filters, pagination, and auth
     apply uniformly to both tables."""
-    first_assessment_id = setup_assessments_results(test_db_session)
-    setup_alignment_data(test_db_session, first_assessment_id)
-    setup_threshold_score_data(test_db_session, first_assessment_id)
+    first_assessment_id = alignment_data.assessment_id
 
     top_count = (
         test_db_session.query(AlignmentTopSourceScores)
@@ -877,77 +880,50 @@ def test_alignmentscores_score_type(
     assert response.status_code == 422
 
 
-def setup_text_lengths_data(db_session):
-    """Setup text lengths assessments and data for testing compare_text_lengths."""
+@dataclasses.dataclass(frozen=True)
+class TextLengthsDataset:
+    """IDs created by the `text_lengths_data` fixture."""
+
+    revision_id: int
+    reference_id: int
+    revision_assessment_id: int
+    reference_assessment_id: int
+
+
+@pytest.fixture(scope="module")
+def text_lengths_data(test_db_session, assessments_dataset):
+    """Two text-lengths Assessment rows (one per revision) plus
+    TextLengthsTable rows with zero values arranged to exercise verse
+    range merging in /v3/compare_text_lengths.
+    """
     from database.models import TextLengthsTable
 
-    # Check if data already exists
-    existing_data = db_session.query(TextLengthsTable).first()
-    if existing_data:
-        return
-
-    # Get existing revisions from setup_assessments_results
-    revision = db_session.query(BibleRevision).filter(BibleRevision.id == 115).first()
-    reference = db_session.query(BibleRevision).filter(BibleRevision.id == 505).first()
-
-    if not revision or not reference:
-        # Create minimal revision and reference if they don't exist
-        user = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
-        if not revision:
-            # Check if BibleVersion already exists
-            existing_version = (
-                db_session.query(BibleVersion).filter(BibleVersion.id == 115).first()
-            )
-            if not existing_version:
-                version = BibleVersion(
-                    id=115, abbreviation="REV", name="Revision", owner_id=user.id
-                )
-                db_session.add(version)
-            revision = BibleRevision(id=115, bible_version_id=115)
-            db_session.add(revision)
-        if not reference:
-            # Check if BibleVersion already exists
-            existing_version = (
-                db_session.query(BibleVersion).filter(BibleVersion.id == 505).first()
-            )
-            if not existing_version:
-                version = BibleVersion(
-                    id=505, abbreviation="REF", name="Reference", owner_id=user.id
-                )
-                db_session.add(version)
-            reference = BibleRevision(id=505, bible_version_id=505)
-            db_session.add(reference)
-        db_session.commit()
-
-    # Create text-lengths assessments for revision and reference
     revision_assessment = Assessment(
-        id=1001,
-        revision_id=115,
+        revision_id=assessments_dataset.revision_id,
         reference_id=None,
         type="text-lengths",
         status="finished",
         assessment_version="1",
     )
-
     reference_assessment = Assessment(
-        id=1002,
-        revision_id=505,
+        revision_id=assessments_dataset.reference_id,
         reference_id=None,
         type="text-lengths",
         status="finished",
         assessment_version="1",
     )
+    test_db_session.add_all([revision_assessment, reference_assessment])
+    test_db_session.flush()
 
-    db_session.add(revision_assessment)
-    db_session.add(reference_assessment)
-    db_session.commit()
+    rev_aid = revision_assessment.id
+    ref_aid = reference_assessment.id
 
     # Create text lengths data with some zero values to test verse range merging
     # Note: Revision and reference have zeros in DIFFERENT places to test realistic scenarios
     # Revision data (GAL 1:1-10)
     revision_data = [
         {
-            "assessment_id": 1001,
+            "assessment_id": rev_aid,
             "vref": "GAL 1:1",
             "word_lengths": 10,
             "char_lengths": 50,
@@ -955,7 +931,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.3,
         },
         {
-            "assessment_id": 1001,
+            "assessment_id": rev_aid,
             "vref": "GAL 1:2",
             "word_lengths": 0,
             "char_lengths": 0,
@@ -963,7 +939,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.0,
         },  # Zero in revision
         {
-            "assessment_id": 1001,
+            "assessment_id": rev_aid,
             "vref": "GAL 1:3",
             "word_lengths": 0,
             "char_lengths": 0,
@@ -971,7 +947,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.0,
         },  # Zero in revision
         {
-            "assessment_id": 1001,
+            "assessment_id": rev_aid,
             "vref": "GAL 1:4",
             "word_lengths": 15,
             "char_lengths": 75,
@@ -979,7 +955,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.8,
         },
         {
-            "assessment_id": 1001,
+            "assessment_id": rev_aid,
             "vref": "GAL 1:5",
             "word_lengths": 12,
             "char_lengths": 60,
@@ -987,7 +963,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.5,
         },
         {
-            "assessment_id": 1001,
+            "assessment_id": rev_aid,
             "vref": "GAL 1:6",
             "word_lengths": 8,
             "char_lengths": 40,
@@ -995,7 +971,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.1,
         },
         {
-            "assessment_id": 1001,
+            "assessment_id": rev_aid,
             "vref": "GAL 1:7",
             "word_lengths": 0,
             "char_lengths": 0,
@@ -1003,7 +979,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.0,
         },  # Zero in revision
         {
-            "assessment_id": 1001,
+            "assessment_id": rev_aid,
             "vref": "GAL 1:8",
             "word_lengths": 14,
             "char_lengths": 70,
@@ -1011,7 +987,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.7,
         },
         {
-            "assessment_id": 1001,
+            "assessment_id": rev_aid,
             "vref": "GAL 1:9",
             "word_lengths": 11,
             "char_lengths": 55,
@@ -1019,7 +995,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.4,
         },
         {
-            "assessment_id": 1001,
+            "assessment_id": rev_aid,
             "vref": "GAL 1:10",
             "word_lengths": 13,
             "char_lengths": 65,
@@ -1031,7 +1007,7 @@ def setup_text_lengths_data(db_session):
     # Reference data (GAL 1:1-10) - zeros in DIFFERENT verses than revision
     reference_data = [
         {
-            "assessment_id": 1002,
+            "assessment_id": ref_aid,
             "vref": "GAL 1:1",
             "word_lengths": 9,
             "char_lengths": 45,
@@ -1039,7 +1015,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.2,
         },
         {
-            "assessment_id": 1002,
+            "assessment_id": ref_aid,
             "vref": "GAL 1:2",
             "word_lengths": 8,
             "char_lengths": 40,
@@ -1047,7 +1023,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.1,
         },  # Non-zero in reference
         {
-            "assessment_id": 1002,
+            "assessment_id": ref_aid,
             "vref": "GAL 1:3",
             "word_lengths": 0,
             "char_lengths": 0,
@@ -1055,7 +1031,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.0,
         },  # Zero in reference (and in revision)
         {
-            "assessment_id": 1002,
+            "assessment_id": ref_aid,
             "vref": "GAL 1:4",
             "word_lengths": 14,
             "char_lengths": 70,
@@ -1063,7 +1039,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.7,
         },
         {
-            "assessment_id": 1002,
+            "assessment_id": ref_aid,
             "vref": "GAL 1:5",
             "word_lengths": 0,
             "char_lengths": 0,
@@ -1071,7 +1047,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.0,
         },  # Zero in reference (not in revision)
         {
-            "assessment_id": 1002,
+            "assessment_id": ref_aid,
             "vref": "GAL 1:6",
             "word_lengths": 7,
             "char_lengths": 35,
@@ -1079,7 +1055,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.0,
         },
         {
-            "assessment_id": 1002,
+            "assessment_id": ref_aid,
             "vref": "GAL 1:7",
             "word_lengths": 9,
             "char_lengths": 45,
@@ -1087,7 +1063,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.2,
         },  # Non-zero in reference
         {
-            "assessment_id": 1002,
+            "assessment_id": ref_aid,
             "vref": "GAL 1:8",
             "word_lengths": 13,
             "char_lengths": 65,
@@ -1095,7 +1071,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.6,
         },
         {
-            "assessment_id": 1002,
+            "assessment_id": ref_aid,
             "vref": "GAL 1:9",
             "word_lengths": 0,
             "char_lengths": 0,
@@ -1103,7 +1079,7 @@ def setup_text_lengths_data(db_session):
             "char_lengths_z": 0.0,
         },  # Zero in reference (not in revision)
         {
-            "assessment_id": 1002,
+            "assessment_id": ref_aid,
             "vref": "GAL 1:10",
             "word_lengths": 12,
             "char_lengths": 60,
@@ -1116,7 +1092,7 @@ def setup_text_lengths_data(db_session):
     revision_data.extend(
         [
             {
-                "assessment_id": 1001,
+                "assessment_id": rev_aid,
                 "vref": "EPH 1:1",
                 "word_lengths": 9,
                 "char_lengths": 45,
@@ -1124,7 +1100,7 @@ def setup_text_lengths_data(db_session):
                 "char_lengths_z": 0.2,
             },
             {
-                "assessment_id": 1001,
+                "assessment_id": rev_aid,
                 "vref": "EPH 1:2",
                 "word_lengths": 10,
                 "char_lengths": 50,
@@ -1137,7 +1113,7 @@ def setup_text_lengths_data(db_session):
     reference_data.extend(
         [
             {
-                "assessment_id": 1002,
+                "assessment_id": ref_aid,
                 "vref": "EPH 1:1",
                 "word_lengths": 8,
                 "char_lengths": 40,
@@ -1145,7 +1121,7 @@ def setup_text_lengths_data(db_session):
                 "char_lengths_z": 0.1,
             },
             {
-                "assessment_id": 1002,
+                "assessment_id": ref_aid,
                 "vref": "EPH 1:2",
                 "word_lengths": 9,
                 "char_lengths": 45,
@@ -1156,22 +1132,27 @@ def setup_text_lengths_data(db_session):
     )
 
     for data in revision_data:
-        db_session.add(TextLengthsTable(**data))
+        test_db_session.add(TextLengthsTable(**data))
 
     for data in reference_data:
-        db_session.add(TextLengthsTable(**data))
+        test_db_session.add(TextLengthsTable(**data))
 
-    db_session.commit()
+    test_db_session.commit()
+
+    return TextLengthsDataset(
+        revision_id=assessments_dataset.revision_id,
+        reference_id=assessments_dataset.reference_id,
+        revision_assessment_id=rev_aid,
+        reference_assessment_id=ref_aid,
+    )
 
 
-def test_compare_text_lengths_basic(client, regular_token1, test_db_session):
+def test_compare_text_lengths_basic(client, regular_token1, text_lengths_data):
     """Test basic functionality of compare_text_lengths endpoint."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     params = {
-        "revision_id": 115,
-        "reference_id": 505,
+        "revision_id": text_lengths_data.revision_id,
+        "reference_id": text_lengths_data.reference_id,
     }
 
     response = client.get(
@@ -1201,7 +1182,7 @@ def test_compare_text_lengths_basic(client, regular_token1, test_db_session):
 
 
 def test_compare_text_lengths_verse_range_merging(
-    client, regular_token1, test_db_session
+    client, regular_token1, text_lengths_data
 ):
     """Test that zero values trigger verse range merging and summing.
 
@@ -1213,12 +1194,10 @@ def test_compare_text_lengths_verse_range_merging(
 
     The final comparison will show merged ranges where either has zeros.
     """
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     params = {
-        "revision_id": 115,
-        "reference_id": 505,
+        "revision_id": text_lengths_data.revision_id,
+        "reference_id": text_lengths_data.reference_id,
     }
 
     response = client.get(
@@ -1279,15 +1258,13 @@ def test_compare_text_lengths_verse_range_merging(
     )
 
 
-def test_compare_text_lengths_book_filter(client, regular_token1, test_db_session):
+def test_compare_text_lengths_book_filter(client, regular_token1, text_lengths_data):
     """Test filtering results by book."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     # Test with GAL book
     params = {
-        "revision_id": 115,
-        "reference_id": 505,
+        "revision_id": text_lengths_data.revision_id,
+        "reference_id": text_lengths_data.reference_id,
         "book": "GAL",
     }
 
@@ -1329,15 +1306,13 @@ def test_compare_text_lengths_book_filter(client, regular_token1, test_db_sessio
 
 
 def test_compare_text_lengths_chapter_aggregation(
-    client, regular_token1, test_db_session
+    client, regular_token1, text_lengths_data
 ):
     """Test chapter-level aggregation."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     params = {
-        "revision_id": 115,
-        "reference_id": 505,
+        "revision_id": text_lengths_data.revision_id,
+        "reference_id": text_lengths_data.reference_id,
         "aggregate": "chapter",
     }
 
@@ -1366,14 +1341,14 @@ def test_compare_text_lengths_chapter_aggregation(
     assert len(chapter_vrefs) >= 2
 
 
-def test_compare_text_lengths_book_aggregation(client, regular_token1, test_db_session):
+def test_compare_text_lengths_book_aggregation(
+    client, regular_token1, text_lengths_data
+):
     """Test book-level aggregation."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     params = {
-        "revision_id": 115,
-        "reference_id": 505,
+        "revision_id": text_lengths_data.revision_id,
+        "reference_id": text_lengths_data.reference_id,
         "aggregate": "book",
     }
 
@@ -1400,14 +1375,14 @@ def test_compare_text_lengths_book_aggregation(client, regular_token1, test_db_s
     assert "EPH" in book_vrefs
 
 
-def test_compare_text_lengths_text_aggregation(client, regular_token1, test_db_session):
+def test_compare_text_lengths_text_aggregation(
+    client, regular_token1, text_lengths_data
+):
     """Test text-level aggregation (entire text)."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     params = {
-        "revision_id": 115,
-        "reference_id": 505,
+        "revision_id": text_lengths_data.revision_id,
+        "reference_id": text_lengths_data.reference_id,
         "aggregate": "text",
     }
 
@@ -1429,15 +1404,13 @@ def test_compare_text_lengths_text_aggregation(client, regular_token1, test_db_s
     assert result.get("vref") is None
 
 
-def test_compare_text_lengths_pagination(client, regular_token1, test_db_session):
+def test_compare_text_lengths_pagination(client, regular_token1, text_lengths_data):
     """Test pagination of results."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     # Get first page
     params = {
-        "revision_id": 115,
-        "reference_id": 505,
+        "revision_id": text_lengths_data.revision_id,
+        "reference_id": text_lengths_data.reference_id,
         "page": 1,
         "page_size": 3,
     }
@@ -1473,15 +1446,13 @@ def test_compare_text_lengths_pagination(client, regular_token1, test_db_session
 
 
 def test_compare_text_lengths_authorization(
-    client, regular_token1, regular_token2, test_db_session
+    client, regular_token1, regular_token2, text_lengths_data
 ):
     """Test that authorization is properly enforced."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     params = {
-        "revision_id": 115,
-        "reference_id": 505,
+        "revision_id": text_lengths_data.revision_id,
+        "reference_id": text_lengths_data.reference_id,
     }
 
     # First user should have access
@@ -1502,10 +1473,9 @@ def test_compare_text_lengths_authorization(
 
 
 def test_compare_text_lengths_no_assessment_found(
-    client, regular_token1, test_db_session
+    client, regular_token1, assessments_dataset
 ):
     """Test that 404 is returned when no matching assessment exists."""
-    setup_assessments_results(test_db_session)
 
     # Use non-existent revision/reference combination
     params = {
@@ -1524,15 +1494,13 @@ def test_compare_text_lengths_no_assessment_found(
 
 
 def test_compare_text_lengths_difference_calculation(
-    client, regular_token1, test_db_session
+    client, regular_token1, text_lengths_data
 ):
     """Test that differences are correctly calculated (revision - reference)."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     params = {
-        "revision_id": 115,
-        "reference_id": 505,
+        "revision_id": text_lengths_data.revision_id,
+        "reference_id": text_lengths_data.reference_id,
         "book": "GAL",
         "chapter": 1,
         "verse": 4,  # A verse with no zeros
@@ -1562,16 +1530,14 @@ def test_compare_text_lengths_difference_calculation(
 
 
 def test_compare_text_lengths_with_assessment_ids(
-    client, regular_token1, test_db_session
+    client, regular_token1, text_lengths_data
 ):
     """Test compare_text_lengths with assessment IDs instead of revision IDs."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
-    # Use assessment IDs directly (1001 for revision, 1002 for reference)
+    # Use assessment IDs directly (skip the revision/reference lookup path).
     params = {
-        "revision_assessment_id": 1001,
-        "reference_assessment_id": 1002,
+        "revision_assessment_id": text_lengths_data.revision_assessment_id,
+        "reference_assessment_id": text_lengths_data.reference_assessment_id,
     }
 
     response = client.get(
@@ -1601,17 +1567,15 @@ def test_compare_text_lengths_with_assessment_ids(
 
 
 def test_compare_text_lengths_mixed_id_types_error(
-    client, regular_token1, test_db_session
+    client, regular_token1, text_lengths_data
 ):
     """Test that providing both revision IDs and assessment IDs raises an error."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     params = {
-        "revision_id": 115,
-        "reference_id": 505,
-        "revision_assessment_id": 1001,
-        "reference_assessment_id": 1002,
+        "revision_id": text_lengths_data.revision_id,
+        "reference_id": text_lengths_data.reference_id,
+        "revision_assessment_id": text_lengths_data.revision_assessment_id,
+        "reference_assessment_id": text_lengths_data.reference_assessment_id,
     }
 
     response = client.get(
@@ -1625,15 +1589,13 @@ def test_compare_text_lengths_mixed_id_types_error(
 
 
 def test_compare_text_lengths_incomplete_revision_pair_error(
-    client, regular_token1, test_db_session
+    client, regular_token1, text_lengths_data
 ):
     """Test that providing only one ID from the revision pair raises an error."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     # Test with only revision_id (no reference_id)
     params = {
-        "revision_id": 115,
+        "revision_id": text_lengths_data.revision_id,
     }
 
     response = client.get(
@@ -1648,15 +1610,13 @@ def test_compare_text_lengths_incomplete_revision_pair_error(
 
 
 def test_compare_text_lengths_incomplete_assessment_pair_error(
-    client, regular_token1, test_db_session
+    client, regular_token1, text_lengths_data
 ):
     """Test that providing only one ID from the assessment pair raises an error."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     # Test with only revision_assessment_id (no reference_assessment_id)
     params = {
-        "revision_assessment_id": 1001,
+        "revision_assessment_id": text_lengths_data.revision_assessment_id,
     }
 
     response = client.get(
@@ -1669,10 +1629,8 @@ def test_compare_text_lengths_incomplete_assessment_pair_error(
     assert "Must provide either" in response.json()["detail"]
 
 
-def test_compare_text_lengths_no_ids_error(client, regular_token1, test_db_session):
+def test_compare_text_lengths_no_ids_error(client, regular_token1, assessments_dataset):
     """Test that providing no IDs raises an error."""
-    setup_assessments_results(test_db_session)
-    setup_text_lengths_data(test_db_session)
 
     params = {}
 
@@ -1705,87 +1663,53 @@ def _clear_ngrams_total_count_cache():
     _ngrams_total_count_cache.clear()
 
 
-def _setup_ngrams_assessment(db_session):
-    """Create a finished ngrams assessment with a small but pagination-
-    exercising number of ngrams (each with 1–3 vrefs). Returns the
-    assessment_id and the list of (ngram, ngram_size, vrefs) tuples in
-    insertion order so tests can assert results match input."""
+_NGRAMS_SEEDS = [
+    ("the lord", 2, ["GEN 1:1", "GEN 1:2"]),
+    ("of god", 2, ["GEN 1:3"]),
+    ("son of man", 3, ["MAT 8:20", "MAT 9:6", "MAT 10:23"]),
+    ("in the beginning", 3, ["GEN 1:1"]),
+    ("light of the world", 4, ["JHN 8:12"]),
+    ("kingdom of heaven", 3, ["MAT 4:17", "MAT 5:3"]),
+    ("bread of life", 3, ["JHN 6:35"]),
+    ("good shepherd", 2, ["JHN 10:11"]),
+    ("alpha and omega", 3, ["REV 1:8", "REV 22:13"]),
+    ("the way", 2, ["JHN 14:6"]),
+    ("the truth", 2, ["JHN 14:6"]),
+    ("the life", 2, ["JHN 14:6"]),
+]
+
+
+@pytest.fixture(scope="module")
+def ngrams_dataset(test_db_session, assessments_dataset):
+    """A finished ngrams Assessment with 12 ngrams (each with 1–3 vrefs)
+    — small but enough rows to exercise multi-page pagination at
+    page_size=5. Returns (assessment_id, seeds)."""
     from database.models import NgramsTable, NgramVrefTable
 
-    setup_assessments_results(db_session)
-    existing = (
-        db_session.query(Assessment)
-        .filter(Assessment.type == "ngrams", Assessment.status == "finished")
-        .first()
+    assessment = Assessment(
+        revision_id=assessments_dataset.revision_id,
+        reference_id=assessments_dataset.reference_id,
+        type="ngrams",
+        status="finished",
+        assessment_version="1",
     )
-    if existing and (
-        db_session.query(NgramsTable)
-        .filter(NgramsTable.assessment_id == existing.id)
-        .first()
-    ):
-        # Already seeded — return existing data so other tests can reuse.
-        rows = (
-            db_session.query(NgramsTable)
-            .filter(NgramsTable.assessment_id == existing.id)
-            .order_by(NgramsTable.id)
-            .all()
-        )
-        seeds = []
-        for r in rows:
-            vrefs = [
-                v.vref
-                for v in db_session.query(NgramVrefTable)
-                .filter(NgramVrefTable.ngram_id == r.id)
-                .all()
-            ]
-            seeds.append((r.ngram, r.ngram_size, vrefs))
-        return existing.id, seeds
+    test_db_session.add(assessment)
+    test_db_session.flush()
 
-    if not existing:
-        # Fixtures load revision 138 under version 115 and revision 772
-        # under version 505; setup_assessments_results grants Group1
-        # access to both versions, so a regular_token1 caller can read
-        # an assessment scoped to those revisions.
-        existing = Assessment(
-            revision_id=138,
-            reference_id=772,
-            type="ngrams",
-            status="finished",
-            assessment_version="1",
-        )
-        db_session.add(existing)
-        db_session.commit()
-        db_session.refresh(existing)
-
-    # 12 ngrams — enough to exercise multi-page pagination at page_size=5.
-    seeds = [
-        ("the lord", 2, ["GEN 1:1", "GEN 1:2"]),
-        ("of god", 2, ["GEN 1:3"]),
-        ("son of man", 3, ["MAT 8:20", "MAT 9:6", "MAT 10:23"]),
-        ("in the beginning", 3, ["GEN 1:1"]),
-        ("light of the world", 4, ["JHN 8:12"]),
-        ("kingdom of heaven", 3, ["MAT 4:17", "MAT 5:3"]),
-        ("bread of life", 3, ["JHN 6:35"]),
-        ("good shepherd", 2, ["JHN 10:11"]),
-        ("alpha and omega", 3, ["REV 1:8", "REV 22:13"]),
-        ("the way", 2, ["JHN 14:6"]),
-        ("the truth", 2, ["JHN 14:6"]),
-        ("the life", 2, ["JHN 14:6"]),
-    ]
-    for ngram, size, vrefs in seeds:
-        ng = NgramsTable(assessment_id=existing.id, ngram=ngram, ngram_size=size)
-        db_session.add(ng)
-        db_session.flush()
+    for ngram, size, vrefs in _NGRAMS_SEEDS:
+        ng = NgramsTable(assessment_id=assessment.id, ngram=ngram, ngram_size=size)
+        test_db_session.add(ng)
+        test_db_session.flush()
         for v in vrefs:
-            db_session.add(NgramVrefTable(ngram_id=ng.id, vref=v))
-    db_session.commit()
-    return existing.id, seeds
+            test_db_session.add(NgramVrefTable(ngram_id=ng.id, vref=v))
+    test_db_session.commit()
+    return assessment.id, list(_NGRAMS_SEEDS)
 
 
-def test_ngrams_result_unpaginated_returns_all(client, regular_token1, test_db_session):
+def test_ngrams_result_unpaginated_returns_all(client, regular_token1, ngrams_dataset):
     """No page params → returns every ngram in the assessment with full
     vref lists, ordered by ngram id."""
-    assessment_id, seeds = _setup_ngrams_assessment(test_db_session)
+    assessment_id, seeds = ngrams_dataset
 
     response = client.get(
         "/v3/ngrams_result",
@@ -1807,14 +1731,14 @@ def test_ngrams_result_unpaginated_returns_all(client, regular_token1, test_db_s
 
 
 def test_ngrams_result_pagination_covers_corpus_without_overlap(
-    client, regular_token1, test_db_session
+    client, regular_token1, ngrams_dataset
 ):
     """Walk the assessment a page at a time and assert: every ngram
     appears exactly once, in id order, and each page <= page_size. This
     is the regression guard for the two-step pagination — if the leaf
     pagination ever drifts out of sync with the vref join, ngrams would
     silently duplicate, vanish, or get the wrong vrefs."""
-    assessment_id, seeds = _setup_ngrams_assessment(test_db_session)
+    assessment_id, seeds = ngrams_dataset
 
     page_size = 5
     seen_ngrams: list[str] = []
@@ -1856,10 +1780,10 @@ def test_ngrams_result_pagination_covers_corpus_without_overlap(
 
 
 def test_ngrams_result_unauthorized_assessment_returns_403(
-    client, regular_token2, test_db_session
+    client, regular_token2, ngrams_dataset
 ):
     """Users outside the assessment's group can't read its ngrams."""
-    assessment_id, _ = _setup_ngrams_assessment(test_db_session)
+    assessment_id, _ = ngrams_dataset
 
     response = client.get(
         "/v3/ngrams_result",
@@ -1878,12 +1802,12 @@ def test_ngrams_result_unauthorized_assessment_returns_403(
     ids=["page_without_size", "size_without_page"],
 )
 def test_ngrams_result_partial_pagination_args_rejected(
-    client, regular_token1, test_db_session, params
+    client, regular_token1, ngrams_dataset, params
 ):
     """`page` and `page_size` must be provided together. Without this
     check, supplying `page=2` alone silently bypassed the offset/limit
     branch in fetch_ngrams_page and returned the entire table."""
-    assessment_id, _ = _setup_ngrams_assessment(test_db_session)
+    assessment_id, _ = ngrams_dataset
 
     response = client.get(
         "/v3/ngrams_result",
@@ -1912,13 +1836,13 @@ def test_ngrams_result_partial_pagination_args_rejected(
     ],
 )
 def test_ngrams_result_pagination_bounds_rejected(
-    client, regular_token1, test_db_session, params, reason
+    client, regular_token1, ngrams_dataset, params, reason
 ):
     """page>=1, page_size in [1, 10000] are enforced at the FastAPI
     boundary so a bad client can't (a) crash the query with a
     negative OFFSET (Postgres rejects it → 500) or (b) blow up the
     vref-fetch IN-list with an unbounded page_size."""
-    assessment_id, _ = _setup_ngrams_assessment(test_db_session)
+    assessment_id, _ = ngrams_dataset
 
     response = client.get(
         "/v3/ngrams_result",
@@ -1928,7 +1852,9 @@ def test_ngrams_result_pagination_bounds_rejected(
     assert response.status_code == 422, reason
 
 
-def test_ngrams_result_includes_vrefless_ngram(client, regular_token1, test_db_session):
+def test_ngrams_result_includes_vrefless_ngram(
+    client, regular_token1, test_db_session, ngrams_dataset
+):
     """A ngram with no rows in ngram_vref_table now appears in results
     with `vrefs=[]` instead of being silently dropped (the old INNER
     JOIN behaviour). Pinned because the docstring on fetch_ngrams_page
@@ -1936,7 +1862,7 @@ def test_ngrams_result_includes_vrefless_ngram(client, regular_token1, test_db_s
     silent regression that callers couldn't easily notice."""
     from database.models import NgramsTable
 
-    assessment_id, seeds = _setup_ngrams_assessment(test_db_session)
+    assessment_id, seeds = ngrams_dataset
 
     # Add a vrefless ngram. The schema permits it (no NOT NULL on the
     # vref relationship from this side; ngrams_table doesn't require
@@ -1968,7 +1894,7 @@ def test_ngrams_result_includes_vrefless_ngram(client, regular_token1, test_db_s
 
 
 def test_ngrams_result_caches_total_count_for_finished_assessment(
-    client, regular_token1, test_db_session
+    client, regular_token1, test_db_session, ngrams_dataset
 ):
     """For a `status='finished'` assessment, total_count is memoized
     per-worker by assessment_id (see #651). Once the cache is warm,
@@ -1982,7 +1908,7 @@ def test_ngrams_result_caches_total_count_for_finished_assessment(
     )
     from database.models import NgramsTable
 
-    assessment_id, _ = _setup_ngrams_assessment(test_db_session)
+    assessment_id, _ = ngrams_dataset
 
     # Prime the cache.
     primed = client.get(
@@ -2026,14 +1952,13 @@ def test_ngrams_result_caches_total_count_for_finished_assessment(
 
 
 def test_ngrams_result_missing_assessment_returns_404_for_admin(
-    client, admin_token, test_db_session
+    client, admin_token, assessments_dataset
 ):
     """Admins are authorized for every assessment without an existence
     check (`is_user_authorized_for_assessment` short-circuits True),
     so a request for a nonexistent assessment_id has to be handled by
     the count helper itself — otherwise the missing row would raise
     NoResultFound and surface as a 500."""
-    setup_assessments_results(test_db_session)
 
     # Pick an id far above any seeded assessment.
     missing_id = 9_999_999
@@ -2048,7 +1973,7 @@ def test_ngrams_result_missing_assessment_returns_404_for_admin(
 
 
 def test_ngrams_result_does_not_cache_in_progress_assessment(
-    client, regular_token1, test_db_session
+    client, regular_token1, test_db_session, assessments_dataset
 ):
     """Counts for non-finished assessments must not be memoized — an
     in-progress assessment can still grow rows, and serving a stale
@@ -2058,10 +1983,9 @@ def test_ngrams_result_does_not_cache_in_progress_assessment(
     )
     from database.models import NgramsTable
 
-    setup_assessments_results(test_db_session)
     in_progress = Assessment(
-        revision_id=138,
-        reference_id=772,
+        revision_id=assessments_dataset.revision_id,
+        reference_id=assessments_dataset.reference_id,
         type="ngrams",
         status="queued",
         assessment_version="1",
