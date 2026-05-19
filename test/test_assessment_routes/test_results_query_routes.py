@@ -483,8 +483,6 @@ def alignment_data(test_db_session, assessments_dataset):
 
 def test_textalignmentmatches_basic(client, regular_token1, alignment_data):
     """Test basic functionality of the textalignmentmatches endpoint."""
-    first_assessment_id = alignment_data.assessment_id
-
     params = {
         "revision_id": alignment_data.revision_id,
         "reference_id": alignment_data.reference_id,
@@ -530,8 +528,6 @@ def test_textalignmentmatches_basic(client, regular_token1, alignment_data):
 
 def test_textalignmentmatches_top_k_parameter(client, regular_token1, alignment_data):
     """Test that the top_k parameter correctly limits results per source word."""
-    first_assessment_id = alignment_data.assessment_id
-
     # Test with top_k=1 (only best match per source)
     params = {
         "revision_id": alignment_data.revision_id,
@@ -572,8 +568,6 @@ def test_textalignmentmatches_min_support_filter(
     client, regular_token1, alignment_data
 ):
     """Test that min_support parameter filters out low-support source words."""
-    first_assessment_id = alignment_data.assessment_id
-
     # Test with very high min_support - should get fewer results
     params = {
         "revision_id": alignment_data.revision_id,
@@ -613,8 +607,6 @@ def test_textalignmentmatches_min_probability_filter(
     client, regular_token1, alignment_data
 ):
     """Test that min_probability parameter filters out low-probability alignments."""
-    first_assessment_id = alignment_data.assessment_id
-
     # Test with high min_probability
     params = {
         "revision_id": alignment_data.revision_id,
@@ -640,8 +632,6 @@ def test_textalignmentmatches_authorization(
     client, regular_token1, regular_token2, alignment_data
 ):
     """Test that authorization is properly enforced."""
-    first_assessment_id = alignment_data.assessment_id
-
     params = {
         "revision_id": alignment_data.revision_id,
         "reference_id": alignment_data.reference_id,
@@ -687,8 +677,6 @@ def test_textalignmentmatches_no_assessment_found(
 
 def test_textalignmentmatches_strength_metrics(client, regular_token1, alignment_data):
     """Test that strength metrics are calculated and present in results."""
-    first_assessment_id = alignment_data.assessment_id
-
     params = {
         "revision_id": alignment_data.revision_id,
         "reference_id": alignment_data.reference_id,
