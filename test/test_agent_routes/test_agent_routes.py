@@ -7450,6 +7450,96 @@ def test_get_lexeme_cards_bulk_no_source_version_id_with_lang_omits_missing(
     assert card_without not in returned_ids
 
 
+def test_get_lexeme_cards_bulk_no_source_version_id_returns_multi_pivot_canonicals(
+    client,
+    regular_token1,
+    db_session,
+):
+    """When a target_version_id has canonicals at two different source
+    versions (i.e. the pivot choice changed over time), the omitted-source
+    query returns both sets rather than picking one. Documents the
+    deliberate non-dedup behavior called out in the endpoint comment."""
+    from database.models import BibleRevision, BibleVersion, UserDB
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+
+    # Two source versions with distinct iso_language values (the unique
+    # index on (target_lemma, source_language_iso, target_version_id)
+    # requires distinct source iso to coexist for the same target).
+    # Limited to eng/swh because the test iso_language table seeds those.
+    source_eng = BibleVersion(
+        name="multi_pivot_src_eng",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="MPSE",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    source_swh = BibleVersion(
+        name="multi_pivot_src_swh",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="MPSS",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    target = BibleVersion(
+        name="multi_pivot_target",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="MPTGT",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    db_session.add_all([source_eng, source_swh, target])
+    db_session.commit()
+
+    rev_eng = BibleRevision(
+        bible_version_id=source_eng.id,
+        published=False,
+        machine_translation=False,
+    )
+    rev_swh = BibleRevision(
+        bible_version_id=source_swh.id,
+        published=False,
+        machine_translation=False,
+    )
+    db_session.add_all([rev_eng, rev_swh])
+    db_session.commit()
+
+    card_via_eng = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="multi_pivot_lemma",
+        source_lemma="multi_pivot_eng_src",
+        revision_id=rev_eng.id,
+        source_version_id=source_eng.id,
+        target_version_id=target.id,
+        examples=[{"source": "eng src", "target": "shared tgt"}],
+    )
+    card_via_swh = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="multi_pivot_lemma",
+        source_lemma="multi_pivot_swh_src",
+        revision_id=rev_swh.id,
+        source_version_id=source_swh.id,
+        target_version_id=target.id,
+        examples=[{"source": "swh src", "target": "shared tgt"}],
+    )
+
+    response = client.get(
+        f"/v3/agent/lexeme-card?target_version_id={target.id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    returned = {c["id"]: c for c in response.json()}
+    assert card_via_eng in returned
+    assert card_via_swh in returned
+    assert returned[card_via_eng]["source_version_id"] == source_eng.id
+    assert returned[card_via_swh]["source_version_id"] == source_swh.id
+
+
 def test_get_lexeme_cards_bulk_source_version_id_still_pinned(
     client,
     regular_token1,
