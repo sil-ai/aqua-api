@@ -530,9 +530,10 @@ class TestIncludeDeleted:
             headers=regular_headers,
         )
         assert list_response.status_code == 200
-        listed_ids = {v["id"] for v in list_response.json()}
-        assert kept_id in listed_ids
-        assert deleted_id not in listed_ids
+        by_id = {v["id"]: v for v in list_response.json()}
+        assert kept_id in by_id
+        assert deleted_id not in by_id
+        assert by_id[kept_id]["deleted"] is False
 
 
 class TestVersionValidation:
