@@ -838,8 +838,10 @@ class LexemeCardOut(BaseModel):
     surface_forms: Optional[list] = None
     source_surface_forms: Optional[list] = None  # Source language surface forms
     senses: Optional[list] = None
-    # Each example dict has shape {"id": int, "source": str, "target": str};
-    # filtered to the requested revision_id when set.
+    # Each example dict has shape {"id": int, "source": str | None, "target": str};
+    # source is None when a translation overlay was requested (either via
+    # ?lang= or auto-derived by pivot routing) but no card_translations row
+    # exists for this card. Filtered to the requested revision_id when set.
     examples: Optional[list] = None
     confidence: Optional[float] = None
     english_lemma: Optional[str] = None
@@ -848,6 +850,12 @@ class LexemeCardOut(BaseModel):
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None
     last_user_edit: Optional[datetime.datetime] = None
+    # True when the response reflects the requested language: either canonical
+    # source matched ?lang, or a card_translations overlay was applied. False
+    # only on the bulk endpoint when ?lang was requested but no overlay
+    # existed — in that case source-side fields above are null. The by-id
+    # endpoint never returns False (it 404s instead, to trigger derivation).
+    has_translation_overlay: bool = True
 
 
 class ListMode(str, Enum):

@@ -1772,9 +1772,22 @@ async def get_lexeme_cards(
     - lang: str (optional) - ISO 639-3 code for the desired source-side language.
       When omitted or equal to the cards' canonical source_language_iso, returns
       cards in their canonical shape (back-compat). When it differs, source-side
-      fields (source_lemma, source_surface_forms, senses, per-example source_text)
+      fields (source_lemma, source_surface_forms, senses, examples[].source)
       are replaced by the matching card_translations row. Cards without a
-      translation in the requested language are omitted from the response.
+      translation in the requested language are still returned, with the
+      source-side overlay fields set to null, examples[].source set to null,
+      and ``has_translation_overlay=False``, so the UI can render the target
+      side and indicate the overlay is missing. (Note: the single-card by-id
+      endpoint returns 404 in that same situation — it's the derivation
+      trigger. Callers iterating the bulk list should check
+      ``has_translation_overlay`` before clicking through to by-id.)
+
+      When ``lang`` is omitted but a ``source_version_id`` is also provided and
+      pivot routing rewrites the source, ``lang`` is auto-derived from the
+      caller's ``source_version_id`` ISO so the pivot stays invisible. In that
+      case the overlay logic above applies as if ``lang`` had been passed
+      explicitly; the structured log payload includes ``lang_auto_derived=True``
+      so dashboards can distinguish UI-driven misses from pivot-driven ones.
 
     Returns:
     - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending).
@@ -1951,6 +1964,7 @@ async def get_lexeme_cards(
 
         # Apply non-canonical language overlay when requested.
         requested_lang = lang.lower() if lang else None
+        lang_auto_derived = False
         # When pivot routing rewrote the source, default lang to the caller's
         # source ISO so the pivot stays invisible. Only meaningful when the
         # caller supplied a source_version_id to compare against.
@@ -1968,6 +1982,7 @@ async def get_lexeme_cards(
             source_iso = source_iso_result.scalar_one_or_none()
             if source_iso is not None:
                 requested_lang = source_iso.lower()
+                lang_auto_derived = True
         # Per-card translation row (only loaded when needed)
         translation_by_card: dict[int, CardTranslation] = {}
         # Per-card map of example_id -> translated source_text
@@ -2011,43 +2026,56 @@ async def get_lexeme_cards(
                         ] = row.source_text
 
         # Build response cards. When `lang` is requested and differs from a
-        # card's canonical source_language_iso, the card is omitted unless a
-        # translation row exists; its source-side fields are then replaced.
+        # card's canonical source_language_iso, source-side fields are replaced
+        # by the card_translations row. If no translation row exists for the
+        # requested lang, the card is still returned with overlay fields null
+        # (and has_translation_overlay=False) so the UI can render the target
+        # side, signal the missing overlay, and suppress click-through to the
+        # by-id endpoint (which still 404s — that path is the derivation
+        # trigger).
         response_cards = []
-        omitted_for_missing_translation = 0
+        missing_translation_overlay = 0
         for card in cards:
             requires_merge = (
                 requested_lang is not None
                 and card.source_language_iso != requested_lang
             )
-            if requires_merge and card.id not in translation_by_card:
-                omitted_for_missing_translation += 1
-                continue
+            trans = translation_by_card.get(card.id) if requires_merge else None
+            has_translation_overlay = not requires_merge or trans is not None
 
-            if requires_merge:
-                trans = translation_by_card[card.id]
+            if requires_merge and trans is None:
+                # No overlay: null source-side fields and mask example source
+                # so we don't leak canonical (pivot-language) text into a
+                # response that asked for a different language.
+                missing_translation_overlay += 1
+                source_lemma = None
+                source_surface_forms = None
+                senses = None
+                examples_out = [
+                    {"id": ex["id"], "source": None, "target": ex["target"]}
+                    for ex in examples_by_card[card.id]
+                ]
+            elif requires_merge:
                 source_lemma = trans.source_lemma
                 source_surface_forms = trans.source_surface_forms
                 senses = trans.senses
                 override_map = trans_source_by_card.get(card.id, {})
+                examples_out = [
+                    {
+                        "id": ex["id"],
+                        "source": override_map.get(ex["id"], ex["source"]),
+                        "target": ex["target"],
+                    }
+                    for ex in examples_by_card[card.id]
+                ]
             else:
                 source_lemma = card.source_lemma
                 source_surface_forms = card.source_surface_forms
                 senses = card.senses
-                override_map = {}
-
-            examples_out = [
-                {
-                    "id": ex["id"],
-                    "source": (
-                        override_map.get(ex["id"], ex["source"])
-                        if requires_merge
-                        else ex["source"]
-                    ),
-                    "target": ex["target"],
-                }
-                for ex in examples_by_card[card.id]
-            ]
+                examples_out = [
+                    {"id": ex["id"], "source": ex["source"], "target": ex["target"]}
+                    for ex in examples_by_card[card.id]
+                ]
 
             card_dict = {
                 "id": card.id,
@@ -2067,6 +2095,7 @@ async def get_lexeme_cards(
                 "last_updated": card.last_updated,
                 "last_user_edit": card.last_user_edit,
                 "examples": examples_out,
+                "has_translation_overlay": has_translation_overlay,
             }
             response_cards.append(LexemeCardOut.model_validate(card_dict))
 
@@ -2093,7 +2122,8 @@ async def get_lexeme_cards(
                 "target_words": target_words,
                 "pos": pos,
                 "lang": requested_lang,
-                "omitted_for_missing_translation": omitted_for_missing_translation,
+                "lang_auto_derived": lang_auto_derived,
+                "missing_translation_overlay": missing_translation_overlay,
                 "duration_s": duration,
             },
         )
