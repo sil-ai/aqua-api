@@ -942,6 +942,9 @@ def test_text_endpoint_include_verses_all_no_merging(
 ):
     """Test /text with include_verses=all returns exactly 41,899 rows even with <range> markers."""
     version_id = create_bible_version(client, regular_token1, db_session)
+    # Partial fixture is sufficient: include_verses=all pads against the
+    # canonical verse_reference table, so the 41,899-row assertion below holds
+    # regardless of how many VerseText rows were uploaded.
     revision_id = upload_revision(
         client,
         regular_token1,
@@ -971,7 +974,6 @@ def test_text_endpoint_include_verses_all_no_merging(
     assert response.status_code == 200
     data = response.json()
 
-    # Must be exactly 41,899 rows (no merging)
     assert len(data) == 41899
 
     # GEN 1:2 should appear as its own row with empty text (range replaced)
@@ -1703,13 +1705,11 @@ def test_texts_include_verses_intersection(client, regular_token1, db_session):
     assert "GEN 1:2" in rev1_vrefs
 
 
-def test_texts_include_verses_all(client, regular_token1, db_session):
+def test_texts_include_verses_all(client, regular_token1, db_session, kjv_revision):
     """Test include_verses=all returns all canonical verses with empty text for missing ones."""
-    version_id1 = create_bible_version(client, regular_token1, db_session)
+    # Rev1: full KJV Bible (shared fixture), Rev2: only Genesis 1:1-3
+    _, revision_id1 = kjv_revision
     version_id2 = create_bible_version(client, regular_token1, db_session)
-
-    # Rev1: full KJV Bible, Rev2: only Genesis 1:1-3
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
     revision_id2 = upload_revision(
         client,
         regular_token1,
