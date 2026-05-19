@@ -1736,8 +1736,8 @@ async def get_word_alignments(
 
 @router.get("/agent/lexeme-card", response_model=list[LexemeCardOut])
 async def get_lexeme_cards(
-    source_version_id: int,
     target_version_id: int,
+    source_version_id: int | None = None,
     source_word: str = None,
     target_word: str = None,
     target_words: str = None,
@@ -1753,8 +1753,14 @@ async def get_lexeme_cards(
     the current user has access to.
 
     Query Parameters:
-    - source_version_id: int (required) - Bible version ID for source
     - target_version_id: int (required) - Bible version ID for target
+    - source_version_id: int (optional) - Bible version ID for source. When
+      provided, the canonical source is resolved via pivot routing (the SQL
+      filter rewrites to the pivot bible_version registered for the target's
+      iso, falling back to the given value). Internal callers that target a
+      specific canonical pair (pivot picker, derive, consolidation) should
+      keep passing this. When omitted, cards are matched on target_version_id
+      alone, which is what a UI showing "cards for this revision" wants.
     - source_word: str (optional) - Filter by source_lemma or source_surface_forms
       (case-insensitive exact match)
     - target_word: str (optional) - Filter by target_lemma or surface_forms
@@ -1790,19 +1796,23 @@ async def get_lexeme_cards(
 
         is_admin = current_user.is_admin
 
-        # Cards are persisted at the pivot bible_version for any target_iso
-        # registered in language_pivot. The caller's source_version_id is a
-        # hint; the SQL expression below resolves to the pivot version when a
-        # mapping exists, else the caller's source_version_id.
-        effective_source_version = _effective_source_version_expr(
-            source_version_id, target_version_id
-        )
-
-        # Base conditions: language pair filter
+        # Base conditions: target version is always pinned. When the caller
+        # passes source_version_id, we additionally pin the source side via
+        # pivot routing (caller's value, rewritten to the pivot bible_version
+        # if one is registered for the target's iso). When it's omitted, we
+        # match on target_version_id alone — a target revision is typically
+        # built against a single pivot, so this returns the canonicals the UI
+        # wants. If a target_version_id ever accumulates canonicals from
+        # multiple pivots, the omitted-source query will return both sets
+        # rather than deduping; callers can pass source_version_id to pick.
         conditions = [
-            AgentLexemeCard.source_version_id == effective_source_version,
             AgentLexemeCard.target_version_id == target_version_id,
         ]
+        if source_version_id is not None:
+            conditions.append(
+                AgentLexemeCard.source_version_id
+                == _effective_source_version_expr(source_version_id, target_version_id)
+            )
 
         # Add POS filter if provided
         if pos:
@@ -1883,6 +1893,14 @@ async def get_lexeme_cards(
             # are always created from revisions in the card's language pair
             # (the POST endpoint requires a revision_id for the language).
             if not is_admin:
+                # Authorize examples against the actual canonical source
+                # versions of the loaded cards plus the target. When the
+                # caller passed source_version_id, all returned cards share
+                # the same (pivot-resolved) source, so this is a single id;
+                # when omitted, multi-pivot result sets fall out naturally.
+                source_versions_for_auth = sorted(
+                    {card.source_version_id for card in cards}
+                )
                 authorized_lang_revisions = (
                     select(BibleRevision.id)
                     .distinct()
@@ -1901,7 +1919,7 @@ async def get_lexeme_cards(
                     .where(
                         UserGroup.user_id == current_user.id,
                         BibleVersion.id.in_(
-                            [effective_source_version, target_version_id]
+                            source_versions_for_auth + [target_version_id]
                         ),
                     )
                 )
@@ -1934,9 +1952,11 @@ async def get_lexeme_cards(
         # Apply non-canonical language overlay when requested.
         requested_lang = lang.lower() if lang else None
         # When pivot routing rewrote the source, default lang to the caller's
-        # source ISO so the pivot stays invisible.
+        # source ISO so the pivot stays invisible. Only meaningful when the
+        # caller supplied a source_version_id to compare against.
         if (
             requested_lang is None
+            and source_version_id is not None
             and cards
             and cards[0].source_version_id != source_version_id
         ):
@@ -2064,7 +2084,8 @@ async def get_lexeme_cards(
                 "target_version_id": target_version_id,
                 "effective_source_version_id": effective_source_version_id,
                 "pivot_routed": (
-                    effective_source_version_id is not None
+                    source_version_id is not None
+                    and effective_source_version_id is not None
                     and effective_source_version_id != source_version_id
                 ),
                 "source_word": source_word,

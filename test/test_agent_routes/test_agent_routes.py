@@ -1696,14 +1696,14 @@ def test_get_lexeme_cards_empty_results(
     assert len(nonexistent_cards) == 0
 
 
-def test_get_lexeme_cards_missing_languages(client, regular_token1, db_session):
-    """Test that getting lexeme cards requires language parameters."""
+def test_get_lexeme_cards_missing_target_version_id(client, regular_token1, db_session):
+    """target_version_id is the only mandatory language parameter; omitting it 422s."""
     response = client.get(
         "/v3/agent/lexeme-card?target_word=test",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
-    assert response.status_code == 422  # Validation error for missing required params
+    assert response.status_code == 422  # Validation error for missing target_version_id
 
 
 def test_get_lexeme_cards_unauthorized(client, test_version_id, test_version_id_2):
@@ -7336,6 +7336,147 @@ def test_get_lexeme_cards_bulk_lang_matches_canonical(
     assert card["examples"][0]["source"] == "canon en src"
     assert card["examples"][0]["target"] == "canon tgt"
     assert isinstance(card["examples"][0]["id"], int)
+
+
+def test_get_lexeme_cards_bulk_no_source_version_id_filters_by_target_only(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Omitting source_version_id matches cards by target_version_id alone."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="bulk_no_src_lemma",
+        source_lemma="bulk_no_src_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "no-src en", "target": "no-src tgt"}],
+    )
+
+    response = client.get(
+        f"/v3/agent/lexeme-card?target_version_id={test_version_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    returned = response.json()
+    assert any(c["id"] == card_id for c in returned)
+
+    card = next(c for c in returned if c["id"] == card_id)
+    assert card["source_lemma"] == "bulk_no_src_src"
+    assert len(card["examples"]) == 1
+    assert card["examples"][0]["source"] == "no-src en"
+    assert card["examples"][0]["target"] == "no-src tgt"
+
+
+def test_get_lexeme_cards_bulk_no_source_version_id_with_lang_overlays(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """UI case: target_version_id + lang resolves overlays without knowing the pivot."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="ui_overlay_lemma",
+        source_lemma="ui_overlay_canon_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "canon en", "target": "canon tgt"}],
+    )
+    ex_id = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_id)
+        .first()
+        .id
+    )
+    post = client.post(
+        f"/v3/agent/lexeme-card/{card_id}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "ui_overlay_swh_src",
+            "examples": [{"example_id": ex_id, "source_text": "overlay swh"}],
+        },
+    )
+    assert post.status_code == 200, post.text
+
+    response = client.get(
+        f"/v3/agent/lexeme-card?target_version_id={test_version_id_2}&lang=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    card = next(c for c in response.json() if c["id"] == card_id)
+    # Source-side fields swapped in from the translation overlay
+    assert card["source_lemma"] == "ui_overlay_swh_src"
+    assert card["examples"][0]["source"] == "overlay swh"
+    # Target-side fields untouched
+    assert card["target_lemma"] == "ui_overlay_lemma"
+    assert card["examples"][0]["target"] == "canon tgt"
+
+
+def test_get_lexeme_cards_bulk_no_source_version_id_with_lang_omits_missing(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Without source_version_id, ?lang still omits cards lacking that translation."""
+    card_without = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="ui_no_overlay_lemma",
+        source_lemma="ui_no_overlay_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "no overlay en", "target": "no overlay tgt"}],
+    )
+
+    response = client.get(
+        f"/v3/agent/lexeme-card?target_version_id={test_version_id_2}&lang=swh",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    returned_ids = {c["id"] for c in response.json()}
+    assert card_without not in returned_ids
+
+
+def test_get_lexeme_cards_bulk_source_version_id_still_pinned(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """When source_version_id is supplied, mismatched pairs return no rows
+    (back-compat for agent-internal callers that probe specific pairs)."""
+    _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="pinned_lemma",
+        source_lemma="pinned_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+
+    # Swap the pair: legacy filter must exclude this card.
+    response = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id_2}"
+        f"&target_version_id={test_version_id}&target_word=pinned_lemma",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_card_translation_cascade_delete(
