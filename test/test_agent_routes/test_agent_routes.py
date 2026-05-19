@@ -7207,7 +7207,7 @@ def test_get_lexeme_card_by_id_card_not_found(client, regular_token1):
     assert response.status_code == 404
 
 
-def test_get_lexeme_cards_bulk_lang_omits_missing_translation(
+def test_get_lexeme_cards_bulk_lang_returns_missing_translation_with_null_overlay(
     client,
     regular_token1,
     db_session,
@@ -7215,7 +7215,8 @@ def test_get_lexeme_cards_bulk_lang_omits_missing_translation(
     test_version_id,
     test_version_id_2,
 ):
-    """Bulk GET with ?lang omits cards that lack a translation in that lang."""
+    """Bulk GET with ?lang returns cards without a translation, with null
+    source-side overlay fields, so the UI can still render the target side."""
     target_lemma_with = "bulk_lang_with_trans"
     target_lemma_without = "bulk_lang_without_trans"
 
@@ -7263,14 +7264,24 @@ def test_get_lexeme_cards_bulk_lang_omits_missing_translation(
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200
-    returned_ids = {c["id"] for c in response.json()}
-    assert card_with in returned_ids
-    assert card_without not in returned_ids
+    by_id = {c["id"]: c for c in response.json()}
+    assert card_with in by_id
+    assert card_without in by_id
 
-    merged = next(c for c in response.json() if c["id"] == card_with)
+    merged = by_id[card_with]
     assert merged["source_lemma"] == "bulk_with_swh"
     assert merged["examples"][0]["source"] == "with swh src"
     assert merged["examples"][0]["target"] == "with tgt"
+
+    # Card lacking a swh translation row is returned with the overlay fields
+    # set to None and example source masked (target side stays intact).
+    missing = by_id[card_without]
+    assert missing["target_lemma"] == target_lemma_without
+    assert missing["source_lemma"] is None
+    assert missing["source_surface_forms"] is None
+    assert missing["senses"] is None
+    assert missing["examples"][0]["source"] is None
+    assert missing["examples"][0]["target"] == "without tgt"
 
 
 def test_get_lexeme_cards_bulk_no_lang_back_compat(
@@ -7422,14 +7433,16 @@ def test_get_lexeme_cards_bulk_no_source_version_id_with_lang_overlays(
     assert card["examples"][0]["target"] == "canon tgt"
 
 
-def test_get_lexeme_cards_bulk_no_source_version_id_with_lang_omits_missing(
+def test_get_lexeme_cards_bulk_no_source_version_id_with_lang_returns_null_overlay(
     client,
     regular_token1,
     test_revision_id,
     test_version_id,
     test_version_id_2,
 ):
-    """Without source_version_id, ?lang still omits cards lacking that translation."""
+    """Without source_version_id, ?lang returns cards lacking a translation
+    with overlay fields nulled out (UI's main case when no translations exist
+    yet for the requested lang)."""
     card_without = _create_card_with_examples(
         client,
         regular_token1,
@@ -7446,8 +7459,15 @@ def test_get_lexeme_cards_bulk_no_source_version_id_with_lang_omits_missing(
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert response.status_code == 200, response.text
-    returned_ids = {c["id"] for c in response.json()}
-    assert card_without not in returned_ids
+    by_id = {c["id"]: c for c in response.json()}
+    assert card_without in by_id
+    missing = by_id[card_without]
+    assert missing["target_lemma"] == "ui_no_overlay_lemma"
+    assert missing["source_lemma"] is None
+    assert missing["source_surface_forms"] is None
+    assert missing["senses"] is None
+    assert missing["examples"][0]["source"] is None
+    assert missing["examples"][0]["target"] == "no overlay tgt"
 
 
 def test_get_lexeme_cards_bulk_no_source_version_id_returns_multi_pivot_canonicals(

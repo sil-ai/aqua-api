@@ -1774,7 +1774,9 @@ async def get_lexeme_cards(
       cards in their canonical shape (back-compat). When it differs, source-side
       fields (source_lemma, source_surface_forms, senses, per-example source_text)
       are replaced by the matching card_translations row. Cards without a
-      translation in the requested language are omitted from the response.
+      translation in the requested language are still returned, with the
+      source-side overlay fields set to null and example source_text omitted,
+      so the UI can render the target side and indicate the overlay is missing.
 
     Returns:
     - List[LexemeCardOut]: List of matching lexeme cards, ordered by confidence (descending).
@@ -2011,21 +2013,26 @@ async def get_lexeme_cards(
                         ] = row.source_text
 
         # Build response cards. When `lang` is requested and differs from a
-        # card's canonical source_language_iso, the card is omitted unless a
-        # translation row exists; its source-side fields are then replaced.
+        # card's canonical source_language_iso, source-side fields are replaced
+        # by the card_translations row. If no translation row exists for the
+        # requested lang, the card is still returned with overlay fields null
+        # so the UI can render the target side and signal a missing overlay.
         response_cards = []
-        omitted_for_missing_translation = 0
+        missing_translation_overlay = 0
         for card in cards:
             requires_merge = (
                 requested_lang is not None
                 and card.source_language_iso != requested_lang
             )
-            if requires_merge and card.id not in translation_by_card:
-                omitted_for_missing_translation += 1
-                continue
+            trans = translation_by_card.get(card.id) if requires_merge else None
 
-            if requires_merge:
-                trans = translation_by_card[card.id]
+            if requires_merge and trans is None:
+                missing_translation_overlay += 1
+                source_lemma = None
+                source_surface_forms = None
+                senses = None
+                override_map: dict[int, str | None] = {}
+            elif requires_merge:
                 source_lemma = trans.source_lemma
                 source_surface_forms = trans.source_surface_forms
                 senses = trans.senses
@@ -2036,18 +2043,26 @@ async def get_lexeme_cards(
                 senses = card.senses
                 override_map = {}
 
-            examples_out = [
-                {
-                    "id": ex["id"],
-                    "source": (
-                        override_map.get(ex["id"], ex["source"])
-                        if requires_merge
-                        else ex["source"]
-                    ),
-                    "target": ex["target"],
-                }
-                for ex in examples_by_card[card.id]
-            ]
+            if requires_merge and trans is None:
+                # No overlay: don't leak the canonical (pivot-language) source
+                # text through examples. Target side stays intact.
+                examples_out = [
+                    {"id": ex["id"], "source": None, "target": ex["target"]}
+                    for ex in examples_by_card[card.id]
+                ]
+            else:
+                examples_out = [
+                    {
+                        "id": ex["id"],
+                        "source": (
+                            override_map.get(ex["id"], ex["source"])
+                            if requires_merge
+                            else ex["source"]
+                        ),
+                        "target": ex["target"],
+                    }
+                    for ex in examples_by_card[card.id]
+                ]
 
             card_dict = {
                 "id": card.id,
@@ -2093,7 +2108,7 @@ async def get_lexeme_cards(
                 "target_words": target_words,
                 "pos": pos,
                 "lang": requested_lang,
-                "omitted_for_missing_translation": omitted_for_missing_translation,
+                "missing_translation_overlay": missing_translation_overlay,
                 "duration_s": duration,
             },
         )
