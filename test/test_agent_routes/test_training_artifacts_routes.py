@@ -446,3 +446,153 @@ def test_affixes_by_version_403_when_version_unknown(
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 403, resp.text
+
+
+# ---- Additional coverage: admin bypass, filter params, empty results -----
+
+
+def test_training_artifacts_admin_can_read_any_version(
+    client, admin_token, test_revision_id, db_session
+):
+    """Admin bypass via is_user_authorized_for_bible_version's is_admin
+    short-circuit. Without an admin-access test, a future tightening of
+    the auth helper could silently lock admins out."""
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    db_session.add(
+        LanguageProfile(iso_639_3=iso, name="English", grammar_sketch="for-admins"),
+    )
+    db_session.commit()
+
+    resp = client.get(
+        f"/{prefix}/tokenizer/training-artifacts/{version_id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["grammar_sketch"] == "for-admins"
+
+    _cleanup(db_session, version_id, iso)
+
+
+def test_training_artifacts_admin_gets_404_for_unknown_version(
+    client, admin_token, db_session
+):
+    """Admins are authorized for any version, so they CAN distinguish
+    "doesn't exist" (404) from "no data" — regular users get 403 for
+    both, but admin queries should fall through to the version lookup."""
+    resp = client.get(
+        f"/{prefix}/tokenizer/training-artifacts/999999999",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_morphemes_by_version_class_filter(
+    client, regular_token1, test_revision_id, db_session
+):
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.flush()
+    db_session.add_all(
+        [
+            LanguageMorpheme(
+                iso_639_3=iso,
+                morpheme="rootword",
+                morpheme_class="LEXICAL",
+                target_version_id=version_id,
+            ),
+            LanguageMorpheme(
+                iso_639_3=iso,
+                morpheme="affixbit",
+                morpheme_class="GRAMMATICAL",
+                target_version_id=version_id,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    resp = client.get(
+        f"/{prefix}/tokenizer/morphemes-by-version/{version_id}?class=LEXICAL",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    morphemes = resp.json()["morphemes"]
+    assert len(morphemes) == 1
+    assert morphemes[0]["morpheme"] == "rootword"
+
+    _cleanup(db_session, version_id, iso)
+
+
+def test_morphemes_by_version_limit(
+    client, regular_token1, test_revision_id, db_session
+):
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.flush()
+    db_session.add_all(
+        [
+            LanguageMorpheme(
+                iso_639_3=iso,
+                morpheme=f"m{i}",
+                morpheme_class="LEXICAL",
+                target_version_id=version_id,
+            )
+            for i in range(5)
+        ]
+    )
+    db_session.commit()
+
+    resp = client.get(
+        f"/{prefix}/tokenizer/morphemes-by-version/{version_id}?limit=2",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["morphemes"]) == 2
+    assert body["total"] == 2
+
+    _cleanup(db_session, version_id, iso)
+
+
+def test_morphemes_by_version_empty_result(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Valid version + authorized user + no rows → 200 with empty list,
+    not 404. Documents the contract for Phase 3 callers."""
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    resp = client.get(
+        f"/{prefix}/tokenizer/morphemes-by-version/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == 0
+    assert body["morphemes"] == []
+
+
+def test_affixes_by_version_empty_result(
+    client, regular_token1, test_revision_id, db_session
+):
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    resp = client.get(
+        f"/{prefix}/affixes-by-version/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == 0
+    assert body["affixes"] == []
