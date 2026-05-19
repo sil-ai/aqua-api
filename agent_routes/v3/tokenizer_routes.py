@@ -45,11 +45,15 @@ from models import (
     TokenizerRunListOut,
     TokenizerRunOut,
     TokenizerRunRequest,
+    TrainingArtifactOut,
     WordIndexRequest,
     WordIndexResponse,
 )
 from security_routes.auth_routes import get_current_user
-from security_routes.utilities import is_user_authorized_for_revision
+from security_routes.utilities import (
+    is_user_authorized_for_bible_version,
+    is_user_authorized_for_revision,
+)
 from utils.logging_config import setup_logger
 from utils.morpheme_tokenizer import strip_punct, viterbi_segment
 
@@ -181,6 +185,200 @@ async def _upsert_profile(
         profile.updated_at = datetime.datetime.utcnow()
     await db.flush()
     return profile
+
+
+@router.get(
+    "/tokenizer/training-artifacts/{version_id}",
+    response_model=TrainingArtifactOut,
+)
+async def get_training_artifacts(
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Version-keyed read for tokenizer training artifacts.
+
+    Prefers the per-version `training_artifacts` row; falls back to the
+    iso-keyed `language_profiles.grammar_sketch` when either no
+    version-keyed row exists OR the version-keyed row exists but its
+    `grammar_sketch` is NULL (in which case the version-keyed
+    `source_model` is still surfaced for provenance). Phase 2 of issue
+    #687. Callers should treat the returned `source` field as advisory:
+    it indicates which store satisfied the grammar_sketch read so we
+    can monitor cutover progress.
+
+    Status codes:
+    - 200: artifact found (either version- or iso-keyed)
+    - 403: caller is not authorized for this version — also returned
+      for non-existent version_ids when the caller is a regular user,
+      so unauthorized callers can't enumerate valid versions
+    - 404: admin caller requesting a version_id that doesn't exist
+      (admins bypass the auth helper, so they reach the lookup)
+    """
+    request_start = time.perf_counter()
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
+
+    version_lookup = await db.execute(
+        select(BibleVersion.iso_language).where(BibleVersion.id == version_id)
+    )
+    iso = version_lookup.scalar_one_or_none()
+    if iso is None:
+        # Reachable only by admins — non-admins are filtered out by the
+        # auth check above (which requires an existing BibleVersionAccess
+        # row). Returning 404 here is safe because the caller is already
+        # authorized to enumerate.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No bible_version with id {version_id}",
+        )
+
+    artifact_result = await db.execute(
+        select(TrainingArtifact).where(TrainingArtifact.target_version_id == version_id)
+    )
+    artifact = artifact_result.scalar_one_or_none()
+    if artifact is not None and artifact.grammar_sketch is not None:
+        response = TrainingArtifactOut(
+            target_version_id=version_id,
+            iso_639_3=iso,
+            grammar_sketch=artifact.grammar_sketch,
+            source_model=artifact.source_model,
+            source="training_artifacts",
+            created_at=artifact.created_at,
+            updated_at=artifact.updated_at,
+        )
+    else:
+        # Fall back to the language-keyed grammar_sketch. We only return
+        # 404 when neither store has data; an empty version-keyed row
+        # with a populated iso-keyed row is a valid fallback hit. If the
+        # version-keyed row exists with a NULL grammar_sketch but a
+        # non-NULL source_model, surface the source_model even though
+        # the sketch came from the fallback — losing provenance silently
+        # would mask whichever model wrote the empty artifacts row.
+        profile_result = await db.execute(
+            select(
+                LanguageProfile.grammar_sketch,
+                LanguageProfile.updated_at,
+                LanguageProfile.created_at,
+            ).where(LanguageProfile.iso_639_3 == iso)
+        )
+        profile_row = profile_result.one_or_none()
+        if profile_row is None or profile_row.grammar_sketch is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"No training artifacts for bible_version {version_id} "
+                    f"and no language-keyed fallback for iso '{iso}'"
+                ),
+            )
+        response = TrainingArtifactOut(
+            target_version_id=version_id,
+            iso_639_3=iso,
+            grammar_sketch=profile_row.grammar_sketch,
+            source_model=artifact.source_model if artifact is not None else None,
+            source="language_profile",
+            created_at=profile_row.created_at,
+            updated_at=profile_row.updated_at,
+        )
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_training_artifacts completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/tokenizer/training-artifacts/{version_id}",
+            "version_id": version_id,
+            "iso": iso,
+            "source": response.source,
+            "duration_s": duration,
+        },
+    )
+    return response
+
+
+@router.get(
+    "/tokenizer/morphemes-by-version/{version_id}",
+    response_model=MorphemeListOut,
+)
+async def get_morphemes_by_version(
+    version_id: int,
+    class_: Optional[str] = Query(
+        None,
+        alias="class",
+        description="Filter to LEXICAL|GRAMMATICAL|BOUND_ROOT|UNKNOWN",
+    ),
+    limit: Optional[int] = Query(None, ge=1),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Version-keyed read for language morphemes.
+
+    Returns the soft union of rows version-stamped for this version
+    *and* legacy rows with `target_version_id IS NULL` that share the
+    version's ISO. NULL-stamped rows are treated as "shared across
+    versions of the ISO" until Phase 5 splits them into per-version
+    rows. (Phase 2 of issue #687.)
+
+    Status codes:
+    - 200: returns the soft union (may be empty)
+    - 403: caller is not authorized for this version — also returned
+      for non-existent version_ids when the caller is a regular user,
+      so unauthorized callers can't enumerate valid versions
+    - 404: admin caller requesting a version_id that doesn't exist
+    """
+    request_start = time.perf_counter()
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
+
+    version_lookup = await db.execute(
+        select(BibleVersion.iso_language).where(BibleVersion.id == version_id)
+    )
+    iso = version_lookup.scalar_one_or_none()
+    if iso is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No bible_version with id {version_id}",
+        )
+
+    query = select(LanguageMorpheme).where(
+        LanguageMorpheme.iso_639_3 == iso,
+        (LanguageMorpheme.target_version_id == version_id)
+        | (LanguageMorpheme.target_version_id.is_(None)),
+    )
+    if class_ is not None:
+        query = query.where(LanguageMorpheme.morpheme_class == class_)
+    query = query.order_by(LanguageMorpheme.id)
+    if limit is not None:
+        query = query.limit(limit)
+
+    result = await db.execute(query)
+    rows = result.scalars().all()
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_morphemes_by_version completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/tokenizer/morphemes-by-version/{version_id}",
+            "version_id": version_id,
+            "iso": iso,
+            "count": len(rows),
+            "duration_s": duration,
+        },
+    )
+    return MorphemeListOut(
+        iso_639_3=iso,
+        total=len(rows),
+        morphemes=[MorphemeOut.model_validate(m) for m in rows],
+    )
 
 
 @router.get("/tokenizer/morphemes/{iso}", response_model=MorphemeListOut)
