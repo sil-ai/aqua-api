@@ -33,22 +33,14 @@ def _resolve_iso(db_session, version_id):
     )
 
 
-def _cleanup(db_session, version_id, iso):
-    # Drop training_artifacts for *every* bible_version under this ISO,
-    # not just `version_id`, so cross-version tests that seed extra
-    # versions don't leak rows. version_id is accepted for symmetry with
-    # the existing API and to keep call sites self-documenting.
-    del version_id
-    version_ids = [
-        row.id
-        for row in db_session.query(BibleVersion.id)
-        .filter(BibleVersion.iso_language == iso)
-        .all()
-    ]
-    if version_ids:
-        db_session.query(TrainingArtifact).filter(
-            TrainingArtifact.target_version_id.in_(version_ids)
-        ).delete(synchronize_session="fetch")
+def _cleanup(db_session, version_id, iso, extra_version_ids=()):
+    # Tests that seed rows for additional versions can pass their IDs in
+    # `extra_version_ids` so the corresponding training_artifacts rows
+    # are also cleaned up.
+    cleanup_version_ids = [version_id, *extra_version_ids]
+    db_session.query(TrainingArtifact).filter(
+        TrainingArtifact.target_version_id.in_(cleanup_version_ids)
+    ).delete(synchronize_session="fetch")
     db_session.query(LanguageAffix).filter(LanguageAffix.iso_639_3 == iso).delete()
     db_session.query(LanguageMorpheme).filter(
         LanguageMorpheme.iso_639_3 == iso
@@ -251,7 +243,7 @@ def test_morphemes_by_version_excludes_other_versions(
     version's results, even though they share the ISO."""
     version_id = _resolve_version_id(db_session, test_revision_id)
     iso = _resolve_iso(db_session, version_id)
-    _cleanup(db_session, version_id, iso)
+    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
 
     db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
     db_session.flush()
@@ -281,7 +273,7 @@ def test_morphemes_by_version_excludes_other_versions(
     forms = {m["morpheme"] for m in resp.json()["morphemes"]}
     assert forms == {"mine"}
 
-    _cleanup(db_session, version_id, iso)
+    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
 
 
 def test_morphemes_by_version_403_when_user_lacks_version_access(
@@ -359,7 +351,7 @@ def test_affixes_by_version_excludes_other_versions(
 ):
     version_id = _resolve_version_id(db_session, test_revision_id)
     iso = _resolve_iso(db_session, version_id)
-    _cleanup(db_session, version_id, iso)
+    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
 
     db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
     db_session.flush()
@@ -391,7 +383,7 @@ def test_affixes_by_version_excludes_other_versions(
     forms = {a["form"] for a in resp.json()["affixes"]}
     assert forms == {"mine-"}
 
-    _cleanup(db_session, version_id, iso)
+    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
 
 
 def test_affixes_by_version_position_filter(
