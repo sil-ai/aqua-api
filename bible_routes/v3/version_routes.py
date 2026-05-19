@@ -24,20 +24,27 @@ router = fastapi.APIRouter()
 
 @router.get("/version", response_model=List[VersionOut])
 async def list_version(
+    include_deleted: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
     Get a list of all versions that the current user is authorized to access.
+
+    Admins may pass ``include_deleted=true`` to also return soft-deleted
+    versions, so downstream mirrors can satisfy FK constraints against
+    revisions whose parent version has been soft-deleted. Non-admin callers
+    never receive soft-deleted versions regardless of this flag.
     """
+
+    admin_include_deleted = include_deleted and current_user.is_admin
 
     # Step 1: Fetch all versions the user can access
     if current_user.is_admin:
-        result = await db.execute(
-            select(BibleVersionModel)
-            .where(BibleVersionModel.deleted.is_(False))
-            .order_by(BibleVersionModel.id)
-        )
+        stmt = select(BibleVersionModel).order_by(BibleVersionModel.id)
+        if not admin_include_deleted:
+            stmt = stmt.where(BibleVersionModel.deleted.is_(False))
+        result = await db.execute(stmt)
         versions = result.scalars().all()
     else:
         user_groups_subq = (
