@@ -4,6 +4,7 @@ import unicodedata
 
 from database.models import (
     BibleRevision,
+    BibleVersion,
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
@@ -43,6 +44,18 @@ def _cleanup(db_session):
         db_session.query(LanguageProfile).filter(
             LanguageProfile.iso_639_3 == iso
         ).delete()
+        # Drop training_artifacts for any bible_version under this ISO so
+        # tests that submit a grammar_sketch don't leak rows into siblings.
+        version_ids = [
+            row.id
+            for row in db_session.query(BibleVersion.id)
+            .filter(BibleVersion.iso_language == iso)
+            .all()
+        ]
+        if version_ids:
+            db_session.query(TrainingArtifact).filter(
+                TrainingArtifact.target_version_id.in_(version_ids)
+            ).delete(synchronize_session="fetch")
     db_session.commit()
 
 
@@ -1292,10 +1305,6 @@ def test_tokenizer_run_dual_writes_training_artifacts(
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     version_id = _resolve_version_id(db_session, test_revision_id)
-    db_session.query(TrainingArtifact).filter(
-        TrainingArtifact.target_version_id == version_id
-    ).delete()
-    db_session.commit()
 
     profile = {"name": "Swahili", "grammar_sketch": "draft v1"}
     resp = client.post(
@@ -1338,10 +1347,51 @@ def test_tokenizer_run_dual_writes_training_artifacts(
     )
     assert refreshed.grammar_sketch == "draft v2"
 
-    db_session.query(TrainingArtifact).filter(
-        TrainingArtifact.target_version_id == version_id
-    ).delete()
-    db_session.commit()
+    _cleanup(db_session)
+
+
+def test_training_artifacts_upsert_preserves_source_model(
+    client, regular_token1, test_revision_id, db_session
+):
+    """A subsequent run without source_model must not wipe the source_model
+    written by an earlier run (preserves provenance)."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    version_id = _resolve_version_id(db_session, test_revision_id)
+
+    # First run records source_model = gpt-5-mini.
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [{"morpheme": "first", "morpheme_class": "LEXICAL"}],
+            profile={"name": "Swahili", "grammar_sketch": "v1"},
+        ),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Second run omits source_model entirely.
+    body = {
+        "iso_639_3": TEST_ISO,
+        "revision_id": test_revision_id,
+        "morphemes": [{"morpheme": "second", "morpheme_class": "LEXICAL"}],
+        "profile": {"name": "Swahili", "grammar_sketch": "v2"},
+        "stats": {},
+    }
+    resp = client.post(f"/{prefix}/tokenizer/runs", json=body, headers=headers)
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    artifact = (
+        db_session.query(TrainingArtifact)
+        .filter(TrainingArtifact.target_version_id == version_id)
+        .one()
+    )
+    assert artifact.grammar_sketch == "v2"
+    assert artifact.source_model == "gpt-5-mini"
+
     _cleanup(db_session)
 
 
@@ -1354,10 +1404,6 @@ def test_tokenizer_run_no_grammar_sketch_skips_training_artifacts(
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     version_id = _resolve_version_id(db_session, test_revision_id)
-    db_session.query(TrainingArtifact).filter(
-        TrainingArtifact.target_version_id == version_id
-    ).delete()
-    db_session.commit()
 
     resp = client.post(
         f"/{prefix}/tokenizer/runs",

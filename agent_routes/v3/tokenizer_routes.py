@@ -151,7 +151,12 @@ async def _upsert_training_artifacts(
         index_elements=["target_version_id"],
         set_={
             "grammar_sketch": stmt.excluded.grammar_sketch,
-            "source_model": stmt.excluded.source_model,
+            # Preserve prior provenance: only update source_model when the
+            # incoming run carries one. NULL incoming values must not wipe
+            # the stored value from an earlier run.
+            "source_model": func.coalesce(
+                stmt.excluded.source_model, TrainingArtifact.source_model
+            ),
             "updated_at": func.now(),
         },
     )
