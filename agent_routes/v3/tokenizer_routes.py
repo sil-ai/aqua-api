@@ -9,7 +9,7 @@ from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,7 @@ from database.models import (
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
-    TrainingArtifacts,
+    TrainingArtifact,
 )
 from database.models import UserDB as UserModel
 from database.models import (
@@ -142,7 +142,7 @@ async def _upsert_training_artifacts(
     grammar_sketch: str,
     source_model: Optional[str],
 ) -> None:
-    stmt = pg_insert(TrainingArtifacts).values(
+    stmt = pg_insert(TrainingArtifact).values(
         target_version_id=target_version_id,
         grammar_sketch=grammar_sketch,
         source_model=source_model,
@@ -152,7 +152,7 @@ async def _upsert_training_artifacts(
         set_={
             "grammar_sketch": stmt.excluded.grammar_sketch,
             "source_model": stmt.excluded.source_model,
-            "updated_at": datetime.datetime.utcnow(),
+            "updated_at": func.now(),
         },
     )
     await db.execute(stmt)
@@ -356,26 +356,32 @@ async def commit_tokenizer_run(
 
             existing_result = await db.execute(
                 select(
-                    LanguageMorpheme.morpheme, LanguageMorpheme.morpheme_class
+                    LanguageMorpheme.morpheme,
+                    LanguageMorpheme.morpheme_class,
+                    LanguageMorpheme.target_version_id,
                 ).where(
                     LanguageMorpheme.iso_639_3 == iso,
                     LanguageMorpheme.morpheme.in_(incoming.keys()),
                 )
             )
-            existing_map = {row[0]: row[1] for row in existing_result.all()}
+            existing_map = {row[0]: (row[1], row[2]) for row in existing_result.all()}
 
             new_rows = []
+            unstamped_existing: list[str] = []
             for morpheme, cls in incoming.items():
                 if morpheme in existing_map:
                     n_existing += 1
-                    if existing_map[morpheme] != cls:
+                    stored_class, stored_version_id = existing_map[morpheme]
+                    if stored_version_id is None:
+                        unstamped_existing.append(morpheme)
+                    if stored_class != cls:
                         n_conflicts += 1
                         logger.warning(
                             "Morpheme class conflict ignored",
                             extra={
                                 "iso": iso,
                                 "morpheme": morpheme,
-                                "stored_class": existing_map[morpheme],
+                                "stored_class": stored_class,
                                 "incoming_class": cls,
                             },
                         )
@@ -397,6 +403,23 @@ async def commit_tokenizer_run(
                     index_elements=["iso_639_3", "morpheme"]
                 )
                 await db.execute(stmt)
+
+            # Backfill target_version_id for legacy rows that pre-date Phase 1.
+            # Stamp only when currently NULL to preserve first-writer-wins
+            # semantics — once a version owns the row, later runs from other
+            # versions don't overwrite it. Properly per-version morpheme rows
+            # arrive in Phase 5 when the (iso_639_3, morpheme) unique constraint
+            # is dropped.
+            if unstamped_existing:
+                await db.execute(
+                    update(LanguageMorpheme)
+                    .where(
+                        LanguageMorpheme.iso_639_3 == iso,
+                        LanguageMorpheme.morpheme.in_(unstamped_existing),
+                        LanguageMorpheme.target_version_id.is_(None),
+                    )
+                    .values(target_version_id=target_version_id)
+                )
 
         merged_stats = dict(payload.stats or {})
         merged_stats["n_morphemes_new"] = n_new

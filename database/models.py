@@ -1192,7 +1192,7 @@ class LanguageAffix(Base):
     )
 
 
-class TrainingArtifacts(Base):
+class TrainingArtifact(Base):
     __tablename__ = "training_artifacts"
 
     target_version_id = Column(

@@ -7,7 +7,7 @@ from database.models import (
     LanguageMorpheme,
     LanguageProfile,
     TokenizerRun,
-    TrainingArtifacts,
+    TrainingArtifact,
     VerseMorphemeIndex,
     VerseText,
     WordMorphemeIndex,
@@ -43,15 +43,6 @@ def _cleanup(db_session):
         db_session.query(LanguageProfile).filter(
             LanguageProfile.iso_639_3 == iso
         ).delete()
-    db_session.commit()
-
-
-def _cleanup_training_artifacts(db_session, version_ids):
-    if not version_ids:
-        return
-    db_session.query(TrainingArtifacts).filter(
-        TrainingArtifacts.target_version_id.in_(version_ids)
-    ).delete(synchronize_session="fetch")
     db_session.commit()
 
 
@@ -1216,6 +1207,82 @@ def test_tokenizer_run_populates_target_version_id(
     _cleanup(db_session)
 
 
+def test_tokenizer_run_backfills_target_version_id_on_existing_morpheme(
+    client, regular_token1, test_revision_id, db_session
+):
+    """When a later run resubmits an existing iso+morpheme row whose
+    target_version_id is NULL (e.g. created before Phase 1), the dual-write
+    stamps it. Once stamped, a subsequent run doesn't overwrite it
+    (first-writer-wins)."""
+    _cleanup(db_session)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    expected_version_id = _resolve_version_id(db_session, test_revision_id)
+
+    # Simulate a legacy row with target_version_id=NULL by inserting directly.
+    db_session.add(
+        LanguageProfile(iso_639_3=TEST_ISO, name="Swahili"),
+    )
+    db_session.flush()
+    db_session.add(
+        LanguageMorpheme(
+            iso_639_3=TEST_ISO,
+            morpheme="legacy",
+            morpheme_class="LEXICAL",
+            target_version_id=None,
+        ),
+    )
+    db_session.commit()
+
+    # Resubmit the same morpheme — the existing-path should stamp version_id.
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [{"morpheme": "legacy", "morpheme_class": "LEXICAL"}],
+        ),
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["n_morphemes_new"] == 0
+    assert resp.json()["n_morphemes_existing"] == 1
+
+    db_session.expire_all()
+    row = (
+        db_session.query(LanguageMorpheme)
+        .filter(
+            LanguageMorpheme.iso_639_3 == TEST_ISO,
+            LanguageMorpheme.morpheme == "legacy",
+        )
+        .one()
+    )
+    assert row.target_version_id == expected_version_id
+
+    # A second run also reporting the same morpheme must not change the stamp.
+    resp = client.post(
+        f"/{prefix}/tokenizer/runs",
+        json=_run_payload(
+            test_revision_id,
+            [{"morpheme": "legacy", "morpheme_class": "LEXICAL"}],
+        ),
+        headers=headers,
+    )
+    assert resp.status_code == 200
+
+    db_session.expire_all()
+    row = (
+        db_session.query(LanguageMorpheme)
+        .filter(
+            LanguageMorpheme.iso_639_3 == TEST_ISO,
+            LanguageMorpheme.morpheme == "legacy",
+        )
+        .one()
+    )
+    assert row.target_version_id == expected_version_id
+
+    _cleanup(db_session)
+
+
 def test_tokenizer_run_dual_writes_training_artifacts(
     client, regular_token1, test_revision_id, db_session
 ):
@@ -1225,8 +1292,8 @@ def test_tokenizer_run_dual_writes_training_artifacts(
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     version_id = _resolve_version_id(db_session, test_revision_id)
-    db_session.query(TrainingArtifacts).filter(
-        TrainingArtifacts.target_version_id == version_id
+    db_session.query(TrainingArtifact).filter(
+        TrainingArtifact.target_version_id == version_id
     ).delete()
     db_session.commit()
 
@@ -1243,8 +1310,8 @@ def test_tokenizer_run_dual_writes_training_artifacts(
     assert resp.status_code == 200, resp.text
 
     artifact = (
-        db_session.query(TrainingArtifacts)
-        .filter(TrainingArtifacts.target_version_id == version_id)
+        db_session.query(TrainingArtifact)
+        .filter(TrainingArtifact.target_version_id == version_id)
         .one()
     )
     assert artifact.grammar_sketch == "draft v1"
@@ -1265,14 +1332,14 @@ def test_tokenizer_run_dual_writes_training_artifacts(
 
     db_session.expire_all()
     refreshed = (
-        db_session.query(TrainingArtifacts)
-        .filter(TrainingArtifacts.target_version_id == version_id)
+        db_session.query(TrainingArtifact)
+        .filter(TrainingArtifact.target_version_id == version_id)
         .one()
     )
     assert refreshed.grammar_sketch == "draft v2"
 
-    db_session.query(TrainingArtifacts).filter(
-        TrainingArtifacts.target_version_id == version_id
+    db_session.query(TrainingArtifact).filter(
+        TrainingArtifact.target_version_id == version_id
     ).delete()
     db_session.commit()
     _cleanup(db_session)
@@ -1287,8 +1354,8 @@ def test_tokenizer_run_no_grammar_sketch_skips_training_artifacts(
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     version_id = _resolve_version_id(db_session, test_revision_id)
-    db_session.query(TrainingArtifacts).filter(
-        TrainingArtifacts.target_version_id == version_id
+    db_session.query(TrainingArtifact).filter(
+        TrainingArtifact.target_version_id == version_id
     ).delete()
     db_session.commit()
 
@@ -1304,8 +1371,8 @@ def test_tokenizer_run_no_grammar_sketch_skips_training_artifacts(
     assert resp.status_code == 200, resp.text
 
     assert (
-        db_session.query(TrainingArtifacts)
-        .filter(TrainingArtifacts.target_version_id == version_id)
+        db_session.query(TrainingArtifact)
+        .filter(TrainingArtifact.target_version_id == version_id)
         .one_or_none()
         is None
     )
