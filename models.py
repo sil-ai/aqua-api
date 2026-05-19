@@ -849,6 +849,12 @@ class LexemeCardOut(BaseModel):
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None
     last_user_edit: Optional[datetime.datetime] = None
+    # True when the response reflects the requested language: either canonical
+    # source matched ?lang, or a card_translations overlay was applied. False
+    # only on the bulk endpoint when ?lang was requested but no overlay
+    # existed — in that case source-side fields above are null. The by-id
+    # endpoint never returns False (it 404s instead, to trigger derivation).
+    has_translation_overlay: bool = True
 
 
 class ListMode(str, Enum):

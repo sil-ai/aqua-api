@@ -7163,11 +7163,13 @@ def test_get_lexeme_card_by_id_lang_merges_translation(
     # Target-side fields come from the canonical card (unchanged)
     assert data["target_lemma"] == "single_merge_lemma"
     # The translated example has source_text overridden; the un-translated
-    # example keeps the canonical source_text.
-    sources = {ex["source"] for ex in data["examples"]}
-    targets = {ex["target"] for ex in data["examples"]}
-    assert sources == {"alpha swh", "beta en"}
-    assert targets == {"alpha tgt", "beta tgt"}
+    # example keeps the canonical source_text. Assert per-id so a swap (both
+    # examples returning the same translated text on different ids) fails.
+    by_ex_id = {ex["id"]: ex for ex in data["examples"]}
+    assert by_ex_id[ex_ids[0]]["source"] == "alpha swh"
+    assert by_ex_id[ex_ids[0]]["target"] == "alpha tgt"
+    assert by_ex_id[ex_ids[1]]["source"] == "beta en"
+    assert by_ex_id[ex_ids[1]]["target"] == "beta tgt"
 
 
 def test_get_lexeme_card_by_id_404_when_no_translation(
@@ -7272,16 +7274,25 @@ def test_get_lexeme_cards_bulk_lang_returns_missing_translation_with_null_overla
     assert merged["source_lemma"] == "bulk_with_swh"
     assert merged["examples"][0]["source"] == "with swh src"
     assert merged["examples"][0]["target"] == "with tgt"
+    assert merged["has_translation_overlay"] is True
 
     # Card lacking a swh translation row is returned with the overlay fields
-    # set to None and example source masked (target side stays intact).
+    # set to None and example source masked. Non-source-side scalars (target,
+    # version ids, pos, confidence, id) and has_translation_overlay must
+    # still reflect the canonical card.
     missing = by_id[card_without]
+    assert missing["id"] == card_without
     assert missing["target_lemma"] == target_lemma_without
+    assert missing["target_version_id"] == test_version_id_2
+    assert missing["source_version_id"] == test_version_id
+    assert missing["pos"] is None or isinstance(missing["pos"], str)
+    assert missing["confidence"] is None or isinstance(missing["confidence"], float)
     assert missing["source_lemma"] is None
     assert missing["source_surface_forms"] is None
     assert missing["senses"] is None
     assert missing["examples"][0]["source"] is None
     assert missing["examples"][0]["target"] == "without tgt"
+    assert missing["has_translation_overlay"] is False
 
 
 def test_get_lexeme_cards_bulk_no_lang_back_compat(
@@ -7463,11 +7474,14 @@ def test_get_lexeme_cards_bulk_no_source_version_id_with_lang_returns_null_overl
     assert card_without in by_id
     missing = by_id[card_without]
     assert missing["target_lemma"] == "ui_no_overlay_lemma"
+    assert missing["target_version_id"] == test_version_id_2
+    assert missing["source_version_id"] == test_version_id
     assert missing["source_lemma"] is None
     assert missing["source_surface_forms"] is None
     assert missing["senses"] is None
     assert missing["examples"][0]["source"] is None
     assert missing["examples"][0]["target"] == "no overlay tgt"
+    assert missing["has_translation_overlay"] is False
 
 
 def test_get_lexeme_cards_bulk_no_source_version_id_returns_multi_pivot_canonicals(
@@ -8293,6 +8307,256 @@ def test_get_lexeme_cards_pivot_routing_with_lang_overlay(
             PivotCandidate.pivot_iso == "eng"
         ).delete()
         db_session.commit()
+
+
+def test_get_lexeme_cards_pivot_routing_with_missing_overlay(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+):
+    """Pivot routing + no overlay: card is still returned, with null source-side
+    fields, no canonical (pivot-language) source leaking through examples, and
+    has_translation_overlay=False. Reproduces the production scenario the PR
+    fixes: UI calls (target_version_id, lang=eng), pivot rewrites source to
+    swh, no eng card_translations row exists yet.
+
+    The ``test_revision_id`` fixture is requested only to chain in
+    ``setup_agent_access`` (Group1 ↔ loading_test access) before we add our
+    own BibleVersionAccess rows below.
+    """
+    from datetime import date
+
+    from database.models import (
+        BibleRevision,
+        BibleVersion,
+        BibleVersionAccess,
+        Group,
+        LanguagePivot,
+        PivotCandidate,
+        UserDB,
+    )
+
+    _ = test_revision_id  # silence linter; fixture runs setup_agent_access
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+    # Pivot canonical lives in a swh BibleVersion + revision. Create them so
+    # the rewritten source resolves to a real bible_version_id whose iso is swh.
+    swh_version = BibleVersion(
+        name="pivot_missing_swh_canonical",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="PMSC",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    db_session.add(swh_version)
+    db_session.commit()
+    swh_revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=swh_version.id,
+        published=False,
+        machine_translation=False,
+    )
+    db_session.add(swh_revision)
+    db_session.commit()
+
+    target = BibleVersion(
+        name="pivot_missing_overlay_target",
+        iso_language="zga",
+        iso_script="Latn",
+        abbreviation="PMOT",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    ui_reference = BibleVersion(
+        name="pivot_missing_overlay_ui_ref",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="PMOU",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    db_session.add_all([target, ui_reference])
+    db_session.commit()
+
+    # Grant Group1 access so testuser1's group can see the example.
+    db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=swh_version.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=target.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=ui_reference.id, group_id=group1.id),
+        ]
+    )
+    db_session.commit()
+
+    db_session.merge(PivotCandidate(pivot_iso="swh", pivot_revision_id=swh_revision.id))
+    db_session.commit()
+    db_session.merge(LanguagePivot(target_iso="zga", pivot_iso="swh"))
+    db_session.commit()
+
+    try:
+        # Card lives at the (swh) canonical, target=zga. The example source is
+        # canonical swh text — must NOT leak into the eng response below. The
+        # example revision_id must belong to one of the version pair, so use
+        # the swh revision we just created.
+        card_id = _create_card_with_examples(
+            client,
+            regular_token1,
+            target_lemma="pivot_missing_tgt",
+            source_lemma="pivot_missing_swh_src",
+            revision_id=swh_revision.id,
+            source_version_id=swh_version.id,
+            target_version_id=target.id,
+            examples=[
+                {"source": "leaky swh src", "target": "rendered tgt"},
+            ],
+        )
+
+        # No POST to /translation — overlay row deliberately absent.
+        response = client.get(
+            f"/v3/agent/lexeme-card?source_version_id={ui_reference.id}"
+            f"&target_version_id={target.id}&lang=eng",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        returned = next(c for c in response.json() if c["id"] == card_id)
+
+        assert returned["target_lemma"] == "pivot_missing_tgt"
+        assert returned["target_version_id"] == target.id
+        assert returned["source_lemma"] is None
+        assert returned["source_surface_forms"] is None
+        assert returned["senses"] is None
+        # Canonical (swh) example source must not leak into the eng response.
+        assert returned["examples"][0]["source"] is None
+        assert returned["examples"][0]["target"] == "rendered tgt"
+        assert returned["has_translation_overlay"] is False
+    finally:
+        db_session.query(LanguagePivot).filter(
+            LanguagePivot.target_iso == "zga"
+        ).delete()
+        db_session.query(PivotCandidate).filter(
+            PivotCandidate.pivot_iso == "swh",
+            PivotCandidate.pivot_revision_id == swh_revision.id,
+        ).delete()
+        db_session.commit()
+
+
+def test_get_lexeme_cards_bulk_missing_overlay_logs_counter(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """The missing_translation_overlay log counter matches the count of cards
+    returned with null overlay. Guards the rename from
+    `omitted_for_missing_translation` and ensures the metric stays accurate
+    so ops can see when backfill is needed."""
+    from unittest.mock import patch
+
+    card_with = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="logcounter_with_tgt",
+        source_lemma="logcounter_with_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "with en", "target": "with tgt"}],
+    )
+    card_without_a = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="logcounter_wo_a_tgt",
+        source_lemma="logcounter_wo_a_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "wo a en", "target": "wo a tgt"}],
+    )
+    card_without_b = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="logcounter_wo_b_tgt",
+        source_lemma="logcounter_wo_b_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        examples=[{"source": "wo b en", "target": "wo b tgt"}],
+    )
+    ex_id = (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id == card_with)
+        .first()
+        .id
+    )
+    client.post(
+        f"/v3/agent/lexeme-card/{card_with}/translation",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "language_iso": "swh",
+            "source_lemma": "logcounter_with_swh",
+            "examples": [{"example_id": ex_id, "source_text": "with swh"}],
+        },
+    )
+
+    # The agent_routes logger sets propagate=False, so caplog can't see it.
+    # Patch logger.info directly and inspect the structured `extra` payload.
+    with patch("agent_routes.v3.agent_routes.logger.info", autospec=True) as mock_info:
+        response = client.get(
+            f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+            f"&target_version_id={test_version_id_2}&lang=swh",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert response.status_code == 200, response.text
+
+    completion_calls = [
+        c
+        for c in mock_info.call_args_list
+        if c.args and "get_lexeme_cards completed" in c.args[0]
+    ]
+    assert completion_calls, "expected get_lexeme_cards completion log"
+    extra = completion_calls[-1].kwargs.get("extra", {})
+    assert (
+        extra.get("missing_translation_overlay", 0) >= 2
+    ), f"counter should reflect ≥2 cards without an overlay, got extra={extra!r}"
+    assert extra.get("lang") == "swh"
+    assert extra.get("lang_auto_derived") is False
+
+    # Sanity: the response contains all three of our cards.
+    returned_ids = {c["id"] for c in response.json()}
+    assert {card_with, card_without_a, card_without_b}.issubset(returned_ids)
+
+
+def test_get_lexeme_card_by_id_lang_matches_canonical_iso_returns_200(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Guard against drift: by-id with ?lang equal to the card's canonical
+    source_language_iso returns 200 with canonical data, never 404 (the
+    404-on-missing-overlay path must not absorb the canonical-match path)."""
+    card_id = _create_card_with_examples(
+        client,
+        regular_token1,
+        target_lemma="byid_canonical_match_tgt",
+        source_lemma="byid_canonical_match_src",
+        revision_id=test_revision_id,
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+    )
+    response = client.get(
+        f"/v3/agent/lexeme-card/{card_id}?lang=eng",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["id"] == card_id
+    assert data["source_lemma"] == "byid_canonical_match_src"
 
 
 def test_check_word_in_lexeme_cards_pivot_routing(
