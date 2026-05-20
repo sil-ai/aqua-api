@@ -49,12 +49,8 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute(
-        "DELETE FROM language_affixes WHERE target_version_id IS NULL"
-    )
-    op.execute(
-        "DELETE FROM language_morphemes WHERE target_version_id IS NULL"
-    )
+    op.execute("DELETE FROM language_affixes WHERE target_version_id IS NULL")
+    op.execute("DELETE FROM language_morphemes WHERE target_version_id IS NULL")
 
 
 def downgrade() -> None:
