@@ -99,12 +99,13 @@ def _job_pairs_response(job: PredictJob) -> list[PredictJobPair]:
     still match results to inputs by index, and so a hypothetical agent
     bug that mangled echo fields wouldn't propagate to the response.
 
-    `lexeme_cards` here is the agent's *filtered* per-pair view of cards
-    relevant to that pair's target text (including any newly minted via
-    record_new_lexeme during this run). The sync /predict path cannot
-    return discoveries because translation/critique are flagged off there
-    (see ``spawn_slow_agent`` below), so this poll endpoint is the only
-    place clients see them.
+    `lexeme_cards` here is the agent's filtered per-pair view of cards
+    relevant to that pair's target text, including any new ones the
+    agent minted during this run. The sync /predict path can't return
+    those discoveries — translation/critique are forced off there
+    (see `spawn_slow_agent` below), so the LLM never runs and no new
+    cards are produced — making this poll endpoint the only surface
+    where clients see them.
     """
     result = job.result or {}
     agent_pairs = result.get("pairs") or []

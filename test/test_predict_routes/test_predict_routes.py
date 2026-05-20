@@ -764,6 +764,9 @@ def test_predict_job_running_returns_retry_after(client, regular_token1, timeout
     assert body["pairs"][0]["vref"] == "GEN 1:1"
     assert body["pairs"][0]["translation"] is None
     assert body["pairs"][0]["critique"] is None
+    # Discovered cards likewise null until the slow path lands; pinned
+    # so a future change that leaks partial cards mid-run gets caught.
+    assert body["pairs"][0]["lexeme_cards"] is None
 
 
 def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_token1):
@@ -842,13 +845,10 @@ def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_t
 
 
 def test_predict_job_complete_forwards_lexeme_cards(client, regular_token1):
-    """Regression for #707: discovered lexeme cards landed in the agent's
-    per-pair response but were dropped by the poll shaper. The slow-path
-    is the ONLY surface where clients can see cards discovered during a
-    predict run — the sync /predict path runs the agent with
-    include_translation=False, so it has no LLM, no record_new_lexeme
-    invocations, and only prefetched cards. If this endpoint drops the
-    field, those discoveries are unreachable to clients.
+    """Regression for #707: discovered lexeme cards were dropped by the
+    poll shaper. The slow path is the only surface where clients see
+    cards discovered during a predict run (sync /predict forces
+    translation/critique off, so its agent leg can't produce new ones).
     """
     import modal
 
@@ -862,10 +862,7 @@ def test_predict_job_complete_forwards_lexeme_cards(client, regular_token1):
         body_overrides={"pairs": submitted_pairs},
     )
 
-    # The agent returns per-pair `lexeme_cards` — its filtered view of
-    # cards relevant to that pair's target text, including any that were
-    # newly minted via record_new_lexeme during this run. Each pair may
-    # have a different subset; pair 1 here has two cards, pair 2 has one.
+    # Pair 1 has two cards, pair 2 has one — exercising per-pair independence.
     agent_complete = {
         "pairs": [
             {
@@ -937,6 +934,131 @@ def test_predict_job_complete_handles_missing_lexeme_cards(client, regular_token
     body = response.json()
     assert body["status"] == "complete"
     assert body["pairs"][0]["lexeme_cards"] is None
+
+
+def test_predict_job_complete_lexeme_cards_empty_list(client, regular_token1):
+    """An explicit empty list is semantically distinct from None: the
+    agent ran lexeme discovery and found nothing for this pair, vs the
+    agent didn't include the field at all. The shaper must preserve the
+    distinction since clients may render the two states differently."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    agent_complete = {
+        "pairs": [
+            {"translation": {"literal": "ok"}, "critique": None, "lexeme_cards": []},
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pairs"][0]["lexeme_cards"] == []
+
+
+def test_predict_job_complete_lexeme_cards_partial_agent_response(
+    client, regular_token1
+):
+    """If the agent returns fewer pairs than the client submitted (mid-
+    stream snapshot, agent-side filter dropped some), pairs without an
+    agent counterpart must surface `lexeme_cards=None` alongside the
+    `None` translation/critique. Verifies the `else {}` fallback at the
+    `idx >= len(agent_pairs)` boundary in the shaper."""
+    import modal
+
+    submitted_pairs = [
+        {"vref": "GEN 1:1", "source_text": "src-A", "target_text": "tgt-A"},
+        {"vref": "GEN 1:2", "source_text": "src-B", "target_text": "tgt-B"},
+        {"vref": "GEN 1:3", "source_text": "src-C", "target_text": "tgt-C"},
+    ]
+    job_id = _spawn_agent_and_get_job(
+        client,
+        regular_token1,
+        body_overrides={"pairs": submitted_pairs},
+    )
+
+    agent_complete = {
+        "pairs": [
+            {
+                "translation": {"literal": "A"},
+                "critique": None,
+                "lexeme_cards": [{"id": 1, "target_lemma": "lemma-A"}],
+            },
+            {
+                "translation": {"literal": "B"},
+                "critique": None,
+                "lexeme_cards": [{"id": 2, "target_lemma": "lemma-B"}],
+            },
+            # Agent omitted pair index 2.
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    pairs = response.json()["pairs"]
+    assert len(pairs) == 3
+    # First two pairs carry their agent-supplied cards
+    assert pairs[0]["lexeme_cards"][0]["id"] == 1
+    assert pairs[1]["lexeme_cards"][0]["id"] == 2
+    # Third pair is echoed back with everything from the agent side null
+    assert pairs[2]["vref"] == "GEN 1:3"
+    assert pairs[2]["translation"] is None
+    assert pairs[2]["lexeme_cards"] is None
+
+
+def test_predict_job_cached_read_preserves_lexeme_cards(client, regular_token1):
+    """The cached path (terminal job re-served from the DB without
+    calling Modal) must also surface lexeme_cards. job.result is
+    persisted as JSONB; this pins the round-trip so a future change to
+    that storage shape doesn't silently drop the field."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    agent_complete = {
+        "pairs": [
+            {
+                "translation": {"literal": "ok"},
+                "critique": None,
+                "lexeme_cards": [
+                    {"id": 42, "target_lemma": "stored-lemma", "confidence": 0.9},
+                ],
+            }
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock) as patched:
+        first = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        second = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        # Second poll served from cache; Modal not consulted again.
+        assert patched.call_count == 1
+
+    assert first.json()["pairs"][0]["lexeme_cards"] == [
+        {"id": 42, "target_lemma": "stored-lemma", "confidence": 0.9}
+    ]
+    assert second.json()["pairs"][0]["lexeme_cards"] == [
+        {"id": 42, "target_lemma": "stored-lemma", "confidence": 0.9}
+    ]
 
 
 def test_predict_job_complete_is_cached(client, regular_token1):
