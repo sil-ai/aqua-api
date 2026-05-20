@@ -40,6 +40,7 @@ from models import (
     AgentWordAlignmentBulkRequest,
     AgentWordAlignmentIn,
     AgentWordAlignmentOut,
+    BulkLexemeCardDeleteResponse,
     CardTranslationIn,
     CardTranslationOut,
     CritiqueIssueOut,
@@ -51,7 +52,10 @@ from models import (
     ListMode,
 )
 from security_routes.auth_routes import get_current_user
-from security_routes.utilities import is_user_authorized_for_assessment
+from security_routes.utilities import (
+    is_user_authorized_for_assessment,
+    is_user_authorized_for_bible_version,
+)
 from utils.logging_config import setup_logger
 
 container_id = socket.gethostname()
@@ -1904,6 +1908,118 @@ async def patch_lexeme_card_by_lemma_DEPRECATED(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
         ) from e
+
+
+@router.delete(
+    "/agent/lexeme-card",
+    response_model=BulkLexemeCardDeleteResponse,
+)
+async def delete_lexeme_cards_for_target_version(
+    target_version_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Wipe every lexeme card for a target_version_id, across all source pairs.
+
+    Cards for a given target_version_id can live at multiple source_version_ids
+    (current pivot, pre-pivot reference version, function-word extraction era).
+    The per-card DELETE plus a GET keyed on (source, target) misses cards at
+    other source pairs, leaving rebuilds dirty. This endpoint deletes by
+    target_version_id alone, regardless of source_version_id.
+
+    Deletes child rows explicitly in child-to-parent order so each row count
+    is authoritative (no pre-delete SELECT COUNTs that could drift under
+    concurrent writes). ``card_translation_examples`` rows are wiped via the
+    ``card_translations`` cascade — they share a parent and never escape it.
+
+    This is the bulk counterpart to ``DELETE /v3/agent/lexeme-card/{card_id}``
+    and the shape mirrors ``DELETE /v3/tokenizer/training-artifacts/{version_id}``
+    so aqua-assessments' Phase 4 rebuild can call them together.
+
+    Status codes:
+    - 200: returns row counts deleted (zeros if nothing existed — idempotent)
+    - 403: caller not authorized for this version — also returned for
+      non-existent version_ids when the caller is a regular user (no
+      enumeration leak)
+    - 404: admin caller requesting a version_id that doesn't exist
+    """
+    request_start = time.perf_counter()
+
+    if not await is_user_authorized_for_bible_version(
+        current_user.id, target_version_id, db
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
+
+    from sqlalchemy import delete, select
+
+    version_lookup = await db.execute(
+        select(BibleVersion.id).where(BibleVersion.id == target_version_id)
+    )
+    if version_lookup.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No bible_version with id {target_version_id}",
+        )
+
+    try:
+        card_ids_subquery = select(AgentLexemeCard.id).where(
+            AgentLexemeCard.target_version_id == target_version_id
+        )
+
+        # child → parent order so each rowcount reflects only that table's
+        # deletes; the parent DELETE's cascade then has nothing left to do.
+        # synchronize_session=False on the subquery-bearing deletes — SQLA
+        # can't evaluate a Select in Python, and we commit right after so
+        # in-session ORM state would be discarded anyway.
+        translations_delete = await db.execute(
+            delete(CardTranslation)
+            .where(CardTranslation.card_id.in_(card_ids_subquery))
+            .execution_options(synchronize_session=False)
+        )
+        examples_delete = await db.execute(
+            delete(AgentLexemeCardExample)
+            .where(AgentLexemeCardExample.lexeme_card_id.in_(card_ids_subquery))
+            .execution_options(synchronize_session=False)
+        )
+        cards_delete = await db.execute(
+            delete(AgentLexemeCard)
+            .where(AgentLexemeCard.target_version_id == target_version_id)
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error("Failed to bulk-delete lexeme cards", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {e}",
+        ) from e
+
+    response = BulkLexemeCardDeleteResponse(
+        target_version_id=target_version_id,
+        lexeme_cards_deleted=cards_delete.rowcount or 0,
+        examples_deleted=examples_delete.rowcount or 0,
+        card_translations_deleted=translations_delete.rowcount or 0,
+    )
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"delete_lexeme_cards_for_target_version completed in {duration}s",
+        extra={
+            "method": "DELETE",
+            "path": "/agent/lexeme-card",
+            "target_version_id": target_version_id,
+            "username": current_user.username,
+            "lexeme_cards_deleted": response.lexeme_cards_deleted,
+            "examples_deleted": response.examples_deleted,
+            "card_translations_deleted": response.card_translations_deleted,
+            "duration_s": duration,
+        },
+    )
+    return response
 
 
 @router.delete("/agent/lexeme-card/{card_id}", status_code=status.HTTP_204_NO_CONTENT)

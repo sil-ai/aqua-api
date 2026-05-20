@@ -6491,6 +6491,331 @@ def test_delete_lexeme_card_unauthorized(client):
 
 
 # --------------------------------------------------------------------------
+# Bulk DELETE /v3/agent/lexeme-card?target_version_id=X (issue #703)
+# --------------------------------------------------------------------------
+
+
+def _bulk_delete_url(target_version_id):
+    return f"/v3/agent/lexeme-card?target_version_id={target_version_id}"
+
+
+def test_bulk_delete_lexeme_cards_across_source_pairs_with_cascades(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """Cards for a target_version_id can live at multiple source_version_ids
+    (different pivots, legacy pre-pivot writes). The bulk DELETE wipes them
+    all, regardless of source, and cascades to examples + card_translations."""
+    # Pre-clean any cards left behind by earlier tests in this module so the
+    # row counts in the response are deterministic.
+    db_session.query(AgentLexemeCard).filter(
+        AgentLexemeCard.target_version_id == test_version_id
+    ).delete(synchronize_session=False)
+    db_session.commit()
+
+    # Two cards at the same target but different source_version_ids.
+    card_a = AgentLexemeCard(
+        target_lemma="bulkdel_a",
+        source_version_id=test_version_id_2,
+        target_version_id=test_version_id,
+        source_language_iso="eng",
+    )
+    card_b = AgentLexemeCard(
+        target_lemma="bulkdel_b",
+        source_version_id=test_version_id,
+        target_version_id=test_version_id,
+        source_language_iso="eng",
+    )
+    db_session.add_all([card_a, card_b])
+    db_session.flush()
+
+    ex_a = AgentLexemeCardExample(
+        lexeme_card_id=card_a.id,
+        revision_id=test_revision_id,
+        source_text="bulk a src",
+        target_text="bulk a tgt",
+    )
+    ex_b1 = AgentLexemeCardExample(
+        lexeme_card_id=card_b.id,
+        revision_id=test_revision_id,
+        source_text="bulk b src 1",
+        target_text="bulk b tgt 1",
+    )
+    ex_b2 = AgentLexemeCardExample(
+        lexeme_card_id=card_b.id,
+        revision_id=test_revision_id,
+        source_text="bulk b src 2",
+        target_text="bulk b tgt 2",
+    )
+    db_session.add_all([ex_a, ex_b1, ex_b2])
+    db_session.flush()
+
+    tr_a = CardTranslation(
+        card_id=card_a.id,
+        language_iso="swh",
+        source_lemma="bulk_a_swh",
+    )
+    db_session.add(tr_a)
+    db_session.flush()
+    db_session.add(
+        CardTranslationExample(
+            card_translation_id=tr_a.id,
+            example_id=ex_a.id,
+            source_text="bulk a swh",
+        )
+    )
+    db_session.commit()
+
+    card_a_id, card_b_id = card_a.id, card_b.id
+    tr_a_id = tr_a.id
+
+    resp = client.delete(
+        _bulk_delete_url(test_version_id),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    # Pin the full response shape so a field rename/addition trips the
+    # contract test that aqua-assessments depends on.
+    assert resp.json() == {
+        "target_version_id": test_version_id,
+        "lexeme_cards_deleted": 2,
+        "examples_deleted": 3,
+        "card_translations_deleted": 1,
+    }
+
+    db_session.expire_all()
+    assert (
+        db_session.query(AgentLexemeCard)
+        .filter(AgentLexemeCard.id.in_([card_a_id, card_b_id]))
+        .count()
+        == 0
+    )
+    assert (
+        db_session.query(AgentLexemeCardExample)
+        .filter(AgentLexemeCardExample.lexeme_card_id.in_([card_a_id, card_b_id]))
+        .count()
+        == 0
+    )
+    assert (
+        db_session.query(CardTranslation).filter(CardTranslation.id == tr_a_id).first()
+        is None
+    )
+    assert (
+        db_session.query(CardTranslationExample)
+        .filter(CardTranslationExample.card_translation_id == tr_a_id)
+        .count()
+        == 0
+    )
+
+    # Calling DELETE again on the same target now returns zero counts —
+    # this is the real "delete real data, second call is a no-op"
+    # idempotency check the rebuild path relies on.
+    second = client.delete(
+        _bulk_delete_url(test_version_id),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json() == {
+        "target_version_id": test_version_id,
+        "lexeme_cards_deleted": 0,
+        "examples_deleted": 0,
+        "card_translations_deleted": 0,
+    }
+
+
+def test_bulk_delete_lexeme_cards_idempotent_on_empty_target(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+):
+    """Calling DELETE on a target with no cards returns zero counts —
+    rebuild semantics are 'ensure nothing exists', not 'something was
+    there'. (The 'delete-then-redelete with data' path is covered by
+    the cascade test above.)"""
+    db_session.query(AgentLexemeCard).filter(
+        AgentLexemeCard.target_version_id == test_version_id
+    ).delete(synchronize_session=False)
+    db_session.commit()
+
+    resp = client.delete(
+        _bulk_delete_url(test_version_id),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "target_version_id": test_version_id,
+        "lexeme_cards_deleted": 0,
+        "examples_deleted": 0,
+        "card_translations_deleted": 0,
+    }
+
+
+def test_bulk_delete_lexeme_cards_preserves_other_target_versions(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+    test_version_id_2,
+):
+    """Cards stamped to other target_version_ids must not be touched —
+    the whole point of the endpoint is target-scoped wipe."""
+    # Pre-clean so the deleted-count is exact, not a lower bound.
+    db_session.query(AgentLexemeCard).filter(
+        AgentLexemeCard.target_version_id == test_version_id
+    ).delete(synchronize_session=False)
+    db_session.commit()
+
+    keep_card = AgentLexemeCard(
+        target_lemma="bulkdel_keep",
+        source_version_id=test_version_id,
+        target_version_id=test_version_id_2,
+        source_language_iso="eng",
+    )
+    wipe_card = AgentLexemeCard(
+        target_lemma="bulkdel_wipe",
+        source_version_id=test_version_id,
+        target_version_id=test_version_id,
+        source_language_iso="eng",
+    )
+    db_session.add_all([keep_card, wipe_card])
+    db_session.commit()
+    keep_id = keep_card.id
+
+    resp = client.delete(
+        _bulk_delete_url(test_version_id),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["lexeme_cards_deleted"] == 1
+
+    db_session.expire_all()
+    assert (
+        db_session.query(AgentLexemeCard).filter(AgentLexemeCard.id == keep_id).first()
+        is not None
+    )
+
+    # Clean up the leftover.
+    db_session.query(AgentLexemeCard).filter(AgentLexemeCard.id == keep_id).delete(
+        synchronize_session=False
+    )
+    db_session.commit()
+
+
+def test_bulk_delete_lexeme_cards_does_not_touch_training_artifacts(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id,
+):
+    """Lexeme cards and tokenizer artifacts have separate DELETE endpoints
+    that are designed to be called together during rebuild but stay
+    independent. Pin the invariant so a future refactor that accidentally
+    cascaded through some new relationship would be caught here. Mirror
+    of `test_delete_training_artifacts_does_not_touch_lexeme_cards`.
+
+    Tests against `training_artifacts` as a sentinel — it has no extra
+    FK dependencies, so the test setup is small. Morphemes/affixes belong
+    to the same family and would behave identically."""
+    from database.models import TrainingArtifact
+
+    db_session.query(AgentLexemeCard).filter(
+        AgentLexemeCard.target_version_id == test_version_id
+    ).delete(synchronize_session=False)
+    db_session.query(TrainingArtifact).filter(
+        TrainingArtifact.target_version_id == test_version_id
+    ).delete(synchronize_session=False)
+    db_session.commit()
+
+    db_session.add(
+        AgentLexemeCard(
+            target_lemma="bulkdel_to_be_wiped",
+            source_version_id=test_version_id,
+            target_version_id=test_version_id,
+            source_language_iso="eng",
+        )
+    )
+    db_session.add(
+        TrainingArtifact(target_version_id=test_version_id, grammar_sketch="stays_put")
+    )
+    db_session.commit()
+
+    resp = client.delete(
+        _bulk_delete_url(test_version_id),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["lexeme_cards_deleted"] == 1
+
+    db_session.expire_all()
+    assert (
+        db_session.query(TrainingArtifact)
+        .filter(TrainingArtifact.target_version_id == test_version_id)
+        .count()
+        == 1
+    ), "bulk-delete lexeme cards must not touch training_artifacts"
+
+    db_session.query(TrainingArtifact).filter(
+        TrainingArtifact.target_version_id == test_version_id
+    ).delete(synchronize_session=False)
+    db_session.commit()
+
+
+def test_bulk_delete_lexeme_cards_403_when_user_lacks_version_access(
+    client, regular_token2, test_version_id
+):
+    """A user without group access to the version cannot bulk-wipe its cards."""
+    resp = client.delete(
+        _bulk_delete_url(test_version_id),
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_bulk_delete_lexeme_cards_403_when_version_unknown_to_regular_user(
+    client, regular_token1
+):
+    """No enumeration leak: a non-admin caller asking about a non-existent
+    version gets the same 403 they'd get for a real version they can't reach."""
+    resp = client.delete(
+        _bulk_delete_url(999999999),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_bulk_delete_lexeme_cards_404_when_version_unknown_to_admin(
+    client, admin_token
+):
+    """Admins bypass the auth helper, so they reach the version lookup and
+    get a real 404 for non-existent versions."""
+    resp = client.delete(
+        _bulk_delete_url(999999999),
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_bulk_delete_lexeme_cards_unauthenticated(client, test_version_id):
+    """Endpoint requires authentication."""
+    resp = client.delete(_bulk_delete_url(test_version_id))
+    assert resp.status_code == 401
+
+
+def test_bulk_delete_lexeme_cards_requires_target_version_id(client, regular_token1):
+    """Missing target_version_id query param is a 422."""
+    resp = client.delete(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+# --------------------------------------------------------------------------
 # Card translation endpoints (pivot-language architecture, issue #669)
 # --------------------------------------------------------------------------
 

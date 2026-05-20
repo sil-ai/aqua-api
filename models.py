@@ -1827,6 +1827,20 @@ class TrainingArtifactsDeleteResponse(BaseModel):
     morphemes_deleted: int
 
 
+class BulkLexemeCardDeleteResponse(BaseModel):
+    """Row counts deleted by DELETE /v3/agent/lexeme-card?target_version_id=X.
+
+    Wipes every lexeme card for the given target_version_id regardless of
+    source_version_id (cards built under different pivots all go), plus
+    cascades to examples and card_translations.
+    """
+
+    target_version_id: int
+    lexeme_cards_deleted: int
+    examples_deleted: int
+    card_translations_deleted: int
+
+
 class TokenizerRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
