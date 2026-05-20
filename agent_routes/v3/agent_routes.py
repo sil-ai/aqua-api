@@ -1927,8 +1927,10 @@ async def delete_lexeme_cards_for_target_version(
     other source pairs, leaving rebuilds dirty. This endpoint deletes by
     target_version_id alone, regardless of source_version_id.
 
-    Cascades to ``agent_lexeme_card_examples`` and ``card_translations`` via
-    their ON DELETE CASCADE FKs (and ``card_translation_examples`` via theirs).
+    Deletes child rows explicitly in child-to-parent order so each row count
+    is authoritative (no pre-delete SELECT COUNTs that could drift under
+    concurrent writes). ``card_translation_examples`` rows are wiped via the
+    ``card_translations`` cascade — they share a parent and never escape it.
 
     This is the bulk counterpart to ``DELETE /v3/agent/lexeme-card/{card_id}``
     and the shape mirrors ``DELETE /v3/tokenizer/training-artifacts/{version_id}``
@@ -1951,7 +1953,7 @@ async def delete_lexeme_cards_for_target_version(
             detail="User not authorized to access this bible_version",
         )
 
-    from sqlalchemy import delete, func, select
+    from sqlalchemy import delete, select
 
     version_lookup = await db.execute(
         select(BibleVersion.id).where(BibleVersion.id == target_version_id)
@@ -1967,22 +1969,25 @@ async def delete_lexeme_cards_for_target_version(
             AgentLexemeCard.target_version_id == target_version_id
         )
 
-        examples_count_result = await db.execute(
-            select(func.count()).where(
-                AgentLexemeCardExample.lexeme_card_id.in_(card_ids_subquery)
-            )
+        # child → parent order so each rowcount reflects only that table's
+        # deletes; the parent DELETE's cascade then has nothing left to do.
+        # synchronize_session=False on the subquery-bearing deletes — SQLA
+        # can't evaluate a Select in Python, and we commit right after so
+        # in-session ORM state would be discarded anyway.
+        translations_delete = await db.execute(
+            delete(CardTranslation)
+            .where(CardTranslation.card_id.in_(card_ids_subquery))
+            .execution_options(synchronize_session=False)
         )
-        examples_count = examples_count_result.scalar() or 0
-
-        translations_count_result = await db.execute(
-            select(func.count()).where(CardTranslation.card_id.in_(card_ids_subquery))
+        examples_delete = await db.execute(
+            delete(AgentLexemeCardExample)
+            .where(AgentLexemeCardExample.lexeme_card_id.in_(card_ids_subquery))
+            .execution_options(synchronize_session=False)
         )
-        translations_count = translations_count_result.scalar() or 0
-
-        card_delete_result = await db.execute(
-            delete(AgentLexemeCard).where(
-                AgentLexemeCard.target_version_id == target_version_id
-            )
+        cards_delete = await db.execute(
+            delete(AgentLexemeCard)
+            .where(AgentLexemeCard.target_version_id == target_version_id)
+            .execution_options(synchronize_session=False)
         )
         await db.commit()
     except SQLAlchemyError as e:
@@ -1995,9 +2000,9 @@ async def delete_lexeme_cards_for_target_version(
 
     response = BulkLexemeCardDeleteResponse(
         target_version_id=target_version_id,
-        lexeme_cards_deleted=card_delete_result.rowcount or 0,
-        examples_deleted=examples_count,
-        card_translations_deleted=translations_count,
+        lexeme_cards_deleted=cards_delete.rowcount or 0,
+        examples_deleted=examples_delete.rowcount or 0,
+        card_translations_deleted=translations_delete.rowcount or 0,
     )
 
     duration = round(time.perf_counter() - request_start, 2)
@@ -2007,6 +2012,7 @@ async def delete_lexeme_cards_for_target_version(
             "method": "DELETE",
             "path": "/agent/lexeme-card",
             "target_version_id": target_version_id,
+            "username": current_user.username,
             "lexeme_cards_deleted": response.lexeme_cards_deleted,
             "examples_deleted": response.examples_deleted,
             "card_translations_deleted": response.card_translations_deleted,
