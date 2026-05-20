@@ -968,6 +968,17 @@ async def _apply_lexeme_card_patch(
 
     provided_fields = patch_data.model_fields_set
 
+    # target_lemma is NOT NULL; reject explicit null with 400 rather than
+    # letting the DB raise an opaque 500 IntegrityError downstream.
+    if "target_lemma" in provided_fields and patch_data.target_lemma is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "target_lemma cannot be null. To leave it unchanged, omit "
+                "the field from the patch body."
+            ),
+        )
+
     # Check if changing target_lemma would create a duplicate
     # Uniqueness is enforced on (LOWER(target_lemma), source_version_id, target_version_id)
     if (
@@ -992,9 +1003,16 @@ async def _apply_lexeme_card_patch(
                 },
             )
 
-    # Scalar fields - update if provided
+    # Scalar fields - update if provided. source_lemma is lowercased here
+    # (the Pydantic validator only NFC-normalizes) to honor the canonical
+    # source_lemma case-insensitive index; the overlay write path elsewhere
+    # preserves casing instead.
     if "source_lemma" in provided_fields:
-        card.source_lemma = patch_data.source_lemma
+        card.source_lemma = (
+            patch_data.source_lemma.lower()
+            if patch_data.source_lemma is not None
+            else None
+        )
     if "target_lemma" in provided_fields:
         card.target_lemma = patch_data.target_lemma
     if "pos" in provided_fields:
@@ -1377,6 +1395,16 @@ async def patch_lexeme_card_translation(
             # the way in, and the stored canonical column was likewise
             # lowercased at write time. Compare directly.
             new_target = patch_data.target_lemma
+            if new_target is None:
+                # Column is NOT NULL; reject explicit null with 400 rather
+                # than letting the DB raise an opaque 500 IntegrityError.
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "target_lemma cannot be null. To leave it unchanged, "
+                        "omit the field from the patch body."
+                    ),
+                )
             if new_target != card.target_lemma:
                 # Uniqueness is enforced on (LOWER(target_lemma),
                 # source_version_id, target_version_id). Check before write
@@ -2919,6 +2947,7 @@ async def add_lexeme_card_translation(
         build_version=translation_row.build_version,
         created_at=translation_row.created_at,
         last_updated=translation_row.last_updated,
+        last_user_edit=translation_row.last_user_edit,
         examples=[
             {
                 "id": e.id,
