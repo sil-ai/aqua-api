@@ -885,10 +885,14 @@ class LexemeCardPatch(BaseModel):
     def normalize_target_lemma(cls, v):
         return unicodedata.normalize("NFC", v).lower() if v else v
 
+    # NFC-only here (no .lower()). The canonical write path lowercases at the
+    # call site to honor the canonical source_lemma index; the overlay write
+    # path preserves casing (overlay source_lemma has no lookup-key role and
+    # is display data, matching CardTranslationIn's preservation contract).
     @field_validator("source_lemma")
     @classmethod
     def normalize_source_lemma(cls, v):
-        return unicodedata.normalize("NFC", v).lower() if v else v
+        return unicodedata.normalize("NFC", v) if v else v
 
     pos: Optional[str] = None
     confidence: Optional[float] = None
@@ -1014,6 +1018,7 @@ class CardTranslationOut(BaseModel):
     build_version: Optional[str] = None
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None
+    last_user_edit: Optional[datetime.datetime] = None
     examples: List[CardTranslationExampleOut] = []
 
 

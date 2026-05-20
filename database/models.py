@@ -596,6 +596,7 @@ class CardTranslation(Base):
     build_version = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
     last_updated = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+    last_user_edit = Column(TIMESTAMP, nullable=True)
 
     __table_args__ = (
         Index(

@@ -517,13 +517,14 @@ def test_patch_lexeme_card_filters_examples_by_user_access(
     assert admin_sources == {"the sun", "bright sun"}
 
 
-def test_patch_lexeme_card_by_lemma_filters_examples_by_user_access(
+def test_patch_lexeme_card_translation_canonical_match_filters_examples_by_user_access(
     client, regular_token1, regular_token2, admin_token, db_session
 ):
     """
-    The by-lemma PATCH endpoint funnels through the same _apply_lexeme_card_patch
-    helper as the by-id endpoint. Pin its access-control behaviour separately so
-    a future refactor that diverges the two endpoints doesn't slip past CI.
+    PATCH /agent/lexeme-card/translation with language_iso matching the card's
+    canonical source_language_iso funnels through _apply_lexeme_card_patch (same
+    as PATCH-by-id). Pin its access-control behaviour separately so a future
+    refactor that diverges the two paths doesn't slip past CI.
     """
     user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
     user2 = db_session.query(UserDB).filter(UserDB.username == "testuser2").first()
@@ -587,10 +588,13 @@ def test_patch_lexeme_card_by_lemma_filters_examples_by_user_access(
         },
     )
 
+    # language_iso=eng matches the canonical source_language_iso, so this
+    # routes through _apply_lexeme_card_patch — same code path the old
+    # by-lemma endpoint used.
     patch_url = (
-        f"/v3/agent/lexeme-card?target_lemma={target_lemma}"
+        f"/v3/agent/lexeme-card/translation?target_lemma={target_lemma}"
         f"&source_version_id={version_a.id}&target_version_id={version_b.id}"
-        "&list_mode=merge"
+        f"&language_iso=eng&list_mode=merge"
     )
 
     resp_user2 = client.patch(
