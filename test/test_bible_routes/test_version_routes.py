@@ -443,9 +443,7 @@ class TestIncludeDeleted:
     so downstream mirrors can satisfy FK constraints from /revision.
     """
 
-    def _create_and_delete_pair(
-        self, client, regular_token, admin_token, db_session
-    ):
+    def _create_and_delete_pair(self, client, regular_token, admin_token, db_session):
         group_1 = db_session.query(Group).filter_by(name="Group1").first()
         assert group_1 is not None
         regular_headers = {"Authorization": f"Bearer {regular_token}"}
@@ -555,9 +553,7 @@ class TestIncludeDeleted:
             f"{prefix}/version", json=legacy_params, headers=regular_headers
         ).json()["id"]
 
-        legacy_row = (
-            db_session.query(BibleVersionModel).filter_by(id=legacy_id).first()
-        )
+        legacy_row = db_session.query(BibleVersionModel).filter_by(id=legacy_id).first()
         legacy_row.deleted = None
         db_session.commit()
 
