@@ -93,11 +93,19 @@ def _job_pairs_response(job: PredictJob) -> list[PredictJobPair]:
     """Reconstitute the per-pair slow-path payload, ordered as submitted.
 
     The agent app preserves input order in its response, so translation /
-    critique are pulled positionally from `agent_pairs[idx]`. The vref /
-    source_text / target_text echo always comes from the original
+    critique / lexeme_cards are pulled positionally from `agent_pairs[idx]`.
+    The vref / source_text / target_text echo always comes from the original
     `pairs_input` so callers that omit `vref` (an optional label) can
     still match results to inputs by index, and so a hypothetical agent
     bug that mangled echo fields wouldn't propagate to the response.
+
+    `lexeme_cards` here is the agent's filtered per-pair view of cards
+    relevant to that pair's target text, including any new ones the
+    agent minted during this run. The sync /predict path can't return
+    those discoveries — translation/critique are forced off there
+    (see `spawn_slow_agent` below), so the LLM never runs and no new
+    cards are produced — making this poll endpoint the only surface
+    where clients see them.
     """
     result = job.result or {}
     agent_pairs = result.get("pairs") or []
@@ -111,6 +119,7 @@ def _job_pairs_response(job: PredictJob) -> list[PredictJobPair]:
                 target_text=submitted.get("target_text", ""),
                 translation=agent_pair.get("translation"),
                 critique=agent_pair.get("critique"),
+                lexeme_cards=agent_pair.get("lexeme_cards"),
             )
         )
     return out
