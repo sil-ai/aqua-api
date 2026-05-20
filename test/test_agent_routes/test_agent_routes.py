@@ -8670,8 +8670,6 @@ def test_patch_lexeme_card_translation_lookup_is_pivot_routed(
     """The lookup must apply pivot routing — UI sends its English reference
     source_version_id, the swh-canonical card still resolves. This is the
     direct regression guard for the staging bug."""
-    from datetime import date
-
     from database.models import (
         BibleRevision,
         BibleVersion,
@@ -8864,8 +8862,6 @@ def test_patch_lexeme_card_translation_target_only_with_existing_overlay_keeps_o
     source-side fields in the response. The build-response helper queries
     the overlay independently of whether this request wrote to it; this test
     guards against a future refactor that conflates the two."""
-    from database.models import CardTranslation
-
     card, _, _, tgt_version = _create_pivot_card(
         db_session, canonical_iso="swh", target_iso="ngq"
     )
