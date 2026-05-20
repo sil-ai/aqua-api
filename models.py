@@ -467,6 +467,7 @@ class PredictJobPair(BaseModel):
     target_text: str
     translation: Optional[Dict[str, Any]] = None
     critique: Optional[Dict[str, Any]] = None
+    lexeme_cards: Optional[List[Dict[str, Any]]] = None
 
 
 class PredictJobStatusResponse(BaseModel):

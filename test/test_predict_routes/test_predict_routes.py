@@ -841,6 +841,104 @@ def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_t
         assert out["translation"]["literal"] == f"{chr(ord('A') + idx)}-translation"
 
 
+def test_predict_job_complete_forwards_lexeme_cards(client, regular_token1):
+    """Regression for #707: discovered lexeme cards landed in the agent's
+    per-pair response but were dropped by the poll shaper. The slow-path
+    is the ONLY surface where clients can see cards discovered during a
+    predict run — the sync /predict path runs the agent with
+    include_translation=False, so it has no LLM, no record_new_lexeme
+    invocations, and only prefetched cards. If this endpoint drops the
+    field, those discoveries are unreachable to clients.
+    """
+    import modal
+
+    submitted_pairs = [
+        {"vref": "GEN 1:1", "source_text": "src-A", "target_text": "tgt-A"},
+        {"vref": "GEN 1:2", "source_text": "src-B", "target_text": "tgt-B"},
+    ]
+    job_id = _spawn_agent_and_get_job(
+        client,
+        regular_token1,
+        body_overrides={"pairs": submitted_pairs},
+    )
+
+    # The agent returns per-pair `lexeme_cards` — its filtered view of
+    # cards relevant to that pair's target text, including any that were
+    # newly minted via record_new_lexeme during this run. Each pair may
+    # have a different subset; pair 1 here has two cards, pair 2 has one.
+    agent_complete = {
+        "pairs": [
+            {
+                "translation": {"literal": "A-translation"},
+                "critique": None,
+                "lexeme_cards": [
+                    {"id": 100, "target_lemma": "tgt-A-lemma-1", "confidence": 0.9},
+                    {"id": 101, "target_lemma": "tgt-A-lemma-2", "confidence": 0.8},
+                ],
+            },
+            {
+                "translation": {"literal": "B-translation"},
+                "critique": None,
+                "lexeme_cards": [
+                    {"id": 200, "target_lemma": "tgt-B-lemma", "confidence": 0.95},
+                ],
+            },
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "complete"
+    assert len(body["pairs"]) == 2
+
+    # Pair 1: two cards, in agent-supplied order
+    cards_a = body["pairs"][0]["lexeme_cards"]
+    assert cards_a is not None
+    assert [c["id"] for c in cards_a] == [100, 101]
+    assert [c["target_lemma"] for c in cards_a] == ["tgt-A-lemma-1", "tgt-A-lemma-2"]
+
+    # Pair 2: one card
+    cards_b = body["pairs"][1]["lexeme_cards"]
+    assert cards_b is not None
+    assert [c["id"] for c in cards_b] == [200]
+
+
+def test_predict_job_complete_handles_missing_lexeme_cards(client, regular_token1):
+    """When the agent's per-pair payload omits `lexeme_cards` (e.g. a
+    pair the agent didn't process, or an older agent build), the poll
+    response surfaces `None` rather than 500ing. Belt-and-suspenders for
+    #707 — the route shouldn't assume the agent always populates the
+    field."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    agent_complete = {
+        "pairs": [
+            {"translation": {"literal": "ok"}, "critique": None},  # no lexeme_cards key
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "complete"
+    assert body["pairs"][0]["lexeme_cards"] is None
+
+
 def test_predict_job_complete_is_cached(client, regular_token1):
     """Once a job lands in a terminal state we don't go back to Modal —
     the second poll must serve from the DB."""
