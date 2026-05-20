@@ -4373,110 +4373,6 @@ def test_patch_lexeme_card_by_id_unauthorized(client, test_revision_id):
     assert patch_response.status_code == 401
 
 
-def test_patch_lexeme_card_by_lemma_success(
-    client,
-    regular_token1,
-    db_session,
-    test_revision_id,
-    test_version_id,
-    test_version_id_2,
-):
-    """Test PATCH by lemma lookup works correctly."""
-    # Create initial card
-    response = client.post(
-        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={
-            "source_lemma": "lemma_lookup_test",
-            "target_lemma": "tafuta",
-            "source_version_id": test_version_id,
-            "target_version_id": test_version_id_2,
-            "confidence": 0.6,
-        },
-    )
-    assert response.status_code == 200
-
-    # PATCH by lemma lookup
-    patch_response = client.patch(
-        "/v3/agent/lexeme-card"
-        "?target_lemma=tafuta"
-        f"&source_version_id={test_version_id}"
-        f"&target_version_id={test_version_id_2}"
-        "&source_lemma=lemma_lookup_test",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={
-            "confidence": 0.9,
-            "surface_forms": ["tafuta", "anatafuta"],
-        },
-    )
-
-    assert patch_response.status_code == 200
-    data = patch_response.json()
-    assert data["confidence"] == 0.9
-    assert data["target_lemma"] == "tafuta"
-    assert len(data["surface_forms"]) == 2
-
-
-def test_patch_lexeme_card_by_lemma_not_found(
-    client, regular_token1, db_session, test_version_id, test_version_id_2
-):
-    """Test PATCH by lemma lookup returns 404 for non-existent card."""
-    patch_response = client.patch(
-        "/v3/agent/lexeme-card"
-        "?target_lemma=nonexistent"
-        f"&source_version_id={test_version_id}"
-        f"&target_version_id={test_version_id_2}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={
-            "confidence": 0.5,
-        },
-    )
-
-    assert patch_response.status_code == 404
-
-
-def test_patch_lexeme_card_by_lemma_without_source_lemma(
-    client,
-    regular_token1,
-    db_session,
-    test_revision_id,
-    test_version_id,
-    test_version_id_2,
-):
-    """Test PATCH by lemma lookup works when source_lemma is not provided."""
-    # Create initial card WITH a source_lemma
-    response = client.post(
-        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={
-            "source_lemma": "some_source",  # Card has source_lemma
-            "target_lemma": "lengo_bila",
-            "source_version_id": test_version_id,
-            "target_version_id": test_version_id_2,
-            "confidence": 0.6,
-        },
-    )
-    assert response.status_code == 200
-
-    # PATCH by lemma lookup WITHOUT source_lemma - should still find the card
-    patch_response = client.patch(
-        "/v3/agent/lexeme-card"
-        "?target_lemma=lengo_bila"
-        f"&source_version_id={test_version_id}"
-        f"&target_version_id={test_version_id_2}",
-        # Note: no source_lemma parameter
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={
-            "confidence": 0.95,
-        },
-    )
-
-    assert patch_response.status_code == 200
-    data = patch_response.json()
-    assert data["confidence"] == 0.95
-    assert data["source_lemma"] == "some_source"  # Original source_lemma preserved
-
-
 def test_post_lexeme_card_duplicate_returns_409_conflict(
     client,
     regular_token1,
@@ -6018,37 +5914,6 @@ def test_post_lexeme_card_case_insensitive_different_source_lemma_returns_409(
     assert resp2.status_code == 409
 
 
-def test_patch_lexeme_card_by_lemma_case_insensitive_lookup(
-    client,
-    regular_token1,
-    db_session,
-    test_revision_id,
-    test_version_id,
-    test_version_id_2,
-):
-    """PATCH by lemma should find the card regardless of case."""
-    # Create card
-    client.post(
-        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={
-            "source_lemma": "eat",
-            "target_lemma": "kula_ci_patch",
-            "source_version_id": test_version_id,
-            "target_version_id": test_version_id_2,
-        },
-    )
-
-    # PATCH using different case
-    resp = client.patch(
-        f"/v3/agent/lexeme-card?target_lemma=KULA_CI_PATCH&source_version_id={test_version_id}&target_version_id={test_version_id_2}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={"confidence": 0.99},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["confidence"] == 0.99
-
-
 def test_patch_lexeme_card_normalizes_target_lemma(
     client,
     regular_token1,
@@ -6185,78 +6050,6 @@ def test_post_lexeme_card_case_only_source_lemma_diff_is_upsert(
     assert resp2.status_code == 200
     assert resp2.json()["id"] == card_id
     assert resp2.json()["confidence"] == 0.9
-
-
-def test_patch_lexeme_card_by_lemma_source_lemma_case_insensitive(
-    client,
-    regular_token1,
-    test_revision_id,
-    test_version_id,
-    test_version_id_2,
-):
-    """PATCH by lemma should match source_lemma case-insensitively when the
-    stored value is mixed case (e.g. legacy rows that predate the backfill)."""
-    # Insert a legacy-style mixed-case source_lemma directly, bypassing the
-    # Pydantic validator that now lowercases on the way in.
-    legacy_id = _raw_psycopg2_fetchone(
-        "INSERT INTO agent_lexeme_cards "
-        "(source_lemma, target_lemma, source_version_id, target_version_id, "
-        " confidence, created_at, last_updated) "
-        "VALUES (%s, %s, %s, %s, %s, now(), now()) RETURNING id",
-        (
-            "Jesus_LegacyCase",
-            "yesu_legacycase",
-            test_version_id,
-            test_version_id_2,
-            0.5,
-        ),
-    )[0]
-
-    # PATCH using lowercased source_lemma — must still find the mixed-case row
-    resp = client.patch(
-        f"/v3/agent/lexeme-card?target_lemma=yesu_legacycase"
-        f"&source_version_id={test_version_id}"
-        f"&target_version_id={test_version_id_2}"
-        f"&source_lemma=jesus_legacycase",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={"confidence": 0.95},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["id"] == legacy_id
-    assert resp.json()["confidence"] == 0.95
-
-
-def test_patch_lexeme_card_by_lemma_without_source_lemma_param(
-    client,
-    regular_token1,
-    test_revision_id,
-    test_version_id,
-    test_version_id_2,
-):
-    """PATCH by lemma must not crash when source_lemma is omitted (None path).
-    Regression guard for the `if source_lemma is not None:` filter — without
-    that guard, sql_func.lower(None) would explode."""
-    client.post(
-        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={
-            "source_lemma": "sleep_noparam",
-            "target_lemma": "lala_noparam",
-            "source_version_id": test_version_id,
-            "target_version_id": test_version_id_2,
-            "confidence": 0.5,
-        },
-    )
-
-    resp = client.patch(
-        f"/v3/agent/lexeme-card?target_lemma=lala_noparam"
-        f"&source_version_id={test_version_id}"
-        f"&target_version_id={test_version_id_2}",
-        headers={"Authorization": f"Bearer {regular_token1}"},
-        json={"confidence": 0.88},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["confidence"] == 0.88
 
 
 def test_post_lexeme_card_upsert_normalizes_legacy_mixed_case_source_lemma(
@@ -8577,6 +8370,489 @@ def test_get_lexeme_card_by_id_lang_matches_canonical_iso_returns_200(
     data = response.json()
     assert data["id"] == card_id
     assert data["source_lemma"] == "byid_canonical_match_src"
+
+
+# ---------------------------------------------------------------------------
+# PATCH /v3/agent/lexeme-card/translation — overlay-routing edit primitive
+# ---------------------------------------------------------------------------
+
+
+def _create_pivot_card(
+    db_session, *, owner_username="testuser1", canonical_iso, target_iso
+):
+    """Build a freshly isolated (canonical-source-iso, target-iso) card with
+    one canonical example, plus Group1 access to every involved version. Used
+    by PATCH-translation tests that need a non-eng canonical so the overlay
+    branch fires."""
+    from datetime import date
+
+    from database.models import (
+        AgentLexemeCard,
+        AgentLexemeCardExample,
+        BibleRevision,
+        BibleVersion,
+        BibleVersionAccess,
+        Group,
+        UserDB,
+    )
+
+    user = db_session.query(UserDB).filter(UserDB.username == owner_username).first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+
+    src_version = BibleVersion(
+        name=f"patchtrans_src_{canonical_iso}_{target_iso}",
+        iso_language=canonical_iso,
+        iso_script="Latn",
+        abbreviation=f"PTS_{canonical_iso}_{target_iso}".upper()[:30],
+        owner_id=user.id,
+        is_reference=True,
+    )
+    tgt_version = BibleVersion(
+        name=f"patchtrans_tgt_{canonical_iso}_{target_iso}",
+        iso_language=target_iso,
+        iso_script="Latn",
+        abbreviation=f"PTT_{canonical_iso}_{target_iso}".upper()[:30],
+        owner_id=user.id,
+        is_reference=False,
+    )
+    db_session.add_all([src_version, tgt_version])
+    db_session.commit()
+
+    db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=src_version.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=tgt_version.id, group_id=group1.id),
+        ]
+    )
+    db_session.commit()
+
+    src_revision = BibleRevision(
+        date=date.today(),
+        bible_version_id=src_version.id,
+        published=False,
+        machine_translation=False,
+    )
+    db_session.add(src_revision)
+    db_session.commit()
+
+    card = AgentLexemeCard(
+        source_lemma=f"canon_{canonical_iso}_src",
+        target_lemma=f"canon_{target_iso}_tgt",
+        source_version_id=src_version.id,
+        target_version_id=tgt_version.id,
+        source_language_iso=canonical_iso,
+        confidence=0.5,
+        surface_forms=[f"canon_{target_iso}_tgt"],
+        source_surface_forms=[f"canon_{canonical_iso}_src"],
+        senses=[{"definition": f"canonical {canonical_iso} sense"}],
+    )
+    db_session.add(card)
+    db_session.commit()
+
+    example = AgentLexemeCardExample(
+        lexeme_card_id=card.id,
+        revision_id=src_revision.id,
+        source_text=f"canon {canonical_iso} example",
+        target_text=f"canon {target_iso} example",
+    )
+    db_session.add(example)
+    db_session.commit()
+    return card, example, src_version, tgt_version
+
+
+def test_patch_lexeme_card_translation_source_only_writes_overlay_only(
+    client, regular_token1, db_session
+):
+    """Source-side edits in overlay mode land in card_translations only.
+    The canonical row's source_lemma must not be touched."""
+    from database.models import AgentLexemeCard, CardTranslation
+
+    card, _, src_version, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+    canonical_source_lemma_before = card.source_lemma
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace"
+        f"&is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["id"] == card.id
+    assert body["source_lemma"] == "grace"
+    assert body["has_translation_overlay"] is True
+
+    # Canonical row untouched.
+    db_session.expire_all()
+    canonical = db_session.query(AgentLexemeCard).filter_by(id=card.id).one()
+    assert canonical.source_lemma == canonical_source_lemma_before
+    assert canonical.last_user_edit is None
+
+    # Overlay row exists with the new value and a user-edit timestamp.
+    overlay = (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="eng")
+        .one()
+    )
+    assert overlay.source_lemma == "grace"
+    assert overlay.last_user_edit is not None
+
+
+def test_patch_lexeme_card_translation_target_only_writes_canonical_only(
+    client, regular_token1, db_session
+):
+    """Target-side edits in overlay mode land in agent_lexeme_cards only.
+    No overlay row should be created for a target-only edit."""
+    from database.models import AgentLexemeCard, CardTranslation
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace"
+        f"&is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"target_lemma": "uwiilá", "confidence": 0.9},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["target_lemma"] == "uwiilá"
+    assert body["confidence"] == 0.9
+    # No overlay was written, so no overlay exists → has_translation_overlay=False
+    assert body["has_translation_overlay"] is False
+
+    db_session.expire_all()
+    canonical = db_session.query(AgentLexemeCard).filter_by(id=card.id).one()
+    assert canonical.target_lemma == "uwiilá"
+    assert canonical.confidence == 0.9
+    assert canonical.last_user_edit is not None
+
+    overlay_count = (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="eng")
+        .count()
+    )
+    assert overlay_count == 0
+
+
+def test_patch_lexeme_card_translation_mixed_edit_bumps_both_user_edit(
+    client, regular_token1, db_session
+):
+    """Mixed edit: source-side → overlay, target-side → canonical. With
+    is_user_edit=true, last_user_edit bumps on both rows because the user is
+    implicitly approving the canonical state of the target."""
+    from database.models import AgentLexemeCard, CardTranslation
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace"
+        f"&is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "love", "confidence": 0.95},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source_lemma"] == "love"
+    assert body["confidence"] == 0.95
+    assert body["has_translation_overlay"] is True
+
+    db_session.expire_all()
+    canonical = db_session.query(AgentLexemeCard).filter_by(id=card.id).one()
+    overlay = (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="eng")
+        .one()
+    )
+    assert canonical.last_user_edit is not None
+    assert overlay.last_user_edit is not None
+    # And they should be close in time (same request, same `now`).
+    assert abs((canonical.last_user_edit - overlay.last_user_edit).total_seconds()) < 1
+
+
+def test_patch_lexeme_card_translation_creates_overlay_when_missing(
+    client, regular_token1, db_session
+):
+    """First source-side edit creates the card_translations row for that
+    language (upsert insert path)."""
+    from database.models import CardTranslation
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+    # Sanity: no overlay exists yet.
+    assert (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="eng")
+        .count()
+        == 0
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace", "source_surface_forms": ["grace", "graces"]},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    overlay = (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="eng")
+        .one()
+    )
+    assert overlay.source_lemma == "grace"
+    assert overlay.source_surface_forms == ["grace", "graces"]
+
+
+def test_patch_lexeme_card_translation_canonical_match_routes_to_canonical(
+    client, regular_token1, db_session
+):
+    """When language_iso equals the canonical's source_language_iso, source-
+    side fields go to the canonical row (degenerate case — no overlay table
+    exists for the canonical's own language)."""
+    from database.models import AgentLexemeCard, CardTranslation
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=swh"
+        f"&list_mode=replace"
+        f"&is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "neema_updated"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["source_lemma"] == "neema_updated"
+
+    db_session.expire_all()
+    canonical = db_session.query(AgentLexemeCard).filter_by(id=card.id).one()
+    assert canonical.source_lemma == "neema_updated"
+    # No overlay row should have been created for swh (the canonical lang).
+    overlay_count = (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="swh")
+        .count()
+    )
+    assert overlay_count == 0
+
+
+def test_patch_lexeme_card_translation_lookup_is_pivot_routed(
+    client, regular_token1, db_session
+):
+    """The lookup must apply pivot routing — UI sends its English reference
+    source_version_id, the swh-canonical card still resolves. This is the
+    direct regression guard for the staging bug."""
+    from datetime import date
+
+    from database.models import (
+        BibleRevision,
+        BibleVersion,
+        BibleVersionAccess,
+        Group,
+        LanguagePivot,
+        PivotCandidate,
+        UserDB,
+    )
+
+    card, _, src_version, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="zga"
+    )
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+
+    # UI sees the English reference version, not the swh canonical's version.
+    eng_ref = BibleVersion(
+        name="patchtrans_eng_ref",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="PTER",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    db_session.add(eng_ref)
+    db_session.commit()
+    db_session.add(BibleVersionAccess(bible_version_id=eng_ref.id, group_id=group1.id))
+    db_session.commit()
+
+    # Pivot: target zga → swh canonical. PivotCandidate points at the swh
+    # revision so the pivot rewrites source_version_id to src_version.id.
+    swh_revision = (
+        db_session.query(BibleRevision)
+        .filter(BibleRevision.bible_version_id == src_version.id)
+        .first()
+    )
+    db_session.merge(PivotCandidate(pivot_iso="swh", pivot_revision_id=swh_revision.id))
+    db_session.commit()
+    db_session.merge(LanguagePivot(target_iso="zga", pivot_iso="swh"))
+    db_session.commit()
+
+    try:
+        resp = client.patch(
+            f"/v3/agent/lexeme-card/translation"
+            f"?target_lemma={card.target_lemma}"
+            f"&target_version_id={tgt_version.id}"
+            f"&source_version_id={eng_ref.id}"
+            f"&language_iso=eng"
+            f"&list_mode=replace",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+            json={"source_lemma": "grace"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source_lemma"] == "grace"
+    finally:
+        db_session.query(LanguagePivot).filter_by(target_iso="zga").delete()
+        db_session.query(PivotCandidate).filter_by(
+            pivot_iso="swh", pivot_revision_id=swh_revision.id
+        ).delete()
+        db_session.commit()
+
+
+def test_patch_lexeme_card_translation_rejects_examples_in_overlay_mode(
+    client, regular_token1, db_session
+):
+    """v1 limitation: examples patching is not supported in overlay mode —
+    callers must use POST /v3/agent/lexeme-card/{id}/translation for full
+    overlay rewrites."""
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "grace",
+            "examples": [
+                {"source": "by grace", "target": "kwa neema", "revision_id": 1}
+            ],
+        },
+    )
+    assert resp.status_code == 400
+    assert "examples patching is not supported" in resp.json()["detail"]
+
+
+def test_patch_lexeme_card_translation_not_found(client, regular_token1, db_session):
+    """Unknown target_lemma → 404. The error message echoes the lookup
+    parameters so the caller can tell pivot routing from a real miss."""
+    _, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma=does_not_exist_anywhere"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace"},
+    )
+    assert resp.status_code == 404
+
+
+def test_patch_lexeme_card_translation_case_insensitive_target_lemma(
+    client, regular_token1, db_session
+):
+    """target_lemma is matched case-insensitively (and NFC-normalized) —
+    the UI may send whatever case it has displayed."""
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma.upper()}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["source_lemma"] == "grace"
+
+
+def test_patch_lexeme_card_translation_no_user_edit_skips_user_edit_timestamp(
+    client, regular_token1, db_session
+):
+    """is_user_edit defaults to false — automated callers (derivation,
+    consolidation) must not bump last_user_edit on either row."""
+    from database.models import AgentLexemeCard, CardTranslation
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace", "confidence": 0.7},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    canonical = db_session.query(AgentLexemeCard).filter_by(id=card.id).one()
+    overlay = (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="eng")
+        .one()
+    )
+    assert canonical.last_user_edit is None
+    assert overlay.last_user_edit is None
+
+
+def test_patch_lexeme_card_translation_rejects_invalid_language_iso(
+    client, regular_token1, db_session
+):
+    """language_iso must be exactly 3 chars (Query validation, 422)."""
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=en",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace"},
+    )
+    assert resp.status_code == 422
 
 
 def test_check_word_in_lexeme_cards_pivot_routing(

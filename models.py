@@ -1014,6 +1014,7 @@ class CardTranslationOut(BaseModel):
     build_version: Optional[str] = None
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None
+    last_user_edit: Optional[datetime.datetime] = None
     examples: List[CardTranslationExampleOut] = []
 
 
