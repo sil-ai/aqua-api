@@ -98,6 +98,13 @@ class VersionOut_v3(BaseModel):
     owner_id: Union[int, None] = None
     group_ids: List[int] = []
     is_reference: bool = False
+    deleted: bool = False
+
+    @field_validator("deleted", mode="before")
+    @classmethod
+    def _coerce_deleted_null_to_false(cls, value):
+        # BibleVersion.deleted column is nullable; legacy rows have NULL.
+        return False if value is None else value
 
     model_config = {
         "json_schema_extra": {
@@ -111,6 +118,7 @@ class VersionOut_v3(BaseModel):
                 "is_reference": False,
                 "owner_id": 1,
                 "group_ids": [1, 2],
+                "deleted": False,
             }
         },
         "from_attributes": True,
