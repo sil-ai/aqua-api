@@ -8761,7 +8761,8 @@ def test_patch_lexeme_card_translation_rejects_examples_in_overlay_mode(
         },
     )
     assert resp.status_code == 400
-    assert "examples patching is not supported" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert "examples patching is not supported" in detail["message"]
 
 
 def test_patch_lexeme_card_translation_not_found(client, regular_token1, db_session):
@@ -8853,6 +8854,486 @@ def test_patch_lexeme_card_translation_rejects_invalid_language_iso(
         json={"source_lemma": "grace"},
     )
     assert resp.status_code == 422
+
+
+def test_patch_lexeme_card_translation_target_only_with_existing_overlay_keeps_overlay(
+    client, regular_token1, db_session
+):
+    """Regression: when an overlay already exists, a target-only PATCH must
+    still report has_translation_overlay=True and surface the overlay's
+    source-side fields in the response. The build-response helper queries
+    the overlay independently of whether this request wrote to it; this test
+    guards against a future refactor that conflates the two."""
+    from database.models import CardTranslation
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+    # Seed an existing eng overlay first.
+    seed = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace"
+        f"&is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace"},
+    )
+    assert seed.status_code == 200
+
+    # Now a target-only PATCH in the same lang view.
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"confidence": 0.77},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["confidence"] == 0.77
+    assert body["has_translation_overlay"] is True
+    assert body["source_lemma"] == "grace"  # overlay's value, not canonical's
+
+
+def test_patch_lexeme_card_translation_response_last_user_edit_reflects_overlay(
+    client, regular_token1, db_session
+):
+    """After a source-only edit, the response's top-level last_user_edit
+    must reflect the overlay's timestamp (the canonical's is unchanged) so
+    the UI's 'edited recently' indicator catches source-only edits."""
+    from database.models import AgentLexemeCard
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+    # Canonical has no last_user_edit yet.
+    assert (
+        db_session.query(AgentLexemeCard).filter_by(id=card.id).one().last_user_edit
+        is None
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace"
+        f"&is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # last_user_edit in the response is the overlay's (canonical's is still
+    # None because the source-only edit didn't touch the canonical).
+    assert body["last_user_edit"] is not None
+
+    db_session.expire_all()
+    canonical_after = db_session.query(AgentLexemeCard).filter_by(id=card.id).one()
+    assert canonical_after.last_user_edit is None
+
+
+def test_patch_lexeme_card_translation_multi_card_ambiguity_returns_400(
+    client, regular_token1, db_session
+):
+    """When (target_lemma, target_version_id) matches two canonicals (e.g.
+    two different source pivots), omitting source_version_id must return 400.
+    Providing source_version_id picks the right one."""
+    from datetime import date
+
+    from database.models import (
+        AgentLexemeCard,
+        BibleRevision,
+        BibleVersion,
+        BibleVersionAccess,
+        Group,
+        UserDB,
+    )
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = db_session.query(Group).filter(Group.name == "Group1").first()
+    target_ver = BibleVersion(
+        name="ambig_target",
+        iso_language="ngq",
+        iso_script="Latn",
+        abbreviation="ATGT",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    src_swh = BibleVersion(
+        name="ambig_src_swh",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="ASRC_S",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    src_eng = BibleVersion(
+        name="ambig_src_eng",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="ASRC_E",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    db_session.add_all([target_ver, src_swh, src_eng])
+    db_session.commit()
+    db_session.add_all(
+        [
+            BibleVersionAccess(bible_version_id=target_ver.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=src_swh.id, group_id=group1.id),
+            BibleVersionAccess(bible_version_id=src_eng.id, group_id=group1.id),
+        ]
+    )
+    db_session.commit()
+
+    # Build a revision in each source so example FKs are satisfiable.
+    rev_swh = BibleRevision(
+        date=date.today(),
+        bible_version_id=src_swh.id,
+        published=False,
+        machine_translation=False,
+    )
+    rev_eng = BibleRevision(
+        date=date.today(),
+        bible_version_id=src_eng.id,
+        published=False,
+        machine_translation=False,
+    )
+    db_session.add_all([rev_swh, rev_eng])
+    db_session.commit()
+    _ = rev_swh, rev_eng
+
+    # Two canonicals with the same target_lemma, different sources.
+    card_swh = AgentLexemeCard(
+        source_lemma="neema",
+        target_lemma="ambig_tgt_lemma",
+        source_version_id=src_swh.id,
+        target_version_id=target_ver.id,
+        source_language_iso="swh",
+        confidence=0.5,
+    )
+    card_eng = AgentLexemeCard(
+        source_lemma="grace",
+        target_lemma="ambig_tgt_lemma",
+        source_version_id=src_eng.id,
+        target_version_id=target_ver.id,
+        source_language_iso="eng",
+        confidence=0.5,
+    )
+    db_session.add_all([card_swh, card_eng])
+    db_session.commit()
+
+    # No source_version_id → 400 ambiguity.
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma=ambig_tgt_lemma"
+        f"&target_version_id={target_ver.id}"
+        f"&language_iso=eng",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace_updated"},
+    )
+    assert resp.status_code == 400, resp.text
+    detail = resp.json()["detail"]
+    assert "Multiple lexeme cards" in detail
+    assert "source_version_id" in detail
+
+    # With source_version_id → 200 on the right card.
+    resp_ok = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma=ambig_tgt_lemma"
+        f"&target_version_id={target_ver.id}"
+        f"&source_version_id={src_eng.id}"
+        f"&language_iso=eng",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace_updated"},
+    )
+    assert resp_ok.status_code == 200, resp_ok.text
+    assert resp_ok.json()["id"] == card_eng.id
+
+
+def test_patch_lexeme_card_translation_merge_source_surface_forms_dedupes(
+    client, regular_token1, db_session
+):
+    """list_mode=merge against an existing overlay's source_surface_forms
+    must case-insensitively dedupe and preserve the original casing of items
+    already stored."""
+    from database.models import CardTranslation
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+
+    seed = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_surface_forms": ["grace", "graces"]},
+    )
+    assert seed.status_code == 200
+
+    merge = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=merge",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_surface_forms": ["GRACE", "gracious"]},
+    )
+    assert merge.status_code == 200, merge.text
+
+    db_session.expire_all()
+    overlay = (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="eng")
+        .one()
+    )
+    # Dedup: "GRACE" recognized as case-insensitive duplicate of "grace";
+    # original casing preserved.
+    assert overlay.source_surface_forms == ["grace", "graces", "gracious"]
+
+
+def test_patch_lexeme_card_translation_non_user_edit_preserves_existing_user_edit(
+    client, regular_token1, db_session
+):
+    """When the overlay already has last_user_edit set (a real human edit),
+    a subsequent automated/non-user-edit PATCH must NOT clear it — the
+    update-branch of the upsert omits last_user_edit from set_ in that case.
+    """
+    from database.models import CardTranslation
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+
+    # First call: real user edit.
+    r1 = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace"
+        f"&is_user_edit=true",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "grace"},
+    )
+    assert r1.status_code == 200
+    db_session.expire_all()
+    overlay = (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="eng")
+        .one()
+    )
+    user_edit_ts = overlay.last_user_edit
+    assert user_edit_ts is not None
+
+    # Second call: automated, is_user_edit=false. Must preserve user_edit_ts.
+    r2 = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"source_lemma": "amazing_grace"},
+    )
+    assert r2.status_code == 200
+    db_session.expire_all()
+    overlay_after = (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="eng")
+        .one()
+    )
+    assert overlay_after.source_lemma == "amazing_grace"  # field did update
+    assert overlay_after.last_user_edit == user_edit_ts  # timestamp preserved
+
+
+def test_patch_lexeme_card_translation_duplicate_target_lemma_returns_409(
+    client, regular_token1, db_session
+):
+    """Renaming target_lemma in overlay mode must 409 if another card already
+    holds the new target_lemma in the same (source, target) version pair."""
+    from database.models import AgentLexemeCard
+
+    card_a, _, src_version, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+    # Add a second card under the same version pair with a different target.
+    card_b = AgentLexemeCard(
+        source_lemma="other_canon",
+        target_lemma="dup_tgt_lemma",
+        source_version_id=src_version.id,
+        target_version_id=tgt_version.id,
+        source_language_iso="swh",
+        confidence=0.5,
+    )
+    db_session.add(card_b)
+    db_session.commit()
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card_a.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"target_lemma": "dup_tgt_lemma"},
+    )
+    assert resp.status_code == 409, resp.text
+    detail = resp.json()["detail"]
+    assert detail["existing_card_id"] == card_b.id
+
+
+def test_patch_lexeme_card_translation_examples_400_includes_resolved_card_id(
+    client, regular_token1, db_session
+):
+    """The examples-rejection 400 must include the resolved card.id so the
+    caller can use POST /v3/agent/lexeme-card/{id}/translation without a
+    second round-trip to discover the id."""
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "examples": [
+                {"source": "by grace", "target": "kwa neema", "revision_id": 1}
+            ]
+        },
+    )
+    assert resp.status_code == 400
+    detail = resp.json()["detail"]
+    assert detail["card_id"] == card.id
+    assert detail["overlay_post_url"] == (
+        f"/v3/agent/lexeme-card/{card.id}/translation"
+    )
+    assert "{card_id}" not in detail["message"]
+
+
+def test_patch_lexeme_card_translation_empty_body_is_noop(
+    client, regular_token1, db_session
+):
+    """Empty body is a no-op 200 — no canonical or overlay writes. Documents
+    the contract so a future 'require at least one field' guard doesn't
+    silently break automated callers."""
+    from database.models import AgentLexemeCard, CardTranslation
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+    canonical_before = db_session.query(AgentLexemeCard).filter_by(id=card.id).one()
+    target_lemma_before = canonical_before.target_lemma
+    confidence_before = canonical_before.confidence
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=replace",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    canonical_after = db_session.query(AgentLexemeCard).filter_by(id=card.id).one()
+    assert canonical_after.target_lemma == target_lemma_before
+    assert canonical_after.confidence == confidence_before
+    overlay_count = (
+        db_session.query(CardTranslation)
+        .filter_by(card_id=card.id, language_iso="eng")
+        .count()
+    )
+    assert overlay_count == 0
+
+
+def test_patch_lexeme_card_translation_canonical_surface_forms_append(
+    client, regular_token1, db_session
+):
+    """surface_forms (target-side list) PATCHed via the new endpoint in
+    overlay mode lands on the canonical row with list_mode honored. Replaces
+    the coverage lost when by-lemma PATCH was removed."""
+    from database.models import AgentLexemeCard
+
+    card, _, _, tgt_version = _create_pivot_card(
+        db_session, canonical_iso="swh", target_iso="ngq"
+    )
+
+    resp = client.patch(
+        f"/v3/agent/lexeme-card/translation"
+        f"?target_lemma={card.target_lemma}"
+        f"&target_version_id={tgt_version.id}"
+        f"&language_iso=eng"
+        f"&list_mode=append",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"surface_forms": ["new_form"]},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    # Original was ["canon_ngq_tgt"] from _create_pivot_card; append adds.
+    assert body["surface_forms"] == ["canon_ngq_tgt", "new_form"]
+    db_session.expire_all()
+    canonical = db_session.query(AgentLexemeCard).filter_by(id=card.id).one()
+    assert canonical.surface_forms == ["canon_ngq_tgt", "new_form"]
+
+
+def test_patch_lexeme_card_by_lemma_deprecated_still_works_for_internal_callers(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """The deprecated by-lemma PATCH is kept for aqua-assessments'
+    word_memory_builder POST→409 fallback. Verify it still works on
+    surface_forms / source_surface_forms / alignment_scores merges against
+    a same-language canonical (safe use case)."""
+    # Build a card via the public POST (eng/eng = no overlay routing issue).
+    resp = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "depr_src",
+            "target_lemma": "depr_tgt",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+            "surface_forms": ["depr_tgt"],
+        },
+    )
+    assert resp.status_code == 200
+
+    patch_resp = client.patch(
+        "/v3/agent/lexeme-card"
+        "?target_lemma=depr_tgt"
+        f"&source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}"
+        "&list_mode=merge",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "surface_forms": ["depr_tgt", "depr_alt"],
+            "alignment_scores": {"some_word": 0.8},
+        },
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    body = patch_resp.json()
+    assert "depr_alt" in body["surface_forms"]
+    assert body["alignment_scores"] == {"some_word": 0.8}
 
 
 def test_check_word_in_lexeme_cards_pivot_routing(

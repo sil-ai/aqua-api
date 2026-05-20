@@ -1238,8 +1238,13 @@ async def patch_lexeme_card_translation(
     and disambiguation is required.
 
     ``is_user_edit=true`` bumps ``last_user_edit`` on every row this patch
-    touches — the user is implicitly approving target-side state when they
-    save an edit that included a source-side change, and vice versa.
+    actually writes to: the canonical row when target-side/shared fields
+    are in the body, the overlay row when source-side fields are in the
+    body. A source-only edit does NOT bump the canonical's
+    ``last_user_edit`` — the user didn't approve the target state, they
+    just changed the source view. The response's top-level
+    ``last_user_edit`` is the max of the two so the UI can render
+    "edited recently" without having to inspect both timestamps.
 
     ``examples`` are not yet supported in the overlay branch (when
     ``language_iso != canonical iso``); pass the full overlay including
@@ -1331,13 +1336,19 @@ async def patch_lexeme_card_translation(
         if "examples" in provided_fields:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=(
-                    "examples patching is not supported when language_iso "
-                    "differs from the card's canonical source_language_iso "
-                    f"(canonical={card.source_language_iso!r}). Use "
-                    "POST /v3/agent/lexeme-card/{card_id}/translation to "
-                    "rewrite the full overlay including example translations."
-                ),
+                detail={
+                    "message": (
+                        "examples patching is not supported when language_iso "
+                        "differs from the card's canonical source_language_iso "
+                        f"(canonical={card.source_language_iso!r}). Use "
+                        f"POST /v3/agent/lexeme-card/{card.id}/translation to "
+                        "rewrite the full overlay including example translations."
+                    ),
+                    "card_id": card.id,
+                    "overlay_post_url": (
+                        f"/v3/agent/lexeme-card/{card.id}/translation"
+                    ),
+                },
             )
 
         canonical_fields = provided_fields & _CANONICAL_PATCH_FIELDS
@@ -1362,15 +1373,17 @@ async def patch_lexeme_card_translation(
 
         # --- Canonical-side patches ---------------------------------------
         if "target_lemma" in canonical_fields:
+            # patch_data.target_lemma was NFC-lowercased by the validator on
+            # the way in, and the stored canonical column was likewise
+            # lowercased at write time. Compare directly.
             new_target = patch_data.target_lemma
-            if new_target.lower() != card.target_lemma.lower():
+            if new_target != card.target_lemma:
                 # Uniqueness is enforced on (LOWER(target_lemma),
                 # source_version_id, target_version_id). Check before write
                 # to give a 409 instead of a 500 from the constraint.
                 dup = await db.scalar(
                     select(AgentLexemeCard).where(
-                        sql_func.lower(AgentLexemeCard.target_lemma)
-                        == new_target.lower(),
+                        sql_func.lower(AgentLexemeCard.target_lemma) == new_target,
                         AgentLexemeCard.source_version_id == card.source_version_id,
                         AgentLexemeCard.target_version_id == card.target_version_id,
                         AgentLexemeCard.id != card.id,
@@ -1637,6 +1650,18 @@ async def _build_lexeme_card_out_for_lang(
         source_surface_forms = card.source_surface_forms
         senses = card.senses
 
+    # last_user_edit: surface the most recent of (canonical, overlay) so the
+    # UI's "edited recently" indicator catches source-only overlay edits.
+    # The bulk GET returns canonical's value only; matches that shape when no
+    # overlay exists, surfaces the overlay timestamp when one does.
+    effective_last_user_edit = card.last_user_edit
+    if overlay is not None and overlay.last_user_edit is not None:
+        if (
+            effective_last_user_edit is None
+            or overlay.last_user_edit > effective_last_user_edit
+        ):
+            effective_last_user_edit = overlay.last_user_edit
+
     return LexemeCardOut.model_validate(
         {
             "id": card.id,
@@ -1654,7 +1679,7 @@ async def _build_lexeme_card_out_for_lang(
             "build_version": card.build_version,
             "created_at": card.created_at,
             "last_updated": card.last_updated,
-            "last_user_edit": card.last_user_edit,
+            "last_user_edit": effective_last_user_edit,
             "examples": examples_out,
             "has_translation_overlay": (not requires_merge) or (overlay is not None),
         }
@@ -1734,6 +1759,119 @@ async def patch_lexeme_card_by_id(
     except SQLAlchemyError as e:
         await db.rollback()
         logger.error(f"Error patching lexeme card: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+@router.patch(
+    "/agent/lexeme-card",
+    response_model=LexemeCardOut,
+    deprecated=True,
+)
+async def patch_lexeme_card_by_lemma_DEPRECATED(
+    patch_data: LexemeCardPatch,
+    target_lemma: str,
+    source_version_id: int,
+    target_version_id: int,
+    source_lemma: str = None,
+    list_mode: ListMode = ListMode.append,
+    is_user_edit: bool = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """**DEPRECATED — internal callers only.** Use
+    ``PATCH /v3/agent/lexeme-card/translation`` instead.
+
+    Partially update a lexeme card by lemma lookup, writing directly to the
+    canonical ``agent_lexeme_cards`` row. This endpoint is **unsafe for UI
+    callers**: when the canonical's source language is the pivot (e.g. swh)
+    and the UI is viewing the card in another language (e.g. eng), a write
+    to ``source_lemma`` here will silently overwrite the pivot canonical
+    with the UI's language text and corrupt every other consumer's view.
+
+    The new ``/agent/lexeme-card/translation`` endpoint solves that by
+    routing source-side writes to the per-language ``card_translations``
+    overlay row. UI clients MUST migrate.
+
+    This endpoint is kept only because aqua-assessments' derivation pipeline
+    (``word_memory_builder.update_lexeme_by_lemma_api``) uses it as a
+    POST→409 fallback to patch ``surface_forms`` / ``source_surface_forms``
+    / ``alignment_scores`` on the canonical it just built. Those writes are
+    safe because the caller knows the canonical's source language matches
+    what it's writing. Once that pipeline migrates to the by-id PATCH or to
+    the new translation endpoint, this route should be removed.
+
+    Query Parameters:
+    - target_lemma: str (required) - The target language lemma
+    - source_version_id: int (required) - Bible version ID for source
+    - target_version_id: int (required) - Bible version ID for target
+    - source_lemma: str (optional) - Disambiguates when multiple cards
+      share the same (target_lemma, source_version_id, target_version_id).
+    - list_mode: str (optional, default="append") - append / replace / merge.
+    - is_user_edit: bool (optional, default=False) - Sets last_user_edit.
+
+    Body: LexemeCardPatch (all fields optional, only provided fields update).
+    """
+    request_start = time.perf_counter()
+    try:
+        from sqlalchemy import select
+        from sqlalchemy.sql import func as sql_func
+
+        query = select(AgentLexemeCard).where(
+            sql_func.lower(AgentLexemeCard.target_lemma) == target_lemma.lower(),
+            AgentLexemeCard.source_version_id == source_version_id,
+            AgentLexemeCard.target_version_id == target_version_id,
+        )
+        if source_lemma is not None:
+            query = query.where(
+                sql_func.lower(AgentLexemeCard.source_lemma) == source_lemma.lower()
+            )
+        cards = (await db.execute(query)).scalars().all()
+
+        if not cards:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    f"Lexeme card not found for target_lemma={target_lemma}, "
+                    f"source_version_id={source_version_id}, "
+                    f"target_version_id={target_version_id}"
+                    + (f", source_lemma={source_lemma}" if source_lemma else "")
+                ),
+            )
+        if len(cards) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Multiple lexeme cards found ({len(cards)}). "
+                    "Please provide source_lemma to disambiguate."
+                ),
+            )
+
+        result_card = await _apply_lexeme_card_patch(
+            cards[0], patch_data, list_mode, current_user, db, is_user_edit
+        )
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"patch_lexeme_card_by_lemma (deprecated) completed in {duration}s",
+            extra={
+                "method": "PATCH",
+                "path": "/agent/lexeme-card",
+                "deprecated": True,
+                "target_lemma": target_lemma,
+                "source_version_id": source_version_id,
+                "target_version_id": target_version_id,
+                "duration_s": duration,
+            },
+        )
+        return result_card
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error(f"Error patching lexeme card by lemma (deprecated): {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
