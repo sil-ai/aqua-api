@@ -3,6 +3,7 @@ __version__ = "v1"
 import os
 
 import fastapi
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
 from agent_routes.v3.affix_routes import router as affix_router_v3
@@ -72,9 +73,43 @@ def my_schema():
     return app.openapi_schema
 
 
+def _parse_allowed_origins(raw: str | None) -> list[str]:
+    """Parse the ALLOWED_ORIGINS env var into a list of origins.
+
+    The value is a comma-separated list of full origins (scheme + host + port).
+    Empty / unset means an empty allowlist, which blocks all cross-origin
+    requests — this is the safe default. Wildcards are not expanded; if the
+    operator wants to allow all origins they must explicitly set "*", in which
+    case credentials are disabled to keep that combination safe.
+    """
+    if not raw:
+        return []
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 def configure(app):
     app.add_middleware(LoggingMiddleware)
+    configure_cors(app)
     configure_routing(app)
+
+
+def configure_cors(app):
+    """Restrict cross-origin requests to an explicit allowlist.
+
+    Origins are read from the ALLOWED_ORIGINS env var as a comma-separated
+    list. With no value set, no cross-origin requests are permitted. Setting
+    "*" disables credentials to avoid the unsafe wildcard-with-credentials
+    combination that browsers reject anyway.
+    """
+    allowed_origins = _parse_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
+    allow_credentials = allowed_origins != ["*"]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 def configure_routing(app):
