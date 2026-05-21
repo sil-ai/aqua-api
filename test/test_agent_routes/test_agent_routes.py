@@ -4416,6 +4416,7 @@ def test_post_lexeme_card_duplicate_returns_409_conflict(
     detail = response2.json()["detail"]
     assert detail["existing_card_id"] == card1_id
     assert detail["existing_source_lemma"] == "source_one"
+    assert detail["existing_source_version_id"] == test_version_id
     assert "already exists" in detail["message"]
 
 
