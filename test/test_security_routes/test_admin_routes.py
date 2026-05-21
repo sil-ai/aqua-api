@@ -252,7 +252,7 @@ def test_admin_flow(client, regular_token1, admin_token, test_db_session):
     assert response.json()["detail"] == "Group not found"
 
 
-def test_link_user_group_requires_params(client, admin_token, test_db_session):
+def test_link_user_group_requires_params(client, admin_token):
     """Regression test for issue #715: link/unlink endpoints used `username=str`
     instead of `username: str`, which made the parameters effectively optional
     and caused silent no-ops (route ran with `username` bound to the `str`
@@ -277,6 +277,22 @@ def test_link_user_group_requires_params(client, admin_token, test_db_session):
     response = client.post(
         f"{prefix}/link-user-group",
         params={"username": "testuser1"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    # Empty-string params should also be rejected (Query min_length=1)
+    # rather than falling through to a misleading 404.
+    response = client.post(
+        f"{prefix}/link-user-group",
+        params={"username": "", "groupname": ""},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+    response = client.post(
+        f"{prefix}/unlink-user-group",
+        params={"username": "", "groupname": ""},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -329,19 +345,24 @@ def test_link_user_group_actually_creates_link(client, admin_token, test_db_sess
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == status.HTTP_204_NO_CONTENT
+    # 204 responses must not include a body.
+    assert response.content == b""
     test_db_session.expire_all()
     assert not link_exists(
         test_db_session, link_data["username"], link_data["groupname"]
     )
 
-    # Cleanup
-    client.delete(
+    # Cleanup - assert deletions succeed so failures here don't silently
+    # pollute downstream tests sharing the module-scoped DB session.
+    cleanup_group = client.delete(
         f"{prefix}/groups",
         params={"groupname": "link_check_group"},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
-    client.delete(
+    assert cleanup_group.status_code == status.HTTP_204_NO_CONTENT
+    cleanup_user = client.delete(
         f"{prefix}/users",
         params={"username": "link_check_user"},
         headers={"Authorization": f"Bearer {admin_token}"},
     )
+    assert cleanup_user.status_code == status.HTTP_204_NO_CONTENT
