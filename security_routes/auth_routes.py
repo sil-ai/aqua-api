@@ -3,7 +3,7 @@ import socket
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from sqlalchemy import select
@@ -16,6 +16,7 @@ from database.models import UserDB, UserGroup
 from models import Group, Token, User
 from utils.logging_config import setup_logger
 
+from .rate_limiting import TOKEN_RATE_LIMIT, limiter
 from .utilities import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     ALGORITHM,
@@ -85,8 +86,11 @@ async def get_current_user(
 
 
 @router.post("/token", response_model=Token)
+@limiter.limit(TOKEN_RATE_LIMIT)
 async def login_for_access_token(
-    form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)
+    request: Request,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_db),
 ):
     user = await authenticate_user(form_data.username, form_data.password, db)
     if not user:

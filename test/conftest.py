@@ -8,6 +8,14 @@ import os
 # run before `from app import app` regardless of pytest collection order.
 os.environ["AQUA_DB_POOLCLASS"] = "null"
 
+# Relax auth rate limits for the test suite. Tests share a single client IP
+# (127.0.0.1) across many fixtures and modules, so the production 5/minute
+# default would trip across normal happy-path token fetches. The dedicated
+# rate-limiting tests override the limiter directly with tighter limits.
+os.environ.setdefault("AUTH_TOKEN_RATE_LIMIT", "10000/minute")
+os.environ.setdefault("AUTH_USERS_RATE_LIMIT", "10000/minute")
+os.environ.setdefault("AUTH_CHANGE_PASSWORD_RATE_LIMIT", "10000/minute")
+
 from datetime import date  # noqa: E402
 
 import bcrypt  # noqa: E402
