@@ -126,11 +126,6 @@ async def link_user_to_group(
         get_current_admin
     ),  # Ensuring only admin can link users to groups
 ):
-    if not username or not groupname:
-        raise HTTPException(
-            status_code=400, detail="Username and group name are required"
-        )
-
     result = await db.execute(select(UserDB).where(UserDB.username == username))
     user = result.scalars().first()
 
@@ -169,11 +164,6 @@ async def unlink_user_from_group(
         get_current_admin
     ),  # Ensuring only admin can unlink users from groups
 ):
-    if not username or not groupname:
-        raise HTTPException(
-            status_code=400, detail="Username and group name are required"
-        )
-
     result = await db.execute(select(UserDB).where(UserDB.username == username))
     user = result.scalars().first()
 
