@@ -22,6 +22,7 @@ Deployment notes
 """
 
 import os
+import time
 
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -40,26 +41,25 @@ CHANGE_PASSWORD_RATE_LIMIT = os.getenv("AUTH_CHANGE_PASSWORD_RATE_LIMIT", "5/min
 # uvicorn worker keep its own counter in production.
 _STORAGE_URI = os.getenv("AUTH_RATE_LIMIT_STORAGE_URI", "")
 
-# ``headers_enabled=True`` makes slowapi's ``_inject_headers`` actually
-# write the ``Retry-After`` / ``X-RateLimit-*`` headers; without it the
-# helper is a no-op (the constructor default is False).
-_limiter_kwargs = {"key_func": get_remote_address, "headers_enabled": True}
+_limiter_kwargs = {"key_func": get_remote_address}
 if _STORAGE_URI:
     _limiter_kwargs["storage_uri"] = _STORAGE_URI
 
+# Note: we do NOT pass ``headers_enabled=True`` to the Limiter. slowapi's
+# decorator would then try to attach ``X-RateLimit-*`` headers to the
+# endpoint's return value on the success path, but the auth endpoints
+# return plain dicts (not ``Response`` objects), and slowapi raises
+# ``Exception("parameter `response` must be an instance of ...")``
+# in that case. We instead set the ``Retry-After`` header manually on
+# the 429 below, which is the only header that matters for back-off.
 limiter = Limiter(**_limiter_kwargs)
 
 
 def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Response:
     """Return a 429 JSON response when a client exceeds an auth rate limit.
 
-    Attaches the standard ``Retry-After`` / ``X-RateLimit-*`` headers so
-    well-behaved clients know when to back off. We call slowapi's
-    ``_inject_headers`` for that — it is underscore-prefixed but is what
-    slowapi's own built-in handler uses, so it is the most stable hook
-    available in 0.1.x. The call is guarded so if the internal helper or
-    ``request.state.view_rate_limit`` changes shape in a future slowapi
-    release, the 429 still goes out cleanly (just without retry hints).
+    Attaches a ``Retry-After`` header (in seconds, per RFC 7231) computed
+    from the limit's window so well-behaved clients know when to back off.
     """
     response = JSONResponse(
         status_code=429,
@@ -67,12 +67,30 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> Res
             "detail": "Too many requests. Please slow down and try again shortly."
         },
     )
-    view_rate_limit = getattr(request.state, "view_rate_limit", None)
-    if view_rate_limit is not None:
-        try:
-            response = request.app.state.limiter._inject_headers(
-                response, view_rate_limit
-            )
-        except Exception:  # pragma: no cover - defensive against slowapi upgrades
-            pass
+    retry_after = _retry_after_seconds(request, exc)
+    if retry_after is not None:
+        response.headers["Retry-After"] = str(retry_after)
     return response
+
+
+def _retry_after_seconds(request: Request, exc: RateLimitExceeded) -> int | None:
+    """Compute seconds-until-reset for the limit that fired.
+
+    Uses the underlying ``limits`` storage's ``get_window_stats`` to find
+    the window reset time, then subtracts ``now()``. Returns None (and the
+    handler omits ``Retry-After``) if anything in the lookup goes wrong —
+    we still need to ship the 429 cleanly.
+    """
+    try:
+        view_rate_limit = getattr(request.state, "view_rate_limit", None)
+        if view_rate_limit is None:
+            return None
+        rate_limit_item, args = view_rate_limit
+        stats = request.app.state.limiter.limiter.get_window_stats(
+            rate_limit_item, *args
+        )
+        reset_at = stats[0]
+        delta = int(reset_at - time.time())
+        return max(delta, 1)
+    except Exception:  # pragma: no cover - defensive against slowapi upgrades
+        return None
