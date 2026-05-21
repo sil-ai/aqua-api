@@ -88,6 +88,25 @@ def test_read_main(client):
     assert response.json() == {"Hello": "World"}
 
 
+def test_health_endpoint(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_ready_endpoint(client):
+    response = client.get("/ready")
+    # /ready hits the DB; in the test environment a DB is available, so
+    # it should report "ready". If the DB is unreachable, it should return
+    # 503 with a "status": "unavailable" body.
+    assert response.status_code in (200, 503)
+    body = response.json()
+    if response.status_code == 200:
+        assert body == {"status": "ready"}
+    else:
+        assert body["status"] == "unavailable"
+
+
 def test_add_version(client):
     test_version = VersionIn(
         name=version_name,

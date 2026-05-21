@@ -4,6 +4,8 @@ import os
 
 import fastapi
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from agent_routes.v3.affix_routes import router as affix_router_v3
 from agent_routes.v3.agent_routes import router as agent_router_v3
@@ -156,6 +158,29 @@ def configure_routing(app):
         """
         Test docs"""
         return {"Hello": "World"}
+
+    @app.get("/health", tags=["Health"])
+    async def health():
+        """Liveness probe — cheap, no external dependencies."""
+        return {"status": "ok"}
+
+    @app.get("/ready", tags=["Health"])
+    async def ready():
+        """Readiness probe — verifies the database is reachable."""
+        import logging
+
+        from database.dependencies import AsyncSessionLocal
+
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(text("SELECT 1"))
+        except Exception:
+            logging.exception("Readiness check failed: database unreachable")
+            return JSONResponse(
+                status_code=503,
+                content={"status": "unavailable"},
+            )
+        return {"status": "ready"}
 
 
 if __name__ == "__main__":
