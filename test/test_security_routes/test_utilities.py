@@ -1,5 +1,7 @@
 # tests/utilities/test_verify_password.py
 
+import importlib
+import sys
 from datetime import date
 
 import bcrypt
@@ -12,6 +14,24 @@ from security_routes.utilities import (
     is_user_authorized_for_revision,
     verify_password,
 )
+
+
+@pytest.mark.parametrize("missing_value", [None, ""])
+def test_secret_key_required_at_import(monkeypatch, missing_value):
+    """Importing security_routes.utilities must fail fast if SECRET_KEY is
+    missing or empty — otherwise python-jose silently signs JWTs with a
+    falsy key, which any other instance/attacker can also produce.
+    """
+    if missing_value is None:
+        monkeypatch.delenv("SECRET_KEY", raising=False)
+    else:
+        monkeypatch.setenv("SECRET_KEY", missing_value)
+
+    # Force a fresh import so the module-level check runs again.
+    monkeypatch.delitem(sys.modules, "security_routes.utilities", raising=False)
+
+    with pytest.raises(ValueError, match="SECRET_KEY"):
+        importlib.import_module("security_routes.utilities")
 
 
 def test_verify_password():
