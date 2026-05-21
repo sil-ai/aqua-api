@@ -124,14 +124,13 @@ async def get_book(revision: int, verse: str):
     connection = postgres_conn()
     cursor = connection.cursor()
 
-    book_reference = '"' + verse + '"'
     get_book_data = queries.get_book_query()
 
     cursor.execute(
         get_book_data,
         (
             revision,
-            book_reference,
+            verse,
         ),
     )
     result = cursor.fetchall()
