@@ -12,7 +12,7 @@ env:
 jobs:
 
   tests:
-    name: Building and pushing main branch images
+    name: Building and testing release branch image
     runs-on: ubuntu-latest
     env:
       MODAL_ENV: main
@@ -55,6 +55,66 @@ jobs:
       run: |
         pip install -r requirements.txt
         make test
+
+  migrate:
+    name: Apply Alembic migrations to production
+    needs: [tests]
+    runs-on: ubuntu-latest
+    # Concurrency guard: only one migration job may run at a time per branch.
+    # Prevents racing/overlapping migrations if multiple commits land quickly.
+    concurrency:
+      group: alembic-migrate-release
+      cancel-in-progress: false
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.11
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Show current revision before migration
+      env:
+        AQUA_DB: ${{ secrets.PROD_AQUA_DB }}
+      run: |
+        cd alembic
+        alembic current || true
+
+    - name: Apply migrations to production
+      env:
+        AQUA_DB: ${{ secrets.PROD_AQUA_DB }}
+      run: |
+        cd alembic
+        alembic upgrade head
+
+    - name: Confirm migration head
+      env:
+        AQUA_DB: ${{ secrets.PROD_AQUA_DB }}
+      run: |
+        cd alembic
+        alembic current
+
+  push:
+    name: Push image to ECR after successful migration
+    needs: [migrate]
+    runs-on: ubuntu-latest
+    env:
+      MODAL_ENV: main
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Build API
+      run: make build-actions
+      env:
+        REGISTRY: ${{ env.AWS_REGISTRY }}
+        IMAGENAME: ${{ env.IMAGE_NAME }}
 
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v1
