@@ -452,9 +452,7 @@ def test_push_eflomal_cooccurrences_idempotent(
     test_db_session.expire_all()
     eflomal_pk = (
         test_db_session.query(EflomalAssessmentModel.id)
-        .filter(
-            EflomalAssessmentModel.assessment_id == test_eflomal_assessment_id
-        )
+        .filter(EflomalAssessmentModel.assessment_id == test_eflomal_assessment_id)
         .scalar()
     )
     pairs = [(row["source_word"], row["target_word"]) for row in batch]

@@ -101,9 +101,7 @@ def upgrade() -> None:
         # The new unique index covers the same column prefix as the old
         # `ix_eflomal_cooccurrence_lookup`, so we can drop the redundant
         # non-unique index to save write amplification.
-        op.execute(
-            "DROP INDEX CONCURRENTLY IF EXISTS ix_eflomal_cooccurrence_lookup"
-        )
+        op.execute("DROP INDEX CONCURRENTLY IF EXISTS ix_eflomal_cooccurrence_lookup")
 
 
 def downgrade() -> None:
