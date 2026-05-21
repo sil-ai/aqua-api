@@ -282,9 +282,7 @@ def test_link_user_group_requires_params(client, admin_token, test_db_session):
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
-def test_link_user_group_actually_creates_link(
-    client, admin_token, test_db_session
-):
+def test_link_user_group_actually_creates_link(client, admin_token, test_db_session):
     """Regression test for issue #715: verify the link endpoint actually
     persists a UserGroup row and the unlink endpoint actually removes it.
     The original `username=str` bug let admins believe access was granted
