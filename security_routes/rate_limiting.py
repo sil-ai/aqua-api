@@ -40,7 +40,10 @@ CHANGE_PASSWORD_RATE_LIMIT = os.getenv("AUTH_CHANGE_PASSWORD_RATE_LIMIT", "5/min
 # uvicorn worker keep its own counter in production.
 _STORAGE_URI = os.getenv("AUTH_RATE_LIMIT_STORAGE_URI", "")
 
-_limiter_kwargs = {"key_func": get_remote_address}
+# ``headers_enabled=True`` makes slowapi's ``_inject_headers`` actually
+# write the ``Retry-After`` / ``X-RateLimit-*`` headers; without it the
+# helper is a no-op (the constructor default is False).
+_limiter_kwargs = {"key_func": get_remote_address, "headers_enabled": True}
 if _STORAGE_URI:
     _limiter_kwargs["storage_uri"] = _STORAGE_URI
 
