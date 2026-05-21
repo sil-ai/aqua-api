@@ -94,6 +94,22 @@ def test_token_endpoint_rate_limited_on_failed_logins(
     assert response.status_code == 429, response.text
 
 
+def test_rate_limit_response_includes_retry_headers(test_db_session, tight_token_limit):
+    """The 429 response should carry the standard ``Retry-After`` header
+    so well-behaved clients know when to back off."""
+    for _ in range(3):
+        client.post(
+            f"{prefix}/token",
+            data={"username": "testuser1", "password": "wrongpassword"},
+        )
+    response = client.post(
+        f"{prefix}/token",
+        data={"username": "testuser1", "password": "wrongpassword"},
+    )
+    assert response.status_code == 429, response.text
+    assert "retry-after" in {h.lower() for h in response.headers}
+
+
 def test_users_endpoint_has_rate_limit_registered():
     """POST /users must have a slowapi route limit registered.
 
