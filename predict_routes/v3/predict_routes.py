@@ -350,6 +350,23 @@ async def get_predict_job(
         try:
             fc = modal.FunctionCall.from_id(job.modal_call_id)
             data = await fc.get.aio(timeout=0)
+        except (
+            modal.exception.FunctionTimeoutError,
+            modal.exception.OutputExpiredError,
+        ) as exc:
+            # The Modal container itself hit its timeout (or the result
+            # expired before we polled). Both subclass the builtin
+            # TimeoutError, so they must be caught BEFORE the bare
+            # `TimeoutError` block below — otherwise they'd be silently
+            # treated as "still running" and the DB status would never flip.
+            logger.warning(
+                f"predict job {job.id} timed out on Modal: {type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+            job.status = "failed"
+            job.error = f"{type(exc).__name__}: {exc}"
+            job.completed_at = datetime.now(timezone.utc)
+            await db.commit()
         except (TimeoutError, modal.exception.TimeoutError):
             # modal._functions.poll_function raises the builtin TimeoutError
             # (not modal.exception.TimeoutError, which doesn't subclass it)
