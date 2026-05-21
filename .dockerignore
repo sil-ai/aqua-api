@@ -1,0 +1,92 @@
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Local virtualenvs / Python caches
+.venv
+venv
+env
+ENV
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.dmypy.json
+dmypy.json
+.coverage
+.coverage.*
+htmlcov
+.tox
+.nox
+.hypothesis
+
+# Build artefacts
+build
+dist
+*.egg-info
+.eggs
+wheels
+pip-wheel-metadata
+share/python-wheels
+
+# Secrets / environment files
+.env
+.env.*
+*.env
+!*.env.example
+
+# Editor / IDE / OS
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+launch.json
+
+# Notebooks and exploratory work
+notebooks
+*.ipynb
+.ipynb_checkpoints
+drafts
+database_scripts
+
+# Local Claude / agent / worktree tooling
+.claude
+.worktrees
+
+# Tests (not needed in runtime image)
+# NOTE: fixtures/ is intentionally kept — fixtures/vref.txt is required by
+# bible_loading.py at runtime.
+test
+tests
+*_test.py
+test_*.py
+conftest.py
+
+# CI / docs / dev configs
+.github
+docs
+README.md
+LICENSE
+CLAUDE.md
+.pre-commit-config.yaml
+.isort.cfg
+Makefile
+docker-compose.yml
+docker-compose.dev.yml
+Dockerfile
+.dockerignore
+
+# Misc local artefacts
+comments.json
+grafana-dashboard.json
+modal_deploy.sh
+modal_test.sh
+*.log
+*.db
