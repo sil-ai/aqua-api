@@ -42,13 +42,17 @@ def _drop_if_invalid(bind, index_name: str) -> None:
     and the planner could still try to use the broken index, while an
     unconditional ``DROP`` would needlessly churn a healthy index on
     every retry.
+
+    The index name is interpolated into the SQL string because asyncpg's
+    SQL driver doesn't accept ``:name``-style placeholders here. Callers
+    pass only static identifiers defined in this migration, so there is
+    no injection surface.
     """
     is_invalid = bind.exec_driver_sql(
         "SELECT 1 FROM pg_class c "
         "JOIN pg_index i ON i.indexrelid = c.oid "
-        "WHERE c.relname = :name "
-        "  AND NOT i.indisvalid",
-        {"name": index_name},
+        f"WHERE c.relname = '{index_name}' "
+        "  AND NOT i.indisvalid"
     ).scalar()
     if is_invalid:
         op.execute(f"DROP INDEX CONCURRENTLY {index_name}")
