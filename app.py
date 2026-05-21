@@ -1,10 +1,13 @@
 __version__ = "v1"
 
+import logging
 import os
 
 import fastapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+
+logger = logging.getLogger(__name__)
 
 from agent_routes.v3.affix_routes import router as affix_router_v3
 from agent_routes.v3.agent_routes import router as agent_router_v3
@@ -103,6 +106,12 @@ def configure_cors(app):
     """
     allowed_origins = _parse_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
     allow_credentials = allowed_origins != ["*"]
+    if not allowed_origins:
+        logger.warning(
+            "ALLOWED_ORIGINS is unset or empty; all cross-origin requests will "
+            "be blocked. Set ALLOWED_ORIGINS to a comma-separated list of "
+            "frontend origins (e.g. https://aqua.sil.org) to enable CORS."
+        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
