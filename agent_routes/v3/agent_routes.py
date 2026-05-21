@@ -920,13 +920,42 @@ async def add_lexeme_card(
     except IntegrityError as e:
         await db.rollback()
         if "ix_agent_lexeme_cards_unique" in str(e.orig):
+            # The DB unique index is on (LOWER(target_lemma), source_language_iso,
+            # target_version_id). The Python pre-check above keys on
+            # source_version_id, so a conflict here means an existing card has
+            # the same source language but a different source_version_id (e.g. a
+            # different reference version was the pivot at write time). Look up
+            # the conflicting card via the actual unique key so callers can PATCH
+            # by id; PATCH-by-lemma would 404 because it uses source_version_id.
+            from sqlalchemy import select
+            from sqlalchemy.sql import func
+
+            existing_card = await db.scalar(
+                select(AgentLexemeCard).where(
+                    func.lower(AgentLexemeCard.target_lemma)
+                    == card.target_lemma.lower(),
+                    AgentLexemeCard.source_language_iso
+                    == (
+                        select(BibleVersion.iso_language)
+                        .where(BibleVersion.id == card.source_version_id)
+                        .scalar_subquery()
+                    ),
+                    AgentLexemeCard.target_version_id == card.target_version_id,
+                )
+            )
+            detail = {
+                "message": f"A lexeme card for target_lemma='{card.target_lemma}' "
+                f"already exists for this language pair. "
+                f"Use PATCH /v3/agent/lexeme-card/{{card_id}} with the "
+                f"returned existing_card_id to update.",
+            }
+            if existing_card is not None:
+                detail["existing_card_id"] = existing_card.id
+                detail["existing_source_lemma"] = existing_card.source_lemma
+                detail["existing_source_version_id"] = existing_card.source_version_id
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "message": f"A lexeme card for target_lemma='{card.target_lemma}' "
-                    f"already exists for this language pair. "
-                    f"Use PATCH to update the existing card.",
-                },
+                detail=detail,
             ) from e
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

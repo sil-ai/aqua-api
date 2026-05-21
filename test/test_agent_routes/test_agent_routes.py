@@ -4419,6 +4419,102 @@ def test_post_lexeme_card_duplicate_returns_409_conflict(
     assert "already exists" in detail["message"]
 
 
+def test_post_lexeme_card_cross_source_version_same_language_returns_409_with_existing_id(
+    client,
+    regular_token1,
+    db_session,
+    test_version_id_2,
+):
+    """Regression for #775: when an existing card has the same source language
+    but a different source_version_id, POST must return 409 with
+    ``existing_card_id`` populated so the caller can PATCH by id.
+
+    The DB unique index is on (LOWER(target_lemma), source_language_iso,
+    target_version_id), but the POST handler's Python pre-check keys on
+    source_version_id and misses the conflict. The INSERT then raises an
+    IntegrityError, and without the existing_card_id in the response the
+    agent's POST→409→PATCH-by-lemma fallback loops to 404 because the
+    PATCH-by-lemma lookup also uses source_version_id."""
+    from database.models import BibleVersion, UserDB
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+
+    # Two eng source versions and one target — both sources share
+    # source_language_iso="eng", so a card written via source_v1 collides
+    # with a write via source_v2 on the DB unique index even though the
+    # source_version_ids differ.
+    source_v1 = BibleVersion(
+        name="cross_src_v1_775",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="CSV1775",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    source_v2 = BibleVersion(
+        name="cross_src_v2_775",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="CSV2775",
+        owner_id=user1.id,
+        is_reference=True,
+    )
+    target = BibleVersion(
+        name="cross_tgt_775",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="CTGT775",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    db_session.add_all([source_v1, source_v2, target])
+    db_session.commit()
+
+    # First card stored at source_v1.
+    resp1 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "src_v1_lemma",
+            "target_lemma": "shared_775_lemma",
+            "source_version_id": source_v1.id,
+            "target_version_id": target.id,
+        },
+    )
+    assert resp1.status_code == 200, resp1.text
+    card_v1_id = resp1.json()["id"]
+
+    # Second POST uses source_v2 — same source language, different
+    # source_version_id. The Python pre-check misses (different
+    # source_version_id), the INSERT hits the language-keyed unique index,
+    # and the IntegrityError handler must surface the existing card's id.
+    resp2 = client.post(
+        "/v3/agent/lexeme-card",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "src_v2_lemma",
+            "target_lemma": "shared_775_lemma",
+            "source_version_id": source_v2.id,
+            "target_version_id": target.id,
+        },
+    )
+    assert resp2.status_code == 409, resp2.text
+    detail = resp2.json()["detail"]
+    assert detail["existing_card_id"] == card_v1_id
+    assert detail["existing_source_version_id"] == source_v1.id
+    assert detail["existing_source_lemma"] == "src_v1_lemma"
+
+    # PATCH by id (using the existing_card_id from the 409) must succeed,
+    # proving the recovery path the agent relies on.
+    patch_resp = client.patch(
+        f"/v3/agent/lexeme-card/{card_v1_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"surface_forms": ["new_form_from_v2_caller"]},
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    assert "new_form_from_v2_caller" in patch_resp.json()["surface_forms"]
+
+
 def test_patch_lexeme_card_omitted_fields_unchanged(
     client,
     regular_token1,
