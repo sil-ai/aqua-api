@@ -5264,13 +5264,13 @@ def test_get_critique_issues_all_assessments_false(
 ):
     """Test getting critique issues from only the latest assessment when all_assessments=False."""
     import time
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     from database.models import Assessment
 
     # Create two assessments with different end times
     # Use a very far future time to ensure this is definitely the latest assessment
-    base_time = datetime.now() + timedelta(days=365)
+    base_time = datetime.now(timezone.utc) + timedelta(days=365)
 
     older_assessment = Assessment(
         revision_id=test_revision_id,

@@ -138,9 +138,9 @@ class Assessment(Base):
     status_detail = Column(Text, nullable=True)
     percent_complete = Column(Float, nullable=True)
     is_training = Column(Boolean, nullable=False, default=False, server_default="false")
-    requested_time = Column(TIMESTAMP, default=func.now())
-    start_time = Column(TIMESTAMP)
-    end_time = Column(TIMESTAMP)
+    requested_time = Column(TIMESTAMP(timezone=True), default=func.now())
+    start_time = Column(TIMESTAMP(timezone=True))
+    end_time = Column(TIMESTAMP(timezone=True))
     assessment_version = Column(String, default="1")
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
@@ -189,7 +189,7 @@ class TrainingJob(Base):
 
     options = Column(JSONB, nullable=True)
 
-    requested_time = Column(TIMESTAMP, default=func.now())
+    requested_time = Column(TIMESTAMP(timezone=True), default=func.now())
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     session_id = Column(Text, nullable=True)
@@ -204,7 +204,7 @@ class TrainingJob(Base):
     )
 
     deleted = Column(Boolean, default=False)
-    deleted_at = Column(TIMESTAMP, nullable=True)
+    deleted_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     source_revision = relationship("BibleRevision", foreign_keys=[source_revision_id])
     target_revision = relationship("BibleRevision", foreign_keys=[target_revision_id])

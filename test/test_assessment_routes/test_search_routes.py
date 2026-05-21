@@ -2795,7 +2795,7 @@ def test_search_include_alignments_auto_picks_latest_finished(
     client, regular_token1, test_db_session
 ):
     """When multiple finished assessments exist for the pair, the latest wins."""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
 
@@ -2813,7 +2813,7 @@ def test_search_include_alignments_auto_picks_latest_finished(
     )
     # Stamp end_times explicitly so ordering isn't relying on insertion order
     # or the id tie-breaker doing the right thing accidentally.
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     older = test_db_session.query(Assessment).filter(Assessment.id == older_id).one()
     newer = test_db_session.query(Assessment).filter(Assessment.id == newer_id).one()
     older.end_time = now - timedelta(days=1)

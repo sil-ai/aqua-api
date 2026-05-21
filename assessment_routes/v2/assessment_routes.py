@@ -3,7 +3,7 @@ __version__ = "v2"
 import base64
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List
 
 import fastapi
@@ -125,7 +125,7 @@ async def add_assessment(
     if not reference_id:
         reference_id = None
     assessment_type_fixed = str(a.type)
-    requested_time = datetime.now().isoformat()
+    requested_time = datetime.now(timezone.utc).isoformat()
     assessment_status = "queued"
 
     new_assessment = queries.add_assessment_query()

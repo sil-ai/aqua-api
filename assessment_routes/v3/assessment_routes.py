@@ -3,7 +3,7 @@ __version__ = "v3"
 import json
 import os
 import socket
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional
 
 import fastapi
@@ -416,7 +416,9 @@ async def add_assessment(
 
     # Check for duplicate in-progress assessment (admins can bypass)
     if not current_user.is_admin:
-        stale_cutoff = datetime.now() - timedelta(hours=STALE_ASSESSMENT_HOURS)
+        stale_cutoff = datetime.now(timezone.utc) - timedelta(
+            hours=STALE_ASSESSMENT_HOURS
+        )
         stmt = (
             select(Assessment.id)
             .where(
@@ -462,7 +464,7 @@ async def add_assessment(
         reference_id=a.reference_id,
         type=a.type,
         status="queued",
-        requested_time=datetime.now(),
+        requested_time=datetime.now(timezone.utc),
         owner_id=current_user.id,
         kwargs=parsed_kwargs,
     )
@@ -573,10 +575,10 @@ async def update_assessment_status(
         assessment.percent_complete = update.percent_complete
 
     if assessment.start_time is None and update.status != "queued":
-        assessment.start_time = datetime.utcnow()
+        assessment.start_time = datetime.now(timezone.utc)
 
     if update.status in ASSESSMENT_TERMINAL_STATUSES:
-        assessment.end_time = datetime.utcnow()
+        assessment.end_time = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(assessment)
