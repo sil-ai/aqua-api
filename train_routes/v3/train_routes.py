@@ -177,8 +177,10 @@ def _training_options_for_type(
 
 
 # Namespace tag for the per-triple advisory lock keyspace so we don't collide
-# with any future pg_advisory_*lock callers. Bumping the suffix invalidates
-# any in-flight locks across a rolling deploy.
+# with any future pg_advisory_*lock callers. Bumping the suffix only matters
+# once every running instance has been redeployed onto the new suffix; during
+# a rolling deploy two instances with different namespaces wouldn't serialize
+# against each other, so don't change this casually.
 _TRAINING_JOB_DUP_LOCK_NS = "training_job_dup_v1"
 
 

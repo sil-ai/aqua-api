@@ -878,6 +878,75 @@ def test_create_training_job_acquires_advisory_lock_per_type_before_dup_check(
     db_session.commit()
 
 
+def test_advisory_lock_acquired_before_dup_check_and_insert(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_revision_id_2,
+    db_session,
+):
+    """The advisory lock must be acquired *before* the duplicate-check SELECT
+    and the row insert — otherwise the race the lock is meant to prevent is
+    still possible. We assert ordering by making the lock helper raise on
+    the first call and verifying no Assessment row was created. If the lock
+    were taken after the insert, the assessment would already exist when
+    the exception fires (#722)."""
+    import train_routes.v3.train_routes as tr
+
+    apps = ["tfidf"]
+    options = {"tag": "lock_order_test"}
+
+    # Count active assessments matching the triple before the failing call.
+    db_session.expire_all()
+
+    def _count_active_tfidf():
+        return (
+            db_session.query(Assessment)
+            .filter(
+                Assessment.is_training.is_(True),
+                Assessment.type == "tfidf",
+                Assessment.revision_id == test_revision_id_2,
+                Assessment.reference_id == test_revision_id,
+                Assessment.kwargs == options,
+                Assessment.deleted.is_not(True),
+            )
+            .count()
+        )
+
+    before = _count_active_tfidf()
+
+    async def _raising_lock(*_args, **_kwargs):
+        raise RuntimeError("simulated advisory-lock acquire failure")
+
+    with patch.object(tr, "_acquire_training_job_dup_lock", side_effect=_raising_lock):
+        # The lock helper raises before any DB write; FastAPI surfaces the
+        # uncaught exception as a 500.
+        resp = client.post(
+            f"{prefix}/train",
+            json={
+                "source_revision_id": test_revision_id,
+                "target_revision_id": test_revision_id_2,
+                "apps": apps,
+                "options": options,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert resp.status_code == 500
+
+    # Crucial assertion: no Assessment row was created. If the lock were
+    # taken *after* the insert, the row would already exist by the time
+    # the exception fires (transaction would still roll back, but if a
+    # future refactor moved the lock acquire below db.commit() this
+    # check would fail).
+    db_session.expire_all()
+    after = _count_active_tfidf()
+    assert after == before, (
+        "Assessment was created despite the lock helper raising — the "
+        "lock must be acquired before the duplicate-check SELECT and "
+        "any insert."
+    )
+
+
 def test_advisory_lock_actually_blocks_concurrent_session_on_same_triple():
     """End-to-end check that pg_advisory_xact_lock(K) on one connection
     actually blocks pg_try_advisory_xact_lock(K) on another connection.
