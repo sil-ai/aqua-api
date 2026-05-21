@@ -153,3 +153,11 @@ Scripts
 
 # GitHub Copilot
 .github/copilot-instructions.md
+
+# Local AI tooling state (Claude Code, OpenAI Codex, worktree managers)
+.claude/
+.codex
+.worktrees/
+
+# Demo / notebook execution artifacts
+notebooks/predict_output.json
