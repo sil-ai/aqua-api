@@ -26,13 +26,23 @@ def _override_route_limit(func, new_limit: str):
     """Replace the slowapi route limit on `func` with `new_limit`.
 
     Returns a `restore` callable that puts the original RateLimitItem back.
+
+    Note: this reaches into ``limiter._route_limits``, which is a private
+    slowapi attribute. We accept that brittleness because the alternative
+    (a fresh Limiter + FastAPI app per test) is much heavier for a CI
+    suite that shares a single module-scoped TestClient. The fixture
+    always restores the original limit, so other tests in the same
+    process are not affected. If slowapi changes this attribute name on
+    a future upgrade, this helper will raise loudly via the
+    ``AssertionError`` below — that's the signal to migrate the test.
     """
     func_name = _route_limit_key(func)
     limits = limiter._route_limits.get(func_name) or []
     if not limits:
         raise AssertionError(
             f"No slowapi route limit registered for {func_name}; "
-            "did the @limiter.limit decorator get removed?"
+            "did the @limiter.limit decorator get removed (or did "
+            "slowapi rename _route_limits)?"
         )
     originals = [lim.limit for lim in limits]
     new_item = parse_many(new_limit)[0]
