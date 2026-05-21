@@ -56,13 +56,9 @@ def test_parse_allowed_origins_strips_and_splits():
 def test_allowed_origin_receives_cors_header():
     test_app = _build_app("https://aqua.sil.org")
     with TestClient(test_app) as client:
-        response = client.get(
-            "/cors-probe", headers={"Origin": "https://aqua.sil.org"}
-        )
+        response = client.get("/cors-probe", headers={"Origin": "https://aqua.sil.org"})
     assert response.status_code == 200
-    assert (
-        response.headers.get("access-control-allow-origin") == "https://aqua.sil.org"
-    )
+    assert response.headers.get("access-control-allow-origin") == "https://aqua.sil.org"
     assert response.headers.get("access-control-allow-credentials") == "true"
 
 
@@ -85,9 +81,7 @@ def test_disallowed_origin_does_not_get_cors_header():
 def test_unset_env_blocks_all_origins():
     test_app = _build_app(None)
     with TestClient(test_app) as client:
-        response = client.get(
-            "/cors-probe", headers={"Origin": "https://aqua.sil.org"}
-        )
+        response = client.get("/cors-probe", headers={"Origin": "https://aqua.sil.org"})
     assert response.status_code == 200
     assert "access-control-allow-origin" not in {
         k.lower() for k in response.headers.keys()
@@ -122,9 +116,7 @@ def test_preflight_allowed_for_allowed_origin():
             },
         )
     assert response.status_code == 200
-    assert (
-        response.headers.get("access-control-allow-origin") == "https://aqua.sil.org"
-    )
+    assert response.headers.get("access-control-allow-origin") == "https://aqua.sil.org"
 
 
 def test_wildcard_origin_disables_credentials():
