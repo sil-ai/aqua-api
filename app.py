@@ -88,8 +88,8 @@ def configure_routing(app):
 
     # !!!: send a deprecation notice but leave the v1 route for awhile
     # if v2 is introduced but change /latest and / to /v2/language_routes.router
-    omit_previous_versions = _omit_previous_versions()
-
+    # Reuse the module-level value so router registration stays consistent with
+    # the conditional v1/v2 imports above (which only run when this is False).
     if not omit_previous_versions:
         app.include_router(language_router_v1, prefix="/v1", tags=["Version 1"])
         app.include_router(revision_router_v1, prefix="/v1", tags=["Version 1"])
