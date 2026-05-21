@@ -210,10 +210,14 @@ async def upload_revision(
     # wrong content-types (415) and reject anything that already advertises a
     # size over the cap (413). This guards against the Starlette multipart
     # DoS where an authenticated user uploads a huge body to exhaust workers.
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
+    # Strip any media-type parameters (e.g. "text/plain; charset=utf-8") so
+    # well-formed clients that include a charset aren't falsely rejected.
+    raw_content_type = file.content_type or ""
+    media_type = raw_content_type.split(";", 1)[0].strip().lower()
+    if media_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"unsupported content-type: {file.content_type}",
+            detail=f"unsupported content-type: {raw_content_type}",
         )
     if file.size is not None and file.size > MAX_UPLOAD_BYTES:
         raise HTTPException(

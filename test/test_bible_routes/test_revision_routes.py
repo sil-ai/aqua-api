@@ -417,10 +417,17 @@ def test_upload_revision_blank_lines_not_inserted(client, regular_token1, db_ses
     assert [r.text for r in rows] == real_text
 
 
-def test_upload_revision_rejects_oversized_file(client, regular_token1, db_session):
+def test_upload_revision_rejects_oversized_file(
+    client, regular_token1, db_session, monkeypatch
+):
     """An upload larger than MAX_UPLOAD_BYTES must be rejected with 413
-    before any DB rows are written."""
-    from bible_routes.v3.revision_routes import MAX_UPLOAD_BYTES
+    before any DB rows are written. Monkeypatch the cap down to a small
+    value so the test doesn't have to allocate / POST a 50MB body."""
+    from bible_routes.v3 import revision_routes
+
+    # Temporarily lower the cap to 1KB; payload of 1KB + 1 byte triggers 413
+    # without bloating the test suite's memory footprint.
+    monkeypatch.setattr(revision_routes, "MAX_UPLOAD_BYTES", 1024)
 
     version_id = create_bible_version(client, regular_token1, db_session)
     before = (
@@ -429,8 +436,7 @@ def test_upload_revision_rejects_oversized_file(client, regular_token1, db_sessi
         .count()
     )
 
-    # One byte over the cap — cheap to construct, exercises the size guard.
-    payload = b"x" * (MAX_UPLOAD_BYTES + 1)
+    payload = b"x" * (1024 + 1)
     headers = {"Authorization": f"Bearer {regular_token1}"}
     test_revision = {"version_id": version_id, "name": "Oversized Revision"}
     files = {"file": ("upload.txt", payload, "text/plain")}
@@ -476,6 +482,28 @@ def test_upload_revision_rejects_disallowed_content_type(
         .count()
     )
     assert after == before, "rejected content-type must not create a revision row"
+
+
+def test_upload_revision_accepts_text_plain_with_charset(
+    client, regular_token1, db_session
+):
+    """Clients that include charset parameters on text/plain
+    (e.g. "text/plain; charset=utf-8") must still be accepted; we only
+    match against the bare media type."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    test_revision = {"version_id": version_id, "name": "Charset Revision"}
+    test_upload_file = Path("fixtures/uploadtest.txt")
+    with open(test_upload_file, "rb") as fh:
+        files = {"file": ("uploadtest.txt", fh, "text/plain; charset=utf-8")}
+        response = client.post(
+            f"{prefix}/revision", params=test_revision, files=files, headers=headers
+        )
+
+    assert response.status_code == 200
+    revision_id = response.json()["id"]
+    assert delete_revision(client, regular_token1, revision_id) == 200
 
 
 def test_upload_revision_accepts_octet_stream(client, regular_token1, db_session):
