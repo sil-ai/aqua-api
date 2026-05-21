@@ -16,11 +16,12 @@ from security_routes.utilities import (
 )
 
 
-@pytest.mark.parametrize("missing_value", [None, ""])
+@pytest.mark.parametrize("missing_value", [None, "", "   ", "\t\n"])
 def test_secret_key_required_at_import(monkeypatch, missing_value):
     """Importing security_routes.utilities must fail fast if SECRET_KEY is
-    missing or empty — otherwise python-jose silently signs JWTs with a
-    falsy key, which any other instance/attacker can also produce.
+    missing, empty, or whitespace-only — otherwise python-jose silently
+    signs JWTs with an effectively-empty key, which any other instance or
+    attacker can also produce.
     """
     if missing_value is None:
         monkeypatch.delenv("SECRET_KEY", raising=False)
