@@ -1105,6 +1105,42 @@ def test_predict_job_failed_records_error(client, regular_token1):
     assert body["error"] == "RuntimeError"
 
 
+@pytest.mark.parametrize(
+    "exc_name",
+    ["FunctionTimeoutError", "OutputExpiredError"],
+)
+def test_predict_job_modal_container_timeout_marks_failed(
+    client, regular_token1, exc_name
+):
+    """When Modal kills the container at its timeout (or the result expires),
+    `fc.get` raises `modal.exception.FunctionTimeoutError` /
+    `OutputExpiredError`. Both subclass the builtin `TimeoutError`, so they
+    have to be caught BEFORE the bare `TimeoutError` block — otherwise
+    they're silently treated as "still running" and the DB row never flips
+    to `failed`. Regression for a job that sat in `running` indefinitely
+    after its container timed out."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    exc_cls = getattr(modal.exception, exc_name)
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(side_effect=exc_cls("container hit timeout"))
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert exc_name in body["error"]
+    assert "container hit timeout" in body["error"]
+    # No Retry-After — the caller should stop polling.
+    assert "Retry-After" not in response.headers
+
+
 def test_predict_job_unknown_returns_404(client, regular_token1):
     """A job id that doesn't exist returns 404, not 500."""
     response = client.get(
