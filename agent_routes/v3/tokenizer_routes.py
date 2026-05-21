@@ -5,7 +5,6 @@ import socket
 import time
 import unicodedata
 from collections import defaultdict
-from datetime import timezone
 from typing import Optional
 
 import fastapi
@@ -150,8 +149,10 @@ async def _upsert_profile(
         for key, value in payload.model_dump(exclude_unset=True).items():
             setattr(profile, key, value)
         # Force the onupdate trigger to fire even when no fields changed,
-        # so repeat PUTs always refresh updated_at.
-        profile.updated_at = datetime.datetime.now(timezone.utc)
+        # so repeat PUTs always refresh updated_at. The column is currently
+        # TIMESTAMP WITHOUT TIME ZONE (out of #720 scope), so use a naive
+        # UTC value to satisfy asyncpg's type checking.
+        profile.updated_at = datetime.datetime.utcnow()
     await db.flush()
     return profile
 

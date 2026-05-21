@@ -44,10 +44,10 @@ async def sweep_stuck_assessments(
     db: AsyncSession, hours: int = DEFAULT_TIMEOUT_HOURS
 ) -> TimeoutSweepResult:
     # Use tz-aware UTC so the cutoff comparison stays correct regardless of
-    # the server's local timezone. requested_time is also written as
-    # tz-aware UTC (see assessment_routes.v3.assessment_routes); pre-existing
-    # naive rows are interpreted by Postgres as the session's timezone when
-    # compared against a tz-aware bound, which is harmless here.
+    # the server's local timezone. requested_time is now a TIMESTAMP WITH
+    # TIME ZONE column written as tz-aware UTC by all assessment writers
+    # (see #720 migration b720f1c8a4d2 — legacy naive rows were converted
+    # by `AT TIME ZONE 'UTC'`, so the comparison is unambiguous).
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=hours)
     stmt = (
