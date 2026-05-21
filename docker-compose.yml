@@ -34,6 +34,9 @@ services:
       - LOKI_AUTH_TOKEN=${LOKI_AUTH_TOKEN:-}
       - PROJECT_NAME=aqua-api
       - ENVIRONMENT_LOKI=${ENVIRONMENT_LOKI:-docker}
+      # Legacy v1/v2 routes are deprecated and disabled. Hard removal: 2026-08-18.
+      # See issue #711. Override only for local back-compat testing.
+      - OMIT_PREVIOUS_VERSIONS=${OMIT_PREVIOUS_VERSIONS:-true}
     depends_on:
       - db
 
