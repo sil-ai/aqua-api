@@ -56,10 +56,10 @@ async def get_chapter(revision_id: int, book: str, chapter: int):
     connection = postgres_conn()
     cursor = connection.cursor()
 
-    chapter_reference = "'" + book + " " + str(chapter) + "'"
-    get_chapters = queries.get_chapter_query(chapter_reference)
+    chapter_reference = book + " " + str(chapter)
+    get_chapters = queries.get_chapter_query()
 
-    cursor.execute(get_chapters, (revision_id,))
+    cursor.execute(get_chapters, (revision_id, chapter_reference))
     result = cursor.fetchall()
 
     chapter_data = []
@@ -90,11 +90,11 @@ async def get_verse(revision_id: int, book: str, chapter: int, verse: int):
     connection = postgres_conn()
     cursor = connection.cursor()
 
-    verse_reference = "'" + book + " " + str(chapter) + ":" + str(verse) + "'"
+    verse_reference = book + " " + str(chapter) + ":" + str(verse)
 
-    get_verses = queries.get_verses_query(verse_reference)
+    get_verses = queries.get_verses_query()
 
-    cursor.execute(get_verses, (revision_id,))
+    cursor.execute(get_verses, (revision_id, verse_reference))
     result = cursor.fetchall()
     verse = result[0]  # There should only be one result
 
