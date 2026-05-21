@@ -1,6 +1,7 @@
 __version__ = "v3"
 
 import asyncio
+import hashlib
 import os
 import socket
 import unicodedata
@@ -12,7 +13,7 @@ import fastapi
 import modal
 from dotenv import load_dotenv
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import Integer, bindparam, func, select, text
+from sqlalchemy import BigInteger, Integer, bindparam, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
@@ -173,6 +174,60 @@ def _training_options_for_type(
     sem_sim_options = dict(options or {})
     sem_sim_options["finetune"] = True
     return sem_sim_options
+
+
+# Namespace tag for the per-triple advisory lock keyspace so we don't collide
+# with any future pg_advisory_*lock callers. Bumping the suffix invalidates
+# any in-flight locks across a rolling deploy.
+_TRAINING_JOB_DUP_LOCK_NS = "training_job_dup_v1"
+
+
+def _training_job_dup_lock_key(
+    source_revision_id: int, target_revision_id: int, training_type: str
+) -> int:
+    """Stable signed 64-bit key for a Postgres transaction-scoped advisory
+    lock that serializes concurrent create_training_job() calls on the same
+    (source_revision_id, target_revision_id, type) triple (#722).
+
+    pg_advisory_xact_lock(bigint) wants a signed int8. We derive a
+    deterministic 64-bit value from a SHA-1 of the namespace + triple and
+    fold it into the signed-int8 range. SHA-1 (rather than Python's built-in
+    hash()) so the key is stable across processes / interpreter restarts.
+    Collisions are vanishingly unlikely for realistic cardinality; a
+    collision would merely serialize two unrelated triples (a small perf
+    hit, not a correctness bug).
+    """
+    payload = (
+        f"{_TRAINING_JOB_DUP_LOCK_NS}|"
+        f"{source_revision_id}|{target_revision_id}|{training_type}"
+    ).encode("utf-8")
+    digest = hashlib.sha1(payload).digest()
+    unsigned = int.from_bytes(digest[:8], byteorder="big", signed=False)
+    return unsigned - (1 << 63)
+
+
+async def _acquire_training_job_dup_lock(
+    db: AsyncSession,
+    source_revision_id: int,
+    target_revision_id: int,
+    training_type: str,
+) -> None:
+    """Take a transaction-scoped Postgres advisory lock that serializes
+    concurrent create_training_job() requests on the same
+    (source_revision_id, target_revision_id, type) triple.
+
+    Released automatically when the surrounding transaction commits or
+    rolls back, so we don't have to manage its lifetime. Pairs with the
+    duplicate-check SELECT below to make check-then-insert atomic (#722).
+    """
+    key = _training_job_dup_lock_key(
+        source_revision_id, target_revision_id, training_type
+    )
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:key)").bindparams(
+            bindparam("key", value=key, type_=BigInteger())
+        )
+    )
 
 
 def _job_out(job: TrainingJob, assessment: Optional[Assessment]) -> TrainingJobOut:
@@ -745,6 +800,22 @@ async def create_training_job(
         training_options = _training_options_for_type(
             training_type.value, job_in.options
         )
+
+        # Serialize concurrent POSTs on the same (source, target, type)
+        # triple with a transaction-scoped Postgres advisory lock. Without
+        # this, two concurrent requests both pass the duplicate-check
+        # SELECT below and both INSERT, leaving two active TrainingJob
+        # rows that each dispatch a Modal runner — doubling the GPU bill
+        # silently (#722). The lock is held until commit/rollback at the
+        # bottom of this function, so the per-type dup-check + insert is
+        # atomic with respect to any other concurrent request on the same
+        # triple. Cross-type triples acquire distinct keys, so different
+        # apps in the same request don't serialize against each other and
+        # different requests targeting different apps proceed in parallel.
+        await _acquire_training_job_dup_lock(
+            db, source_revision_id, target_revision_id, training_type.value
+        )
+
         # Duplicate check per type — "active" means linked Assessment is
         # live (not soft-deleted) and not in a terminal state.
         dup_stmt = (
