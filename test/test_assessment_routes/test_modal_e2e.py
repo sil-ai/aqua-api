@@ -107,8 +107,7 @@ def test_modal_callback_end_to_end(client, regular_token1, db_session, test_db_s
     # in its payload — this is the "wrong assessment_id in the Modal payload"
     # failure mode the issue calls out.
     assert mock_runner.await_count == 1
-    spawn_args, spawn_kwargs = mock_runner.await_args
-    spawned_assessment = spawn_args[0]
+    spawned_assessment = mock_runner.await_args.args[0]
     assert spawned_assessment.id == assessment_id
     assert spawned_assessment.revision_id == revision_id
     assert spawned_assessment.reference_id == reference_id
