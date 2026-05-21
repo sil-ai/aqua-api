@@ -69,9 +69,7 @@ def _assert_transition_allowed(prev, nxt):
     )
 
 
-def test_modal_callback_end_to_end(
-    client, regular_token1, db_session, test_db_session
-):
+def test_modal_callback_end_to_end(client, regular_token1, db_session, test_db_session):
     """Walks the full Modal-driven choreography in a single test.
 
     1. POST /assessment creates the row (Modal.spawn is mocked so no real
@@ -216,20 +214,16 @@ def test_modal_callback_end_to_end(
     assert payload["total_count"] == len(pushed_items)
     returned_by_vref = {row["vref"]: row for row in payload["results"]}
     for pushed in pushed_items:
-        assert pushed["vref"] in returned_by_vref, (
-            f"pushed vref {pushed['vref']} missing from GET /result response"
-        )
+        assert (
+            pushed["vref"] in returned_by_vref
+        ), f"pushed vref {pushed['vref']} missing from GET /result response"
         got = returned_by_vref[pushed["vref"]]
         assert got["score"] == pushed["score"]
         assert got["assessment_id"] == assessment_id
 
     # Final DB-level assertion: the row is finished and stamped.
     db_session.expire_all()
-    row = (
-        db_session.query(Assessment)
-        .filter(Assessment.id == assessment_id)
-        .one()
-    )
+    row = db_session.query(Assessment).filter(Assessment.id == assessment_id).one()
     assert row.status == "finished"
     assert row.end_time is not None
     assert row.start_time is not None
@@ -288,9 +282,7 @@ def test_modal_callback_failure_path(
     assert failed["status_detail"] == "Modal worker OOM"
 
     # Subsequent PATCHes against a terminal assessment must 409.
-    retry = _patch_status(
-        client, regular_token1, assessment_id, {"status": "running"}
-    )
+    retry = _patch_status(client, regular_token1, assessment_id, {"status": "running"})
     assert retry.status_code == 409
 
 
@@ -397,13 +389,7 @@ def test_modal_callback_rejects_unauthorized_caller(
 
     # And the assessment is still queued in the DB — neither attempt landed.
     db_session.expire_all()
-    row = (
-        db_session.query(Assessment)
-        .filter(Assessment.id == assessment_id)
-        .one()
-    )
+    row = db_session.query(Assessment).filter(Assessment.id == assessment_id).one()
     assert row.status == "queued"
-    owner = (
-        db_session.query(UserDB).filter(UserDB.username == "testuser1").one()
-    )
+    owner = db_session.query(UserDB).filter(UserDB.username == "testuser1").one()
     assert row.owner_id == owner.id
