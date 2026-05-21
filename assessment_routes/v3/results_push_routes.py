@@ -11,7 +11,6 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.dependencies import get_db
-from database.upsert import batch_insert_on_conflict_nothing
 from database.models import (
     AlignmentThresholdScores,
     AlignmentTopSourceScores,
@@ -23,6 +22,7 @@ from database.models import (
     TfidfPcaVector,
 )
 from database.models import UserDB as UserModel
+from database.upsert import batch_insert_on_conflict_nothing
 from models import (
     AlignmentScoreItem,
     AssessmentResultItem,
