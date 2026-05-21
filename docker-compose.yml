@@ -5,7 +5,8 @@ services:
     image: local/aqua-api:latest
     ports:
       - "8000:8000"
-      - "5678:5678" # Expose the debug port
+      # Debugpy port (5678) intentionally not exposed. If you need it for
+      # local debugging, add it via a docker-compose.override.yml.
     # command: pytest -v
     environment:
       - DATABASE_URL=postgresql+asyncpg://dbuser:dbpassword@db:5432/dbname

@@ -1,0 +1,56 @@
+# Development-only dependencies. Includes everything in requirements.txt
+# plus linters, formatters, pytest, Jupyter, and debugpy. Not installed in
+# production images.
+
+-r requirements.txt
+
+# Formatters / linters
+black==23.12.1
+flake8==7.0.0
+flake8-black==0.3.6
+isort==6.0.0
+pre-commit==4.2.0
+
+# Test runner
+iniconfig==2.0.0
+pluggy==1.3.0
+py==1.11.0
+pytest==7.1.2
+pytest-asyncio==0.23.6
+pytest-dotenv==0.5.2
+
+# Debugging
+debugpy==1.8.1
+
+# Jupyter / IPython (and their transitive deps that we'd otherwise have
+# floating in the runtime image)
+asttokens==2.4.1
+comm==0.2.1
+decorator==5.1.1
+executing==2.0.1
+ipykernel==6.29.2
+ipython==8.21.0
+jedi==0.19.1
+jupyter_client==8.6.0
+jupyter_core==5.7.1
+matplotlib-inline==0.1.6
+nest-asyncio==1.6.0
+parso==0.8.3
+pexpect==4.9.0
+platformdirs==4.1.0
+prompt-toolkit==3.0.43
+ptyprocess==0.7.0
+pure-eval==0.2.2
+Pygments==2.17.2
+pyzmq==25.1.2
+stack-data==0.6.3
+tornado==6.4
+traitlets==5.14.1
+wcwidth==0.2.13
+
+# Lint plumbing (pulled in by black/flake8)
+mccabe==0.7.0
+mypy-extensions==1.0.0
+pathspec==0.12.1
+pycodestyle==2.11.1
+pyflakes==3.2.0

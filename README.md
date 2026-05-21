@@ -38,6 +38,10 @@ To run the API locally while developing:
 3. Install the requirements:
 
     ```
+    # For local development (includes linters, pytest, jupyter, debugpy):
+    $ pip install -r requirements-dev.txt
+
+    # Runtime-only (matches what ships in the Docker image):
     $ pip install -r requirements.txt
     ```
 
