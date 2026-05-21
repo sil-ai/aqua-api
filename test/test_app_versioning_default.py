@@ -1,7 +1,8 @@
 """Tests for the OMIT_PREVIOUS_VERSIONS default behavior (issue #711).
 
 Asserts that legacy v1 and v2 routes are disabled by default — i.e. when the
-env var is unset, importing app.py must not mount any /v1 or /v2 routes.
+env var is unset, calling app.configure() on a fresh FastAPI instance must not
+mount any /v1 or /v2 routes.
 """
 
 import importlib

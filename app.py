@@ -89,8 +89,10 @@ def configure_routing(app):
     # !!!: send a deprecation notice but leave the v1 route for awhile
     # if v2 is introduced but change /latest and / to /v2/language_routes.router
     # See deprecation note at top of file. Hard removal cutoff: 2026-08-18.
-    omit_previous_versions = os.getenv("OMIT_PREVIOUS_VERSIONS", "true")
-
+    # NOTE: reuse the module-level value (set at import time) so the import
+    # decision and the mount decision can't diverge — otherwise toggling the
+    # env var between import and configure_routing() would NameError on the
+    # un-imported v1/v2 router symbols.
     if not omit_previous_versions:
         app.include_router(language_router_v1, prefix="/v1", tags=["Version 1"])
         app.include_router(revision_router_v1, prefix="/v1", tags=["Version 1"])
