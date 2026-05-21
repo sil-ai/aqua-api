@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1.6
 
 # ---- Builder stage --------------------------------------------------------
-# Use the full Python image so build-time toolchain (gcc, headers needed by
-# wheels that don't have manylinux builds) is available. Wheels are built
-# into /install and copied into the slim runtime stage.
+# python:3.11-slim plus a temporary apt-installed build toolchain (gcc,
+# libpq-dev headers needed by wheels without manylinux builds). The whole
+# builder stage is thrown away — only /install is copied forward — so the
+# toolchain never reaches the runtime image.
 FROM python:3.11-slim AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -12,8 +13,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Build tools needed to compile any sdist-only deps and git for VCS-pinned
-# dependencies (e.g. observability-library). Cleaned up at the end so they
-# don't bloat the builder layer.
+# dependencies (e.g. observability-library). The whole builder stage is
+# discarded, so no further purge is needed beyond clearing apt lists.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
@@ -78,6 +79,9 @@ USER appuser
 
 EXPOSE 8000
 
-# Worker count is configurable via $WEB_CONCURRENCY (default 4). `exec` keeps
-# uvicorn as PID 1 so it receives SIGTERM cleanly during graceful shutdown.
-CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port 8000 --workers ${WEB_CONCURRENCY:-4}"]
+# Worker count is configurable via $WEB_CONCURRENCY (default 4). The shell
+# wrapper validates the value is a non-empty digit string before passing it
+# to uvicorn (defense-in-depth against a bad env value being interpreted as
+# extra uvicorn arguments). `exec` keeps uvicorn as PID 1 so it receives
+# SIGTERM cleanly during graceful shutdown.
+CMD ["sh", "-c", "w=${WEB_CONCURRENCY:-4}; case \"$w\" in ''|*[!0-9]*) echo \"invalid WEB_CONCURRENCY: $w\" >&2; exit 64;; esac; exec uvicorn app:app --host 0.0.0.0 --port 8000 --workers \"$w\""]
