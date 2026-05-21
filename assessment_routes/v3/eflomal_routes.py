@@ -28,6 +28,7 @@ from database.models import (
     EflomalTargetWordCount,
 )
 from database.models import UserDB as UserModel
+from database.upsert import batch_insert_on_conflict_nothing
 from models import (
     EflomalAssessmentOut,
     EflomalBpeModels,
@@ -109,32 +110,6 @@ async def _batch_insert(db, model_cls, rows):
     for i in range(0, len(rows), batch_size):
         batch = rows[i : i + batch_size]
         stmt = insert(model_cls).values(batch).returning(model_cls.id)
-        result = await db.execute(stmt)
-        inserted_ids.extend(r[0] for r in result.fetchall())
-    return inserted_ids
-
-
-async def _batch_insert_on_conflict_nothing(db, model_cls, rows, conflict_cols):
-    """Batch-insert with ON CONFLICT DO NOTHING on ``conflict_cols``.
-
-    The returned ID list covers only rows the statement actually inserted —
-    rows that conflicted with the unique index are silently skipped. That
-    matches issue #721's retry semantics for ``eflomal_cooccurrence``:
-    re-pushing a partial batch is idempotent (first-write-wins), so row
-    counts no longer inflate on Modal retries. On a clean first push the
-    returned IDs match the input row order; on a full replay the list is
-    empty.
-    """
-    _PG_MAX_PARAMS = 32_767
-    cols_per_row = len(model_cls.__table__.columns)
-    batch_size = min(_BATCH_SIZE, _PG_MAX_PARAMS // cols_per_row)
-    inserted_ids = []
-    for i in range(0, len(rows), batch_size):
-        batch = rows[i : i + batch_size]
-        stmt = pg_insert(model_cls).values(batch)
-        stmt = stmt.on_conflict_do_nothing(
-            index_elements=conflict_cols
-        ).returning(model_cls.id)
         result = await db.execute(stmt)
         inserted_ids.extend(r[0] for r in result.fetchall())
     return inserted_ids
@@ -555,11 +530,13 @@ async def push_eflomal_cooccurrences(
         for item in body
     ]
     try:
-        ids = await _batch_insert_on_conflict_nothing(
+        ids = await batch_insert_on_conflict_nothing(
             db,
             EflomalCooccurrence,
             rows,
             conflict_cols=["assessment_id", "source_word", "target_word"],
+            batch_size=_BATCH_SIZE,
+            return_ids=True,
         )
         await db.commit()
         return InsertResponse(ids=ids)

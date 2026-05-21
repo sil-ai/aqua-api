@@ -32,17 +32,33 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _drop_if_invalid(bind, index_name: str) -> None:
+    """Drop ``index_name`` only if it exists and is in an INVALID state.
+
+    Mirrors the pattern from migration 7f2e9a4b8c31 (pg_trgm index on
+    verse_text): a CONCURRENTLY build that was interrupted leaves a row
+    in ``pg_index`` with ``indisvalid = false``. Without this guard
+    ``CREATE INDEX CONCURRENTLY IF NOT EXISTS`` would skip the rebuild
+    and the planner could still try to use the broken index, while an
+    unconditional ``DROP`` would needlessly churn a healthy index on
+    every retry.
+    """
+    is_invalid = bind.exec_driver_sql(
+        "SELECT 1 FROM pg_class c "
+        "JOIN pg_index i ON i.indexrelid = c.oid "
+        "WHERE c.relname = :name "
+        "  AND NOT i.indisvalid",
+        {"name": index_name},
+    ).scalar()
+    if is_invalid:
+        op.execute(f"DROP INDEX CONCURRENTLY {index_name}")
+
+
 def upgrade() -> None:
-    # We use raw op.execute rather than op.create_index so we get
-    # Postgres' IF NOT EXISTS / CONCURRENTLY forms — SQLAlchemy 1.4
-    # alembic helpers don't expose them. A defensive DROP INDEX
-    # CONCURRENTLY IF EXISTS before each CREATE cleans up any INVALID
-    # index left behind by a prior interrupted attempt, which would
-    # otherwise fail the next CREATE with "relation already exists".
-    #
-    # CREATE INDEX CONCURRENTLY cannot run inside a transaction; wrap
-    # the body in alembic's autocommit_block so each statement commits
+    # CREATE INDEX CONCURRENTLY cannot run inside a transaction; wrap the
+    # body in alembic's autocommit_block so each statement commits
     # independently.
+    bind = op.get_bind()
     with op.get_context().autocommit_block():
         # --- assessment_result --------------------------------------------
         # Keep the lowest-id row per (assessment_id, vref). Rows where
@@ -58,9 +74,7 @@ def upgrade() -> None:
               AND a.id > b.id
             """
         )
-        op.execute(
-            "DROP INDEX CONCURRENTLY IF EXISTS uq_assessment_result_assessment_vref"
-        )
+        _drop_if_invalid(bind, "uq_assessment_result_assessment_vref")
         op.execute(
             "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "
             "uq_assessment_result_assessment_vref "
@@ -78,10 +92,7 @@ def upgrade() -> None:
               AND a.id > b.id
             """
         )
-        op.execute(
-            "DROP INDEX CONCURRENTLY IF EXISTS "
-            "uq_eflomal_cooccurrence_assessment_source_target"
-        )
+        _drop_if_invalid(bind, "uq_eflomal_cooccurrence_assessment_source_target")
         op.execute(
             "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS "
             "uq_eflomal_cooccurrence_assessment_source_target "
