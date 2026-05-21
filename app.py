@@ -1,5 +1,6 @@
 __version__ = "v1"
 
+import logging
 import os
 
 import fastapi
@@ -23,6 +24,7 @@ from bible_routes.v3.language_routes import router as language_router_v3
 from bible_routes.v3.revision_routes import router as revision_router_v3
 from bible_routes.v3.verse_routes import router as verse_router_v3
 from bible_routes.v3.version_routes import router as version_router_v3
+from database.dependencies import AsyncSessionLocal
 from middleware import LoggingMiddleware
 from predict_routes.v3.predict_routes import router as predict_router_v3
 from security_routes.admin_routes import router as admin_router
@@ -44,6 +46,8 @@ if not omit_previous_versions:
     from bible_routes.v2.revision_routes import router as revision_router_v2
     from bible_routes.v2.verse_routes import router as verse_router_v2
     from bible_routes.v2.version_routes import router as version_router_v2
+
+logger = logging.getLogger(__name__)
 
 app = fastapi.FastAPI()
 
@@ -167,15 +171,11 @@ def configure_routing(app):
     @app.get("/ready", tags=["Health"])
     async def ready():
         """Readiness probe — verifies the database is reachable."""
-        import logging
-
-        from database.dependencies import AsyncSessionLocal
-
         try:
             async with AsyncSessionLocal() as session:
                 await session.execute(text("SELECT 1"))
         except Exception:
-            logging.exception("Readiness check failed: database unreachable")
+            logger.exception("Readiness check failed: database unreachable")
             return JSONResponse(
                 status_code=503,
                 content={"status": "unavailable"},

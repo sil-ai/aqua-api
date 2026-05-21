@@ -95,16 +95,11 @@ def test_health_endpoint(client):
 
 
 def test_ready_endpoint(client):
+    # /ready runs a SELECT 1 against the configured DB. The rest of this
+    # test suite requires the DB to be up, so we assert the success path.
     response = client.get("/ready")
-    # /ready hits the DB; in the test environment a DB is available, so
-    # it should report "ready". If the DB is unreachable, it should return
-    # 503 with a "status": "unavailable" body.
-    assert response.status_code in (200, 503)
-    body = response.json()
-    if response.status_code == 200:
-        assert body == {"status": "ready"}
-    else:
-        assert body["status"] == "unavailable"
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
 
 
 def test_add_version(client):
