@@ -7,8 +7,6 @@ import fastapi
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 
-logger = logging.getLogger(__name__)
-
 from agent_routes.v3.affix_routes import router as affix_router_v3
 from agent_routes.v3.agent_routes import router as agent_router_v3
 from agent_routes.v3.tokenizer_routes import router as tokenizer_router_v3
@@ -46,6 +44,8 @@ if not omit_previous_versions:
     from bible_routes.v2.revision_routes import router as revision_router_v2
     from bible_routes.v2.verse_routes import router as verse_router_v2
     from bible_routes.v2.version_routes import router as version_router_v2
+
+logger = logging.getLogger(__name__)
 
 app = fastapi.FastAPI()
 
