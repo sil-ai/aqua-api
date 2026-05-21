@@ -186,10 +186,13 @@ async def push_results(
         await db.commit()
         return InsertResponse(ids=[])
     except IntegrityError:
+        # Duplicate (assessment_id, vref) rows are silently skipped by the
+        # ON CONFLICT clause, so reaching this branch means a different
+        # constraint fired (e.g. an FK violation on assessment_id or vref).
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} results for assessment {assessment_id}",
+            detail=f"Constraint violation inserting {len(rows)} results for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(

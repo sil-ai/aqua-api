@@ -417,16 +417,28 @@ def test_push_eflomal_cooccurrences_idempotent(
     """Retrying the same cooccurrence payload is a true no-op (issue #721).
 
     The endpoint uses ``ON CONFLICT (assessment_id, source_word, target_word)
-    DO NOTHING``, so the retry returns no new IDs and the row count stays at
-    the first-push value — previously the retry would silently insert
-    duplicate rows, inflating later aggregate queries.
+    DO NOTHING``, so the retry returns no new IDs and the row count for
+    this batch's keys stays at the first-push value — previously the retry
+    silently inserted duplicate rows, inflating later aggregate queries.
     """
+    from sqlalchemy import tuple_
+
     from database.models import EflomalAssessment as EflomalAssessmentModel
     from database.models import EflomalCooccurrence
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
     url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-cooccurrences"
-    batch = _cooccurrence_items(6)
+    # Disjoint from any other test's payload in this module so we can assert
+    # on an exact post-retry row count without coupling to earlier inserts.
+    batch = [
+        {
+            "source_word": f"idem_src_{i}",
+            "target_word": f"idem_tgt_{i}",
+            "co_occur_count": i + 1,
+            "aligned_count": i,
+        }
+        for i in range(6)
+    ]
 
     first = client.post(url, json=batch, headers=headers)
     assert first.status_code == 200
@@ -436,7 +448,7 @@ def test_push_eflomal_cooccurrences_idempotent(
     assert retry.status_code == 200
     assert retry.json()["ids"] == []
 
-    # Verify the second push didn't duplicate rows in the DB.
+    # Verify the retry didn't duplicate rows for this batch's natural keys.
     test_db_session.expire_all()
     eflomal_pk = (
         test_db_session.query(EflomalAssessmentModel.id)
@@ -445,9 +457,15 @@ def test_push_eflomal_cooccurrences_idempotent(
         )
         .scalar()
     )
+    pairs = [(row["source_word"], row["target_word"]) for row in batch]
     count = (
         test_db_session.query(EflomalCooccurrence)
-        .filter(EflomalCooccurrence.assessment_id == eflomal_pk)
+        .filter(
+            EflomalCooccurrence.assessment_id == eflomal_pk,
+            tuple_(
+                EflomalCooccurrence.source_word, EflomalCooccurrence.target_word
+            ).in_(pairs),
+        )
         .count()
     )
     assert count == 6

@@ -564,10 +564,14 @@ async def push_eflomal_cooccurrences(
         await db.commit()
         return InsertResponse(ids=ids)
     except IntegrityError:
+        # Duplicate (assessment_id, source_word, target_word) rows are
+        # silently skipped by the ON CONFLICT clause, so reaching this
+        # branch means a different constraint fired (e.g. an FK violation
+        # on assessment_id).
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} cooccurrences for assessment {assessment_id}",
+            detail=f"Constraint violation inserting {len(rows)} cooccurrences for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(
