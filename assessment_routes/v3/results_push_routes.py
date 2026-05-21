@@ -7,6 +7,7 @@ from typing import List
 import fastapi
 from fastapi import Depends, HTTPException
 from sqlalchemy import delete, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,6 +96,24 @@ async def _batch_insert(db, model_cls, rows):
         await db.execute(insert(model_cls).values(batch))
 
 
+async def _batch_insert_on_conflict_nothing(db, model_cls, rows, conflict_cols):
+    """Batch-insert with ON CONFLICT DO NOTHING on ``conflict_cols``.
+
+    Used for tables with a unique key on the natural identifier (issue #721):
+    Modal workers may retry a partial push, and the request must be safely
+    replayable. First-write-wins matches the prior application-side
+    deduplication semantics.
+    """
+    _PG_MAX_PARAMS = 32_767
+    cols_per_row = len(model_cls.__table__.columns)
+    batch_size = min(_BATCH_SIZE, _PG_MAX_PARAMS // cols_per_row)
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i : i + batch_size]
+        stmt = pg_insert(model_cls).values(batch)
+        stmt = stmt.on_conflict_do_nothing(index_elements=conflict_cols)
+        await db.execute(stmt)
+
+
 def _build_score_rows(assessment_id: int, items: List[AssessmentResultItem]):
     rows = []
     for item in items:
@@ -148,6 +167,11 @@ async def push_results(
     Maximum of 5,000 items per request. For larger datasets, split into
     multiple requests of 5,000 items or fewer.
 
+    The insert uses ``ON CONFLICT DO NOTHING`` on
+    ``(assessment_id, vref)`` so Modal-worker retries are idempotent —
+    re-pushing a partially-written batch is safe and silently skips rows
+    that already landed (issue #721, first-write-wins).
+
     Returns an empty ``ids`` list; generated IDs are intentionally not fetched
     during bulk inserts.
     """
@@ -156,7 +180,9 @@ async def push_results(
     _check_body_size(body)
     rows = _build_score_rows(assessment_id, body)
     try:
-        await _batch_insert(db, AssessmentResult, rows)
+        await _batch_insert_on_conflict_nothing(
+            db, AssessmentResult, rows, conflict_cols=["assessment_id", "vref"]
+        )
         await db.commit()
         return InsertResponse(ids=[])
     except IntegrityError:

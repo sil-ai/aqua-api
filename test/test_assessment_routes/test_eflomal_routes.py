@@ -408,9 +408,22 @@ def test_push_eflomal_cooccurrences(
 
 
 def test_push_eflomal_cooccurrences_idempotent(
-    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
+    client,
+    regular_token1,
+    test_eflomal_assessment_id,
+    _ensure_metadata_pushed,
+    test_db_session,
 ):
-    """Retrying the same cooccurrence payload succeeds without a 400."""
+    """Retrying the same cooccurrence payload is a true no-op (issue #721).
+
+    The endpoint uses ``ON CONFLICT (assessment_id, source_word, target_word)
+    DO NOTHING``, so the retry returns no new IDs and the row count stays at
+    the first-push value — previously the retry would silently insert
+    duplicate rows, inflating later aggregate queries.
+    """
+    from database.models import EflomalAssessment as EflomalAssessmentModel
+    from database.models import EflomalCooccurrence
+
     headers = {"Authorization": f"Bearer {regular_token1}"}
     url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-cooccurrences"
     batch = _cooccurrence_items(6)
@@ -421,7 +434,23 @@ def test_push_eflomal_cooccurrences_idempotent(
 
     retry = client.post(url, json=batch, headers=headers)
     assert retry.status_code == 200
-    assert len(retry.json()["ids"]) == 6
+    assert retry.json()["ids"] == []
+
+    # Verify the second push didn't duplicate rows in the DB.
+    test_db_session.expire_all()
+    eflomal_pk = (
+        test_db_session.query(EflomalAssessmentModel.id)
+        .filter(
+            EflomalAssessmentModel.assessment_id == test_eflomal_assessment_id
+        )
+        .scalar()
+    )
+    count = (
+        test_db_session.query(EflomalCooccurrence)
+        .filter(EflomalCooccurrence.assessment_id == eflomal_pk)
+        .count()
+    )
+    assert count == 6
 
 
 def test_push_eflomal_target_word_counts(
