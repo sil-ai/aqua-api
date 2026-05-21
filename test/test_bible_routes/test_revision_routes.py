@@ -495,3 +495,38 @@ def test_upload_revision_accepts_octet_stream(client, regular_token1, db_session
     assert response.status_code == 200
     revision_id = response.json()["id"]
     assert delete_revision(client, regular_token1, revision_id) == 200
+
+
+@pytest.mark.asyncio
+async def test_read_upload_with_limit_streams_oversize_when_size_unknown():
+    """When the client doesn't advertise a size (file.size is None), the
+    streaming chunk loop must still abort once cumulative bytes exceed the
+    cap. This is the path that defends against chunked-encoded bodies that
+    bypass the fast file.size pre-check.
+    """
+    from fastapi import HTTPException
+
+    from bible_routes.v3.revision_routes import read_upload_with_limit
+
+    class FakeUploadFile:
+        """Mimics the subset of UploadFile.read(n) we depend on, while
+        leaving .size unset to force the streaming branch."""
+
+        def __init__(self, payload: bytes):
+            self._buf = payload
+            self.size = None
+            self.content_type = "text/plain"
+
+        async def read(self, n: int) -> bytes:
+            chunk, self._buf = self._buf[:n], self._buf[n:]
+            return chunk
+
+    # 6 bytes of payload, cap at 4: must trigger 413 mid-stream.
+    fake = FakeUploadFile(b"abcdef")
+    with pytest.raises(HTTPException) as exc_info:
+        await read_upload_with_limit(fake, max_bytes=4)
+    assert exc_info.value.status_code == 413
+
+    # Under the cap returns the full payload.
+    fake_ok = FakeUploadFile(b"abc")
+    assert await read_upload_with_limit(fake_ok, max_bytes=4) == b"abc"
