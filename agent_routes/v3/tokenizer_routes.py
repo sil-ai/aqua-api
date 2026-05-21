@@ -148,10 +148,13 @@ async def _upsert_profile(
     else:
         for key, value in payload.model_dump(exclude_unset=True).items():
             setattr(profile, key, value)
-        # Force the onupdate trigger to fire even when no fields changed,
-        # so repeat PUTs always refresh updated_at. The column is currently
-        # TIMESTAMP WITHOUT TIME ZONE (out of #720 scope), so use a naive
-        # UTC value to satisfy asyncpg's type checking.
+        # Explicitly bump updated_at so repeat PUTs always advance it,
+        # even when no scalar fields actually changed (SQLAlchemy's
+        # onupdate=func.now() only fires when other columns mutate).
+        # LanguageProfile.updated_at is still TIMESTAMP WITHOUT TIME ZONE
+        # — converting it is out of scope for #720 (which targets
+        # assessment/training_job columns) — so we write a naive UTC
+        # value here to satisfy asyncpg's column-type check.
         profile.updated_at = datetime.datetime.utcnow()
     await db.flush()
     return profile
