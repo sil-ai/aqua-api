@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import jwt
 from sqlalchemy import select
@@ -9,6 +9,7 @@ from database.models import Group as GroupDB
 from database.models import UserDB, UserGroup
 from models import Group, User
 
+from .rate_limiting import CHANGE_PASSWORD_RATE_LIMIT, USERS_RATE_LIMIT, limiter
 from .utilities import ALGORITHM, SECRET_KEY, hash_password
 
 router = APIRouter()
@@ -43,7 +44,9 @@ async def get_current_admin(
 
 
 @router.post("/users", response_model=User)
+@limiter.limit(USERS_RATE_LIMIT)
 async def create_user(
+    request: Request,
     user: User = Depends(),
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
@@ -244,7 +247,9 @@ async def delete_user(
 
 # create a change password endpoint
 @router.post("/change-password")
+@limiter.limit(CHANGE_PASSWORD_RATE_LIMIT)
 async def change_password(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(get_current_admin),
