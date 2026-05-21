@@ -130,3 +130,24 @@ def test_wildcard_origin_disables_credentials():
     # (wildcard + allow_credentials) — which browsers reject — is impossible.
     assert response.headers.get("access-control-allow-origin") == "*"
     assert response.headers.get("access-control-allow-credentials") != "true"
+
+
+def test_wildcard_mixed_with_origins_still_disables_credentials():
+    """A misconfigured "*, https://aqua.sil.org" must not enable credentials.
+
+    Without the wildcard-collapse logic, the env var "*, https://aqua.sil.org"
+    would produce allow_origins=["*", "https://aqua.sil.org"] with
+    allow_credentials=True — which means any origin in the wild would receive
+    a credentialed Access-Control-Allow-Origin echo for non-listed origins.
+    Guard against that: any "*" in the list must drop credentials.
+    """
+    test_app = _build_app("*, https://aqua.sil.org")
+    with TestClient(test_app) as client:
+        response = client.get(
+            "/cors-probe", headers={"Origin": "https://anything.example.com"}
+        )
+    assert response.status_code == 200
+    # We collapsed to a single "*", so it's the only origin echoed back, and
+    # credentials must not be advertised.
+    assert response.headers.get("access-control-allow-origin") == "*"
+    assert response.headers.get("access-control-allow-credentials") != "true"

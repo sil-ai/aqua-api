@@ -100,17 +100,27 @@ def configure_cors(app):
     """Restrict cross-origin requests to an explicit allowlist.
 
     Origins are read from the ALLOWED_ORIGINS env var as a comma-separated
-    list. With no value set, no cross-origin requests are permitted. Setting
-    "*" disables credentials to avoid the unsafe wildcard-with-credentials
-    combination that browsers reject anyway.
+    list. With no value set, no Access-Control-Allow-Origin header is emitted
+    for cross-origin requests, so browsers will refuse to expose responses to
+    foreign-origin scripts. If "*" appears in the list, credentials are
+    disabled regardless of what else is listed, because credentialed CORS
+    with any wildcard origin is unsafe (and browsers reject it).
     """
     allowed_origins = _parse_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
-    allow_credentials = allowed_origins != ["*"]
+    has_wildcard = "*" in allowed_origins
+    if has_wildcard:
+        # Collapse to a single "*" so we never emit a mixed allowlist that
+        # would let credentialed CORS through for non-wildcard entries.
+        allowed_origins = ["*"]
+    allow_credentials = not has_wildcard
     if not allowed_origins:
         logger.warning(
-            "ALLOWED_ORIGINS is unset or empty; all cross-origin requests will "
-            "be blocked. Set ALLOWED_ORIGINS to a comma-separated list of "
-            "frontend origins (e.g. https://aqua.sil.org) to enable CORS."
+            "ALLOWED_ORIGINS is unset or empty; no Access-Control-Allow-Origin "
+            "header will be emitted, so browsers will block JS access to "
+            "responses from foreign-origin scripts. Note: simple cross-origin "
+            "requests still reach the server — this is not a CSRF defense. "
+            "Set ALLOWED_ORIGINS to a comma-separated list of frontend origins "
+            "(e.g. https://aqua.sil.org) to enable CORS."
         )
     app.add_middleware(
         CORSMiddleware,
