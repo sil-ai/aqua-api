@@ -527,9 +527,14 @@ async def add_lexeme_card(
     """
     Add a new lexeme card entry or update an existing one.
 
-    Uniqueness is enforced on (target_lemma, source_version_id, target_version_id).
-    If a card with the same target_lemma and language pair already exists,
-    it will be updated instead of creating a duplicate.
+    Uniqueness is enforced at the DB level on (LOWER(target_lemma),
+    source_language_iso, target_version_id) — i.e. one canonical card per
+    (lemma, source language, target version), regardless of which specific
+    source_version_id the card was written via. The Python pre-check below
+    keys on source_version_id so callers that re-POST the same exact pair
+    upsert, but cross-source-version collisions inside the same source
+    language fall through to the IntegrityError handler and return 409
+    with the conflicting card's id so callers can PATCH by id.
 
     Input:
     - card: LexemeCardIn - The lexeme card data
@@ -666,6 +671,7 @@ async def add_lexeme_card(
                         f"Use PATCH to update the existing card.",
                         "existing_card_id": existing_card.id,
                         "existing_source_lemma": existing_card.source_lemma,
+                        "existing_source_version_id": existing_card.source_version_id,
                     },
                 )
             # Migrate any pre-backfill mixed-case value to the validator-normalized form.
@@ -920,13 +926,40 @@ async def add_lexeme_card(
     except IntegrityError as e:
         await db.rollback()
         if "ix_agent_lexeme_cards_unique" in str(e.orig):
+            # The DB unique index is on (LOWER(target_lemma), source_language_iso,
+            # target_version_id). The Python pre-check above keys on
+            # source_version_id, so a conflict here means an existing card has
+            # the same source language but a different source_version_id (e.g. a
+            # different reference version was the pivot at write time). Look up
+            # the conflicting card via the actual unique key so callers can PATCH
+            # by id; PATCH-by-lemma would 404 because it uses source_version_id.
+            # `select` and `func` are already imported at the top of the `try`.
+            existing_card = await db.scalar(
+                select(AgentLexemeCard).where(
+                    func.lower(AgentLexemeCard.target_lemma)
+                    == card.target_lemma.lower(),
+                    AgentLexemeCard.source_language_iso
+                    == (
+                        select(BibleVersion.iso_language)
+                        .where(BibleVersion.id == card.source_version_id)
+                        .scalar_subquery()
+                    ),
+                    AgentLexemeCard.target_version_id == card.target_version_id,
+                )
+            )
+            detail = {
+                "message": f"A lexeme card for target_lemma='{card.target_lemma}' "
+                f"already exists for this language pair. "
+                f"Use PATCH /v3/agent/lexeme-card/{{card_id}} with the "
+                f"returned existing_card_id to update.",
+            }
+            if existing_card is not None:
+                detail["existing_card_id"] = existing_card.id
+                detail["existing_source_lemma"] = existing_card.source_lemma
+                detail["existing_source_version_id"] = existing_card.source_version_id
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "message": f"A lexeme card for target_lemma='{card.target_lemma}' "
-                    f"already exists for this language pair. "
-                    f"Use PATCH to update the existing card.",
-                },
+                detail=detail,
             ) from e
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
