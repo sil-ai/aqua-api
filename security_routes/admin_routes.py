@@ -119,8 +119,8 @@ async def get_groups(
 
 @router.post("/link-user-group", status_code=status.HTTP_201_CREATED)
 async def link_user_to_group(
-    username=str,
-    groupname=str,
+    username: str,
+    groupname: str,
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(
         get_current_admin
@@ -162,8 +162,8 @@ async def link_user_to_group(
 
 @router.post("/unlink-user-group", status_code=status.HTTP_204_NO_CONTENT)
 async def unlink_user_from_group(
-    username=str,
-    groupname=str,
+    username: str,
+    groupname: str,
     db: AsyncSession = Depends(get_db),
     _: UserDB = Depends(
         get_current_admin
