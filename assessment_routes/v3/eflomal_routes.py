@@ -28,6 +28,7 @@ from database.models import (
     EflomalTargetWordCount,
 )
 from database.models import UserDB as UserModel
+from database.upsert import batch_insert_on_conflict_nothing
 from models import (
     EflomalAssessmentOut,
     EflomalBpeModels,
@@ -498,14 +499,15 @@ async def push_eflomal_cooccurrences(
 ):
     """Bulk insert cooccurrence entries for an eflomal assessment.
 
-    Maximum of 5,000 items per request. The eflomal_cooccurrence table has
-    no unique constraint on (assessment_id, source_word, target_word), so
-    inserts cannot conflict and a 400 from a retry is not possible — the
-    cost is that retrying the full sequence after a partial failure can
-    accumulate duplicate rows (a separate cleanup needs a unique-constraint
-    migration before upsert can be used here).
+    Maximum of 5,000 items per request. Inserts use
+    ``ON CONFLICT (assessment_id, source_word, target_word) DO NOTHING``
+    so Modal-worker retries are idempotent — re-pushing a partially-written
+    batch is safe and preserves the original counts (first-write-wins,
+    issue #721).
 
-    Returns the list of inserted row IDs in the same order as the input.
+    Returns the IDs of rows the statement actually inserted; rows whose
+    natural key already existed are skipped, so on a clean first push this
+    matches the input row order and on a full replay it is empty.
     """
     eflomal = await _get_eflomal_assessment(assessment_id, db)
     if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
@@ -528,14 +530,25 @@ async def push_eflomal_cooccurrences(
         for item in body
     ]
     try:
-        ids = await _batch_insert(db, EflomalCooccurrence, rows)
+        ids = await batch_insert_on_conflict_nothing(
+            db,
+            EflomalCooccurrence,
+            rows,
+            conflict_cols=["assessment_id", "source_word", "target_word"],
+            batch_size=_BATCH_SIZE,
+            return_ids=True,
+        )
         await db.commit()
         return InsertResponse(ids=ids)
     except IntegrityError:
+        # Duplicate (assessment_id, source_word, target_word) rows are
+        # silently skipped by the ON CONFLICT clause, so reaching this
+        # branch means a different constraint fired (e.g. an FK violation
+        # on assessment_id).
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} cooccurrences for assessment {assessment_id}",
+            detail=f"Constraint violation inserting {len(rows)} cooccurrences for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(

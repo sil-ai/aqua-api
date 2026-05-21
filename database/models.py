@@ -258,6 +258,17 @@ class AssessmentResult(Base):
         ),
         Index("idx_assessment_id", "assessment_id"),
         Index("idx_book_chapter_verse", "book", "chapter", "verse"),
+        # Issue #721: prevents silent duplicate rows when a Modal worker
+        # retries a partial push. Inserts go through
+        # ON CONFLICT DO NOTHING on (assessment_id, vref); see
+        # `_batch_insert_on_conflict_nothing` in
+        # `assessment_routes/v3/results_push_routes.py`.
+        Index(
+            "uq_assessment_result_assessment_vref",
+            "assessment_id",
+            "vref",
+            unique=True,
+        ),
     )
 
 
@@ -971,11 +982,18 @@ class EflomalCooccurrence(Base):
     aligned_count = Column(Integer, nullable=False)
 
     __table_args__ = (
+        # Issue #721: prevents silent duplicate rows when a Modal worker
+        # retries a partial push. The unique tuple doubles as the lookup
+        # index, so we promote the previous non-unique
+        # `ix_eflomal_cooccurrence_lookup` to a unique index keyed on the
+        # same columns. Inserts go through ON CONFLICT DO NOTHING in
+        # `assessment_routes/v3/eflomal_routes.py`.
         Index(
-            "ix_eflomal_cooccurrence_lookup",
+            "uq_eflomal_cooccurrence_assessment_source_target",
             "assessment_id",
             "source_word",
             "target_word",
+            unique=True,
         ),
     )
 

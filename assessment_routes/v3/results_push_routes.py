@@ -22,6 +22,7 @@ from database.models import (
     TfidfPcaVector,
 )
 from database.models import UserDB as UserModel
+from database.upsert import batch_insert_on_conflict_nothing
 from models import (
     AlignmentScoreItem,
     AssessmentResultItem,
@@ -148,6 +149,11 @@ async def push_results(
     Maximum of 5,000 items per request. For larger datasets, split into
     multiple requests of 5,000 items or fewer.
 
+    The insert uses ``ON CONFLICT DO NOTHING`` on
+    ``(assessment_id, vref)`` so Modal-worker retries are idempotent —
+    re-pushing a partially-written batch is safe and silently skips rows
+    that already landed (issue #721, first-write-wins).
+
     Returns an empty ``ids`` list; generated IDs are intentionally not fetched
     during bulk inserts.
     """
@@ -156,14 +162,23 @@ async def push_results(
     _check_body_size(body)
     rows = _build_score_rows(assessment_id, body)
     try:
-        await _batch_insert(db, AssessmentResult, rows)
+        await batch_insert_on_conflict_nothing(
+            db,
+            AssessmentResult,
+            rows,
+            conflict_cols=["assessment_id", "vref"],
+            batch_size=_BATCH_SIZE,
+        )
         await db.commit()
         return InsertResponse(ids=[])
     except IntegrityError:
+        # Duplicate (assessment_id, vref) rows are silently skipped by the
+        # ON CONFLICT clause, so reaching this branch means a different
+        # constraint fired (e.g. an FK violation on assessment_id or vref).
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} results for assessment {assessment_id}",
+            detail=f"Constraint violation inserting {len(rows)} results for assessment {assessment_id}",
         )
     except SQLAlchemyError:
         logger.exception(

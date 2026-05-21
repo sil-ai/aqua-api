@@ -111,6 +111,88 @@ def test_push_results_invalid_vref(client, regular_token1, push_assessment_id):
     assert response.status_code == 400
 
 
+def test_push_results_idempotent_on_retry(
+    client, regular_token1, push_assessment_id, test_db_session
+):
+    """Retrying the same results payload does not duplicate rows (issue #721).
+
+    The endpoint uses ``ON CONFLICT (assessment_id, vref) DO NOTHING``, so a
+    Modal worker that retries a partial push lands the same row count as a
+    clean first push — previously the retry silently inserted duplicates.
+    """
+    body = [
+        {"vref": "GEN 2:1", "score": 0.10},
+        {"vref": "GEN 2:2", "score": 0.20},
+        {"vref": "GEN 2:3", "score": 0.30},
+    ]
+    url = f"{prefix}/assessment/{push_assessment_id}/results"
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    first = client.post(url, json=body, headers=headers)
+    assert first.status_code == 200
+
+    retry = client.post(url, json=body, headers=headers)
+    assert retry.status_code == 200
+
+    test_db_session.expire_all()
+    persisted = (
+        test_db_session.query(AssessmentResult)
+        .filter(
+            AssessmentResult.assessment_id == push_assessment_id,
+            AssessmentResult.vref.in_(["GEN 2:1", "GEN 2:2", "GEN 2:3"]),
+        )
+        .count()
+    )
+    assert persisted == 3
+
+
+def test_push_results_partial_overlap_first_write_wins(
+    client, regular_token1, push_assessment_id, test_db_session
+):
+    """A partial-overlap retry only inserts the new vrefs (first-write-wins).
+
+    Simulates a Modal worker that pushes [A, B], times out, then re-pushes
+    [B, C] with a changed score for B. The original B score must survive
+    and C must be inserted exactly once.
+    """
+    url = f"{prefix}/assessment/{push_assessment_id}/results"
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    first = client.post(
+        url,
+        json=[
+            {"vref": "GEN 3:1", "score": 0.11},
+            {"vref": "GEN 3:2", "score": 0.22},
+        ],
+        headers=headers,
+    )
+    assert first.status_code == 200
+
+    retry = client.post(
+        url,
+        json=[
+            # Same key as before, different score — must be ignored.
+            {"vref": "GEN 3:2", "score": 0.99},
+            {"vref": "GEN 3:3", "score": 0.33},
+        ],
+        headers=headers,
+    )
+    assert retry.status_code == 200
+
+    test_db_session.expire_all()
+    rows = (
+        test_db_session.query(AssessmentResult)
+        .filter(
+            AssessmentResult.assessment_id == push_assessment_id,
+            AssessmentResult.vref.in_(["GEN 3:1", "GEN 3:2", "GEN 3:3"]),
+        )
+        .all()
+    )
+    assert len(rows) == 3
+    by_vref = {r.vref: float(r.score) for r in rows}
+    assert by_vref == {"GEN 3:1": 0.11, "GEN 3:2": 0.22, "GEN 3:3": 0.33}
+
+
 def test_push_results_body_too_large(client, regular_token1, push_assessment_id):
     body = [{"vref": "GEN 1:1", "score": 0.5}] * 5001
     response = client.post(
