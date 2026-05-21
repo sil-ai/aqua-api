@@ -18,9 +18,7 @@ from database.models import (  # Your SQLAlchemy model
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 if not SECRET_KEY:
-    raise ValueError(
-        "SECRET_KEY environment variable is required for JWT signing"
-    )
+    raise ValueError("SECRET_KEY environment variable is required for JWT signing")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
