@@ -32,7 +32,7 @@ from train_routes.v3.train_routes import router as train_router_v3
 # a legacy API-key auth model. Hard removal cutoff: 2026-08-18 (90 days from
 # 2026-05-20). After that date, delete queries.py, database/database.py, and
 # all v1/v2 route files. See issue #711.
-omit_previous_versions = os.getenv("OMIT_PREVIOUS_VERSIONS", True)
+omit_previous_versions = os.getenv("OMIT_PREVIOUS_VERSIONS", "true")
 
 if not omit_previous_versions:
     from assessment_routes.v1.assessment_routes import router as assessment_router_v1
@@ -89,7 +89,7 @@ def configure_routing(app):
     # !!!: send a deprecation notice but leave the v1 route for awhile
     # if v2 is introduced but change /latest and / to /v2/language_routes.router
     # See deprecation note at top of file. Hard removal cutoff: 2026-08-18.
-    omit_previous_versions = os.getenv("OMIT_PREVIOUS_VERSIONS", True)
+    omit_previous_versions = os.getenv("OMIT_PREVIOUS_VERSIONS", "true")
 
     if not omit_previous_versions:
         app.include_router(language_router_v1, prefix="/v1", tags=["Version 1"])
