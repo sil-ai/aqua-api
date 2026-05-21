@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from assessment_routes.v3.timeout_sweep_routes import TIMEOUT_STATUS_DETAIL
 from database.models import Assessment
@@ -41,8 +41,8 @@ def test_timeout_sweep_marks_old_running_and_queued_failed(
     revision_id = test_db_session.test_revision_id_1
     reference_id = test_db_session.test_revision_id_2
 
-    old = datetime.now() - timedelta(hours=48)
-    recent = datetime.now() - timedelta(minutes=5)
+    old = datetime.now(timezone.utc) - timedelta(hours=48)
+    recent = datetime.now(timezone.utc) - timedelta(minutes=5)
 
     stuck_running = _create_assessment(
         db_session, revision_id, reference_id, status="running", requested_time=old
@@ -142,8 +142,8 @@ def test_timeout_sweep_respects_custom_hours(
     revision_id = test_db_session.test_revision_id_1
     reference_id = test_db_session.test_revision_id_2
 
-    five_hours_ago = datetime.now() - timedelta(hours=5)
-    one_hour_ago = datetime.now() - timedelta(hours=1)
+    five_hours_ago = datetime.now(timezone.utc) - timedelta(hours=5)
+    one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
 
     older_than_3h = _create_assessment(
         db_session,
@@ -193,7 +193,7 @@ def test_timeout_sweep_requires_admin(
 ):
     revision_id = test_db_session.test_revision_id_1
     reference_id = test_db_session.test_revision_id_2
-    old = datetime.now() - timedelta(hours=48)
+    old = datetime.now(timezone.utc) - timedelta(hours=48)
     stuck = _create_assessment(
         db_session, revision_id, reference_id, status="running", requested_time=old
     )
@@ -228,3 +228,59 @@ def test_timeout_sweep_rejects_hours_above_ceiling(client, admin_token):
         headers={"Authorization": f"Bearer {admin_token}"},
     )
     assert response.status_code == 422
+
+
+def test_timeout_sweep_uses_utc_cutoff_regardless_of_server_timezone(
+    client, admin_token, db_session, test_db_session
+):
+    """Regression for aqua-api#720: timeout sweep cutoff must be tz-aware UTC
+    so that the age comparison against ``requested_time`` does not silently
+    drift by the server's local UTC offset.
+
+    Without this property, a host in (say) UTC-10 would treat a row
+    requested 23h ago as if it were 13h old and skip sweeping it (or, in
+    the opposite direction, sweep something that was only 1h old). We assert
+    the round-tripped cutoff carries tzinfo and matches now(timezone.utc).
+    """
+    revision_id = test_db_session.test_revision_id_1
+    reference_id = test_db_session.test_revision_id_2
+
+    before = datetime.now(timezone.utc)
+    response = client.post(
+        f"{prefix}/assessment/timeout-sweep?hours=24",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    after = datetime.now(timezone.utc)
+    assert response.status_code == 200, response.text
+
+    cutoff_iso = response.json()["cutoff"]
+    cutoff = datetime.fromisoformat(cutoff_iso)
+    assert cutoff.tzinfo is not None, "cutoff must be tz-aware"
+
+    # The cutoff is hours=24 in the past, computed between `before` and `after`.
+    assert (before - timedelta(hours=24, seconds=5)) <= cutoff
+    assert cutoff <= (after - timedelta(hours=24) + timedelta(seconds=5))
+
+    # And the sweep correctly identifies a stuck row whose requested_time is
+    # tz-aware UTC and well past the cutoff.
+    old = datetime.now(timezone.utc) - timedelta(hours=48)
+    stuck = _create_assessment(
+        db_session, revision_id, reference_id, status="running", requested_time=old
+    )
+    try:
+        response = client.post(
+            f"{prefix}/assessment/timeout-sweep",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert response.status_code == 200, response.text
+        assert stuck.id in set(response.json()["swept_ids"])
+
+        db_session.expire_all()
+        refreshed = (
+            db_session.query(Assessment).filter(Assessment.id == stuck.id).first()
+        )
+        # end_time written by the route must be tz-aware UTC.
+        assert refreshed.end_time is not None
+        assert refreshed.end_time.tzinfo is not None
+    finally:
+        _delete_assessments(db_session, [stuck])

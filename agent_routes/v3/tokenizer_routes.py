@@ -5,6 +5,7 @@ import socket
 import time
 import unicodedata
 from collections import defaultdict
+from datetime import timezone
 from typing import Optional
 
 import fastapi
@@ -150,7 +151,7 @@ async def _upsert_profile(
             setattr(profile, key, value)
         # Force the onupdate trigger to fire even when no fields changed,
         # so repeat PUTs always refresh updated_at.
-        profile.updated_at = datetime.datetime.utcnow()
+        profile.updated_at = datetime.datetime.now(timezone.utc)
     await db.flush()
     return profile
 

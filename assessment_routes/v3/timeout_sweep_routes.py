@@ -1,7 +1,7 @@
 __version__ = "v3"
 
 import socket
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List
 
 import fastapi
@@ -43,10 +43,12 @@ class TimeoutSweepResult(BaseModel):
 async def sweep_stuck_assessments(
     db: AsyncSession, hours: int = DEFAULT_TIMEOUT_HOURS
 ) -> TimeoutSweepResult:
-    # Match the convention used elsewhere when writing requested_time
-    # (assessment_routes.v3.assessment_routes uses datetime.now()) so the
-    # cutoff comparison stays consistent regardless of server timezone.
-    now = datetime.now()
+    # Use tz-aware UTC so the cutoff comparison stays correct regardless of
+    # the server's local timezone. requested_time is also written as
+    # tz-aware UTC (see assessment_routes.v3.assessment_routes); pre-existing
+    # naive rows are interpreted by Postgres as the session's timezone when
+    # compared against a tz-aware bound, which is harmless here.
+    now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=hours)
     stmt = (
         update(Assessment)

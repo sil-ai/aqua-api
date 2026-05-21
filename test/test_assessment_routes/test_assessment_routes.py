@@ -724,7 +724,7 @@ def test_duplicate_assessment_stale_allowed(
     client, regular_token1, db_session, test_db_session
 ):
     """Assessment older than stale cutoff should not block a new one."""
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
@@ -746,7 +746,7 @@ def test_duplicate_assessment_stale_allowed(
         assessment = (
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
-        assessment.requested_time = datetime.now() - timedelta(hours=3)
+        assessment.requested_time = datetime.now(timezone.utc) - timedelta(hours=3)
         db_session.commit()
 
         second = client.post(
@@ -864,7 +864,7 @@ def test_completed_assessment_returns_409(
     client, regular_token1, db_session, test_db_session
 ):
     """POST assessment that already completed returns 409 with existing ID."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
@@ -889,7 +889,7 @@ def test_completed_assessment_returns_409(
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
         assessment.status = "finished"
-        assessment.end_time = datetime.now()
+        assessment.end_time = datetime.now(timezone.utc)
         db_session.commit()
 
         second = client.post(
@@ -906,7 +906,7 @@ def test_completed_assessment_force_rerun(
     client, regular_token1, db_session, test_db_session
 ):
     """force=true allows rerunning a completed assessment."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
@@ -931,7 +931,7 @@ def test_completed_assessment_force_rerun(
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
         assessment.status = "finished"
-        assessment.end_time = datetime.now()
+        assessment.end_time = datetime.now(timezone.utc)
         db_session.commit()
 
         # force=true should allow rerun
@@ -949,7 +949,7 @@ def test_completed_assessment_different_type_allowed(
     client, regular_token1, db_session, test_db_session
 ):
     """Completed assessment of different type should not block."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
@@ -977,7 +977,7 @@ def test_completed_assessment_different_type_allowed(
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
         assessment.status = "finished"
-        assessment.end_time = datetime.now()
+        assessment.end_time = datetime.now(timezone.utc)
         db_session.commit()
 
         # Different type should succeed
@@ -997,7 +997,7 @@ def test_completed_assessment_different_kwargs_blocked(
     client, regular_token1, db_session, test_db_session
 ):
     """Finished assessment with different kwargs still blocks (same type+revision)."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
@@ -1024,7 +1024,7 @@ def test_completed_assessment_different_kwargs_blocked(
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
         assessment.status = "finished"
-        assessment.end_time = datetime.now()
+        assessment.end_time = datetime.now(timezone.utc)
         db_session.commit()
 
         # Different kwargs on same type+revision still blocked
@@ -1045,7 +1045,7 @@ def test_completed_assessment_different_vref_allowed(
     client, regular_token1, db_session, test_db_session
 ):
     """Completed assessment with different verse range should not block."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
@@ -1072,7 +1072,7 @@ def test_completed_assessment_different_vref_allowed(
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
         assessment.status = "finished"
-        assessment.end_time = datetime.now()
+        assessment.end_time = datetime.now(timezone.utc)
         db_session.commit()
 
         # Different verse range should succeed
@@ -1092,7 +1092,7 @@ def test_completed_assessment_same_vref_blocked(
     client, regular_token1, db_session, test_db_session
 ):
     """Completed assessment with same verse range should block (409)."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
@@ -1119,7 +1119,7 @@ def test_completed_assessment_same_vref_blocked(
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
         assessment.status = "finished"
-        assessment.end_time = datetime.now()
+        assessment.end_time = datetime.now(timezone.utc)
         db_session.commit()
 
         # Same verse range should be blocked
@@ -1140,7 +1140,7 @@ def test_completed_assessment_no_vref_not_blocked_by_vref(
     client, regular_token1, db_session, test_db_session
 ):
     """Full-Bible run (no vref) should not be blocked by a partial-range assessment."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
@@ -1167,7 +1167,7 @@ def test_completed_assessment_no_vref_not_blocked_by_vref(
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
         assessment.status = "finished"
-        assessment.end_time = datetime.now()
+        assessment.end_time = datetime.now(timezone.utc)
         db_session.commit()
 
         # Full-Bible run (no vref) should not be blocked
@@ -1186,7 +1186,7 @@ def test_completed_assessment_admin_also_blocked(
     client, regular_token1, admin_token, db_session, test_db_session
 ):
     """Admin users are also blocked by completed assessment check (must use force)."""
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
@@ -1211,7 +1211,7 @@ def test_completed_assessment_admin_also_blocked(
             db_session.query(Assessment).filter(Assessment.id == first_id).first()
         )
         assessment.status = "finished"
-        assessment.end_time = datetime.now()
+        assessment.end_time = datetime.now(timezone.utc)
         db_session.commit()
 
         # Admin without force should still be blocked

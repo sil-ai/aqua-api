@@ -5,7 +5,7 @@ import os
 import socket
 import unicodedata
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import fastapi
@@ -786,7 +786,7 @@ async def create_training_job(
             reference_id=source_revision_id,
             type=training_type.value,
             status="queued",
-            requested_time=datetime.utcnow(),
+            requested_time=datetime.now(timezone.utc),
             owner_id=current_user.id,
             kwargs=training_options,
             is_training=True,
@@ -802,7 +802,7 @@ async def create_training_job(
             source_version_id=source_version.id,
             target_version_id=target_version.id,
             options=training_options,
-            requested_time=datetime.utcnow(),
+            requested_time=datetime.now(timezone.utc),
             owner_id=current_user.id,
             session_id=session_id,
             assessment_id=assessment_id,
@@ -864,7 +864,7 @@ async def create_training_job(
         # runner never got a chance to advance it past `queued`. Skip
         # soft-deleted rows defensively even though they can't appear in
         # this code path today (assessments are freshly created above).
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         failed_assessments = (
             (
                 await db.execute(
@@ -1755,6 +1755,6 @@ async def delete_training_job(
         )
 
     job.deleted = True
-    job.deleted_at = datetime.utcnow()
+    job.deleted_at = datetime.now(timezone.utc)
     await db.commit()
     return {"detail": f"Training job {job_id} deleted successfully"}
