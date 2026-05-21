@@ -1114,10 +1114,11 @@ def test_predict_job_modal_container_timeout_marks_failed(
 ):
     """When Modal kills the container at its timeout (or the result expires),
     `fc.get` raises `modal.exception.FunctionTimeoutError` /
-    `OutputExpiredError`. Both subclass the builtin `TimeoutError`, so they
-    have to be caught BEFORE the bare `TimeoutError` block — otherwise
-    they're silently treated as "still running" and the DB row never flips
-    to `failed`. Regression for a job that sat in `running` indefinitely
+    `OutputExpiredError`. Both subclass `modal.exception.TimeoutError`, so
+    they have to be caught BEFORE the bare `TimeoutError` block — otherwise
+    they're silently treated as "still running" (that block catches
+    `modal.exception.TimeoutError` too) and the DB row never flips to
+    `failed`. Regression for a job that sat in `running` indefinitely
     after its container timed out."""
     import modal
 

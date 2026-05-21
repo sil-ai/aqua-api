@@ -355,10 +355,12 @@ async def get_predict_job(
             modal.exception.OutputExpiredError,
         ) as exc:
             # The Modal container itself hit its timeout (or the result
-            # expired before we polled). Both subclass the builtin
-            # TimeoutError, so they must be caught BEFORE the bare
-            # `TimeoutError` block below — otherwise they'd be silently
-            # treated as "still running" and the DB status would never flip.
+            # expired before we polled). Both subclass
+            # `modal.exception.TimeoutError`, so they must be caught BEFORE
+            # the bare `TimeoutError` block below — otherwise they'd be
+            # silently treated as "still running" (that block catches
+            # `modal.exception.TimeoutError` too) and the DB status would
+            # never flip.
             logger.warning(
                 f"predict job {job.id} timed out on Modal: {type(exc).__name__}: {exc}",
                 exc_info=True,
