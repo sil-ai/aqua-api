@@ -88,6 +88,32 @@ def test_read_main(client):
     assert response.json() == {"Hello": "World"}
 
 
+def test_health_endpoint(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+def test_ready_endpoint(client):
+    # /ready runs a SELECT 1 against the configured DB. The rest of this
+    # test suite requires the DB to be up, so we assert the success path.
+    response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+def test_ready_endpoint_returns_503_when_db_unreachable(client, monkeypatch):
+    # Force the engine.connect() call inside /ready to raise so we exercise
+    # the failure path and confirm the 503 contract.
+    def boom(*args, **kwargs):
+        raise RuntimeError("simulated DB outage")
+
+    monkeypatch.setattr(app, "async_engine", type("X", (), {"connect": boom})())
+    response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json() == {"status": "unavailable"}
+
+
 def test_add_version(client):
     test_version = VersionIn(
         name=version_name,

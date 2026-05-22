@@ -1,9 +1,12 @@
 __version__ = "v1"
 
+import logging
 import os
 
 import fastapi
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
 
 from agent_routes.v3.affix_routes import router as affix_router_v3
 from agent_routes.v3.agent_routes import router as agent_router_v3
@@ -22,6 +25,7 @@ from bible_routes.v3.language_routes import router as language_router_v3
 from bible_routes.v3.revision_routes import router as revision_router_v3
 from bible_routes.v3.verse_routes import router as verse_router_v3
 from bible_routes.v3.version_routes import router as version_router_v3
+from database.dependencies import engine as async_engine
 from middleware import LoggingMiddleware
 from predict_routes.v3.predict_routes import router as predict_router_v3
 from security_routes.admin_routes import router as admin_router
@@ -43,6 +47,8 @@ if not omit_previous_versions:
     from bible_routes.v2.revision_routes import router as revision_router_v2
     from bible_routes.v2.verse_routes import router as verse_router_v2
     from bible_routes.v2.version_routes import router as version_router_v2
+
+logger = logging.getLogger(__name__)
 
 app = fastapi.FastAPI()
 
@@ -159,6 +165,29 @@ def configure_routing(app):
         """
         Test docs"""
         return {"Hello": "World"}
+
+    @app.get("/health", tags=["Health"])
+    async def health():
+        """Liveness probe — cheap, no external dependencies."""
+        return {"status": "ok"}
+
+    @app.get("/ready", tags=["Health"])
+    async def ready():
+        """Readiness probe — verifies the database is reachable.
+
+        Uses the engine directly (not an ORM session) so the probe is a
+        single round-trip with no implicit transaction overhead.
+        """
+        try:
+            async with async_engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        except Exception:
+            logger.exception("Readiness check failed: database unreachable")
+            return JSONResponse(
+                status_code=503,
+                content={"status": "unavailable"},
+            )
+        return {"status": "ready"}
 
 
 if __name__ == "__main__":
