@@ -6515,6 +6515,213 @@ def test_post_lexeme_card_nfd_nfc_treated_as_same_lemma(
     assert data["confidence"] == 0.99
 
 
+def test_patch_by_lemma_nfd_input_finds_nfc_stored_card(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """PATCH-by-lemma (deprecated) must NFC-normalize target_lemma so NFD-encoded
+    callers find the NFC-stored row. Regression for issue #779."""
+
+    nfd_lemma = "ápelile_patch_by_lemma_779"
+    nfc_lemma = unicodedata.normalize("NFC", nfd_lemma)
+    assert nfd_lemma != nfc_lemma  # Sanity: inputs differ in code-point form
+
+    # POST with NFD; storage validator normalizes to NFC.
+    post_resp = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "patch_by_lemma_src",
+            "target_lemma": nfd_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert post_resp.status_code == 200, post_resp.text
+    created_id = post_resp.json()["id"]
+
+    # PATCH-by-lemma with NFD-encoded target_lemma must find the NFC-stored
+    # row. Pre-fix this would 404 because the route only did .lower().
+    patch_resp = client.patch(
+        f"/v3/agent/lexeme-card"
+        f"?target_lemma={nfd_lemma}"
+        f"&source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"surface_forms": ["nfd_patched_form_779"]},
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    data = patch_resp.json()
+    assert data["id"] == created_id
+    assert "nfd_patched_form_779" in data["surface_forms"]
+    # Stored lemma stays NFC.
+    assert data["target_lemma"] == nfc_lemma
+
+    # Now exercise the source_lemma disambiguator path on PATCH-by-lemma.
+    # Create a fresh card in a new language pair (distinct target_version_id,
+    # so the unique index does not collide with the first card above) with an
+    # NFD-encoded source_lemma, then PATCH-by-lemma using the same NFD-encoded
+    # source_lemma. The route must NFC-normalize before lookup.
+    from database.models import BibleVersion, UserDB
+
+    user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    alt_target = BibleVersion(
+        name="nfd_patch_alt_target_779",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="NFDP779T",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    db_session.add(alt_target)
+    db_session.commit()
+
+    nfd_src_a = "étoile_src_a_779"
+    # Sanity: confirm the literal is NFD (different from its NFC form). If a
+    # source-file re-normalization ever flips this, the assert will catch it
+    # before the test silently bypasses the NFD->NFC code path under test.
+    assert nfd_src_a != unicodedata.normalize("NFC", nfd_src_a)
+
+    post_a = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": nfd_src_a,
+            "target_lemma": "shared_nfd_target_779",
+            "source_version_id": test_version_id,
+            "target_version_id": alt_target.id,
+        },
+    )
+    assert post_a.status_code == 200, post_a.text
+
+    # PATCH-by-lemma with NFD source_lemma disambiguator must locate the
+    # NFC-stored row.
+    patch_resp_b = client.patch(
+        f"/v3/agent/lexeme-card"
+        f"?target_lemma=shared_nfd_target_779"
+        f"&source_lemma={nfd_src_a}"
+        f"&source_version_id={test_version_id}"
+        f"&target_version_id={alt_target.id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"surface_forms": ["disambig_via_nfd_src"]},
+    )
+    assert patch_resp_b.status_code == 200, patch_resp_b.text
+    assert "disambig_via_nfd_src" in patch_resp_b.json()["surface_forms"]
+
+
+def test_check_word_nfd_input_matches_nfc_stored(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """check-word must NFC-normalize input so NFD-encoded queries find
+    NFC-stored target_lemma rows. Regression for issue #779."""
+
+    nfd_word = "ápelile_check_word_779"
+    nfc_word = unicodedata.normalize("NFC", nfd_word)
+    assert nfd_word != nfc_word
+
+    # POST with NFC; validator no-ops, storage is NFC.
+    post_resp = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": nfc_word,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert post_resp.status_code == 200, post_resp.text
+
+    # check-word with NFD input must match (pre-fix it would not).
+    response = client.get(
+        f"/v3/agent/lexeme-card/check-word"
+        f"?word={nfd_word}"
+        f"&source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["count"] >= 1
+
+
+def test_post_409_then_patch_by_lemma_nfd_bounce_resolves(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """End-to-end: an agent caller doing POST->409->PATCH-by-lemma with NFD
+    inputs must successfully patch the card the POST collided with. Pre-fix
+    the PATCH step 404s because the lookup keys differ by NFD/NFC. Regression
+    for issue #779."""
+
+    nfd_lemma = "ápelile_bounce_779"
+    nfc_lemma = unicodedata.normalize("NFC", nfd_lemma)
+    assert nfd_lemma != nfc_lemma
+
+    # First POST creates the card.
+    resp1 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "bounce_src_a",
+            "target_lemma": nfd_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+        },
+    )
+    assert resp1.status_code == 200, resp1.text
+    existing_id = resp1.json()["id"]
+
+    # Second POST with a different source_lemma forces a 409 — same shape the
+    # agent's update_lexeme_by_lemma_api sees when it tries to upsert and
+    # collides with an existing card from another source.
+    resp2 = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "source_lemma": "bounce_src_b",
+            "target_lemma": nfd_lemma,
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.42,
+        },
+    )
+    assert resp2.status_code == 409, resp2.text
+    assert resp2.json()["detail"]["existing_card_id"] == existing_id
+
+    # Agent fallback: PATCH-by-lemma with the (still NFD-encoded) lemma the
+    # caller had in hand. Must resolve to the same card and apply the patch.
+    patch_resp = client.patch(
+        f"/v3/agent/lexeme-card"
+        f"?target_lemma={nfd_lemma}"
+        f"&source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "surface_forms": ["bounce_form_779"],
+            "confidence": 0.42,
+        },
+    )
+    assert patch_resp.status_code == 200, patch_resp.text
+    data = patch_resp.json()
+    assert data["id"] == existing_id
+    assert data["target_lemma"] == nfc_lemma
+    assert "bounce_form_779" in data["surface_forms"]
+    assert data["confidence"] == 0.42
+
+
 def test_delete_lexeme_card_success(
     client,
     regular_token1,
