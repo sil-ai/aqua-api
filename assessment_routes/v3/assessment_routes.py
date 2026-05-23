@@ -829,14 +829,24 @@ async def increment_assessment_attempts(
                 detail="Not authorized to update this assessment",
             )
 
+    # Filter on `deleted is not True` in the UPDATE so a race with a
+    # concurrent DELETE between the SELECT above and this UPDATE doesn't
+    # increment a freshly-deleted row. If the row was deleted in that
+    # window, `scalar_one_or_none()` returns None and we 404.
     stmt = (
         update(Assessment)
-        .where(Assessment.id == assessment_id)
+        .where(Assessment.id == assessment_id, Assessment.deleted.is_not(True))
         .values(attempt_count=Assessment.attempt_count + 1)
         .returning(Assessment.attempt_count)
     )
     res = await db.execute(stmt)
-    new_count = res.scalar_one()
+    new_count = res.scalar_one_or_none()
+    if new_count is None:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found",
+        )
     await db.commit()
     return {"attempt_count": new_count}
 

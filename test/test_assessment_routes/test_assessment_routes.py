@@ -2647,3 +2647,26 @@ def test_increment_attempts_admin_can_increment(
     resp = _increment_attempts(client, admin_token, aid)
     assert resp.status_code == 200
     assert resp.json() == {"attempt_count": 1}
+
+
+def test_assessment_out_exposes_attempt_count(
+    client, regular_token1, db_session, test_db_session
+):
+    """GET /assessment includes ``attempt_count`` in the response payload,
+    starting at 0 for a freshly-created row and reflecting subsequent
+    increments."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = list_assessment(client, regular_token1, ids=aid)
+    assert resp.status_code == 200
+    bodies = [row for row in resp.json() if row["id"] == aid]
+    assert len(bodies) == 1
+    assert bodies[0]["attempt_count"] == 0
+
+    inc = _increment_attempts(client, regular_token1, aid)
+    assert inc.status_code == 200
+
+    resp = list_assessment(client, regular_token1, ids=aid)
+    assert resp.status_code == 200
+    bodies = [row for row in resp.json() if row["id"] == aid]
+    assert bodies[0]["attempt_count"] == 1
