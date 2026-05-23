@@ -6561,9 +6561,11 @@ def test_patch_by_lemma_nfd_input_finds_nfc_stored_card(
     # Stored lemma stays NFC.
     assert data["target_lemma"] == nfc_lemma
 
-    # source_lemma disambiguator must also NFC-normalize. Create a second card
-    # under the same target_lemma but a different source_lemma (also NFD-encoded)
-    # via a separate language pair to avoid colliding the unique index.
+    # Now exercise the source_lemma disambiguator path on PATCH-by-lemma.
+    # Create a fresh card in a new language pair (distinct target_version_id,
+    # so the unique index does not collide with the first card above) with an
+    # NFD-encoded source_lemma, then PATCH-by-lemma using the same NFD-encoded
+    # source_lemma. The route must NFC-normalize before lookup.
     from database.models import BibleVersion, UserDB
 
     user1 = db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
@@ -6579,6 +6581,10 @@ def test_patch_by_lemma_nfd_input_finds_nfc_stored_card(
     db_session.commit()
 
     nfd_src_a = "étoile_src_a_779"
+    # Sanity: confirm the literal is NFD (different from its NFC form). If a
+    # source-file re-normalization ever flips this, the assert will catch it
+    # before the test silently bypasses the NFD->NFC code path under test.
+    assert nfd_src_a != unicodedata.normalize("NFC", nfd_src_a)
 
     post_a = client.post(
         f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
