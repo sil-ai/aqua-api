@@ -2335,11 +2335,11 @@ def test_call_assessment_runner_refuses_to_respawn_non_queued_row(
     setting (running) let a second dispatch through."""
     import asyncio
 
-    import assessment_routes.v3.assessment_routes as ar
+    from fastapi import HTTPException
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
     from sqlalchemy.orm import sessionmaker
 
-    from fastapi import HTTPException
+    import assessment_routes.v3.assessment_routes as ar
 
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
