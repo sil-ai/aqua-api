@@ -1885,13 +1885,15 @@ async def patch_lexeme_card_by_lemma_DEPRECATED(
         from sqlalchemy.sql import func as sql_func
 
         query = select(AgentLexemeCard).where(
-            sql_func.lower(AgentLexemeCard.target_lemma) == target_lemma.lower(),
+            sql_func.lower(AgentLexemeCard.target_lemma)
+            == unicodedata.normalize("NFC", target_lemma).lower(),
             AgentLexemeCard.source_version_id == source_version_id,
             AgentLexemeCard.target_version_id == target_version_id,
         )
         if source_lemma is not None:
             query = query.where(
-                sql_func.lower(AgentLexemeCard.source_lemma) == source_lemma.lower()
+                sql_func.lower(AgentLexemeCard.source_lemma)
+                == unicodedata.normalize("NFC", source_lemma).lower()
             )
         cards = (await db.execute(query)).scalars().all()
 
@@ -2851,8 +2853,10 @@ async def check_word_in_lexeme_cards(
     try:
         from sqlalchemy import func, select, text
 
-        # Normalize the word for case-insensitive comparison
-        word_lower = word.strip().lower()
+        # Normalize the word for case-insensitive comparison.
+        # NFC matches the storage normalization performed by LexemeCardIn so
+        # NFD-decomposed inputs find NFC-stored rows (see issue #779).
+        word_lower = unicodedata.normalize("NFC", word.strip()).lower()
 
         effective_source_version = _effective_source_version_expr(
             source_version_id, target_version_id
