@@ -4,6 +4,15 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+# Serialize main-branch deploys to prevent the `:latest` push race
+# where a slower workflow built from an older SHA finishes after a
+# faster newer one and regresses ECR. cancel-in-progress: true means
+# a newer merge wins (its checkout already contains the older PR).
+concurrency:
+  group: main-build
+  cancel-in-progress: true
 
 env:
   AWS_REGISTRY: 279795702643.dkr.ecr.us-east-1.amazonaws.com
