@@ -1,10 +1,11 @@
 __version__ = "v3"
 # Standard library imports
+import hashlib
 import json
 import os
 import socket
 from datetime import date, datetime, timedelta
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import fastapi
 import modal
@@ -12,7 +13,7 @@ from dotenv import load_dotenv
 
 # Third party imports
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import JSON, or_, select
+from sqlalchemy import JSON, BigInteger, bindparam, or_, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -28,6 +29,7 @@ from models import (
     ASSESSMENT_VALID_TRANSITIONS,
     AssessmentIn,
     AssessmentOut,
+    AssessmentStatus,
     AssessmentStatusUpdate,
 )
 from security_routes.auth_routes import get_current_user
@@ -42,6 +44,88 @@ logger = setup_logger(__name__, container_id=container_id)
 
 
 router = fastapi.APIRouter()
+
+
+# Namespace tag for the per-quadruple advisory lock keyspace so we don't
+# collide with any future pg_advisory_*lock callers (in particular the
+# training-job dup lock in train_routes.v3, which has its own namespace).
+# Bumping the suffix only matters once every running instance has been
+# redeployed onto the new suffix; during a rolling deploy two instances with
+# different namespaces wouldn't serialize against each other, so don't change
+# this casually.
+_ASSESS_DUP_LOCK_NS = "assessment_dup_v1"
+
+
+def _canonicalize_kwargs(kwargs: Optional[Dict[str, Any]]) -> str:
+    """Canonical JSON representation of an Assessment.kwargs payload for use
+    as part of the advisory-lock key. Empty-dict normalizes to None to match
+    the dup-check semantics (we treat `{}` as "no kwargs" at the request
+    layer). Keys are sorted so logically-equal kwargs hash to the same key
+    regardless of insertion order."""
+    if not kwargs:
+        return "null"
+    return json.dumps(kwargs, sort_keys=True, separators=(",", ":"))
+
+
+def _assess_dup_lock_key(
+    revision_id: int,
+    reference_id: Optional[int],
+    assessment_type: str,
+    kwargs_canonical: str,
+) -> int:
+    """Stable signed 64-bit key for a Postgres transaction-scoped advisory
+    lock that serializes concurrent add_assessment() calls on the same
+    (revision_id, reference_id, type, kwargs) quadruple (#780).
+
+    Mirrors the training-job dup-lock helper (#722 / PR #771) — copied
+    rather than shared so this PR doesn't depend on that one landing
+    first. Extracting a shared util is tracked as a follow-up.
+
+    pg_advisory_xact_lock(bigint) wants a signed int8. We derive a
+    deterministic 64-bit value from a SHA-1 of the namespace + quadruple
+    and fold it into the signed-int8 range. SHA-1 (rather than Python's
+    built-in hash()) so the key is stable across processes / interpreter
+    restarts. Collisions are vanishingly unlikely for realistic
+    cardinality; a collision would merely serialize two unrelated
+    quadruples (a small perf hit, not a correctness bug).
+    """
+    payload = (
+        f"{_ASSESS_DUP_LOCK_NS}|"
+        f"{revision_id}|{reference_id if reference_id is not None else ''}|"
+        f"{assessment_type}|{kwargs_canonical}"
+    ).encode("utf-8")
+    digest = hashlib.sha1(payload).digest()
+    unsigned = int.from_bytes(digest[:8], byteorder="big", signed=False)
+    return unsigned - (1 << 63)
+
+
+async def _acquire_assess_dup_lock(
+    db: AsyncSession,
+    revision_id: int,
+    reference_id: Optional[int],
+    assessment_type: str,
+    kwargs_canonical: str,
+) -> None:
+    """Take a transaction-scoped Postgres advisory lock that serializes
+    concurrent add_assessment() requests on the same
+    (revision_id, reference_id, type, kwargs) quadruple.
+
+    Released automatically when the surrounding transaction commits or
+    rolls back, so we don't have to manage its lifetime. Pairs with the
+    duplicate-check SELECT below to make check-then-insert atomic (#780).
+    The lock is taken even for admin callers — the per-quadruple lock is
+    cheap and prevents the admin/admin race where two parallel admin
+    POSTs could both INSERT (admin bypass applies only to the duplicate
+    *check*, not to the lock).
+    """
+    key = _assess_dup_lock_key(
+        revision_id, reference_id, assessment_type, kwargs_canonical
+    )
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:key)").bindparams(
+            bindparam("key", value=key, type_=BigInteger())
+        )
+    )
 
 
 def _apply_filters(stmt, ids, revision_id, reference_id, type_):
@@ -184,7 +268,65 @@ async def call_assessment_runner(
     modal_env: str,
     source_version_id: Optional[int] = None,
     target_version_id: Optional[int] = None,
+    db: Optional[AsyncSession] = None,
 ):
+    """Spawn the Modal assessment runner for an existing Assessment row.
+
+    Per-row idempotency guard (#780): if a `db` session is provided, we
+    take a `SELECT ... FOR UPDATE` on the assessment row and verify it's
+    still in `queued` status before spawning the Modal worker.  If the
+    row is already `running` / `finished` / `failed`, we refuse to
+    re-spawn and raise HTTPException(409). On success we atomically
+    transition the row to `running` in the same transaction, closing the
+    window between "INSERT queued" and "worker picks up and sets running"
+    that allowed assessment_id=21288 to be dispatched twice.
+
+    `db` is optional for backwards compatibility with the existing API
+    POST flow (which always passes it); other callers that have already
+    transitioned the row themselves can omit it.
+    """
+    if db is not None and assessment.id is not None:
+        row = await db.execute(
+            select(Assessment).where(Assessment.id == assessment.id).with_for_update()
+        )
+        a_row = row.scalar_one_or_none()
+        if a_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Assessment {assessment.id} not found",
+            )
+        if a_row.status != AssessmentStatus.queued.value:
+            requested = (
+                a_row.requested_time.isoformat()
+                if a_row.requested_time is not None
+                else None
+            )
+            logger.warning(
+                "Refusing to re-spawn assessment not in queued status",
+                extra={
+                    "assessment_id": a_row.id,
+                    "status": a_row.status,
+                    "requested_time": requested,
+                },
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "detail": "Assessment in progress",
+                    "existing_id": a_row.id,
+                    "status": a_row.status,
+                    "requested_time": requested,
+                },
+            )
+        # Transition queued → running inside the same transaction so the
+        # row reflects "dispatched" before we hand off to Modal. If the
+        # spawn raises below, the caller rolls back and the row reverts
+        # to queued. Use datetime.utcnow() to match the existing pattern
+        # in update_assessment_status.
+        a_row.status = AssessmentStatus.running.value
+        a_row.start_time = datetime.utcnow()
+        await db.flush()
+
     logger.info(
         "Calling Modal runner",
         extra={
@@ -414,6 +556,22 @@ async def add_assessment(
                 detail=f"Assessment already completed (id={existing.id}). Use force=true to rerun.",
             )
 
+    # Serialize concurrent POSTs on the same (revision, reference, type,
+    # kwargs) quadruple with a transaction-scoped Postgres advisory lock.
+    # Without this, two concurrent requests both pass the duplicate-check
+    # SELECT below and both INSERT, leaving two queued assessments that
+    # each dispatch a Modal runner (#780, sibling of training-job #722).
+    # The lock is held until commit/rollback at the bottom of this
+    # function, so the dup-check + insert is atomic with respect to any
+    # other concurrent request on the same quadruple. The lock is taken
+    # even for admins — admin bypass is preserved for the *check*, but
+    # the lock still serializes per-quadruple so two parallel admin
+    # POSTs can't both INSERT in parallel.
+    kwargs_canonical = _canonicalize_kwargs(parsed_kwargs)
+    await _acquire_assess_dup_lock(
+        db, a.revision_id, a.reference_id, a.type, kwargs_canonical
+    )
+
     # Check for duplicate in-progress assessment (admins can bypass)
     if not current_user.is_admin:
         stale_cutoff = datetime.now() - timedelta(hours=STALE_ASSESSMENT_HOURS)
@@ -468,6 +626,14 @@ async def add_assessment(
     )
 
     db.add(assessment)
+    # Commit the INSERT (in `queued` state) before spawning so the Modal
+    # worker can PATCH /v3/assessment/{id}/status as soon as it picks
+    # the job up — without this, a fast worker could try to mutate a
+    # row that hasn't been committed yet. Releasing the advisory lock
+    # here is safe: by this point the dup-check + INSERT pair is atomic
+    # under the lock, so any concurrent waiter on the same quadruple
+    # will see this row in its dup-check after the lock releases.
+    # Mirrors the train_routes dispatch pattern (#722 / PR #771).
     await db.commit()
     await db.refresh(assessment)
     a.id = assessment.id
@@ -475,7 +641,13 @@ async def add_assessment(
     # Resolve Modal environment once at the route level
     resolved_modal_env = modal_env or os.getenv("MODAL_ENV", "main")
 
-    # Dispatch to Modal runner (fire-and-forget via spawn)
+    # Dispatch to Modal runner (fire-and-forget via spawn). Pass `db` so
+    # the runner helper takes a SELECT ... FOR UPDATE on the row and
+    # transitions queued→running atomically before the spawn — closes
+    # the window that let assessment_id=21288 be dispatched twice (#780).
+    # The FOR UPDATE serializes any concurrent call_assessment_runner
+    # invocations on the same id: the first transitions to `running`
+    # and spawns; the second sees `running` and 409s without spawning.
     try:
         await call_assessment_runner(
             a,
@@ -483,7 +655,14 @@ async def add_assessment(
             resolved_modal_env,
             source_version_id=source_version_id,
             target_version_id=target_version_id,
+            db=db,
         )
+    except HTTPException:
+        # Re-spawn refused (e.g., row is no longer queued). Roll back
+        # the FOR UPDATE txn so we don't leave anything pending, and
+        # propagate the HTTP error to the caller verbatim.
+        await db.rollback()
+        raise
     except Exception as e:
         logger.error(
             "Modal runner dispatch failed",
@@ -494,18 +673,31 @@ async def add_assessment(
                 "error_type": type(e).__name__,
             },
         )
+        # Mark the row as failed in a fresh transaction so it reflects
+        # reality (the runner never got a chance to advance it past
+        # whatever state we left it in). Mirrors the train_routes
+        # failure-handling pattern.
         try:
-            await db.delete(assessment)
+            await db.rollback()
+            assessment.status = AssessmentStatus.failed.value
+            assessment.status_detail = f"dispatch_failed: {type(e).__name__}: {e}"
+            assessment.end_time = datetime.utcnow()
             await db.commit()
         except SQLAlchemyError as cleanup_err:
             await db.rollback()
             logger.error(
-                f"Failed to delete assessment {assessment.id} after runner error: {cleanup_err}"
+                f"Failed to mark assessment {assessment.id} as failed "
+                f"after runner error: {cleanup_err}"
             )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Assessment runner service is unavailable or failed.",
         ) from e
+
+    # Commit the queued → running transition that call_assessment_runner
+    # performed under FOR UPDATE.
+    await db.commit()
+    await db.refresh(assessment)
 
     return [AssessmentOut.model_validate(assessment)]
 
