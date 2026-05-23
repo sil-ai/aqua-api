@@ -626,11 +626,15 @@ async def add_assessment(
     )
 
     db.add(assessment)
-    # Flush (don't commit) so the row gets an id while staying inside the
-    # transaction that holds the advisory lock — this keeps the dup-check
-    # + INSERT + queued→running transition + Modal spawn all atomic with
-    # respect to other concurrent POSTs on the same quadruple (#780).
-    await db.flush()
+    # Commit the INSERT (in `queued` state) before spawning so the Modal
+    # worker can PATCH /v3/assessment/{id}/status as soon as it picks
+    # the job up — without this, a fast worker could try to mutate a
+    # row that hasn't been committed yet. Releasing the advisory lock
+    # here is safe: by this point the dup-check + INSERT pair is atomic
+    # under the lock, so any concurrent waiter on the same quadruple
+    # will see this row in its dup-check after the lock releases.
+    # Mirrors the train_routes dispatch pattern (#722 / PR #771).
+    await db.commit()
     await db.refresh(assessment)
     a.id = assessment.id
 
@@ -639,9 +643,11 @@ async def add_assessment(
 
     # Dispatch to Modal runner (fire-and-forget via spawn). Pass `db` so
     # the runner helper takes a SELECT ... FOR UPDATE on the row and
-    # transitions queued→running atomically before the spawn, closing
-    # the window that allowed assessment_id=21288 to be dispatched twice
-    # (#780).
+    # transitions queued→running atomically before the spawn — closes
+    # the window that let assessment_id=21288 be dispatched twice (#780).
+    # The FOR UPDATE serializes any concurrent call_assessment_runner
+    # invocations on the same id: the first transitions to `running`
+    # and spawns; the second sees `running` and 409s without spawning.
     try:
         await call_assessment_runner(
             a,
@@ -652,9 +658,9 @@ async def add_assessment(
             db=db,
         )
     except HTTPException:
-        # Re-spawn refused (e.g., row is no longer queued). Roll back so
-        # we don't accidentally commit a partial state, and propagate the
-        # HTTP error to the caller verbatim.
+        # Re-spawn refused (e.g., row is no longer queued). Roll back
+        # the FOR UPDATE txn so we don't leave anything pending, and
+        # propagate the HTTP error to the caller verbatim.
         await db.rollback()
         raise
     except Exception as e:
@@ -667,22 +673,29 @@ async def add_assessment(
                 "error_type": type(e).__name__,
             },
         )
+        # Mark the row as failed in a fresh transaction so it reflects
+        # reality (the runner never got a chance to advance it past
+        # whatever state we left it in). Mirrors the train_routes
+        # failure-handling pattern.
         try:
             await db.rollback()
+            assessment.status = AssessmentStatus.failed.value
+            assessment.status_detail = f"dispatch_failed: {type(e).__name__}: {e}"
+            assessment.end_time = datetime.utcnow()
+            await db.commit()
         except SQLAlchemyError as cleanup_err:
+            await db.rollback()
             logger.error(
-                f"Failed to roll back after runner error for assessment "
-                f"{assessment.id}: {cleanup_err}"
+                f"Failed to mark assessment {assessment.id} as failed "
+                f"after runner error: {cleanup_err}"
             )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Assessment runner service is unavailable or failed.",
         ) from e
 
-    # Commit the INSERT + queued→running transition together. The
-    # advisory lock is released here (xact-scoped), and any concurrent
-    # waiter on the same quadruple will now see this row in the
-    # duplicate-check SELECT.
+    # Commit the queued → running transition that call_assessment_runner
+    # performed under FOR UPDATE.
     await db.commit()
     await db.refresh(assessment)
 
