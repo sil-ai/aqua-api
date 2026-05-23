@@ -327,6 +327,7 @@ class AssessmentOut(BaseModel):
     percent_complete: Optional[float] = None
     is_training: bool = False
     kwargs: Optional[Dict[str, Any]] = None
+    attempt_count: int = 0
 
     model_config = {
         "json_schema_extra": {
@@ -341,6 +342,7 @@ class AssessmentOut(BaseModel):
                 "end_time": "2024-06-01T12:00:00",
                 "owner_id": 1,
                 "kwargs": None,
+                "attempt_count": 0,
             }
         },
         "from_attributes": True,

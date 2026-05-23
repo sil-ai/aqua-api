@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 # Third party imports
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import JSON, BigInteger, bindparam, or_, select, text
+from sqlalchemy import JSON, BigInteger, bindparam, or_, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -773,6 +773,82 @@ async def update_assessment_status(
     await db.commit()
     await db.refresh(assessment)
     return AssessmentOut.model_validate(assessment)
+
+
+@router.post("/assessment/{assessment_id}/increment-attempts")
+async def increment_assessment_attempts(
+    assessment_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Atomically increment ``attempt_count`` for an assessment and return
+    the new value.
+
+    Called by the Modal runner's lifecycle helper at the start of each
+    attempt (after the initial `running` PATCH, so terminal-409 retries
+    don't bump the counter for no-ops). The lifecycle uses the returned
+    count to decide whether to PATCH ``failed`` on exception (only once
+    ``attempt_count >= max_attempts``).
+
+    The UPDATE ... RETURNING runs as a single atomic statement so two
+    concurrent retries on the same row can't observe the same
+    pre-increment value — Postgres serializes the writes and each call
+    sees its own post-increment count.
+
+    Auth: admin, assessment owner, or any user with group access to the
+    assessment's bible version. Mirrors ``update_assessment_status``.
+    """
+    result = await db.execute(select(Assessment).where(Assessment.id == assessment_id))
+    assessment = result.scalars().first()
+    if not assessment or assessment.deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found",
+        )
+
+    if not current_user.is_admin and assessment.owner_id != current_user.id:
+        revision = await db.get(BibleRevision, assessment.revision_id)
+        if not revision:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Assessment revision not found",
+            )
+        version_access = await db.execute(
+            select(BibleVersionAccess.bible_version_id).where(
+                BibleVersionAccess.group_id.in_(
+                    select(UserGroup.group_id).where(
+                        UserGroup.user_id == current_user.id
+                    )
+                )
+            )
+        )
+        accessible_version_ids = {row[0] for row in version_access.all()}
+        if revision.bible_version_id not in accessible_version_ids:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this assessment",
+            )
+
+    # Filter on `deleted is not True` in the UPDATE so a race with a
+    # concurrent DELETE between the SELECT above and this UPDATE doesn't
+    # increment a freshly-deleted row. If the row was deleted in that
+    # window, `scalar_one_or_none()` returns None and we 404.
+    stmt = (
+        update(Assessment)
+        .where(Assessment.id == assessment_id, Assessment.deleted.is_not(True))
+        .values(attempt_count=Assessment.attempt_count + 1)
+        .returning(Assessment.attempt_count)
+    )
+    res = await db.execute(stmt)
+    new_count = res.scalar_one_or_none()
+    if new_count is None:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Assessment not found",
+        )
+    await db.commit()
+    return {"attempt_count": new_count}
 
 
 @router.delete("/assessment")
