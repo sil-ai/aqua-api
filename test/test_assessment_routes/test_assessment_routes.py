@@ -2532,3 +2532,118 @@ def test_create_assessment_blocked_when_existing_row_is_running(
     )
     assert dup.status_code == 409
     assert str(first_id) in dup.json()["detail"]
+
+
+# --- POST /assessment/{id}/increment-attempts tests (issue #314) ---
+
+
+def _increment_attempts(client, token, assessment_id):
+    return client.post(
+        f"{prefix}/assessment/{assessment_id}/increment-attempts",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_increment_attempts_zero_to_one_to_two(
+    client, regular_token1, db_session, test_db_session
+):
+    """Successive increments return the post-increment value (0→1, 1→2)."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    # Newly-created row should have attempt_count=0 (server_default).
+    db_session.expire_all()
+    row = db_session.query(Assessment).filter(Assessment.id == aid).first()
+    assert row.attempt_count == 0
+
+    resp = _increment_attempts(client, regular_token1, aid)
+    assert resp.status_code == 200
+    assert resp.json() == {"attempt_count": 1}
+
+    resp = _increment_attempts(client, regular_token1, aid)
+    assert resp.status_code == 200
+    assert resp.json() == {"attempt_count": 2}
+
+    db_session.expire_all()
+    row = db_session.query(Assessment).filter(Assessment.id == aid).first()
+    assert row.attempt_count == 2
+
+
+def test_increment_attempts_concurrent_race_free(
+    client, regular_token1, db_session, test_db_session
+):
+    """Two concurrent increments on the same row must observe distinct
+    post-increment values (the UPDATE ... RETURNING is atomic). Asserts
+    the union of results is {1, 2} — never {1, 1}."""
+    import asyncio
+
+    import httpx
+
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    async def _run():
+        from app import app as fastapi_app  # FastAPI app object
+
+        # ASGITransport drives the FastAPI app in-process so the two
+        # requests share the same event loop and can actually interleave.
+        transport = httpx.ASGITransport(app=fastapi_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            headers = {"Authorization": f"Bearer {regular_token1}"}
+            r1, r2 = await asyncio.gather(
+                ac.post(
+                    f"/{prefix}/assessment/{aid}/increment-attempts", headers=headers
+                ),
+                ac.post(
+                    f"/{prefix}/assessment/{aid}/increment-attempts", headers=headers
+                ),
+            )
+            return r1, r2
+
+    r1, r2 = asyncio.run(_run())
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    counts = {r1.json()["attempt_count"], r2.json()["attempt_count"]}
+    assert counts == {1, 2}, f"expected {{1, 2}}, got {counts}"
+
+    db_session.expire_all()
+    row = db_session.query(Assessment).filter(Assessment.id == aid).first()
+    assert row.attempt_count == 2
+
+
+def test_increment_attempts_not_found(
+    client, regular_token1, db_session, test_db_session
+):
+    """404 when the assessment doesn't exist."""
+    resp = _increment_attempts(client, regular_token1, 9999999)
+    assert resp.status_code == 404
+
+
+def test_increment_attempts_deleted(
+    client, regular_token1, db_session, test_db_session
+):
+    """404 when the assessment row is soft-deleted."""
+    aid = _create_assessment(client, regular_token1, db_session)
+    delete_assessment(client, regular_token1, aid)
+
+    resp = _increment_attempts(client, regular_token1, aid)
+    assert resp.status_code == 404
+
+
+def test_increment_attempts_unauthorized_non_owner(
+    client, regular_token1, regular_token2, db_session, test_db_session
+):
+    """A user in a different group is denied (403)."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _increment_attempts(client, regular_token2, aid)
+    assert resp.status_code == 403
+
+
+def test_increment_attempts_admin_can_increment(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """Admin can increment any assessment."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _increment_attempts(client, admin_token, aid)
+    assert resp.status_code == 200
+    assert resp.json() == {"attempt_count": 1}

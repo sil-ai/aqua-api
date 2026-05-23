@@ -148,6 +148,7 @@ class Assessment(Base):
     deletedAt = Column(TIMESTAMP, default=None)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
     kwargs = Column(JSONB, nullable=True, default=None)
+    attempt_count = Column(Integer, nullable=False, server_default="0", default=0)
 
     results = relationship(
         "AssessmentResult", cascade="all, delete", back_populates="assessment"
