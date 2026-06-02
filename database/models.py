@@ -470,6 +470,9 @@ class AgentLexemeCard(Base):
     # Opaque token bumped when the canonical card-builder rebuilds the card.
     # Nullable forever; only the most recent build sets it.
     build_version = Column(Text, nullable=True)
+    # Provenance: model id/name that built this card (e.g. "claude-sonnet-...",
+    # "gpt-oss-..."). Nullable forever; older/back-filled cards stay NULL.
+    model = Column(Text, nullable=True)
     pos = Column(Text)
     surface_forms = Column(JSONB)  # JSON array of target language surface forms
     source_surface_forms = Column(JSONB)  # JSON array of source language surface forms
