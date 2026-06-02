@@ -1,6 +1,6 @@
 import re
 import unicodedata
-from datetime import date
+from datetime import date, datetime
 
 from database.models import (
     AlignmentTopSourceScores,
@@ -3197,8 +3197,6 @@ def test_search_include_alignments_use_eflomal_selects_runner(
 ):
     """include_alignments sources links from the runner chosen by use_eflomal,
     even when the eflomal assessment for the pair finished more recently."""
-    from datetime import datetime
-
     main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
     _setup_runner_assessment(
         test_db_session,
@@ -3244,3 +3242,59 @@ def test_search_include_alignments_use_eflomal_selects_runner(
     # eflomal assessment — the kwargs filter, not recency, decides.
     assert _alignment_targets(None) == {"fasttarget"}
     assert _alignment_targets(False) == {"fasttarget"}
+
+
+def test_search_include_alignments_explicit_id_runner_mismatch_drops_alignments(
+    client, regular_token1, test_db_session
+):
+    """Passing an explicit eflomal alignment_assessment_id while leaving
+    use_eflomal at the fastalign default makes the runner clause reject the
+    pinned id — the response is returned without the ``alignments`` field
+    rather than erroring. This is the documented behaviour from issue #661
+    extended to the runner mismatch case."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    eflomal_id = _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=True,
+        end_time=datetime(2024, 6, 1),
+        rows=[("JHN 3:16", "loved", "efltarget", 0.92)],
+    )
+
+    base_params = {
+        "revision_id": main_revision_id,
+        "comparison_revision_id": comp_revision_id,
+        "term": "loved",
+        "include_alignments": True,
+        "alignment_assessment_id": eflomal_id,
+    }
+
+    # Pinned eflomal id + runner=eflomal -> alignments come through.
+    matched = client.get(
+        "/v3/textsearch",
+        params={**base_params, "use_eflomal": True},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert matched.status_code == 200, matched.text
+    jhn = next(
+        r
+        for r in matched.json()["results"]
+        if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+    )
+    assert {a["target"] for a in jhn["alignments"]} == {"efltarget"}
+
+    # Pinned eflomal id but default (fastalign) runner -> clause rejects the
+    # pinned id, response carries no alignments key (silent fallback).
+    mismatched = client.get(
+        "/v3/textsearch",
+        params=base_params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert mismatched.status_code == 200, mismatched.text
+    jhn_mm = next(
+        r
+        for r in mismatched.json()["results"]
+        if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+    )
+    assert "alignments" not in jhn_mm

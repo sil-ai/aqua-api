@@ -1,5 +1,5 @@
 import dataclasses
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import pytest
@@ -14,6 +14,7 @@ from database.models import (
     BibleVersionAccess,
     Group,
     UserDB,
+    VerseText,
 )
 
 
@@ -2057,6 +2058,7 @@ class RunnerSelectDataset:
     eflomal_only_revision_id: int
     main_fast_assessment_id: int
     main_eflomal_assessment_id: int
+    eflomal_only_assessment_id: int
 
 
 @pytest.fixture(scope="module")
@@ -2068,8 +2070,6 @@ def runner_select_dataset(test_db_session):
     Lets the use_eflomal tests assert that each endpoint targets the requested
     runner and that baselines never mix the two.
     """
-    from datetime import datetime
-
     user = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
     group = test_db_session.query(Group).first()
 
@@ -2144,13 +2144,37 @@ def runner_select_dataset(test_db_session):
         )
 
     # "shared" is above the missing threshold for both; the low-score word is
-    # runner-specific so /missingwords output identifies the runner used.
+    # runner-specific so /missingwords output identifies the runner used. The
+    # eflonly assessment has its own "shared" row so /alignmentmatches has
+    # rows to return when the eflomal-only pair is queried.
     test_db_session.add_all(
         [
             _align(main_fast.id, "alpha", "a_fast", 0.05),
             _align(main_fast.id, "shared", "s_fast", 0.9),
             _align(main_efl.id, "beta", "b_efl", 0.05),
             _align(main_efl.id, "shared", "s_efl", 0.9),
+            _align(eflonly.id, "shared", "s_only", 0.9),
+        ]
+    )
+
+    # VerseText rows for the main pair so /alignmentmatches' VerseText join
+    # returns rows (the endpoint joins revision and reference VerseText with
+    # alignment_top_source_scores).
+    def _verse_text(revision_id, text):
+        return VerseText(
+            revision_id=revision_id,
+            verse_reference="GEN 1:1",
+            text=text,
+            book="GEN",
+            chapter=1,
+            verse=1,
+        )
+
+    test_db_session.add_all(
+        [
+            _verse_text(r_target.id, "target text"),
+            _verse_text(r_reference.id, "reference text"),
+            _verse_text(r_eflonly.id, "eflonly text"),
         ]
     )
 
@@ -2169,12 +2193,13 @@ def runner_select_dataset(test_db_session):
             hide=False,
         )
 
-    # Distinct baseline scores per runner so /compareresults mean_score reveals
-    # which baseline assessment was selected (no mixing).
+    # Distinct main and baseline scores per runner so /compareresults can prove
+    # BOTH the main-query filter (score field) and the baseline-query filter
+    # (mean_score field) — neither is masked by identical values across runners.
     test_db_session.add_all(
         [
-            _result(main_fast.id, 0.5),
-            _result(main_efl.id, 0.5),
+            _result(main_fast.id, 0.3),
+            _result(main_efl.id, 0.7),
             _result(base_fast.id, 0.2),
             _result(base_efl.id, 0.9),
         ]
@@ -2188,6 +2213,7 @@ def runner_select_dataset(test_db_session):
         eflomal_only_revision_id=r_eflonly.id,
         main_fast_assessment_id=main_fast.id,
         main_eflomal_assessment_id=main_efl.id,
+        eflomal_only_assessment_id=eflonly.id,
     )
 
 
@@ -2286,12 +2312,16 @@ def test_textalignmentmatches_use_eflomal_selects_runner(
 
 def test_alignmentmatches_use_eflomal_selects_assessment(client, runner_select_dataset):
     """For an eflomal-only pair, /alignmentmatches finds the assessment only
-    when use_eflomal=true; the fastalign default 404s. Proves runner
-    selection at the assessment-resolution step (independent of VerseText)."""
+    when use_eflomal=true; the fastalign default 404s. The 200 case carries
+    real rows (eflonly has alignment + VerseText rows) so the assertion proves
+    data was actually retrieved from the eflomal assessment, not just that an
+    assessment id was resolved."""
+    # /alignmentmatches has no auth dependency (no Depends(get_current_user))
+    # on the endpoint, so no Authorization header is required.
     params = {
         "revision_id": runner_select_dataset.eflomal_only_revision_id,
         "reference_id": runner_select_dataset.reference_id,
-        "word": "beta",
+        "word": "shared",
     }
 
     default = client.get("/v3/alignmentmatches", params=params)
@@ -2299,13 +2329,50 @@ def test_alignmentmatches_use_eflomal_selects_assessment(client, runner_select_d
 
     efl = client.get("/v3/alignmentmatches", params={**params, "use_eflomal": True})
     assert efl.status_code == 200, efl.text
+    body = efl.json()
+    assert body["total_count"] > 0
+    # The target identifies which runner's alignment row was returned.
+    assert {row["target"] for row in body["results"]} == {"s_only"}
+    assert all(
+        row["assessment_id"] == runner_select_dataset.eflomal_only_assessment_id
+        for row in body["results"]
+    )
+
+
+def test_alignmentmatches_main_pair_picks_correct_runner(client, runner_select_dataset):
+    """When both runners exist for a pair, /alignmentmatches' target field
+    differs by runner — fastalign returns s_fast, eflomal returns s_efl —
+    proving the runner clause (not recency) decides even though the eflomal
+    assessment finished later."""
+    params = {
+        "revision_id": runner_select_dataset.revision_id,
+        "reference_id": runner_select_dataset.reference_id,
+        "word": "shared",
+    }
+
+    fast = client.get("/v3/alignmentmatches", params=params)
+    assert fast.status_code == 200, fast.text
+    assert {row["target"] for row in fast.json()["results"]} == {"s_fast"}
+
+    efl = client.get("/v3/alignmentmatches", params={**params, "use_eflomal": True})
+    assert efl.status_code == 200, efl.text
+    assert {row["target"] for row in efl.json()["results"]} == {"s_efl"}
+
+    explicit_false = client.get(
+        "/v3/alignmentmatches", params={**params, "use_eflomal": False}
+    )
+    assert explicit_false.status_code == 200, explicit_false.text
+    assert {row["target"] for row in explicit_false.json()["results"]} == {"s_fast"}
 
 
 def test_compareresults_baselines_do_not_mix_runners(
     client, regular_token1, runner_select_dataset
 ):
-    """The baseline mean_score reflects only the selected runner's baseline
-    assessment — eflomal (0.9) vs fastalign (0.2) — never a mix of both."""
+    """Both the main `score` (0.3 fastalign / 0.7 eflomal) and the baseline
+    `mean_score` (0.2 fastalign / 0.9 eflomal) reflect only the selected
+    runner. Asserting both fields catches a regression in either the main or
+    the baseline subquery filter — using identical scores per runner would
+    mask one of the two."""
     base_params = {
         "revision_id": runner_select_dataset.revision_id,
         "reference_id": runner_select_dataset.reference_id,
@@ -2320,6 +2387,7 @@ def test_compareresults_baselines_do_not_mix_runners(
     assert efl.status_code == 200, efl.text
     efl_results = efl.json()["results"]
     assert efl_results
+    assert efl_results[0]["score"] == pytest.approx(0.7, abs=1e-6)
     assert efl_results[0]["mean_score"] == pytest.approx(0.9, abs=1e-6)
 
     fast = client.get(
@@ -2330,4 +2398,72 @@ def test_compareresults_baselines_do_not_mix_runners(
     assert fast.status_code == 200, fast.text
     fast_results = fast.json()["results"]
     assert fast_results
+    assert fast_results[0]["score"] == pytest.approx(0.3, abs=1e-6)
     assert fast_results[0]["mean_score"] == pytest.approx(0.2, abs=1e-6)
+
+    # Explicit use_eflomal=false behaves identically to the default.
+    explicit_false = client.get(
+        "/v3/compareresults",
+        params={**base_params, "use_eflomal": False},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert explicit_false.status_code == 200, explicit_false.text
+    explicit_false_results = explicit_false.json()["results"]
+    assert explicit_false_results
+    assert explicit_false_results[0]["score"] == pytest.approx(0.3, abs=1e-6)
+    assert explicit_false_results[0]["mean_score"] == pytest.approx(0.2, abs=1e-6)
+
+
+def test_missingwords_baselines_do_not_mix_runners(
+    client, regular_token1, runner_select_dataset
+):
+    """/missingwords' baseline subquery is runner-filtered: a word missing in
+    main fastalign should be compared against the fastalign baseline only,
+    and the eflomal baseline only when use_eflomal=true. The runner used by
+    the baseline is exposed via the baseline target word ('s_fast' vs
+    's_efl') in the response."""
+    base_params = {
+        "revision_id": runner_select_dataset.revision_id,
+        "reference_id": runner_select_dataset.reference_id,
+        "baseline_ids": [runner_select_dataset.baseline_revision_id],
+    }
+
+    fast = client.get(
+        "/v3/missingwords",
+        params=base_params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert fast.status_code == 200, fast.text
+    fast_sources = {r["source"] for r in fast.json()["results"]}
+    assert "alpha" in fast_sources
+
+    efl = client.get(
+        "/v3/missingwords",
+        params={**base_params, "use_eflomal": True},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert efl.status_code == 200, efl.text
+    efl_sources = {r["source"] for r in efl.json()["results"]}
+    assert "beta" in efl_sources
+
+
+def test_textalignmentmatches_use_eflomal_false_is_fastalign(
+    client, regular_token1, runner_select_dataset
+):
+    """Explicit use_eflomal=false matches the fastalign default for
+    /textalignmentmatches."""
+    response = client.get(
+        "/v3/textalignmentmatches",
+        params={
+            "revision_id": runner_select_dataset.revision_id,
+            "reference_id": runner_select_dataset.reference_id,
+            "min_support": 0.0,
+            "min_probability": 0.0,
+            "use_eflomal": False,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    sources = {row["source_word"] for row in response.json()["results"]}
+    assert "alpha" in sources
+    assert "beta" not in sources
