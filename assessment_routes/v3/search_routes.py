@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
 from sqlalchemy.sql.expression import literal_column
 
+from assessment_routes.v3.alignment_filters import eflomal_method_clause
 from database.dependencies import get_db
 from database.models import (
     AlignmentTopSourceScores,
@@ -26,8 +27,6 @@ from database.models import (
     UserGroup,
     VerseText,
 )
-
-from assessment_routes.v3.alignment_filters import eflomal_method_clause
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_assessment
 from utils.logging_config import setup_logger

@@ -2284,9 +2284,7 @@ def test_textalignmentmatches_use_eflomal_selects_runner(
     assert "beta" not in fast_sources
 
 
-def test_alignmentmatches_use_eflomal_selects_assessment(
-    client, runner_select_dataset
-):
+def test_alignmentmatches_use_eflomal_selects_assessment(client, runner_select_dataset):
     """For an eflomal-only pair, /alignmentmatches finds the assessment only
     when use_eflomal=true; the fastalign default 404s. Proves runner
     selection at the assessment-resolution step (independent of VerseText)."""
@@ -2299,9 +2297,7 @@ def test_alignmentmatches_use_eflomal_selects_assessment(
     default = client.get("/v3/alignmentmatches", params=params)
     assert default.status_code == 404, default.text
 
-    efl = client.get(
-        "/v3/alignmentmatches", params={**params, "use_eflomal": True}
-    )
+    efl = client.get("/v3/alignmentmatches", params={**params, "use_eflomal": True})
     assert efl.status_code == 200, efl.text
 
 

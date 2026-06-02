@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
 
+from assessment_routes.v3.alignment_filters import eflomal_method_clause
 from database.dependencies import get_db
 from database.models import (
     AlignmentThresholdScores,
@@ -31,8 +32,6 @@ from database.models import UserDB as UserModel
 from database.models import (
     VerseText,
 )
-
-from assessment_routes.v3.alignment_filters import eflomal_method_clause
 from models import AlignmentMatch, MultipleResult, NgramResult
 from models import Result_v2 as Result
 from models import TextLengthsResult, TfidfResult, WordAlignment
