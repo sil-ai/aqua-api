@@ -3151,3 +3151,96 @@ def test_search_include_alignments_empty_array_when_no_links_above_threshold(
     jhn = next(r for r in data["results"] if r["verse"] == 16)
     assert "alignments" in jhn
     assert jhn["alignments"] == []
+
+
+def _setup_runner_assessment(
+    db_session, revision_id, reference_id, *, use_eflomal, end_time, rows
+):
+    """Create a finished word-alignment assessment for a specific runner.
+
+    ``rows`` is a list of ``(vref, source, target, score)`` tuples.
+    """
+    assessment = Assessment(
+        revision_id=revision_id,
+        reference_id=reference_id,
+        type="word-alignment",
+        status="finished",
+        kwargs={"use_eflomal": True} if use_eflomal else None,
+        end_time=end_time,
+    )
+    db_session.add(assessment)
+    db_session.commit()
+    db_session.refresh(assessment)
+    for vref, source, target, score in rows:
+        book, rest = vref.split(" ")
+        chapter, verse = rest.split(":")
+        db_session.add(
+            AlignmentTopSourceScores(
+                assessment_id=assessment.id,
+                vref=vref,
+                source=source,
+                target=target,
+                score=score,
+                book=book,
+                chapter=int(chapter),
+                verse=int(verse),
+                hide=False,
+                flag=False,
+            )
+        )
+    db_session.commit()
+    return assessment.id
+
+
+def test_search_include_alignments_use_eflomal_selects_runner(
+    client, regular_token1, test_db_session
+):
+    """include_alignments sources links from the runner chosen by use_eflomal,
+    even when the eflomal assessment for the pair finished more recently."""
+    from datetime import datetime
+
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=False,
+        end_time=datetime(2024, 1, 1),
+        rows=[("JHN 3:16", "loved", "fasttarget", 0.92)],
+    )
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=True,
+        end_time=datetime(2024, 6, 1),
+        rows=[("JHN 3:16", "loved", "efltarget", 0.92)],
+    )
+
+    def _alignment_targets(use_eflomal):
+        params = {
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        }
+        if use_eflomal is not None:
+            params["use_eflomal"] = use_eflomal
+        response = client.get(
+            "/v3/textsearch",
+            params=params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        jhn = next(
+            r
+            for r in response.json()["results"]
+            if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+        )
+        return {a["target"] for a in jhn["alignments"]}
+
+    assert _alignment_targets(True) == {"efltarget"}
+    # Default and explicit-false both resolve to fastalign despite the newer
+    # eflomal assessment — the kwargs filter, not recency, decides.
+    assert _alignment_targets(None) == {"fasttarget"}
+    assert _alignment_targets(False) == {"fasttarget"}

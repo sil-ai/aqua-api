@@ -2037,3 +2037,301 @@ def test_ngrams_result_does_not_cache_in_progress_assessment(
     assert response.json()["total_count"] == 1
     # Must not have been memoized — only finished assessments are cached.
     assert in_progress_id not in _ngrams_total_count_cache
+
+
+# ---------------------------------------------------------------------------
+# eflomal vs fastalign runner selection (use_eflomal query param)
+#
+# Both runners produce type="word-alignment" assessments distinguished only by
+# kwargs={"use_eflomal": true}. The revision/reference-keyed read endpoints must
+# let a client choose the runner via ?use_eflomal=, never silently mix them, and
+# default to fastalign for backward compatibility.
+# ---------------------------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class RunnerSelectDataset:
+    revision_id: int
+    reference_id: int
+    baseline_revision_id: int
+    eflomal_only_revision_id: int
+    main_fast_assessment_id: int
+    main_eflomal_assessment_id: int
+
+
+@pytest.fixture(scope="module")
+def runner_select_dataset(test_db_session):
+    """A revision/reference pair carrying BOTH a fastalign and an eflomal
+    word-alignment assessment (plus a baseline revision with both runners and
+    an eflomal-only revision), with distinguishable alignment + result rows.
+
+    Lets the use_eflomal tests assert that each endpoint targets the requested
+    runner and that baselines never mix the two.
+    """
+    from datetime import datetime
+
+    user = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group = test_db_session.query(Group).first()
+
+    def _version(name, abbr):
+        v = BibleVersion(
+            name=name,
+            iso_language="eng",
+            iso_script="Latn",
+            abbreviation=abbr,
+            owner_id=user.id if user else None,
+        )
+        return v
+
+    v_target = _version("runner_sel_target", "rs-tgt")
+    v_reference = _version("runner_sel_reference", "rs-ref")
+    v_baseline = _version("runner_sel_baseline", "rs-base")
+    v_eflonly = _version("runner_sel_eflonly", "rs-efl")
+    test_db_session.add_all([v_target, v_reference, v_baseline, v_eflonly])
+    test_db_session.flush()
+
+    for v in (v_target, v_reference, v_baseline, v_eflonly):
+        test_db_session.add(
+            BibleVersionAccess(bible_version_id=v.id, group_id=group.id)
+        )
+
+    def _revision(version_id, d):
+        r = BibleRevision(date=d, bible_version_id=version_id, published=False)
+        return r
+
+    r_target = _revision(v_target.id, date(2023, 1, 1))
+    r_reference = _revision(v_reference.id, date(2023, 1, 2))
+    r_baseline = _revision(v_baseline.id, date(2023, 1, 3))
+    r_eflonly = _revision(v_eflonly.id, date(2023, 1, 4))
+    test_db_session.add_all([r_target, r_reference, r_baseline, r_eflonly])
+    test_db_session.flush()
+
+    def _assessment(revision_id, reference_id, use_eflomal, end_time):
+        a = Assessment(
+            revision_id=revision_id,
+            reference_id=reference_id,
+            type="word-alignment",
+            status="finished",
+            kwargs={"use_eflomal": True} if use_eflomal else None,
+            end_time=end_time,
+        )
+        return a
+
+    # Eflomal end_time is deliberately LATER than fastalign for the main pair,
+    # so a passing "default == fastalign" assertion proves the kwargs filter is
+    # doing the work, not just recency ordering.
+    main_fast = _assessment(r_target.id, r_reference.id, False, datetime(2024, 1, 1))
+    main_efl = _assessment(r_target.id, r_reference.id, True, datetime(2024, 6, 1))
+    base_fast = _assessment(r_baseline.id, r_reference.id, False, datetime(2024, 1, 1))
+    base_efl = _assessment(r_baseline.id, r_reference.id, True, datetime(2024, 6, 1))
+    eflonly = _assessment(r_eflonly.id, r_reference.id, True, datetime(2024, 1, 1))
+    test_db_session.add_all([main_fast, main_efl, base_fast, base_efl, eflonly])
+    test_db_session.flush()
+
+    def _align(assessment_id, source, target, score):
+        return AlignmentTopSourceScores(
+            assessment_id=assessment_id,
+            source=source,
+            target=target,
+            score=score,
+            vref="GEN 1:1",
+            book="GEN",
+            chapter=1,
+            verse=1,
+            flag=False,
+            hide=False,
+            note=None,
+        )
+
+    # "shared" is above the missing threshold for both; the low-score word is
+    # runner-specific so /missingwords output identifies the runner used.
+    test_db_session.add_all(
+        [
+            _align(main_fast.id, "alpha", "a_fast", 0.05),
+            _align(main_fast.id, "shared", "s_fast", 0.9),
+            _align(main_efl.id, "beta", "b_efl", 0.05),
+            _align(main_efl.id, "shared", "s_efl", 0.9),
+        ]
+    )
+
+    def _result(assessment_id, score):
+        return AssessmentResult(
+            assessment_id=assessment_id,
+            vref="GEN 1:1",
+            score=score,
+            book="GEN",
+            chapter=1,
+            verse=1,
+            flag=False,
+            note=None,
+            source=None,
+            target=None,
+            hide=False,
+        )
+
+    # Distinct baseline scores per runner so /compareresults mean_score reveals
+    # which baseline assessment was selected (no mixing).
+    test_db_session.add_all(
+        [
+            _result(main_fast.id, 0.5),
+            _result(main_efl.id, 0.5),
+            _result(base_fast.id, 0.2),
+            _result(base_efl.id, 0.9),
+        ]
+    )
+    test_db_session.commit()
+
+    return RunnerSelectDataset(
+        revision_id=r_target.id,
+        reference_id=r_reference.id,
+        baseline_revision_id=r_baseline.id,
+        eflomal_only_revision_id=r_eflonly.id,
+        main_fast_assessment_id=main_fast.id,
+        main_eflomal_assessment_id=main_efl.id,
+    )
+
+
+def _missing_sources(response):
+    return {r["source"] for r in response.json()["results"]}
+
+
+def test_missingwords_use_eflomal_true_selects_eflomal(
+    client, regular_token1, runner_select_dataset
+):
+    """use_eflomal=true returns the eflomal assessment's low-score word."""
+    response = client.get(
+        "/v3/missingwords",
+        params={
+            "revision_id": runner_select_dataset.revision_id,
+            "reference_id": runner_select_dataset.reference_id,
+            "use_eflomal": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    sources = _missing_sources(response)
+    assert "beta" in sources
+    assert "alpha" not in sources
+
+
+def test_missingwords_default_is_fastalign(
+    client, regular_token1, runner_select_dataset
+):
+    """Omitting use_eflomal returns fastalign even though the eflomal
+    assessment for the same pair finished more recently."""
+    response = client.get(
+        "/v3/missingwords",
+        params={
+            "revision_id": runner_select_dataset.revision_id,
+            "reference_id": runner_select_dataset.reference_id,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    sources = _missing_sources(response)
+    assert "alpha" in sources
+    assert "beta" not in sources
+
+
+def test_missingwords_use_eflomal_false_is_fastalign(
+    client, regular_token1, runner_select_dataset
+):
+    """Explicit use_eflomal=false behaves like the default (fastalign)."""
+    response = client.get(
+        "/v3/missingwords",
+        params={
+            "revision_id": runner_select_dataset.revision_id,
+            "reference_id": runner_select_dataset.reference_id,
+            "use_eflomal": False,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    sources = _missing_sources(response)
+    assert "alpha" in sources
+    assert "beta" not in sources
+
+
+def test_textalignmentmatches_use_eflomal_selects_runner(
+    client, regular_token1, runner_select_dataset
+):
+    """/textalignmentmatches reads the selected runner's alignment rows."""
+    base_params = {
+        "revision_id": runner_select_dataset.revision_id,
+        "reference_id": runner_select_dataset.reference_id,
+        "min_support": 0.0,
+        "min_probability": 0.0,
+    }
+
+    efl = client.get(
+        "/v3/textalignmentmatches",
+        params={**base_params, "use_eflomal": True},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert efl.status_code == 200, efl.text
+    efl_sources = {row["source_word"] for row in efl.json()["results"]}
+    assert "beta" in efl_sources
+    assert "alpha" not in efl_sources
+
+    fast = client.get(
+        "/v3/textalignmentmatches",
+        params=base_params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert fast.status_code == 200, fast.text
+    fast_sources = {row["source_word"] for row in fast.json()["results"]}
+    assert "alpha" in fast_sources
+    assert "beta" not in fast_sources
+
+
+def test_alignmentmatches_use_eflomal_selects_assessment(
+    client, runner_select_dataset
+):
+    """For an eflomal-only pair, /alignmentmatches finds the assessment only
+    when use_eflomal=true; the fastalign default 404s. Proves runner
+    selection at the assessment-resolution step (independent of VerseText)."""
+    params = {
+        "revision_id": runner_select_dataset.eflomal_only_revision_id,
+        "reference_id": runner_select_dataset.reference_id,
+        "word": "beta",
+    }
+
+    default = client.get("/v3/alignmentmatches", params=params)
+    assert default.status_code == 404, default.text
+
+    efl = client.get(
+        "/v3/alignmentmatches", params={**params, "use_eflomal": True}
+    )
+    assert efl.status_code == 200, efl.text
+
+
+def test_compareresults_baselines_do_not_mix_runners(
+    client, regular_token1, runner_select_dataset
+):
+    """The baseline mean_score reflects only the selected runner's baseline
+    assessment — eflomal (0.9) vs fastalign (0.2) — never a mix of both."""
+    base_params = {
+        "revision_id": runner_select_dataset.revision_id,
+        "reference_id": runner_select_dataset.reference_id,
+        "baseline_ids": [runner_select_dataset.baseline_revision_id],
+    }
+
+    efl = client.get(
+        "/v3/compareresults",
+        params={**base_params, "use_eflomal": True},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert efl.status_code == 200, efl.text
+    efl_results = efl.json()["results"]
+    assert efl_results
+    assert efl_results[0]["mean_score"] == pytest.approx(0.9, abs=1e-6)
+
+    fast = client.get(
+        "/v3/compareresults",
+        params=base_params,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert fast.status_code == 200, fast.text
+    fast_results = fast.json()["results"]
+    assert fast_results
+    assert fast_results[0]["mean_score"] == pytest.approx(0.2, abs=1e-6)

@@ -31,6 +31,8 @@ from database.models import UserDB as UserModel
 from database.models import (
     VerseText,
 )
+
+from assessment_routes.v3.alignment_filters import eflomal_method_clause
 from models import AlignmentMatch, MultipleResult, NgramResult
 from models import Result_v2 as Result
 from models import TextLengthsResult, TfidfResult, WordAlignment
@@ -1512,11 +1514,13 @@ async def build_compare_results_baseline_query(
     chapter: Optional[int],
     verse: Optional[int],
     db: AsyncSession,
+    use_eflomal: Optional[bool] = None,
 ) -> Tuple:
     if not baseline_ids:
         baseline_ids = []
 
-    # Fetch the latest assessment IDs for each revision in the baseline
+    # Fetch the latest assessment IDs for each revision in the baseline.
+    # Filter by runner so baselines never mix eflomal with fastalign scores.
     baseline_assessment_ids = await db.execute(
         select(Assessment.revision_id, func.max(Assessment.id).label("id"))
         .filter(
@@ -1524,6 +1528,7 @@ async def build_compare_results_baseline_query(
             Assessment.reference_id == reference_id,
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
+            eflomal_method_clause(use_eflomal),
         )
         .group_by(Assessment.revision_id)
     )
@@ -1606,6 +1611,7 @@ async def build_compare_results_main_query(
     page: Optional[int],
     page_size: Optional[int],
     db: AsyncSession,
+    use_eflomal: Optional[bool] = None,
 ) -> Tuple:
     if page is not None and page_size is not None:
         offset = (page - 1) * page_size
@@ -1623,6 +1629,7 @@ async def build_compare_results_main_query(
             Assessment.reference_id == reference_id,
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
+            eflomal_method_clause(use_eflomal),
         )
         .order_by(Assessment.end_time.desc())
     )
@@ -1683,6 +1690,7 @@ async def build_missing_words_main_query(
     chapter: Optional[int],
     verse: Optional[int],
     db: AsyncSession,
+    use_eflomal: Optional[bool] = None,
 ) -> Tuple:
     """
     Asynchronously builds the main query for fetching words missing from a text alignment assessment, applying filtering.
@@ -1707,6 +1715,7 @@ async def build_missing_words_main_query(
             Assessment.reference_id == reference_id,
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
+            eflomal_method_clause(use_eflomal),
         )
         .order_by(Assessment.end_time.desc())
     )
@@ -1758,6 +1767,7 @@ async def build_missing_words_baseline_query(
     chapter: Optional[int],
     verse: Optional[int],
     db: AsyncSession,
+    use_eflomal: Optional[bool] = None,
 ) -> Tuple:
     """
     Asynchronously builds the query for fetching baseline words from a set of alignment assessments, with optional filtering.
@@ -1780,6 +1790,7 @@ async def build_missing_words_baseline_query(
     """
     if not baseline_ids:
         baseline_ids = []
+    # Filter by runner so baselines never mix eflomal with fastalign scores.
     baseline_assessments = await db.execute(
         select(Assessment.revision_id, func.max(Assessment.id).label("id"))
         .where(
@@ -1787,6 +1798,7 @@ async def build_missing_words_baseline_query(
             Assessment.reference_id == reference_id,
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
+            eflomal_method_clause(use_eflomal),
         )
         .group_by(Assessment.revision_id)
     )
@@ -1853,6 +1865,15 @@ async def get_compare_results(
     verse: Optional[int] = None,
     page: Optional[int] = None,
     page_size: Optional[int] = None,
+    use_eflomal: Optional[bool] = Query(
+        default=None,
+        description=(
+            "Select which word-alignment runner to read. ``true`` uses the "
+            "eflomal assessment; omitted or ``false`` uses fastalign. Applies "
+            "to both the main revision and the baselines so the two runners' "
+            "scores are never mixed."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -1913,6 +1934,7 @@ async def get_compare_results(
         page,
         page_size,
         db,
+        use_eflomal,
     )
 
     if not await is_user_authorized_for_assessment(
@@ -1931,6 +1953,7 @@ async def get_compare_results(
         chapter,
         verse,
         db,
+        use_eflomal,
     )
     main_assessment_results, _ = await execute_query(
         main_assessments_query, select(func.count()), db
@@ -2129,6 +2152,15 @@ async def get_missing_words(
     book: Optional[str] = None,
     chapter: Optional[int] = None,
     verse: Optional[int] = None,
+    use_eflomal: Optional[bool] = Query(
+        default=None,
+        description=(
+            "Select which word-alignment runner to read. ``true`` uses the "
+            "eflomal assessment; omitted or ``false`` uses fastalign. Applies "
+            "to both the main revision and the baselines so the two runners' "
+            "scores are never mixed."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -2197,6 +2229,7 @@ async def get_missing_words(
         chapter,
         verse,
         db,
+        use_eflomal,
     )
     main_assessment_results = await db.execute(main_assessment_query)
     main_assessment_results = main_assessment_results.all()
@@ -2219,6 +2252,7 @@ async def get_missing_words(
             chapter,
             verse,
             db,
+            use_eflomal,
         )
         baseline_assessment_results = await db.execute(baseline_assessment_query)
         baseline_assessment_results = baseline_assessment_results.all()
@@ -2312,6 +2346,13 @@ async def get_word_alignments(
     reference_id: int,
     word: str,
     threshold: Optional[float] = None,
+    use_eflomal: Optional[bool] = Query(
+        default=None,
+        description=(
+            "Select which word-alignment runner to read. ``true`` uses the "
+            "eflomal assessment; omitted or ``false`` uses fastalign."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -2341,6 +2382,7 @@ async def get_word_alignments(
             Assessment.reference_id == reference_id,
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
+            eflomal_method_clause(use_eflomal),
         )
         .order_by(Assessment.end_time.desc())
     )
@@ -2427,6 +2469,13 @@ async def get_text_alignment_matches(
     top_k: int = 3,
     min_support: float = 20.0,
     min_probability: float = 0.4,
+    use_eflomal: Optional[bool] = Query(
+        default=None,
+        description=(
+            "Select which word-alignment runner to read. ``true`` uses the "
+            "eflomal assessment; omitted or ``false`` uses fastalign."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
@@ -2471,6 +2520,7 @@ async def get_text_alignment_matches(
             Assessment.reference_id == reference_id,
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
+            eflomal_method_clause(use_eflomal),
         )
         .order_by(Assessment.end_time.desc())
     )

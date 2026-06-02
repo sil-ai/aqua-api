@@ -18,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from assessment_routes.v3.alignment_filters import eflomal_method_clause
 from database.dependencies import get_db
 from database.models import Assessment, BibleRevision, BibleVersionAccess
 from database.models import UserDB as UserModel
@@ -504,18 +505,12 @@ async def add_assessment(
             )
         else:
             completed_stmt = completed_stmt.where(Assessment.reference_id.is_(None))
-        # Distinguish eflomal from regular word-alignment
-        if is_eflomal:
-            completed_stmt = completed_stmt.where(
-                Assessment.kwargs.op("@>")({"use_eflomal": True})
-            )
-        elif a.type == "word-alignment":
-            completed_stmt = completed_stmt.where(
-                or_(
-                    Assessment.kwargs.is_(None),
-                    ~Assessment.kwargs.op("@>")({"use_eflomal": True}),
-                )
-            )
+        # Distinguish eflomal from regular word-alignment. Shared with the read
+        # endpoints via eflomal_method_clause so create-dedup and reads stay in
+        # lock-step. Only applies to word-alignment assessments (or explicit
+        # eflomal requests); other types carry no runner distinction.
+        if is_eflomal or a.type == "word-alignment":
+            completed_stmt = completed_stmt.where(eflomal_method_clause(is_eflomal))
         # Distinguish by verse range
         if parsed_kwargs and parsed_kwargs.get("first_vref"):
             completed_stmt = completed_stmt.where(
