@@ -782,6 +782,9 @@ class LexemeCardIn(BaseModel):
     # Derived translations record this in parent_build_version so cache
     # invalidation can detect when the canonical has moved on.
     build_version: Optional[str] = None
+    # Provenance: model id/name that built this card (e.g. "claude-sonnet-...",
+    # "gpt-oss-..."). Lets downstream consumers harvest only trusted cards.
+    model: Optional[str] = None
 
     @field_validator("surface_forms")
     @classmethod
@@ -834,6 +837,7 @@ class LexemeCardIn(BaseModel):
                 "english_lemma": "love",
                 "alignment_scores": {"love": 0.92, "you": 0.88},
                 "build_version": "agent-20260514T123000Z",
+                "model": "claude-sonnet-4-6",
             }
         }
     }
@@ -858,6 +862,7 @@ class LexemeCardOut(BaseModel):
     english_lemma: Optional[str] = None
     alignment_scores: Optional[Dict[str, float]] = None
     build_version: Optional[str] = None
+    model: Optional[str] = None
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None
     last_user_edit: Optional[datetime.datetime] = None
@@ -907,6 +912,7 @@ class LexemeCardPatch(BaseModel):
     # Dict values can be float or None (None means remove that key)
     alignment_scores: Optional[Dict[str, Optional[float]]] = None
     build_version: Optional[str] = None
+    model: Optional[str] = None
 
     @field_validator("surface_forms")
     @classmethod

@@ -4053,6 +4053,222 @@ def test_lexeme_card_build_version_roundtrip(
     assert cleared.json()["build_version"] is None
 
 
+def test_lexeme_card_model_roundtrip(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """POST + GET + PATCH preserve and update the model provenance field.
+
+    `model` records which builder (e.g. claude-sonnet-..., gpt-oss-...) wrote
+    the card so downstream consumers can harvest trusted cards and skip
+    poisoned ones. Mirrors the build_version round-trip.
+    """
+    create = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "model_prov_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+            "model": "claude-sonnet-4-6",
+        },
+    )
+    assert create.status_code == 200
+    assert create.json()["model"] == "claude-sonnet-4-6"
+    card_id = create.json()["id"]
+
+    # GET single by id returns the stored model
+    single = client.get(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert single.status_code == 200
+    assert single.json()["model"] == "claude-sonnet-4-6"
+
+    # GET list also includes model
+    listing = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert listing.status_code == 200
+    in_list = next(c for c in listing.json() if c["id"] == card_id)
+    assert in_list["model"] == "claude-sonnet-4-6"
+
+    # PATCH updates the model field
+    patch = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"model": "claude-opus-4-7"},
+    )
+    assert patch.status_code == 200
+    assert patch.json()["model"] == "claude-opus-4-7"
+
+    # POST upsert with model set overwrites the existing value
+    upsert = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "model_prov_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+            "model": "claude-haiku-4-5",
+        },
+    )
+    assert upsert.status_code == 200
+    assert upsert.json()["model"] == "claude-haiku-4-5"
+
+    # PATCH with explicit null clears the field
+    cleared = client.patch(
+        f"/v3/agent/lexeme-card/{card_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={"model": None},
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["model"] is None
+
+
+def test_lexeme_card_post_upsert_with_omitted_model_clobbers_to_null(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """POST upsert is a full-field replacement: omitting ``model`` writes NULL.
+
+    Same semantics as build_version (the upsert update path unconditionally
+    assigns from the incoming payload). Callers that want to preserve an
+    existing provenance value across upserts must include ``model`` on every
+    POST, or use PATCH for partial updates.
+    """
+    # Stamp a model on a card.
+    created = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "model_clobber_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+            "model": "claude-sonnet-4-6",
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["model"] == "claude-sonnet-4-6"
+
+    # POST upsert without `model` — full-field replacement clobbers it to NULL.
+    upserted = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "model_clobber_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.6,
+        },
+    )
+    assert upserted.status_code == 200
+    assert upserted.json()["model"] is None
+
+
+def test_lexeme_card_get_filter_by_model(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """GET /v3/agent/lexeme-card?model=<x> returns only matching cards.
+
+    Cards with NULL model are excluded by SQL ``=`` semantics — exactly what
+    a harvester filtering for "built by model X" wants.
+    """
+    # Three cards: one built by sonnet, one by gpt-oss, one unstamped.
+    sonnet_card = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "model_filter_sonnet",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+            "model": "claude-sonnet-4-6",
+        },
+    )
+    assert sonnet_card.status_code == 200
+    sonnet_id = sonnet_card.json()["id"]
+
+    gpt_card = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "model_filter_gpt",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+            "model": "gpt-oss-1",
+        },
+    )
+    assert gpt_card.status_code == 200
+    gpt_id = gpt_card.json()["id"]
+
+    unstamped = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "model_filter_none",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+        },
+    )
+    assert unstamped.status_code == 200
+    unstamped_id = unstamped.json()["id"]
+
+    # Filter on sonnet — should only return the sonnet card.
+    filtered = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}&model=claude-sonnet-4-6",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert filtered.status_code == 200
+    returned_ids = {c["id"] for c in filtered.json()}
+    assert sonnet_id in returned_ids
+    assert gpt_id not in returned_ids
+    assert unstamped_id not in returned_ids
+
+    # Filter on a model that doesn't exist — empty result.
+    none_match = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}&model=nonexistent-model",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert none_match.status_code == 200
+    none_ids = {c["id"] for c in none_match.json()}
+    assert sonnet_id not in none_ids
+    assert gpt_id not in none_ids
+    assert unstamped_id not in none_ids
+
+    # Omitting model returns all three (sanity check that the cards exist).
+    no_filter = client.get(
+        f"/v3/agent/lexeme-card?source_version_id={test_version_id}"
+        f"&target_version_id={test_version_id_2}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert no_filter.status_code == 200
+    all_ids = {c["id"] for c in no_filter.json()}
+    assert {sonnet_id, gpt_id, unstamped_id}.issubset(all_ids)
+
+
 # Lexeme Card PATCH Tests
 
 

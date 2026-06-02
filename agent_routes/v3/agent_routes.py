@@ -682,6 +682,7 @@ async def add_lexeme_card(
             existing_card.english_lemma = card.english_lemma
             existing_card.alignment_scores = sorted_alignment_scores
             existing_card.build_version = card.build_version
+            existing_card.model = card.model
             existing_card.last_updated = func.now()
             if is_user_edit:
                 existing_card.last_user_edit = func.now()
@@ -814,6 +815,7 @@ async def add_lexeme_card(
                 "english_lemma": existing_card.english_lemma,
                 "alignment_scores": sorted_alignment_scores,
                 "build_version": existing_card.build_version,
+                "model": existing_card.model,
                 "created_at": existing_card.created_at,
                 "last_updated": existing_card.last_updated,
                 "last_user_edit": existing_card.last_user_edit,
@@ -844,6 +846,7 @@ async def add_lexeme_card(
                 english_lemma=card.english_lemma,
                 alignment_scores=sorted_alignment_scores,
                 build_version=card.build_version,
+                model=card.model,
                 last_user_edit=func.now() if is_user_edit else None,
             )
 
@@ -907,6 +910,7 @@ async def add_lexeme_card(
                 "english_lemma": lexeme_card.english_lemma,
                 "alignment_scores": sorted_alignment_scores,
                 "build_version": lexeme_card.build_version,
+                "model": lexeme_card.model,
                 "created_at": lexeme_card.created_at,
                 "last_updated": lexeme_card.last_updated,
                 "last_user_edit": lexeme_card.last_user_edit,
@@ -1060,6 +1064,8 @@ async def _apply_lexeme_card_patch(
         card.english_lemma = patch_data.english_lemma
     if "build_version" in provided_fields:
         card.build_version = patch_data.build_version
+    if "model" in provided_fields:
+        card.model = patch_data.model
 
     # Handle alignment_scores (dict) - merge keys, null value removes key
     if "alignment_scores" in provided_fields:
@@ -1222,6 +1228,7 @@ async def _apply_lexeme_card_patch(
         "english_lemma": card.english_lemma,
         "alignment_scores": card.alignment_scores,
         "build_version": card.build_version,
+        "model": card.model,
         "created_at": card.created_at,
         "last_updated": card.last_updated,
         "last_user_edit": card.last_user_edit,
@@ -1240,6 +1247,7 @@ _CANONICAL_PATCH_FIELDS = {
     "english_lemma",
     "alignment_scores",
     "build_version",
+    "model",
 }
 # Fields routed to the card_translations overlay row for (card_id, language_iso)
 # in overlay-mode patching. Source-side identity and senses.
@@ -1278,8 +1286,8 @@ async def patch_lexeme_card_translation(
       upserted on conflict. The canonical's source-side stays untouched, so
       edits in (target, eng) view can't corrupt the (target, swh) pivot.
     - Target-side and shared fields (target_lemma, surface_forms, pos,
-      confidence, english_lemma, alignment_scores, build_version) land in
-      the canonical ``agent_lexeme_cards`` row. There is only one target
+      confidence, english_lemma, alignment_scores, build_version, model) land
+      in the canonical ``agent_lexeme_cards`` row. There is only one target
       column physically, so all overlays project the same target text — fixing
       a typo from any language view fixes it everywhere.
     - When ``language_iso`` equals the card's canonical ``source_language_iso``
@@ -1479,6 +1487,9 @@ async def patch_lexeme_card_translation(
             canonical_touched = True
         if "build_version" in canonical_fields:
             card.build_version = patch_data.build_version
+            canonical_touched = True
+        if "model" in canonical_fields:
+            card.model = patch_data.model
             canonical_touched = True
         if "alignment_scores" in canonical_fields:
             if patch_data.alignment_scores is None:
@@ -1742,6 +1753,7 @@ async def _build_lexeme_card_out_for_lang(
             "english_lemma": card.english_lemma,
             "alignment_scores": card.alignment_scores,
             "build_version": card.build_version,
+            "model": card.model,
             "created_at": card.created_at,
             "last_updated": card.last_updated,
             "last_user_edit": effective_last_user_edit,
@@ -2435,6 +2447,7 @@ async def get_lexeme_cards(
     target_word: str = None,
     target_words: str = None,
     pos: str = None,
+    model: str | None = Query(default=None, min_length=1),
     lang: str | None = Query(default=None, min_length=3, max_length=3),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -2462,6 +2475,10 @@ async def get_lexeme_cards(
       cards where target_lemma or any surface_form matches any of the given words
       (case-insensitive, NFC-normalized). Cannot be used with target_word.
     - pos: str (optional) - Filter by part of speech
+    - model: str (optional) - Filter by the model id/name that built the card.
+      Lets harvesters fetch only cards built by a trusted model (e.g. Sonnet)
+      and exclude poisoned ones. Exact match; cards with NULL ``model`` are
+      excluded when this filter is set.
     - lang: str (optional) - ISO 639-3 code for the desired source-side language.
       When omitted or equal to the cards' canonical source_language_iso, returns
       cards in their canonical shape (back-compat). When it differs, source-side
@@ -2523,6 +2540,13 @@ async def get_lexeme_cards(
         # Add POS filter if provided
         if pos:
             conditions.append(AgentLexemeCard.pos == pos)
+
+        # Filter by build-provenance model when provided. Exact match — NULLs
+        # are excluded by SQL ``=`` semantics, which is what we want (the
+        # caller is asking for "cards built by model X", so unstamped cards
+        # don't qualify).
+        if model:
+            conditions.append(AgentLexemeCard.model == model)
 
         # Word filtering: both source_word and target_word search
         # lemma OR surface_forms (case-insensitive exact match, NFC-normalized)
@@ -2784,6 +2808,7 @@ async def get_lexeme_cards(
                 "english_lemma": card.english_lemma,
                 "alignment_scores": card.alignment_scores,
                 "build_version": card.build_version,
+                "model": card.model,
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
                 "last_user_edit": card.last_user_edit,
@@ -3253,6 +3278,7 @@ async def get_lexeme_card_by_id(
             "english_lemma": card.english_lemma,
             "alignment_scores": card.alignment_scores,
             "build_version": card.build_version,
+            "model": card.model,
             "created_at": card.created_at,
             "last_updated": card.last_updated,
             "last_user_edit": card.last_user_edit,
