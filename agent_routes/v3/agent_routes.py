@@ -1286,8 +1286,8 @@ async def patch_lexeme_card_translation(
       upserted on conflict. The canonical's source-side stays untouched, so
       edits in (target, eng) view can't corrupt the (target, swh) pivot.
     - Target-side and shared fields (target_lemma, surface_forms, pos,
-      confidence, english_lemma, alignment_scores, build_version) land in
-      the canonical ``agent_lexeme_cards`` row. There is only one target
+      confidence, english_lemma, alignment_scores, build_version, model) land
+      in the canonical ``agent_lexeme_cards`` row. There is only one target
       column physically, so all overlays project the same target text — fixing
       a typo from any language view fixes it everywhere.
     - When ``language_iso`` equals the card's canonical ``source_language_iso``
@@ -2447,7 +2447,7 @@ async def get_lexeme_cards(
     target_word: str = None,
     target_words: str = None,
     pos: str = None,
-    model: str | None = None,
+    model: str | None = Query(default=None, min_length=1),
     lang: str | None = Query(default=None, min_length=3, max_length=3),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),

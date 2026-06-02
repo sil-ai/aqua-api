@@ -4134,6 +4134,51 @@ def test_lexeme_card_model_roundtrip(
     assert cleared.json()["model"] is None
 
 
+def test_lexeme_card_post_upsert_with_omitted_model_clobbers_to_null(
+    client,
+    regular_token1,
+    db_session,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+):
+    """POST upsert is a full-field replacement: omitting ``model`` writes NULL.
+
+    Same semantics as build_version (the upsert update path unconditionally
+    assigns from the incoming payload). Callers that want to preserve an
+    existing provenance value across upserts must include ``model`` on every
+    POST, or use PATCH for partial updates.
+    """
+    # Stamp a model on a card.
+    created = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "model_clobber_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.5,
+            "model": "claude-sonnet-4-6",
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["model"] == "claude-sonnet-4-6"
+
+    # POST upsert without `model` — full-field replacement clobbers it to NULL.
+    upserted = client.post(
+        f"/v3/agent/lexeme-card?revision_id={test_revision_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+        json={
+            "target_lemma": "model_clobber_lemma",
+            "source_version_id": test_version_id,
+            "target_version_id": test_version_id_2,
+            "confidence": 0.6,
+        },
+    )
+    assert upserted.status_code == 200
+    assert upserted.json()["model"] is None
+
+
 def test_lexeme_card_get_filter_by_model(
     client,
     regular_token1,
