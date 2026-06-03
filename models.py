@@ -1442,15 +1442,6 @@ class EflomalDictionaryItem(BaseModel):
     probability: float
 
 
-class EflomalCooccurrenceItem(BaseModel):
-    """Co-occurrence entry. Words in normalized form (lowercase, alphanumeric)."""
-
-    source_word: str
-    target_word: str
-    co_occur_count: int
-    aligned_count: int
-
-
 class EflomalTargetWordCountItem(BaseModel):
     """Target word frequency. Word in normalized form."""
 
@@ -1461,8 +1452,8 @@ class EflomalTargetWordCountItem(BaseModel):
 class EflomalResultsPushRequest(BaseModel):
     """Create the eflomal_assessment metadata row (no bulk data).
 
-    After this call succeeds, push dictionary, cooccurrences, and
-    target-word-counts via their own endpoints, then PATCH the
+    After this call succeeds, push dictionary, target-word-counts,
+    priors, and BPE models via their own endpoints, then PATCH the
     assessment status to 'finished'.
     """
 

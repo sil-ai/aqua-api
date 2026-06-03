@@ -83,18 +83,6 @@ def _dictionary_items(n=10):
     ]
 
 
-def _cooccurrence_items(n=20, n_dict=10):
-    return [
-        {
-            "source_word": f"src_{i % n_dict}",
-            "target_word": f"tgt_{i}",
-            "co_occur_count": i + 1,
-            "aligned_count": i,
-        }
-        for i in range(n)
-    ]
-
-
 def _target_word_count_items(n=5):
     return [{"word": f"word_{i}", "count": i + 10} for i in range(n)]
 
@@ -119,13 +107,6 @@ def _push_all(
     resp = client.post(
         f"{prefix}/assessment/{assessment_id}/eflomal-dictionary",
         json=_dictionary_items(),
-        headers=headers,
-    )
-    assert resp.status_code == 200
-
-    resp = client.post(
-        f"{prefix}/assessment/{assessment_id}/eflomal-cooccurrences",
-        json=_cooccurrence_items(),
         headers=headers,
     )
     assert resp.status_code == 200
@@ -328,7 +309,7 @@ def test_push_eflomal_metadata_version_id_validator_uses_post620_mapping(
 
 
 # ---------------------------------------------------------------------------
-# Push data tests (dictionary, cooccurrences, target-word-counts)
+# Push data tests (dictionary, target-word-counts, priors, BPE models)
 # ---------------------------------------------------------------------------
 
 
@@ -391,37 +372,6 @@ def test_push_eflomal_dictionary_body_too_large(
     assert "5001" in detail
     assert "5000" in detail
     assert "reduce the payload" in detail
-
-
-def test_push_eflomal_cooccurrences(
-    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
-):
-    """Push cooccurrence entries."""
-    headers = {"Authorization": f"Bearer {regular_token1}"}
-    response = client.post(
-        f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-cooccurrences",
-        json=_cooccurrence_items(8),
-        headers=headers,
-    )
-    assert response.status_code == 200
-    assert len(response.json()["ids"]) == 8
-
-
-def test_push_eflomal_cooccurrences_idempotent(
-    client, regular_token1, test_eflomal_assessment_id, _ensure_metadata_pushed
-):
-    """Retrying the same cooccurrence payload succeeds without a 400."""
-    headers = {"Authorization": f"Bearer {regular_token1}"}
-    url = f"{prefix}/assessment/{test_eflomal_assessment_id}/eflomal-cooccurrences"
-    batch = _cooccurrence_items(6)
-
-    first = client.post(url, json=batch, headers=headers)
-    assert first.status_code == 200
-    assert len(first.json()["ids"]) == 6
-
-    retry = client.post(url, json=batch, headers=headers)
-    assert retry.status_code == 200
-    assert len(retry.json()["ids"]) == 6
 
 
 def test_push_eflomal_target_word_counts(
