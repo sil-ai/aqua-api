@@ -90,7 +90,8 @@ def _target_word_count_items(n=5):
 def _push_all(
     client, token, assessment_id, source_version_id=None, target_version_id=None
 ):
-    """Push metadata + all three data types. Returns the metadata response."""
+    """Push metadata + all data types (dictionary, target word counts,
+    priors, BPE models). Returns the metadata response."""
     headers = {"Authorization": f"Bearer {token}"}
 
     meta = client.post(
