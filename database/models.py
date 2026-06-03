@@ -947,43 +947,6 @@ class EflomalDictionary(Base):
     )
 
 
-class EflomalCooccurrence(Base):
-    """Verse-level co-occurrence statistics for word pairs.
-
-    Separate from EflomalDictionary because the key space differs:
-    - Dictionary contains only pairs the model actually aligned.
-    - This table contains ALL word pairs that co-occurred in any verse,
-      including pairs that were never aligned (co_occur > 0, aligned = 0).
-    Words are stored in normalized form (lowercase, alphanumeric only).
-
-    - co_occur_count: number of verses where both words appear.
-    - aligned_count: number of those verses where the model aligned them.
-
-    The ratio aligned/co_occur is used as a co-occurrence consistency signal
-    in the scoring formula (weighted geometric mean with dictionary probability).
-    """
-
-    __tablename__ = "eflomal_cooccurrence"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    assessment_id = Column(
-        Integer, ForeignKey("eflomal_assessment.id", ondelete="CASCADE"), nullable=False
-    )
-    source_word = Column(String, nullable=False)
-    target_word = Column(String, nullable=False)
-    co_occur_count = Column(Integer, nullable=False)
-    aligned_count = Column(Integer, nullable=False)
-
-    __table_args__ = (
-        Index(
-            "ix_eflomal_cooccurrence_lookup",
-            "assessment_id",
-            "source_word",
-            "target_word",
-        ),
-    )
-
-
 class EflomalTargetWordCount(Base):
     """Corpus-wide frequency of each target-language word.
 
@@ -993,8 +956,8 @@ class EflomalTargetWordCount(Base):
 
     Used as the denominator in missing-word detection: a word that appears
     500 times but is only aligned 10 times behaves very differently from one
-    that appears and is aligned 10 times.  Neither EflomalDictionary nor
-    EflomalCooccurrence captures this marginal frequency.
+    that appears and is aligned 10 times.  EflomalDictionary does not
+    capture this marginal frequency.
     """
 
     __tablename__ = "eflomal_target_word_count"
