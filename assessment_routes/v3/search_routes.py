@@ -13,6 +13,7 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
 from sqlalchemy.sql.expression import literal_column
 
+from assessment_routes.v3.alignment_filters import eflomal_method_clause
 from database.dependencies import get_db
 from database.models import (
     AlignmentTopSourceScores,
@@ -227,12 +228,16 @@ async def _resolve_alignment_assessment_id(
     revision_id: Optional[int],
     comparison_revision_id: Optional[int],
     alignment_assessment_id: Optional[int],
+    use_eflomal: Optional[bool] = None,
 ) -> Optional[int]:
-    """Pick the eflomal assessment to source alignment links from.
+    """Pick the word-alignment assessment to source alignment links from.
 
     Explicit ``alignment_assessment_id`` wins; otherwise auto-pick the most
     recent finished ``word-alignment`` assessment whose
     ``(revision_id, reference_id)`` matches ``(revision_id, comparison_revision_id)``.
+    ``use_eflomal`` selects the runner: ``true`` picks the eflomal assessment,
+    omitted or ``false`` picks fastalign — applied to both the explicit-id and
+    auto-pick paths so the chosen assessment always matches the requested runner.
     Returns ``None`` if no candidate exists or the user is not authorized to
     see the chosen assessment — callers should fall back to the unannotated
     response instead of erroring (per issue #661).
@@ -253,6 +258,7 @@ async def _resolve_alignment_assessment_id(
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
             Assessment.deleted.is_not(True),
+            eflomal_method_clause(use_eflomal),
         ]
         if revision_id is not None and comparison_revision_id is not None:
             conditions.extend(
@@ -279,6 +285,7 @@ async def _resolve_alignment_assessment_id(
             Assessment.type == "word-alignment",
             Assessment.status == "finished",
             Assessment.deleted.is_not(True),
+            eflomal_method_clause(use_eflomal),
         )
         .order_by(Assessment.end_time.desc().nullslast(), Assessment.id.desc())
         .limit(1)
@@ -371,11 +378,12 @@ async def search_revision_text(
         default=False,
         description=(
             "If true, annotate each result with per-verse word alignments "
-            "from the most recent finished eflomal word-alignment assessment "
-            "for the (revision_id, comparison_revision_id) pair. Each result "
-            "gains an ``alignments`` array of ``{source, target, score}`` "
-            "objects. If no eflomal assessment exists for the pair, results "
-            "are returned without the ``alignments`` field (no error)."
+            "from the most recent finished word-alignment assessment for the "
+            "(revision_id, comparison_revision_id) pair (runner selected by "
+            "``use_eflomal``). Each result gains an ``alignments`` array of "
+            "``{source, target, score}`` objects. If no matching assessment "
+            "exists for the pair, results are returned without the "
+            "``alignments`` field (no error)."
         ),
     ),
     min_alignment_score: float = Query(
@@ -394,6 +402,15 @@ async def search_revision_text(
             "alignments from. When omitted, the latest finished "
             "word-alignment assessment for the "
             "(revision_id, comparison_revision_id) pair is used."
+        ),
+    ),
+    use_eflomal: Optional[bool] = Query(
+        default=None,
+        description=(
+            "Select which word-alignment runner to source alignments from "
+            "when ``include_alignments`` is true. ``true`` uses the eflomal "
+            "assessment; omitted or ``false`` uses fastalign. Applies to both "
+            "the explicit ``alignment_assessment_id`` and the auto-pick path."
         ),
     ),
     db: AsyncSession = Depends(get_db),
@@ -701,6 +718,7 @@ async def search_revision_text(
                 revision_id=revision_id,
                 comparison_revision_id=comparison_revision_id,
                 alignment_assessment_id=alignment_assessment_id,
+                use_eflomal=use_eflomal,
             )
             if alignment_assessment_used is not None:
                 vrefs = [
