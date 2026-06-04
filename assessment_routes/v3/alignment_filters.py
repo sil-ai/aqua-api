@@ -12,8 +12,10 @@ handling:
   concrete ``bool`` *before* calling this clause (eflomal is the create-time
   default), so the create path never passes ``None`` here.
 - **Read endpoints** pass the request's ``use_eflomal`` straight through. There,
-  ``None`` means "no runner preference" — the caller's query already orders by
-  recency, so it picks the most recent assessment regardless of runner.
+  ``None`` means "no runner preference": the clause applies no runner filter and
+  each calling query decides how "most recent" is resolved (most order by
+  ``Assessment.end_time``; the compare/missingwords baseline selection uses
+  ``func.max(Assessment.id)``).
 """
 
 from typing import Optional
@@ -31,8 +33,9 @@ def eflomal_method_clause(use_eflomal: Optional[bool]):
     """Return a clause selecting word-alignment assessments by runner.
 
     - ``use_eflomal is None`` -> no runner filter (matches both runners). The
-      calling query's existing recency ordering then selects the most recent
-      assessment regardless of method. This is the read-endpoint default.
+      calling query then selects an assessment regardless of method by its own
+      "most recent" rule (``end_time`` order or ``max(id)``). This is the
+      read-endpoint default.
     - ``use_eflomal is True`` -> eflomal only
       (``kwargs @> {"use_eflomal": true}``)
     - ``use_eflomal is False`` -> fastalign only

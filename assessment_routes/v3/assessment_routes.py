@@ -365,7 +365,7 @@ async def add_assessment(
     ),
     use_eflomal: Optional[bool] = Query(
         None,
-        description="Word-alignment runner selector. Eflomal is the default; omitted or true runs eflomal, false runs fastalign. Source/target version IDs are derived from reference_id/revision_id.",
+        description="Word-alignment runner selector. true runs eflomal, false runs fastalign. When omitted, eflomal runs by default unless use_eflomal was injected via extra_kwargs, in which case the injected value is honored — the typed query param always wins over an injected value. Source/target version IDs are derived from reference_id/revision_id.",
     ),
     force: bool = Query(
         False,
