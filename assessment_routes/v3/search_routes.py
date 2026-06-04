@@ -235,9 +235,10 @@ async def _resolve_alignment_assessment_id(
     Explicit ``alignment_assessment_id`` wins; otherwise auto-pick the most
     recent finished ``word-alignment`` assessment whose
     ``(revision_id, reference_id)`` matches ``(revision_id, comparison_revision_id)``.
-    ``use_eflomal`` selects the runner: ``true`` picks the eflomal assessment,
-    omitted or ``false`` picks fastalign — applied to both the explicit-id and
-    auto-pick paths so the chosen assessment always matches the requested runner.
+    ``use_eflomal`` selects the runner: omitted or ``true`` picks the eflomal
+    assessment (the default), ``false`` picks fastalign — applied to both the
+    explicit-id and auto-pick paths so the chosen assessment always matches the
+    requested runner.
     Returns ``None`` if no candidate exists or the user is not authorized to
     see the chosen assessment — callers should fall back to the unannotated
     response instead of erroring (per issue #661).
@@ -408,9 +409,10 @@ async def search_revision_text(
         default=None,
         description=(
             "Select which word-alignment runner to source alignments from "
-            "when ``include_alignments`` is true. ``true`` uses the eflomal "
-            "assessment; omitted or ``false`` uses fastalign. Applies to both "
-            "the explicit ``alignment_assessment_id`` and the auto-pick path."
+            "when ``include_alignments`` is true. Eflomal is the default; "
+            "omitted or ``true`` uses the eflomal assessment, ``false`` uses "
+            "fastalign. Applies to both the explicit ``alignment_assessment_id`` "
+            "and the auto-pick path."
         ),
     ),
     db: AsyncSession = Depends(get_db),

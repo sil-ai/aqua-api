@@ -1867,10 +1867,10 @@ async def get_compare_results(
     use_eflomal: Optional[bool] = Query(
         default=None,
         description=(
-            "Select which word-alignment runner to read. ``true`` uses the "
-            "eflomal assessment; omitted or ``false`` uses fastalign. Applies "
-            "to both the main revision and the baselines so the two runners' "
-            "scores are never mixed."
+            "Select which word-alignment runner to read. Eflomal is the "
+            "default; omitted or ``true`` uses the eflomal assessment, "
+            "``false`` uses fastalign. Applies to both the main revision and "
+            "the baselines so the two runners' scores are never mixed."
         ),
     ),
     db: AsyncSession = Depends(get_db),
@@ -2154,10 +2154,10 @@ async def get_missing_words(
     use_eflomal: Optional[bool] = Query(
         default=None,
         description=(
-            "Select which word-alignment runner to read. ``true`` uses the "
-            "eflomal assessment; omitted or ``false`` uses fastalign. Applies "
-            "to both the main revision and the baselines so the two runners' "
-            "scores are never mixed."
+            "Select which word-alignment runner to read. Eflomal is the "
+            "default; omitted or ``true`` uses the eflomal assessment, "
+            "``false`` uses fastalign. Applies to both the main revision and "
+            "the baselines so the two runners' scores are never mixed."
         ),
     ),
     db: AsyncSession = Depends(get_db),
@@ -2348,8 +2348,9 @@ async def get_word_alignments(
     use_eflomal: Optional[bool] = Query(
         default=None,
         description=(
-            "Select which word-alignment runner to read. ``true`` uses the "
-            "eflomal assessment; omitted or ``false`` uses fastalign."
+            "Select which word-alignment runner to read. Eflomal is the "
+            "default; omitted or ``true`` uses the eflomal assessment, "
+            "``false`` uses fastalign."
         ),
     ),
     db: AsyncSession = Depends(get_db),
@@ -2471,8 +2472,9 @@ async def get_text_alignment_matches(
     use_eflomal: Optional[bool] = Query(
         default=None,
         description=(
-            "Select which word-alignment runner to read. ``true`` uses the "
-            "eflomal assessment; omitted or ``false`` uses fastalign."
+            "Select which word-alignment runner to read. Eflomal is the "
+            "default; omitted or ``true`` uses the eflomal assessment, "
+            "``false`` uses fastalign."
         ),
     ),
     db: AsyncSession = Depends(get_db),

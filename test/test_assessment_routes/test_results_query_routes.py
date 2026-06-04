@@ -77,11 +77,15 @@ def assessments_dataset(test_db_session):
     test_db_session.add_all([revision, reference])
     test_db_session.flush()
 
+    # Stored as eflomal so the revision/reference-keyed read endpoints
+    # (/textalignmentmatches etc.) resolve to it under the default runner
+    # selection, which is now eflomal.
     assessment = Assessment(
         revision_id=revision.id,
         reference_id=reference.id,
         type="word-alignment",
         status="finished",
+        kwargs={"use_eflomal": True},
     )
     test_db_session.add(assessment)
     test_db_session.flush()
@@ -2240,11 +2244,12 @@ def test_missingwords_use_eflomal_true_selects_eflomal(
     assert "alpha" not in sources
 
 
-def test_missingwords_default_is_fastalign(
+def test_missingwords_default_is_eflomal(
     client, regular_token1, runner_select_dataset
 ):
-    """Omitting use_eflomal returns fastalign even though the eflomal
-    assessment for the same pair finished more recently."""
+    """Omitting use_eflomal returns eflomal (the default), not fastalign. The
+    eflomal-only word 'beta' is returned and the fastalign-only word 'alpha'
+    is not."""
     response = client.get(
         "/v3/missingwords",
         params={
@@ -2255,8 +2260,8 @@ def test_missingwords_default_is_fastalign(
     )
     assert response.status_code == 200, response.text
     sources = _missing_sources(response)
-    assert "alpha" in sources
-    assert "beta" not in sources
+    assert "beta" in sources
+    assert "alpha" not in sources
 
 
 def test_missingwords_use_eflomal_false_is_fastalign(
@@ -2301,7 +2306,7 @@ def test_textalignmentmatches_use_eflomal_selects_runner(
 
     fast = client.get(
         "/v3/textalignmentmatches",
-        params=base_params,
+        params={**base_params, "use_eflomal": False},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert fast.status_code == 200, fast.text
@@ -2312,10 +2317,10 @@ def test_textalignmentmatches_use_eflomal_selects_runner(
 
 def test_alignmentmatches_use_eflomal_selects_assessment(client, runner_select_dataset):
     """For an eflomal-only pair, /alignmentmatches finds the assessment only
-    when use_eflomal=true; the fastalign default 404s. The 200 case carries
-    real rows (eflonly has alignment + VerseText rows) so the assertion proves
-    data was actually retrieved from the eflomal assessment, not just that an
-    assessment id was resolved."""
+    via eflomal; requesting fastalign (use_eflomal=false) 404s. The 200 case
+    carries real rows (eflonly has alignment + VerseText rows) so the assertion
+    proves data was actually retrieved from the eflomal assessment, not just
+    that an assessment id was resolved."""
     # /alignmentmatches has no auth dependency (no Depends(get_current_user))
     # on the endpoint, so no Authorization header is required.
     params = {
@@ -2324,8 +2329,10 @@ def test_alignmentmatches_use_eflomal_selects_assessment(client, runner_select_d
         "word": "shared",
     }
 
-    default = client.get("/v3/alignmentmatches", params=params)
-    assert default.status_code == 404, default.text
+    fastalign = client.get(
+        "/v3/alignmentmatches", params={**params, "use_eflomal": False}
+    )
+    assert fastalign.status_code == 404, fastalign.text
 
     efl = client.get("/v3/alignmentmatches", params={**params, "use_eflomal": True})
     assert efl.status_code == 200, efl.text
@@ -2342,17 +2349,18 @@ def test_alignmentmatches_use_eflomal_selects_assessment(client, runner_select_d
 def test_alignmentmatches_main_pair_picks_correct_runner(client, runner_select_dataset):
     """When both runners exist for a pair, /alignmentmatches' target field
     differs by runner — fastalign returns s_fast, eflomal returns s_efl —
-    proving the runner clause (not recency) decides even though the eflomal
-    assessment finished later."""
+    proving the runner clause (not recency) decides. The omitted default
+    resolves to eflomal (s_efl), and use_eflomal=false selects fastalign
+    (s_fast)."""
     params = {
         "revision_id": runner_select_dataset.revision_id,
         "reference_id": runner_select_dataset.reference_id,
         "word": "shared",
     }
 
-    fast = client.get("/v3/alignmentmatches", params=params)
-    assert fast.status_code == 200, fast.text
-    assert {row["target"] for row in fast.json()["results"]} == {"s_fast"}
+    default = client.get("/v3/alignmentmatches", params=params)
+    assert default.status_code == 200, default.text
+    assert {row["target"] for row in default.json()["results"]} == {"s_efl"}
 
     efl = client.get("/v3/alignmentmatches", params={**params, "use_eflomal": True})
     assert efl.status_code == 200, efl.text
@@ -2390,18 +2398,20 @@ def test_compareresults_baselines_do_not_mix_runners(
     assert efl_results[0]["score"] == pytest.approx(0.7, abs=1e-6)
     assert efl_results[0]["mean_score"] == pytest.approx(0.9, abs=1e-6)
 
-    fast = client.get(
+    # Omitting use_eflomal resolves to eflomal (the default), matching the
+    # explicit-true scores above.
+    default = client.get(
         "/v3/compareresults",
         params=base_params,
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-    assert fast.status_code == 200, fast.text
-    fast_results = fast.json()["results"]
-    assert fast_results
-    assert fast_results[0]["score"] == pytest.approx(0.3, abs=1e-6)
-    assert fast_results[0]["mean_score"] == pytest.approx(0.2, abs=1e-6)
+    assert default.status_code == 200, default.text
+    default_results = default.json()["results"]
+    assert default_results
+    assert default_results[0]["score"] == pytest.approx(0.7, abs=1e-6)
+    assert default_results[0]["mean_score"] == pytest.approx(0.9, abs=1e-6)
 
-    # Explicit use_eflomal=false behaves identically to the default.
+    # Explicit use_eflomal=false selects fastalign.
     explicit_false = client.get(
         "/v3/compareresults",
         params={**base_params, "use_eflomal": False},
@@ -2430,7 +2440,7 @@ def test_missingwords_baselines_do_not_mix_runners(
 
     fast = client.get(
         "/v3/missingwords",
-        params=base_params,
+        params={**base_params, "use_eflomal": False},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert fast.status_code == 200, fast.text

@@ -365,7 +365,7 @@ async def add_assessment(
     ),
     use_eflomal: Optional[bool] = Query(
         None,
-        description="Run eflomal-based word alignment. Source/target version IDs are derived from reference_id/revision_id.",
+        description="Word-alignment runner selector. Eflomal is the default; omitted or true runs eflomal, false runs fastalign. Source/target version IDs are derived from reference_id/revision_id.",
     ),
     force: bool = Query(
         False,
@@ -385,9 +385,9 @@ async def add_assessment(
     Currently supported assessment types are:
     - semantic-similarity (requires reference)
     - sentence-length
-    - word-alignment (requires reference; can optionally run eflomal-based alignment
-      when `use_eflomal=true`. Source/target version IDs are derived from
-      reference_id and revision_id respectively.)
+    - word-alignment (requires reference; runs eflomal-based alignment by default.
+      Pass `use_eflomal=false` to run fastalign instead. Source/target version IDs
+      are derived from reference_id and revision_id respectively.)
     - ngrams
     - tfidf
     - text-lengths
@@ -437,8 +437,44 @@ async def add_assessment(
             parsed_kwargs = None
         a.kwargs = parsed_kwargs
 
-    # Fold the use_eflomal query param into kwargs so it reaches Modal and the dedup check
-    if use_eflomal:
+    # Strict-bool check first: a caller could route around the typed query
+    # param by injecting `use_eflomal: 1` (or "true", etc.) via extra_kwargs.
+    # The dedup SQL uses JSONB containment which is strictly typed, so a
+    # truthy-but-non-bool value would silently bypass dedup. Reject it before
+    # the eflomal default gets folded in below — otherwise the fold would
+    # overwrite the bad value and mask this error.
+    injected_eflomal = a.kwargs.get("use_eflomal") if a.kwargs else None
+    if injected_eflomal is not None and not isinstance(injected_eflomal, bool):
+        raise HTTPException(
+            status_code=400,
+            detail="use_eflomal must be a boolean.",
+        )
+
+    # Resolve the effective runner. Eflomal is the default for word-alignment;
+    # callers opt out with use_eflomal=false. The typed query param wins over
+    # any value injected via extra_kwargs. For non-word-alignment types eflomal
+    # is never implied by default; an explicit eflomal request is rejected just
+    # below.
+    if use_eflomal is None:
+        is_eflomal = (
+            injected_eflomal
+            if injected_eflomal is not None
+            else a.type == "word-alignment"
+        )
+    else:
+        is_eflomal = use_eflomal
+    if is_eflomal and a.type != "word-alignment":
+        raise HTTPException(
+            status_code=400,
+            detail="use_eflomal is only valid for word-alignment assessments.",
+        )
+
+    # Fold the resolved runner into kwargs so it reaches Modal, the create-time
+    # dedup check, and the read endpoints. Eflomal is stored as
+    # {"use_eflomal": true}; fastalign stores no flag. On an explicit opt-out we
+    # strip any injected flag so the row reads as fastalign and dedup stays
+    # correct.
+    if is_eflomal:
         combined_kwargs = dict(a.kwargs or {})
         combined_kwargs["use_eflomal"] = True
         try:
@@ -447,23 +483,10 @@ async def add_assessment(
             raise HTTPException(status_code=400, detail=str(e)) from e
         a.kwargs = combined_kwargs
         parsed_kwargs = combined_kwargs
-
-    # Strict-bool check: a caller could route around the typed query param
-    # by passing `use_eflomal: 1` (or "true", etc.) via extra_kwargs. The
-    # dedup SQL uses JSONB containment which is strictly typed, so a
-    # truthy-but-non-bool value would silently bypass dedup. Reject it.
-    use_eflomal_kw = a.kwargs.get("use_eflomal") if a.kwargs else None
-    if use_eflomal_kw is not None and not isinstance(use_eflomal_kw, bool):
-        raise HTTPException(
-            status_code=400,
-            detail="use_eflomal must be a boolean.",
-        )
-    is_eflomal = use_eflomal_kw is True
-    if is_eflomal and a.type != "word-alignment":
-        raise HTTPException(
-            status_code=400,
-            detail="use_eflomal is only valid for word-alignment assessments.",
-        )
+    elif a.kwargs and "use_eflomal" in a.kwargs:
+        stripped = {k: v for k, v in a.kwargs.items() if k != "use_eflomal"}
+        a.kwargs = stripped or None
+        parsed_kwargs = a.kwargs
 
     # Derive source/target version IDs from the reference and revision rows
     # for every assessment type (not just eflomal). Downstream consumers

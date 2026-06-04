@@ -2561,13 +2561,16 @@ def _setup_alignment_assessment(
     """Create a finished word-alignment assessment plus alignment rows.
 
     ``rows`` is a list of ``(vref, source, target, score)`` tuples. Returns
-    the assessment id.
+    the assessment id. The assessment is stored as eflomal
+    (``kwargs={"use_eflomal": True}``) so the default runner selection (eflomal)
+    resolves to it; runner-specific tests use ``_setup_runner_assessment``.
     """
     assessment = Assessment(
         revision_id=revision_id,
         reference_id=reference_id,
         type="word-alignment",
         status=status,
+        kwargs={"use_eflomal": True},
     )
     db_session.add(assessment)
     db_session.commit()
@@ -3238,17 +3241,17 @@ def test_search_include_alignments_use_eflomal_selects_runner(
         return {a["target"] for a in jhn["alignments"]}
 
     assert _alignment_targets(True) == {"efltarget"}
-    # Default and explicit-false both resolve to fastalign despite the newer
-    # eflomal assessment — the kwargs filter, not recency, decides.
-    assert _alignment_targets(None) == {"fasttarget"}
+    # The omitted default resolves to eflomal; only explicit-false selects
+    # fastalign. The kwargs filter, not recency, decides.
+    assert _alignment_targets(None) == {"efltarget"}
     assert _alignment_targets(False) == {"fasttarget"}
 
 
 def test_search_include_alignments_explicit_id_runner_mismatch_drops_alignments(
     client, regular_token1, test_db_session
 ):
-    """Passing an explicit eflomal alignment_assessment_id while leaving
-    use_eflomal at the fastalign default makes the runner clause reject the
+    """Passing an explicit eflomal alignment_assessment_id while requesting the
+    fastalign runner (use_eflomal=false) makes the runner clause reject the
     pinned id — the response is returned without the ``alignments`` field
     rather than erroring. This is the documented behaviour from issue #661
     extended to the runner mismatch case."""
@@ -3284,11 +3287,11 @@ def test_search_include_alignments_explicit_id_runner_mismatch_drops_alignments(
     )
     assert {a["target"] for a in jhn["alignments"]} == {"efltarget"}
 
-    # Pinned eflomal id but default (fastalign) runner -> clause rejects the
-    # pinned id, response carries no alignments key (silent fallback).
+    # Pinned eflomal id but fastalign runner (use_eflomal=false) -> clause
+    # rejects the pinned id, response carries no alignments key (silent fallback).
     mismatched = client.get(
         "/v3/textsearch",
-        params=base_params,
+        params={**base_params, "use_eflomal": False},
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert mismatched.status_code == 200, mismatched.text

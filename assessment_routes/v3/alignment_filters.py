@@ -21,18 +21,20 @@ _EFLOMAL_KWARG = {"use_eflomal": True}
 def eflomal_method_clause(use_eflomal: Optional[bool]):
     """Return a clause selecting word-alignment assessments by runner.
 
-    - ``use_eflomal is True``  -> eflomal only (``kwargs @> {"use_eflomal": true}``)
-    - ``use_eflomal`` is ``False`` or ``None`` -> fastalign only
+    - ``use_eflomal is False`` -> fastalign only
       (``kwargs IS NULL`` or kwargs not containing the flag)
+    - ``use_eflomal`` is ``True`` or ``None`` -> eflomal only
+      (``kwargs @> {"use_eflomal": true}``)
 
-    The ``None`` default maps to fastalign so read endpoints stay
-    backward-compatible and symmetric with the assessment-create endpoint, where
-    ``use_eflomal`` defaults to false. AND this into a select that already
+    Eflomal is the default runner: the ``None`` default maps to eflomal so read
+    endpoints stay symmetric with the assessment-create endpoint, where
+    ``use_eflomal`` defaults to true for word-alignment. Callers opt out of
+    eflomal with ``use_eflomal=false``. AND this into a select that already
     filters ``Assessment.type == "word-alignment"``.
     """
-    if use_eflomal is True:
-        return Assessment.kwargs.op("@>")(_EFLOMAL_KWARG)
-    return or_(
-        Assessment.kwargs.is_(None),
-        ~Assessment.kwargs.op("@>")(_EFLOMAL_KWARG),
-    )
+    if use_eflomal is False:
+        return or_(
+            Assessment.kwargs.is_(None),
+            ~Assessment.kwargs.op("@>")(_EFLOMAL_KWARG),
+        )
+    return Assessment.kwargs.op("@>")(_EFLOMAL_KWARG)
