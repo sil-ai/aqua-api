@@ -2265,7 +2265,8 @@ def test_missingwords_default_is_eflomal(client, regular_token1, runner_select_d
 def test_missingwords_use_eflomal_false_is_fastalign(
     client, regular_token1, runner_select_dataset
 ):
-    """Explicit use_eflomal=false behaves like the default (fastalign)."""
+    """Explicit use_eflomal=false selects fastalign (opting out of the eflomal
+    default)."""
     response = client.get(
         "/v3/missingwords",
         params={
@@ -2458,8 +2459,8 @@ def test_missingwords_baselines_do_not_mix_runners(
 def test_textalignmentmatches_use_eflomal_false_is_fastalign(
     client, regular_token1, runner_select_dataset
 ):
-    """Explicit use_eflomal=false matches the fastalign default for
-    /textalignmentmatches."""
+    """Explicit use_eflomal=false selects fastalign for /textalignmentmatches
+    (opting out of the eflomal default)."""
     response = client.get(
         "/v3/textalignmentmatches",
         params={
