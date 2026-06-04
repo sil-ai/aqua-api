@@ -77,9 +77,10 @@ def assessments_dataset(test_db_session):
     test_db_session.add_all([revision, reference])
     test_db_session.flush()
 
-    # Stored as eflomal so the revision/reference-keyed read endpoints
-    # (/textalignmentmatches etc.) resolve to it under the default runner
-    # selection, which is now eflomal.
+    # The only assessment for its pair, so the revision/reference-keyed read
+    # endpoints (/textalignmentmatches etc.) resolve to it under the omitted
+    # default (most recent regardless of runner). Stored as eflomal so explicit
+    # use_eflomal=true reads match it too.
     assessment = Assessment(
         revision_id=revision.id,
         reference_id=reference.id,
@@ -2048,9 +2049,9 @@ def test_ngrams_result_does_not_cache_in_progress_assessment(
 # eflomal vs fastalign runner selection (use_eflomal query param)
 #
 # Both runners produce type="word-alignment" assessments distinguished only by
-# kwargs={"use_eflomal": true}. The revision/reference-keyed read endpoints must
-# let a client choose the runner via ?use_eflomal=, never silently mix them, and
-# default to fastalign for backward compatibility.
+# kwargs={"use_eflomal": true}. The revision/reference-keyed read endpoints let a
+# client choose the runner via ?use_eflomal= (true=eflomal, false=fastalign);
+# when omitted, they return the most recent assessment regardless of runner.
 # ---------------------------------------------------------------------------
 
 
@@ -2060,9 +2061,15 @@ class RunnerSelectDataset:
     reference_id: int
     baseline_revision_id: int
     eflomal_only_revision_id: int
+    # A pair where the fastalign assessment finished MORE recently than the
+    # eflomal one — inverts the main pair's ordering so a test can prove the
+    # omitted default follows recency, not the runner.
+    fast_recent_revision_id: int
     main_fast_assessment_id: int
     main_eflomal_assessment_id: int
     eflomal_only_assessment_id: int
+    fast_recent_fast_assessment_id: int
+    fast_recent_eflomal_assessment_id: int
 
 
 @pytest.fixture(scope="module")
@@ -2091,10 +2098,13 @@ def runner_select_dataset(test_db_session):
     v_reference = _version("runner_sel_reference", "rs-ref")
     v_baseline = _version("runner_sel_baseline", "rs-base")
     v_eflonly = _version("runner_sel_eflonly", "rs-efl")
-    test_db_session.add_all([v_target, v_reference, v_baseline, v_eflonly])
+    v_fastrecent = _version("runner_sel_fastrecent", "rs-frc")
+    test_db_session.add_all(
+        [v_target, v_reference, v_baseline, v_eflonly, v_fastrecent]
+    )
     test_db_session.flush()
 
-    for v in (v_target, v_reference, v_baseline, v_eflonly):
+    for v in (v_target, v_reference, v_baseline, v_eflonly, v_fastrecent):
         test_db_session.add(
             BibleVersionAccess(bible_version_id=v.id, group_id=group.id)
         )
@@ -2107,7 +2117,10 @@ def runner_select_dataset(test_db_session):
     r_reference = _revision(v_reference.id, date(2023, 1, 2))
     r_baseline = _revision(v_baseline.id, date(2023, 1, 3))
     r_eflonly = _revision(v_eflonly.id, date(2023, 1, 4))
-    test_db_session.add_all([r_target, r_reference, r_baseline, r_eflonly])
+    r_fastrecent = _revision(v_fastrecent.id, date(2023, 1, 5))
+    test_db_session.add_all(
+        [r_target, r_reference, r_baseline, r_eflonly, r_fastrecent]
+    )
     test_db_session.flush()
 
     def _assessment(revision_id, reference_id, use_eflomal, end_time):
@@ -2122,14 +2135,22 @@ def runner_select_dataset(test_db_session):
         return a
 
     # Eflomal end_time is deliberately LATER than fastalign for the main pair,
-    # so a passing "default == fastalign" assertion proves the kwargs filter is
-    # doing the work, not just recency ordering.
+    # so for the omitted default (most recent regardless of runner) this pair
+    # resolves to eflomal. The fast_recent pair below inverts the ordering
+    # (fastalign latest) so a test can prove the default follows recency, not
+    # the runner. Explicit use_eflomal=true/false ignore recency and filter by
+    # kwargs, so those assertions hold for either ordering.
     main_fast = _assessment(r_target.id, r_reference.id, False, datetime(2024, 1, 1))
     main_efl = _assessment(r_target.id, r_reference.id, True, datetime(2024, 6, 1))
     base_fast = _assessment(r_baseline.id, r_reference.id, False, datetime(2024, 1, 1))
     base_efl = _assessment(r_baseline.id, r_reference.id, True, datetime(2024, 6, 1))
     eflonly = _assessment(r_eflonly.id, r_reference.id, True, datetime(2024, 1, 1))
-    test_db_session.add_all([main_fast, main_efl, base_fast, base_efl, eflonly])
+    # fast_recent pair: fastalign finished LATER than eflomal.
+    fr_fast = _assessment(r_fastrecent.id, r_reference.id, False, datetime(2024, 6, 1))
+    fr_efl = _assessment(r_fastrecent.id, r_reference.id, True, datetime(2024, 1, 1))
+    test_db_session.add_all(
+        [main_fast, main_efl, base_fast, base_efl, eflonly, fr_fast, fr_efl]
+    )
     test_db_session.flush()
 
     def _align(assessment_id, source, target, score):
@@ -2158,6 +2179,12 @@ def runner_select_dataset(test_db_session):
             _align(main_efl.id, "beta", "b_efl", 0.05),
             _align(main_efl.id, "shared", "s_efl", 0.9),
             _align(eflonly.id, "shared", "s_only", 0.9),
+            # fast_recent pair: the runner-specific low-score word identifies
+            # which assessment a /missingwords read resolved to.
+            _align(fr_fast.id, "gamma", "g_fast", 0.05),
+            _align(fr_fast.id, "shared", "s_fr_fast", 0.9),
+            _align(fr_efl.id, "delta", "d_efl", 0.05),
+            _align(fr_efl.id, "shared", "s_fr_efl", 0.9),
         ]
     )
 
@@ -2215,9 +2242,12 @@ def runner_select_dataset(test_db_session):
         reference_id=r_reference.id,
         baseline_revision_id=r_baseline.id,
         eflomal_only_revision_id=r_eflonly.id,
+        fast_recent_revision_id=r_fastrecent.id,
         main_fast_assessment_id=main_fast.id,
         main_eflomal_assessment_id=main_efl.id,
         eflomal_only_assessment_id=eflonly.id,
+        fast_recent_fast_assessment_id=fr_fast.id,
+        fast_recent_eflomal_assessment_id=fr_efl.id,
     )
 
 
@@ -2244,10 +2274,15 @@ def test_missingwords_use_eflomal_true_selects_eflomal(
     assert "alpha" not in sources
 
 
-def test_missingwords_default_is_eflomal(client, regular_token1, runner_select_dataset):
-    """Omitting use_eflomal returns eflomal (the default), not fastalign. The
-    eflomal-only word 'beta' is returned and the fastalign-only word 'alpha'
-    is not."""
+def test_missingwords_default_is_most_recent_eflomal(
+    client, regular_token1, runner_select_dataset
+):
+    """Omitting use_eflomal returns the most recent assessment regardless of
+    runner. For the main pair the eflomal assessment finished more recently
+    (2024-06-01) than fastalign (2024-01-01), so the default resolves to it:
+    the eflomal-only word 'beta' is returned and the fastalign-only word
+    'alpha' is not. See test_missingwords_default_is_most_recent_fastalign for
+    the inverse, which proves recency (not an eflomal filter) drives this."""
     response = client.get(
         "/v3/missingwords",
         params={
@@ -2260,6 +2295,40 @@ def test_missingwords_default_is_eflomal(client, regular_token1, runner_select_d
     sources = _missing_sources(response)
     assert "beta" in sources
     assert "alpha" not in sources
+
+
+def test_missingwords_default_is_most_recent_fastalign(
+    client, regular_token1, runner_select_dataset
+):
+    """The inverse of the eflomal case: for the fast_recent pair the fastalign
+    assessment finished more recently (2024-06-01) than eflomal (2024-01-01),
+    so omitting use_eflomal resolves to fastalign — the fastalign-only word
+    'gamma' is returned and the eflomal-only word 'delta' is not. This proves
+    the omitted default follows recency, not a runner filter. Explicit
+    use_eflomal=true still selects the older eflomal run ('delta')."""
+    base = {
+        "revision_id": runner_select_dataset.fast_recent_revision_id,
+        "reference_id": runner_select_dataset.reference_id,
+    }
+    default = client.get(
+        "/v3/missingwords",
+        params=base,
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert default.status_code == 200, default.text
+    default_sources = _missing_sources(default)
+    assert "gamma" in default_sources
+    assert "delta" not in default_sources
+
+    efl = client.get(
+        "/v3/missingwords",
+        params={**base, "use_eflomal": True},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert efl.status_code == 200, efl.text
+    efl_sources = _missing_sources(efl)
+    assert "delta" in efl_sources
+    assert "gamma" not in efl_sources
 
 
 def test_missingwords_use_eflomal_false_is_fastalign(
@@ -2347,10 +2416,11 @@ def test_alignmentmatches_use_eflomal_selects_assessment(client, runner_select_d
 
 def test_alignmentmatches_main_pair_picks_correct_runner(client, runner_select_dataset):
     """When both runners exist for a pair, /alignmentmatches' target field
-    differs by runner — fastalign returns s_fast, eflomal returns s_efl —
-    proving the runner clause (not recency) decides. The omitted default
-    resolves to eflomal (s_efl), and use_eflomal=false selects fastalign
-    (s_fast)."""
+    differs by runner — fastalign returns s_fast, eflomal returns s_efl. The
+    explicit use_eflomal=true/false assertions prove the runner clause selects
+    by kwargs regardless of recency. The omitted default resolves to the most
+    recent assessment, which for this pair is eflomal (s_efl, end_time
+    2024-06-01)."""
     params = {
         "revision_id": runner_select_dataset.revision_id,
         "reference_id": runner_select_dataset.reference_id,
@@ -2397,7 +2467,9 @@ def test_compareresults_baselines_do_not_mix_runners(
     assert efl_results[0]["score"] == pytest.approx(0.7, abs=1e-6)
     assert efl_results[0]["mean_score"] == pytest.approx(0.9, abs=1e-6)
 
-    # Omitting use_eflomal resolves to eflomal (the default), matching the
+    # Omitting use_eflomal takes the most recent assessment regardless of
+    # runner. For this pair the most recent main (end_time 2024-06-01) and the
+    # highest-id baseline are both eflomal, so the default matches the
     # explicit-true scores above.
     default = client.get(
         "/v3/compareresults",

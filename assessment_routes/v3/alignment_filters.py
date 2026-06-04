@@ -3,13 +3,22 @@
 Both fastalign and eflomal produce ``type="word-alignment"`` assessments; they
 are told apart only by the ``use_eflomal`` flag stored in ``Assessment.kwargs``
 (a JSONB column, see ``assessment_routes.py`` create logic). This module is the
-single source of truth for that distinction so the create-time dedup logic and
-the read endpoints stay in lock-step.
+single source of truth for that distinction.
+
+The clause is used in two contexts with intentionally different ``None``
+handling:
+
+- **Create / dedup** (``assessment_routes.py``) resolves the runner to a
+  concrete ``bool`` *before* calling this clause (eflomal is the create-time
+  default), so the create path never passes ``None`` here.
+- **Read endpoints** pass the request's ``use_eflomal`` straight through. There,
+  ``None`` means "no runner preference" — the caller's query already orders by
+  recency, so it picks the most recent assessment regardless of runner.
 """
 
 from typing import Optional
 
-from sqlalchemy import or_
+from sqlalchemy import or_, true
 
 from database.models import Assessment
 
@@ -21,17 +30,21 @@ _EFLOMAL_KWARG = {"use_eflomal": True}
 def eflomal_method_clause(use_eflomal: Optional[bool]):
     """Return a clause selecting word-alignment assessments by runner.
 
+    - ``use_eflomal is None`` -> no runner filter (matches both runners). The
+      calling query's existing recency ordering then selects the most recent
+      assessment regardless of method. This is the read-endpoint default.
+    - ``use_eflomal is True`` -> eflomal only
+      (``kwargs @> {"use_eflomal": true}``)
     - ``use_eflomal is False`` -> fastalign only
       (``kwargs IS NULL`` or kwargs not containing the flag)
-    - ``use_eflomal`` is ``True`` or ``None`` -> eflomal only
-      (``kwargs @> {"use_eflomal": true}``)
 
-    Eflomal is the default runner: the ``None`` default maps to eflomal so read
-    endpoints stay symmetric with the assessment-create endpoint, where
-    ``use_eflomal`` defaults to true for word-alignment. Callers opt out of
-    eflomal with ``use_eflomal=false``. AND this into a select that already
-    filters ``Assessment.type == "word-alignment"``.
+    The ``None`` branch only ever affects read endpoints: the create/dedup path
+    resolves ``None`` to a concrete ``bool`` before calling (eflomal stays the
+    create-time default), so it never relies on this no-op. AND this into a
+    select that already filters ``Assessment.type == "word-alignment"``.
     """
+    if use_eflomal is None:
+        return true()
     if use_eflomal is False:
         return or_(
             Assessment.kwargs.is_(None),

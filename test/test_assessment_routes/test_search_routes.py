@@ -2561,9 +2561,10 @@ def _setup_alignment_assessment(
     """Create a finished word-alignment assessment plus alignment rows.
 
     ``rows`` is a list of ``(vref, source, target, score)`` tuples. Returns
-    the assessment id. The assessment is stored as eflomal
-    (``kwargs={"use_eflomal": True}``) so the default runner selection (eflomal)
-    resolves to it; runner-specific tests use ``_setup_runner_assessment``.
+    the assessment id. As the only assessment for its pair it resolves under
+    the omitted default (most recent regardless of runner); it is stored as
+    eflomal (``kwargs={"use_eflomal": True}``) so explicit ``use_eflomal=true``
+    queries also match it. Runner-specific tests use ``_setup_runner_assessment``.
     """
     assessment = Assessment(
         revision_id=revision_id,
@@ -3241,9 +3242,67 @@ def test_search_include_alignments_use_eflomal_selects_runner(
         return {a["target"] for a in jhn["alignments"]}
 
     assert _alignment_targets(True) == {"efltarget"}
-    # The omitted default resolves to eflomal; only explicit-false selects
-    # fastalign. The kwargs filter, not recency, decides.
+    # No runner given -> source from the most recent assessment regardless of
+    # runner; eflomal finished later here, so the default returns its links.
+    # See test_search_include_alignments_default_takes_most_recent for the
+    # inverse, which proves recency (not an eflomal default) decides.
     assert _alignment_targets(None) == {"efltarget"}
+    assert _alignment_targets(False) == {"fasttarget"}
+
+
+def test_search_include_alignments_default_takes_most_recent(
+    client, regular_token1, test_db_session
+):
+    """With no use_eflomal given, include_alignments sources from the most
+    recent finished assessment regardless of runner. Here the fastalign
+    assessment finished more recently (2024-06-01) than the eflomal one
+    (2024-01-01), so the omitted default returns the fastalign links — the
+    inverse of test_search_include_alignments_use_eflomal_selects_runner,
+    proving recency (not an eflomal default) decides. Explicit use_eflomal=true
+    still selects the older eflomal assessment."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=True,
+        end_time=datetime(2024, 1, 1),
+        rows=[("JHN 3:16", "loved", "efltarget", 0.92)],
+    )
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=False,
+        end_time=datetime(2024, 6, 1),
+        rows=[("JHN 3:16", "loved", "fasttarget", 0.92)],
+    )
+
+    def _alignment_targets(use_eflomal):
+        params = {
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        }
+        if use_eflomal is not None:
+            params["use_eflomal"] = use_eflomal
+        response = client.get(
+            "/v3/textsearch",
+            params=params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        jhn = next(
+            r
+            for r in response.json()["results"]
+            if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+        )
+        return {a["target"] for a in jhn["alignments"]}
+
+    # Fastalign is the most recent, so the omitted default sources from it.
+    assert _alignment_targets(None) == {"fasttarget"}
+    assert _alignment_targets(True) == {"efltarget"}
     assert _alignment_targets(False) == {"fasttarget"}
 
 

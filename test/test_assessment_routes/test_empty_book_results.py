@@ -34,8 +34,9 @@ def setup_empty_book_assessment(db_session):
     reference = BibleRevision(id=9998, bible_version_id=9999)
     db_session.add(reference)
 
-    # Create an assessment with no results. Stored as eflomal so the default
-    # runner selection (now eflomal) resolves to it on the read endpoints.
+    # Create an assessment with no results. As the only assessment for its pair
+    # it resolves under the omitted default (most recent regardless of runner);
+    # stored as eflomal so explicit use_eflomal=true reads match it too.
     assessment = Assessment(
         id=9999,
         revision_id=9999,
