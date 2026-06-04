@@ -2244,9 +2244,7 @@ def test_missingwords_use_eflomal_true_selects_eflomal(
     assert "alpha" not in sources
 
 
-def test_missingwords_default_is_eflomal(
-    client, regular_token1, runner_select_dataset
-):
+def test_missingwords_default_is_eflomal(client, regular_token1, runner_select_dataset):
     """Omitting use_eflomal returns eflomal (the default), not fastalign. The
     eflomal-only word 'beta' is returned and the fastalign-only word 'alpha'
     is not."""
