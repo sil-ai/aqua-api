@@ -1798,8 +1798,9 @@ def test_use_eflomal_derives_version_ids(
 def test_non_eflomal_word_alignment_derives_version_ids(
     client, regular_token1, db_session, test_db_session
 ):
-    """Non-eflomal word-alignment must also forward derived source/target_version_id
-    to the runner — derivation now runs for every assessment type, not just eflomal."""
+    """Fastalign word-alignment (use_eflomal=false) must also forward derived
+    source/target_version_id to the runner — derivation now runs for every
+    assessment type, not just eflomal."""
     target_version_id = create_bible_version(client, regular_token1, db_session)
     source_version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, target_version_id)
@@ -1815,6 +1816,7 @@ def test_non_eflomal_word_alignment_derives_version_ids(
                 "revision_id": revision_id,
                 "reference_id": reference_id,
                 "type": "word-alignment",
+                "use_eflomal": False,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -1822,6 +1824,8 @@ def test_non_eflomal_word_alignment_derives_version_ids(
         kwargs = mock_runner.await_args.kwargs
         assert kwargs["source_version_id"] == source_version_id
         assert kwargs["target_version_id"] == target_version_id
+        # Fastalign stores no flag.
+        assert mock_runner.await_args.args[0].kwargs is None
 
 
 def test_agent_critique_derives_version_ids(
@@ -1983,18 +1987,22 @@ def test_non_eflomal_deleted_revision_returns_404(
 def test_use_eflomal_dedup_separate_from_regular(
     client, regular_token1, db_session, test_db_session
 ):
-    """Eflomal and regular word-alignment use separate in-progress dedup buckets."""
+    """Eflomal and fastalign word-alignment use separate in-progress dedup buckets."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
     reference_id = upload_revision(client, regular_token1, version_id)
 
+    # Eflomal is the default, so the fastalign bucket must opt out explicitly.
     base_params = {
         "revision_id": revision_id,
         "reference_id": reference_id,
         "type": "word-alignment",
+        "use_eflomal": False,
     }
     eflomal_params = {
-        **base_params,
+        "revision_id": revision_id,
+        "reference_id": reference_id,
+        "type": "word-alignment",
         "use_eflomal": True,
     }
 
@@ -2011,7 +2019,7 @@ def test_use_eflomal_dedup_separate_from_regular(
         )
         assert eflomal_resp.status_code == 200
 
-        # Regular word-alignment on the same revision pair must NOT be blocked by eflomal
+        # Fastalign word-alignment on the same revision pair must NOT be blocked by eflomal
         regular_resp = client.post(
             f"{prefix}/assessment",
             params=base_params,
@@ -2027,7 +2035,7 @@ def test_use_eflomal_dedup_separate_from_regular(
         )
         assert eflomal_dup.status_code == 409
 
-        # Second regular submission on same params must also be blocked
+        # Second fastalign submission on same params must also be blocked
         regular_dup = client.post(
             f"{prefix}/assessment",
             params=base_params,
@@ -2039,7 +2047,12 @@ def test_use_eflomal_dedup_separate_from_regular(
 def test_kwargs_returned_in_assessment_response(
     client, regular_token1, db_session, test_db_session
 ):
-    """AssessmentOut includes kwargs so callers can tell eflomal from regular word-alignment."""
+    """AssessmentOut includes kwargs so callers can tell eflomal from fastalign.
+
+    Eflomal is the default: an omitted ``use_eflomal`` stores
+    ``{"use_eflomal": true}``. Fastalign is selected with ``use_eflomal=false``
+    and stores no flag (kwargs is None).
+    """
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
     reference_id = upload_revision(client, regular_token1, version_id)
@@ -2049,14 +2062,13 @@ def test_kwargs_returned_in_assessment_response(
     ) as mock_runner:
         mock_runner.return_value = None
 
-        # Eflomal assessment — kwargs should contain use_eflomal: true
+        # Default word-alignment — eflomal — kwargs should contain use_eflomal: true
         eflomal_resp = client.post(
             f"{prefix}/assessment",
             params={
                 "revision_id": revision_id,
                 "reference_id": reference_id,
                 "type": "word-alignment",
-                "use_eflomal": True,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -2064,19 +2076,20 @@ def test_kwargs_returned_in_assessment_response(
         eflomal_data = eflomal_resp.json()[0]
         assert eflomal_data["kwargs"] == {"use_eflomal": True}
 
-        # Regular word-alignment — kwargs should be None
-        regular_resp = client.post(
+        # Explicit fastalign (use_eflomal=false) — kwargs should be None
+        fastalign_resp = client.post(
             f"{prefix}/assessment",
             params={
                 "revision_id": revision_id,
                 "reference_id": reference_id,
                 "type": "word-alignment",
+                "use_eflomal": False,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
-        assert regular_resp.status_code == 200
-        regular_data = regular_resp.json()[0]
-        assert regular_data["kwargs"] is None
+        assert fastalign_resp.status_code == 200
+        fastalign_data = fastalign_resp.json()[0]
+        assert fastalign_data["kwargs"] is None
 
 
 # -- Atomic duplicate-dispatch tests (#780) --
@@ -2251,8 +2264,9 @@ def test_add_assessment_calls_advisory_lock_with_correct_quadruple(
     assert rev == revision_id
     assert ref == reference_id
     assert atype == "word-alignment"
-    # No extra kwargs → canonicalizes to "null"
-    assert kw == "null"
+    # Eflomal is the default for word-alignment, so the folded
+    # {"use_eflomal": True} flag is part of the locked quadruple's kwargs.
+    assert kw == ar._canonicalize_kwargs({"use_eflomal": True})
 
 
 def test_advisory_lock_actually_blocks_concurrent_session_on_same_quadruple():
