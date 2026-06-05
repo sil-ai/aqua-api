@@ -32,7 +32,12 @@ from security_routes.admin_routes import router as admin_router
 from security_routes.auth_routes import router as security_router
 from train_routes.v3.train_routes import router as train_router_v3
 
-omit_previous_versions = os.getenv("OMIT_PREVIOUS_VERSIONS", False)
+
+def _omit_previous_versions() -> bool:
+    return os.getenv("OMIT_PREVIOUS_VERSIONS", "").lower() in ("1", "true", "yes")
+
+
+omit_previous_versions = _omit_previous_versions()
 
 if not omit_previous_versions:
     from assessment_routes.v1.assessment_routes import router as assessment_router_v1
@@ -90,8 +95,8 @@ def configure_routing(app):
 
     # !!!: send a deprecation notice but leave the v1 route for awhile
     # if v2 is introduced but change /latest and / to /v2/language_routes.router
-    omit_previous_versions = os.getenv("OMIT_PREVIOUS_VERSIONS", False)
-
+    # Reuse the module-level value so router registration stays consistent with
+    # the conditional v1/v2 imports above (which only run when this is False).
     if not omit_previous_versions:
         app.include_router(language_router_v1, prefix="/v1", tags=["Version 1"])
         app.include_router(revision_router_v1, prefix="/v1", tags=["Version 1"])
