@@ -1,6 +1,5 @@
 __version__ = "v1"
 
-import logging
 import os
 
 import fastapi
@@ -45,8 +44,6 @@ if not omit_previous_versions:
     from bible_routes.v2.verse_routes import router as verse_router_v2
     from bible_routes.v2.version_routes import router as version_router_v2
 
-logger = logging.getLogger(__name__)
-
 app = fastapi.FastAPI()
 
 
@@ -76,14 +73,25 @@ def my_schema():
     return app.openapi_schema
 
 
+# Origins that are always allowed regardless of ALLOWED_ORIGINS. These are the
+# known first-party frontends; operators can extend the list via the env var
+# (which is added on top, deduplicated) but cannot remove these without a code
+# change.
+DEFAULT_ALLOWED_ORIGINS = [
+    "https://aqua.multilingualai.com",
+    "https://aqua-staging.multilingualai.com",
+    "http://localhost:8000",
+]
+
+
 def _parse_allowed_origins(raw: str | None) -> list[str]:
     """Parse the ALLOWED_ORIGINS env var into a list of origins.
 
     The value is a comma-separated list of full origins (scheme + host + port).
-    Empty / unset means an empty allowlist, which blocks all cross-origin
-    requests — this is the safe default. Wildcards are not expanded; if the
-    operator wants to allow all origins they must explicitly set "*", in which
-    case credentials are disabled to keep that combination safe.
+    Empty / unset means no additional origins beyond DEFAULT_ALLOWED_ORIGINS.
+    Wildcards are not expanded; if the operator wants to allow all origins they
+    must explicitly set "*", in which case credentials are disabled to keep
+    that combination safe.
     """
     if not raw:
         return []
@@ -99,29 +107,29 @@ def configure(app):
 def configure_cors(app):
     """Restrict cross-origin requests to an explicit allowlist.
 
-    Origins are read from the ALLOWED_ORIGINS env var as a comma-separated
-    list. With no value set, no Access-Control-Allow-Origin header is emitted
-    for cross-origin requests, so browsers will refuse to expose responses to
-    foreign-origin scripts. If "*" appears in the list, credentials are
-    disabled regardless of what else is listed, because credentialed CORS
-    with any wildcard origin is unsafe (and browsers reject it).
+    The allowlist is the union of DEFAULT_ALLOWED_ORIGINS (baked into the
+    code so the known first-party frontends keep working without env-var
+    config) and any extra origins in the ALLOWED_ORIGINS env var
+    (comma-separated). If "*" appears anywhere, credentials are disabled,
+    because credentialed CORS with a wildcard origin is unsafe (and browsers
+    reject it).
     """
-    allowed_origins = _parse_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
-    has_wildcard = "*" in allowed_origins
+    env_origins = _parse_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
+    combined = list(DEFAULT_ALLOWED_ORIGINS) + env_origins
+    has_wildcard = "*" in combined
     if has_wildcard:
         # Collapse to a single "*" so we never emit a mixed allowlist that
         # would let credentialed CORS through for non-wildcard entries.
         allowed_origins = ["*"]
+    else:
+        # Deduplicate while preserving order (defaults first, then env extras).
+        seen = set()
+        allowed_origins = []
+        for origin in combined:
+            if origin not in seen:
+                seen.add(origin)
+                allowed_origins.append(origin)
     allow_credentials = not has_wildcard
-    if not allowed_origins:
-        logger.warning(
-            "ALLOWED_ORIGINS is unset or empty; no Access-Control-Allow-Origin "
-            "header will be emitted, so browsers will block JS access to "
-            "responses from foreign-origin scripts. Note: simple cross-origin "
-            "requests still reach the server — this is not a CSRF defense. "
-            "Set ALLOWED_ORIGINS to a comma-separated list of frontend origins "
-            "(e.g. https://aqua.sil.org) to enable CORS."
-        )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,

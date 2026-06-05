@@ -78,14 +78,49 @@ def test_disallowed_origin_does_not_get_cors_header():
     }
 
 
-def test_unset_env_blocks_all_origins():
+def test_unset_env_still_allows_default_origins():
+    """With no env var set, the baked-in DEFAULT_ALLOWED_ORIGINS still work."""
     test_app = _build_app(None)
     with TestClient(test_app) as client:
-        response = client.get("/cors-probe", headers={"Origin": "https://aqua.sil.org"})
+        for origin in app_module.DEFAULT_ALLOWED_ORIGINS:
+            response = client.get("/cors-probe", headers={"Origin": origin})
+            assert response.status_code == 200
+            assert response.headers.get("access-control-allow-origin") == origin
+            assert response.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_unset_env_blocks_non_default_origins():
+    test_app = _build_app(None)
+    with TestClient(test_app) as client:
+        response = client.get(
+            "/cors-probe", headers={"Origin": "https://evil.example.com"}
+        )
     assert response.status_code == 200
     assert "access-control-allow-origin" not in {
         k.lower() for k in response.headers.keys()
     }
+
+
+def test_env_origins_extend_defaults():
+    """Origins from the env var are added on top of DEFAULT_ALLOWED_ORIGINS."""
+    test_app = _build_app("https://extra.example.com")
+    with TestClient(test_app) as client:
+        # Env-provided origin works.
+        response = client.get(
+            "/cors-probe", headers={"Origin": "https://extra.example.com"}
+        )
+        assert (
+            response.headers.get("access-control-allow-origin")
+            == "https://extra.example.com"
+        )
+        # And the defaults are still honored.
+        response = client.get(
+            "/cors-probe", headers={"Origin": "https://aqua.multilingualai.com"}
+        )
+        assert (
+            response.headers.get("access-control-allow-origin")
+            == "https://aqua.multilingualai.com"
+        )
 
 
 def test_preflight_blocked_for_disallowed_origin():
