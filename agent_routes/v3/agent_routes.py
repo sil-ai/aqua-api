@@ -435,6 +435,11 @@ async def add_critique_issues(
         created_issues = []
 
         for issue_in in critique.issues:
+            evidence = (
+                [sanitize_text(item) for item in issue_in.evidence]
+                if issue_in.evidence is not None
+                else None
+            )
             issue = AgentCritiqueIssue(
                 assessment_id=assessment_id,
                 agent_translation_id=critique.agent_translation_id,
@@ -442,14 +447,14 @@ async def add_critique_issues(
                 book=book,
                 chapter=chapter,
                 verse=verse,
-                dimension=issue_in.dimension,
-                subtype=issue_in.subtype,
-                detector=issue_in.detector,
+                dimension=sanitize_text(issue_in.dimension),
+                subtype=sanitize_text(issue_in.subtype),
+                detector=sanitize_text(issue_in.detector),
                 source_text=sanitize_text(issue_in.source_text),
                 draft_text=sanitize_text(issue_in.draft_text),
                 comments=sanitize_text(issue_in.comments),
                 severity=issue_in.severity,
-                evidence=issue_in.evidence,
+                evidence=evidence,
             )
             db.add(issue)
             created_issues.append(issue)

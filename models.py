@@ -1034,7 +1034,7 @@ class CardTranslationOut(BaseModel):
 class IssueIn(BaseModel):
     """A single MQM-aligned critique issue."""
 
-    dimension: str = Field(min_length=1, max_length=50)
+    dimension: Literal["accuracy", "terminology", "linguistic_conventions"]
     subtype: str = Field(min_length=1, max_length=100)
     source_text: Optional[str] = None
     draft_text: Optional[str] = None
