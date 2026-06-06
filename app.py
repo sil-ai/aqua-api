@@ -4,6 +4,7 @@ import logging
 import os
 
 import fastapi
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -84,9 +85,70 @@ def my_schema():
     return app.openapi_schema
 
 
+# Origins that are always allowed regardless of ALLOWED_ORIGINS. These are the
+# known first-party frontends; operators can extend the list via the env var
+# (which is added on top, deduplicated) but cannot remove these without a code
+# change.
+DEFAULT_ALLOWED_ORIGINS = [
+    "https://aqua.multilingualai.com",
+    "https://aqua-staging.multilingualai.com",
+    "http://localhost:8000",
+]
+
+
+def _parse_allowed_origins(raw: str | None) -> list[str]:
+    """Parse the ALLOWED_ORIGINS env var into a list of origins.
+
+    The value is a comma-separated list of full origins (scheme + host + port).
+    Empty / unset means no additional origins beyond DEFAULT_ALLOWED_ORIGINS.
+    Wildcards are not expanded; if the operator wants to allow all origins they
+    must explicitly set "*", in which case credentials are disabled to keep
+    that combination safe.
+    """
+    if not raw:
+        return []
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 def configure(app):
     app.add_middleware(LoggingMiddleware)
+    configure_cors(app)
     configure_routing(app)
+
+
+def configure_cors(app):
+    """Restrict cross-origin requests to an explicit allowlist.
+
+    The allowlist is the union of DEFAULT_ALLOWED_ORIGINS (baked into the
+    code so the known first-party frontends keep working without env-var
+    config) and any extra origins in the ALLOWED_ORIGINS env var
+    (comma-separated). If "*" appears anywhere, credentials are disabled,
+    because credentialed CORS with a wildcard origin is unsafe (and browsers
+    reject it).
+    """
+    env_origins = _parse_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
+    combined = list(DEFAULT_ALLOWED_ORIGINS) + env_origins
+    has_wildcard = "*" in combined
+    if has_wildcard:
+        # Collapse to a single "*" so we never emit a mixed allowlist that
+        # would let credentialed CORS through for non-wildcard entries.
+        allowed_origins = ["*"]
+    else:
+        # Deduplicate while preserving order (defaults first, then env extras).
+        seen = set()
+        allowed_origins = []
+        for origin in combined:
+            if origin not in seen:
+                seen.add(origin)
+                allowed_origins.append(origin)
+    allow_credentials = not has_wildcard
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 
 def configure_routing(app):
