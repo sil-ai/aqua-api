@@ -773,16 +773,17 @@ class AgentCritiqueIssue(Base):
     chapter = Column(Integer, nullable=False)
     verse = Column(Integer, nullable=False)
 
-    # Issue classification
-    issue_type = Column(
-        String(15), nullable=False
-    )  # 'omission', 'addition', or 'replacement'
+    # MQM classification
+    dimension = Column(String(50), nullable=False)
+    subtype = Column(String(100), nullable=False)
+    detector = Column(String(50), nullable=True)
 
     # Issue details
-    source_text = Column(Text, nullable=True)  # The source text (omission/replacement)
-    draft_text = Column(Text, nullable=True)  # The draft text (addition/replacement)
-    comments = Column(Text, nullable=True)  # Explanation of why this is an issue
-    severity = Column(Integer, nullable=False)  # 0=none, 5=critical
+    source_text = Column(Text, nullable=True)
+    draft_text = Column(Text, nullable=True)
+    comments = Column(Text, nullable=True)
+    severity = Column(Integer, nullable=True)  # 1-5, nullable when model omits it
+    evidence = Column(JSONB, nullable=True)  # list[str]
 
     # Resolution tracking
     is_resolved = Column(Boolean, default=False, nullable=False)
@@ -809,23 +810,12 @@ class AgentCritiqueIssue(Base):
         Index("ix_agent_critique_issue_assessment", "assessment_id"),
         Index("ix_agent_critique_issue_vref", "vref"),
         Index("ix_agent_critique_issue_book_chapter_verse", "book", "chapter", "verse"),
-        Index("ix_agent_critique_issue_type", "issue_type"),
+        Index("ix_agent_critique_issue_dimension", "dimension"),
+        Index("ix_agent_critique_issue_subtype", "subtype"),
         Index("ix_agent_critique_issue_severity", "severity"),
         Index("ix_agent_critique_issue_resolved", "is_resolved"),
         Index("ix_agent_critique_issue_resolved_by", "resolved_by_id"),
         Index("ix_agent_critique_issue_translation", "agent_translation_id"),
-        # The both-NULL clause permits legacy rows that existed before this
-        # migration with no text fields set.  New rows always satisfy the
-        # type-specific requirements via Pydantic validation.
-        CheckConstraint(
-            """
-            (issue_type = 'omission'    AND source_text IS NOT NULL AND draft_text IS NULL) OR
-            (issue_type = 'addition'    AND source_text IS NULL     AND draft_text IS NOT NULL) OR
-            (issue_type = 'replacement' AND source_text IS NOT NULL AND draft_text IS NOT NULL) OR
-            (source_text IS NULL AND draft_text IS NULL)
-            """,
-            name="ck_critique_issue_text_fields",
-        ),
     )
 
 

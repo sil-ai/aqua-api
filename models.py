@@ -1031,73 +1031,45 @@ class CardTranslationOut(BaseModel):
     examples: List[CardTranslationExampleOut] = []
 
 
-class OmissionIssueIn(BaseModel):
-    """Omission critique issue: source text missing from the draft."""
+class IssueIn(BaseModel):
+    """A single MQM-aligned critique issue."""
 
-    source_text: str = Field(min_length=1)
+    dimension: str = Field(min_length=1)
+    subtype: str = Field(min_length=1)
+    source_text: Optional[str] = None
+    draft_text: Optional[str] = None
     comments: Optional[str] = None
-    severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
-
-    model_config = {"str_strip_whitespace": True}
-
-
-class AdditionIssueIn(BaseModel):
-    """Addition critique issue: draft text not present in the source."""
-
-    draft_text: str = Field(min_length=1)
-    comments: Optional[str] = None
-    severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
-
-    model_config = {"str_strip_whitespace": True}
-
-
-class ReplacementIssueIn(BaseModel):
-    """Replacement critique issue: source text incorrectly rendered as draft text."""
-
-    source_text: str = Field(min_length=1)
-    draft_text: str = Field(min_length=1)
-    comments: Optional[str] = None
-    severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
+    severity: Optional[int] = Field(default=None, ge=1, le=5)
+    detector: Optional[str] = None
+    evidence: Optional[List[str]] = None
 
     model_config = {"str_strip_whitespace": True}
 
 
 class CritiqueStorageRequest(BaseModel):
-    """Request to store critique results for a verse.
+    """Request to store MQM-aligned critique issues for a verse.
 
     The critique is linked to a specific agent translation by agent_translation_id.
     The assessment_id and vref are derived from the referenced translation.
     """
 
     agent_translation_id: int
-    omissions: list[OmissionIssueIn] = []
-    additions: list[AdditionIssueIn] = []
-    replacements: list[ReplacementIssueIn] = []
+    issues: list[IssueIn] = []
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "agent_translation_id": 1,
-                "omissions": [
+                "issues": [
                     {
-                        "source_text": "in the beginning",
-                        "comments": "Missing key phrase",
+                        "dimension": "accuracy",
+                        "subtype": "mistranslation/hallucination-numbers",
+                        "source_text": "forty days",
+                        "draft_text": "fourteen days",
+                        "comments": "Number mistranslated",
                         "severity": 4,
-                    }
-                ],
-                "additions": [
-                    {
-                        "draft_text": "extra words",
-                        "comments": "Not in source",
-                        "severity": 2,
-                    }
-                ],
-                "replacements": [
-                    {
-                        "source_text": "love",
-                        "draft_text": "like",
-                        "comments": "Incorrect translation",
-                        "severity": 3,
+                        "detector": "number_diff",
+                        "evidence": ["source: 40", "draft: 14"],
                     }
                 ],
             }
@@ -1115,11 +1087,14 @@ class CritiqueIssueOut(BaseModel):
     book: str
     chapter: int
     verse: int
-    issue_type: Literal["omission", "addition", "replacement"]
+    dimension: str
+    subtype: str
     source_text: Optional[str] = None
     draft_text: Optional[str] = None
     comments: Optional[str] = None
-    severity: int
+    severity: Optional[int] = None
+    detector: Optional[str] = None
+    evidence: Optional[List[str]] = None
     is_resolved: bool = False
     resolved_by_id: Optional[int] = None
     resolved_at: Optional[datetime.datetime] = None
@@ -1136,11 +1111,14 @@ class CritiqueIssueOut(BaseModel):
                 "book": "JHN",
                 "chapter": 1,
                 "verse": 1,
-                "issue_type": "omission",
-                "source_text": "in the beginning",
-                "draft_text": None,
-                "comments": "Missing key phrase from source text",
+                "dimension": "accuracy",
+                "subtype": "mistranslation/hallucination-numbers",
+                "source_text": "forty days",
+                "draft_text": "fourteen days",
+                "comments": "Number mistranslated",
                 "severity": 4,
+                "detector": "number_diff",
+                "evidence": ["source: 40", "draft: 14"],
                 "is_resolved": False,
                 "resolved_by_id": None,
                 "resolved_at": None,

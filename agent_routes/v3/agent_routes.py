@@ -378,13 +378,12 @@ async def add_critique_issues(
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Store critique issues (omissions, additions, and replacements) linked to a specific agent translation.
+    Store MQM-aligned critique issues linked to a specific agent translation.
 
     Input:
     - agent_translation_id: int - The ID of the translation being critiqued
-    - omissions: list[OmissionIssueIn] - source_text present in source but missing from draft
-    - additions: list[AdditionIssueIn] - draft_text present in draft but not in source
-    - replacements: list[ReplacementIssueIn] - source_text incorrectly rendered as draft_text
+    - issues: list[IssueIn] - MQM-aligned issues (dimension, subtype, optional
+      source_text/draft_text/comments/severity/detector/evidence)
 
     Returns:
     - List[CritiqueIssueOut]: List of all created critique issue entries
@@ -434,8 +433,7 @@ async def add_critique_issues(
 
         created_issues = []
 
-        # Create records for omissions
-        for omission in critique.omissions:
+        for issue_in in critique.issues:
             issue = AgentCritiqueIssue(
                 assessment_id=assessment_id,
                 agent_translation_id=critique.agent_translation_id,
@@ -443,45 +441,14 @@ async def add_critique_issues(
                 book=book,
                 chapter=chapter,
                 verse=verse,
-                issue_type="omission",
-                source_text=sanitize_text(omission.source_text),
-                comments=sanitize_text(omission.comments),
-                severity=omission.severity,
-            )
-            db.add(issue)
-            created_issues.append(issue)
-
-        # Create records for additions
-        for addition in critique.additions:
-            issue = AgentCritiqueIssue(
-                assessment_id=assessment_id,
-                agent_translation_id=critique.agent_translation_id,
-                vref=vref,
-                book=book,
-                chapter=chapter,
-                verse=verse,
-                issue_type="addition",
-                draft_text=sanitize_text(addition.draft_text),
-                comments=sanitize_text(addition.comments),
-                severity=addition.severity,
-            )
-            db.add(issue)
-            created_issues.append(issue)
-
-        # Create records for replacements
-        for replacement in critique.replacements:
-            issue = AgentCritiqueIssue(
-                assessment_id=assessment_id,
-                agent_translation_id=critique.agent_translation_id,
-                vref=vref,
-                book=book,
-                chapter=chapter,
-                verse=verse,
-                issue_type="replacement",
-                source_text=sanitize_text(replacement.source_text),
-                draft_text=sanitize_text(replacement.draft_text),
-                comments=sanitize_text(replacement.comments),
-                severity=replacement.severity,
+                dimension=issue_in.dimension,
+                subtype=issue_in.subtype,
+                detector=issue_in.detector,
+                source_text=sanitize_text(issue_in.source_text),
+                draft_text=sanitize_text(issue_in.draft_text),
+                comments=sanitize_text(issue_in.comments),
+                severity=issue_in.severity,
+                evidence=issue_in.evidence,
             )
             db.add(issue)
             created_issues.append(issue)
@@ -3319,7 +3286,8 @@ async def get_critique_issues(
     agent_translation_id: int = None,
     vref: str = None,
     book: str = None,
-    issue_type: str = None,
+    dimension: str = None,
+    subtype: str = None,
     min_severity: int = None,
     is_resolved: bool = None,
     db: AsyncSession = Depends(get_db),
@@ -3336,8 +3304,9 @@ async def get_critique_issues(
     - agent_translation_id: int (optional) - Filter by specific agent translation ID
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - book: str (optional) - Filter by book code (e.g., "JHN")
-    - issue_type: str (optional) - Filter by issue type ("omission" or "addition")
-    - min_severity: int (optional) - Minimum severity level (0-5)
+    - dimension: str (optional) - Filter by MQM dimension (e.g., "accuracy")
+    - subtype: str (optional) - Filter by MQM subtype (e.g., "wrong-key-term")
+    - min_severity: int (optional) - Minimum severity level (1-5)
     - is_resolved: bool (optional) - Filter by resolution status (true=resolved, false=unresolved)
 
     Returns:
@@ -3443,19 +3412,17 @@ async def get_critique_issues(
         if book:
             query = query.where(AgentCritiqueIssue.book == book)
 
-        if issue_type:
-            if issue_type not in ["omission", "addition", "replacement"]:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="issue_type must be 'omission', 'addition', or 'replacement'",
-                )
-            query = query.where(AgentCritiqueIssue.issue_type == issue_type)
+        if dimension:
+            query = query.where(AgentCritiqueIssue.dimension == dimension)
+
+        if subtype:
+            query = query.where(AgentCritiqueIssue.subtype == subtype)
 
         if min_severity is not None:
-            if min_severity < 0 or min_severity > 5:
+            if min_severity < 1 or min_severity > 5:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="min_severity must be between 0 and 5",
+                    detail="min_severity must be between 1 and 5",
                 )
             query = query.where(AgentCritiqueIssue.severity >= min_severity)
 
@@ -3485,7 +3452,8 @@ async def get_critique_issues(
                 "reference_id": reference_id,
                 "vref": vref,
                 "book": book,
-                "issue_type": issue_type,
+                "dimension": dimension,
+                "subtype": subtype,
                 "duration_s": duration,
             },
         )
