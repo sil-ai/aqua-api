@@ -5,6 +5,7 @@ import socket
 import time
 import unicodedata
 from collections import Counter
+from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
@@ -92,7 +93,7 @@ def _effective_source_version_expr(source_version_id: int, target_version_id: in
     return func.coalesce(pivot_version_subquery, source_version_id)
 
 
-def sanitize_text(text: str) -> str:
+def sanitize_text(text: Optional[str]) -> Optional[str]:
     """Sanitize text fields to remove control characters.
 
     LLM responses can contain literal newlines, tabs, or other control characters.
@@ -3306,7 +3307,8 @@ async def get_critique_issues(
     - book: str (optional) - Filter by book code (e.g., "JHN")
     - dimension: str (optional) - Filter by MQM dimension (e.g., "accuracy")
     - subtype: str (optional) - Filter by MQM subtype (e.g., "wrong-key-term")
-    - min_severity: int (optional) - Minimum severity level (1-5)
+    - min_severity: int (optional) - Minimum severity level (1-5). Issues with
+      severity=NULL are excluded by this filter (SQL three-valued logic).
     - is_resolved: bool (optional) - Filter by resolution status (true=resolved, false=unresolved)
 
     Returns:
@@ -3429,12 +3431,14 @@ async def get_critique_issues(
         if is_resolved is not None:
             query = query.where(AgentCritiqueIssue.is_resolved == is_resolved)
 
-        # Order by book, chapter, verse, and severity (descending)
+        # Order by book, chapter, verse, severity (desc, NULLs last so issues
+        # that omit severity sort to the bottom rather than to the top under
+        # PostgreSQL's default DESC-puts-NULLs-first behaviour).
         query = query.order_by(
             AgentCritiqueIssue.book,
             AgentCritiqueIssue.chapter,
             AgentCritiqueIssue.verse,
-            desc(AgentCritiqueIssue.severity),
+            desc(AgentCritiqueIssue.severity).nulls_last(),
         )
 
         # Execute query

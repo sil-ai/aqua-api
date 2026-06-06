@@ -5114,31 +5114,32 @@ def test_add_critique_issues_missing_fields(client, regular_token1):
 def test_add_critique_issues_invalid_severity(
     client, regular_token1, test_assessment_id
 ):
-    """Severity outside 1-5 is rejected."""
+    """Severity outside 1-5 is rejected (0 and 6 both fail; 1 and 5 succeed)."""
     translation_id = _create_translation(
         client, regular_token1, test_assessment_id, "JHN 1:1"
     )
 
-    critique_data = {
-        "agent_translation_id": translation_id,
-        "issues": [
-            {
-                "dimension": "accuracy",
-                "subtype": "omission",
-                "source_text": "test",
-                "comments": "test",
-                "severity": 10,
-            }
-        ],
-    }
+    def post(severity):
+        return client.post(
+            f"{prefix}/agent/critique",
+            json={
+                "agent_translation_id": translation_id,
+                "issues": [
+                    {
+                        "dimension": "accuracy",
+                        "subtype": "omission",
+                        "source_text": "test",
+                        "severity": severity,
+                    }
+                ],
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
 
-    response = client.post(
-        f"{prefix}/agent/critique",
-        json=critique_data,
-        headers={"Authorization": f"Bearer {regular_token1}"},
-    )
-
-    assert response.status_code == 422
+    assert post(0).status_code == 422
+    assert post(10).status_code == 422
+    assert post(1).status_code == 200
+    assert post(5).status_code == 200
 
 
 def test_add_critique_issues_missing_dimension_or_subtype(
@@ -5451,6 +5452,75 @@ def test_get_critique_issues_ordered(client, regular_token1, test_assessment_id)
     assert test_issues[1]["severity"] == 3
     assert test_issues[2]["chapter"] == 2
     assert test_issues[2]["verse"] == 1
+
+
+def test_get_critique_issues_null_severity_sorts_last(
+    client, regular_token1, test_assessment_id
+):
+    """Null severity must sort *after* numeric severities within a verse."""
+    t = _create_translation(client, regular_token1, test_assessment_id, "OBA 1:1")
+    _create_critique(
+        client,
+        regular_token1,
+        t,
+        issues=[
+            {
+                "dimension": "accuracy",
+                "subtype": "mistranslation",
+                "source_text": "no-sev-marker",
+                "draft_text": "x",
+                "severity": None,
+            },
+            _omission_issue("with-sev-marker", severity=2),
+        ],
+    )
+
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&book=OBA",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    oba = [
+        d
+        for d in response.json()
+        if d["source_text"] in {"no-sev-marker", "with-sev-marker"}
+    ]
+    assert len(oba) == 2
+    assert oba[0]["source_text"] == "with-sev-marker"
+    assert oba[1]["source_text"] == "no-sev-marker"
+
+
+def test_get_critique_issues_min_severity_excludes_null_severity(
+    client, regular_token1, test_assessment_id
+):
+    """min_severity uses `severity >= N` which excludes NULL rows in SQL."""
+    t = _create_translation(client, regular_token1, test_assessment_id, "NAM 1:1")
+    _create_critique(
+        client,
+        regular_token1,
+        t,
+        issues=[
+            {
+                "dimension": "accuracy",
+                "subtype": "mistranslation",
+                "source_text": "nam-null-sev",
+                "draft_text": "x",
+                "severity": None,
+            },
+            _omission_issue("nam-sev-3", severity=3),
+        ],
+    )
+
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&book=NAM&min_severity=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    nam = [
+        d for d in response.json() if d["source_text"] in {"nam-null-sev", "nam-sev-3"}
+    ]
+    assert {row["source_text"] for row in nam} == {"nam-sev-3"}
 
 
 def test_get_critique_issues_empty_results(client, regular_token1, test_assessment_id):

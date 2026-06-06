@@ -782,7 +782,7 @@ class AgentCritiqueIssue(Base):
     source_text = Column(Text, nullable=True)
     draft_text = Column(Text, nullable=True)
     comments = Column(Text, nullable=True)
-    severity = Column(Integer, nullable=True)  # 1-5, nullable when model omits it
+    severity = Column(Integer, nullable=True)  # 1..5, NULL when the agent omits it
     evidence = Column(JSONB, nullable=True)  # list[str]
 
     # Resolution tracking

@@ -1034,13 +1034,13 @@ class CardTranslationOut(BaseModel):
 class IssueIn(BaseModel):
     """A single MQM-aligned critique issue."""
 
-    dimension: str = Field(min_length=1)
-    subtype: str = Field(min_length=1)
+    dimension: str = Field(min_length=1, max_length=50)
+    subtype: str = Field(min_length=1, max_length=100)
     source_text: Optional[str] = None
     draft_text: Optional[str] = None
     comments: Optional[str] = None
     severity: Optional[int] = Field(default=None, ge=1, le=5)
-    detector: Optional[str] = None
+    detector: Optional[str] = Field(default=None, max_length=50)
     evidence: Optional[List[str]] = None
 
     model_config = {"str_strip_whitespace": True}

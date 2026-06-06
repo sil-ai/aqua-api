@@ -92,10 +92,19 @@ def downgrade() -> None:
     op.drop_column("agent_critique_issue", "subtype")
     op.drop_column("agent_critique_issue", "dimension")
 
+    # server_default lets the NOT NULL column be added safely even if a row
+    # were inserted between the DELETE above and this ADD COLUMN (defence in
+    # depth — the DELETE should have left the table empty).
     op.add_column(
         "agent_critique_issue",
-        sa.Column("issue_type", sa.String(length=15), nullable=False),
+        sa.Column(
+            "issue_type",
+            sa.String(length=15),
+            nullable=False,
+            server_default="omission",
+        ),
     )
+    op.alter_column("agent_critique_issue", "issue_type", server_default=None)
     op.create_index(
         "ix_agent_critique_issue_type", "agent_critique_issue", ["issue_type"]
     )
