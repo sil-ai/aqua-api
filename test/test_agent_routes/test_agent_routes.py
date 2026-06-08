@@ -4843,17 +4843,13 @@ def _create_translation(client, token, assessment_id, vref, draft_text="test"):
     return resp.json()["id"]
 
 
-def _create_critique(
-    client, token, translation_id, omissions=None, additions=None, replacements=None
-):
+def _create_critique(client, token, translation_id, issues=None):
     """Helper: create critique issues for a translation and return the response."""
     return client.post(
         f"{prefix}/agent/critique",
         json={
             "agent_translation_id": translation_id,
-            "omissions": omissions or [],
-            "additions": additions or [],
-            "replacements": replacements or [],
+            "issues": issues or [],
         },
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -4869,24 +4865,30 @@ def test_add_critique_issues_success(
 
     critique_data = {
         "agent_translation_id": translation_id,
-        "omissions": [
+        "issues": [
             {
+                "dimension": "accuracy",
+                "subtype": "omission",
                 "source_text": "in the beginning",
                 "comments": "Missing key phrase from source text",
                 "severity": 4,
+                "detector": "llm_accuracy",
+                "evidence": ["span: 'in the beginning'"],
             },
             {
+                "dimension": "accuracy",
+                "subtype": "omission",
                 "source_text": "was the Word",
                 "comments": "Critical theological term missing",
                 "severity": 5,
             },
-        ],
-        "additions": [
             {
+                "dimension": "accuracy",
+                "subtype": "addition",
                 "draft_text": "extra phrase",
                 "comments": "Not present in source",
                 "severity": 2,
-            }
+            },
         ],
     }
 
@@ -4896,37 +4898,38 @@ def test_add_critique_issues_success(
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     data = response.json()
 
-    # Should return 3 issues (2 omissions + 1 addition)
     assert len(data) == 3
 
-    # Check first omission
-    omission1 = next((d for d in data if d["source_text"] == "in the beginning"), None)
-    assert omission1 is not None
-    assert omission1["assessment_id"] == test_assessment_id
-    assert omission1["agent_translation_id"] == translation_id
-    assert omission1["vref"] == "JHN 1:1"
-    assert omission1["book"] == "JHN"
-    assert omission1["chapter"] == 1
-    assert omission1["verse"] == 1
-    assert omission1["issue_type"] == "omission"
-    assert omission1["comments"] == "Missing key phrase from source text"
-    assert omission1["severity"] == 4
-    assert omission1["id"] is not None
-    assert omission1["created_at"] is not None
-    assert omission1["draft_text"] is None
+    first = next((d for d in data if d["source_text"] == "in the beginning"), None)
+    assert first is not None
+    assert first["assessment_id"] == test_assessment_id
+    assert first["agent_translation_id"] == translation_id
+    assert first["vref"] == "JHN 1:1"
+    assert first["book"] == "JHN"
+    assert first["chapter"] == 1
+    assert first["verse"] == 1
+    assert first["dimension"] == "accuracy"
+    assert first["subtype"] == "omission"
+    assert first["detector"] == "llm_accuracy"
+    assert first["evidence"] == ["span: 'in the beginning'"]
+    assert first["comments"] == "Missing key phrase from source text"
+    assert first["severity"] == 4
+    assert first["id"] is not None
+    assert first["created_at"] is not None
+    assert first["draft_text"] is None
 
-    # Check second omission
-    omission2 = next((d for d in data if d["source_text"] == "was the Word"), None)
-    assert omission2 is not None
-    assert omission2["severity"] == 5
+    second = next((d for d in data if d["source_text"] == "was the Word"), None)
+    assert second is not None
+    assert second["severity"] == 5
+    assert second["detector"] is None
+    assert second["evidence"] is None
 
-    # Check addition
     addition = next((d for d in data if d["draft_text"] == "extra phrase"), None)
     assert addition is not None
-    assert addition["issue_type"] == "addition"
+    assert addition["subtype"] == "addition"
     assert addition["severity"] == 2
     assert addition["source_text"] is None
 
@@ -4943,7 +4946,7 @@ def test_add_critique_issues_success(
 
 
 def test_add_critique_issues_empty_lists(client, regular_token1, test_assessment_id):
-    """Test adding critique with empty omissions and additions lists."""
+    """Test adding critique with an empty issues list."""
     translation_id = _create_translation(
         client, regular_token1, test_assessment_id, "JHN 1:2"
     )
@@ -4955,8 +4958,8 @@ def test_add_critique_issues_empty_lists(client, regular_token1, test_assessment
     assert len(data) == 0  # No issues created
 
 
-def test_add_critique_issues_only_omissions(client, regular_token1, test_assessment_id):
-    """Test adding critique with only omissions."""
+def test_add_critique_issues_terminology(client, regular_token1, test_assessment_id):
+    """Cross-verse terminology issue: evidence carries the related verse refs."""
     translation_id = _create_translation(
         client, regular_token1, test_assessment_id, "GEN 1:1"
     )
@@ -4965,20 +4968,32 @@ def test_add_critique_issues_only_omissions(client, regular_token1, test_assessm
         client,
         regular_token1,
         translation_id,
-        omissions=[
-            {"source_text": "God", "comments": "Missing subject", "severity": 5}
+        issues=[
+            {
+                "dimension": "terminology",
+                "subtype": "wrong-key-term",
+                "draft_text": "Lord",
+                "comments": "Should be 'God' to match cross-verse rendering",
+                "severity": 3,
+                "detector": "key_term_lookup",
+                "evidence": ["GEN 1:3", "GEN 1:26"],
+            }
         ],
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     data = response.json()
     assert len(data) == 1
-    assert data[0]["issue_type"] == "omission"
+    assert data[0]["dimension"] == "terminology"
+    assert data[0]["subtype"] == "wrong-key-term"
+    assert data[0]["evidence"] == ["GEN 1:3", "GEN 1:26"]
     assert data[0]["book"] == "GEN"
 
 
-def test_add_critique_issues_only_additions(client, regular_token1, test_assessment_id):
-    """Test adding critique with only additions."""
+def test_add_critique_issues_linguistic_conventions(
+    client, regular_token1, test_assessment_id
+):
+    """Punctuation issue: no source_text/draft_text spans."""
     translation_id = _create_translation(
         client, regular_token1, test_assessment_id, "MAT 5:3"
     )
@@ -4987,18 +5002,55 @@ def test_add_critique_issues_only_additions(client, regular_token1, test_assessm
         client,
         regular_token1,
         translation_id,
-        additions=[
-            {"draft_text": "blessed are", "comments": "Redundant phrase", "severity": 1}
+        issues=[
+            {
+                "dimension": "linguistic_conventions",
+                "subtype": "punctuation",
+                "comments": "Missing terminal period",
+                "severity": 1,
+            }
         ],
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     data = response.json()
     assert len(data) == 1
-    assert data[0]["issue_type"] == "addition"
+    assert data[0]["dimension"] == "linguistic_conventions"
+    assert data[0]["subtype"] == "punctuation"
+    assert data[0]["source_text"] is None
+    assert data[0]["draft_text"] is None
     assert data[0]["book"] == "MAT"
     assert data[0]["chapter"] == 5
     assert data[0]["verse"] == 3
+
+
+def test_add_critique_issues_severity_omitted(
+    client, regular_token1, test_assessment_id
+):
+    """Severity is nullable: passing None must be preserved, not coerced."""
+    translation_id = _create_translation(
+        client, regular_token1, test_assessment_id, "MAT 1:1"
+    )
+
+    response = _create_critique(
+        client,
+        regular_token1,
+        translation_id,
+        issues=[
+            {
+                "dimension": "accuracy",
+                "subtype": "mistranslation",
+                "source_text": "abc",
+                "draft_text": "xyz",
+                "severity": None,
+            }
+        ],
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["severity"] is None
 
 
 def test_add_critique_issues_nonexistent_translation(
@@ -5009,7 +5061,15 @@ def test_add_critique_issues_nonexistent_translation(
         client,
         regular_token1,
         999999,
-        omissions=[{"source_text": "test", "comments": "test", "severity": 1}],
+        issues=[
+            {
+                "dimension": "accuracy",
+                "subtype": "omission",
+                "source_text": "test",
+                "comments": "test",
+                "severity": 1,
+            }
+        ],
     )
 
     assert response.status_code == 404
@@ -5024,8 +5084,7 @@ def test_add_critique_issues_unauthorized(client, test_assessment_id, regular_to
 
     critique_data = {
         "agent_translation_id": translation_id,
-        "omissions": [],
-        "additions": [],
+        "issues": [],
     }
 
     response = client.post(
@@ -5039,7 +5098,7 @@ def test_add_critique_issues_unauthorized(client, test_assessment_id, regular_to
 def test_add_critique_issues_missing_fields(client, regular_token1):
     """Test that missing required fields are rejected."""
     critique_data = {
-        "omissions": [],
+        "issues": [],
         # Missing agent_translation_id
     }
 
@@ -5055,29 +5114,56 @@ def test_add_critique_issues_missing_fields(client, regular_token1):
 def test_add_critique_issues_invalid_severity(
     client, regular_token1, test_assessment_id
 ):
-    """Test that invalid severity values are rejected."""
+    """Severity outside 1-5 is rejected (0 and 6 both fail; 1 and 5 succeed)."""
     translation_id = _create_translation(
         client, regular_token1, test_assessment_id, "JHN 1:1"
     )
 
-    critique_data = {
-        "agent_translation_id": translation_id,
-        "omissions": [
-            {
-                "source_text": "test",
-                "comments": "test",
-                "severity": 10,  # Invalid (should be 0-5)
-            }
-        ],
-        "additions": [],
-    }
+    def post(severity):
+        return client.post(
+            f"{prefix}/agent/critique",
+            json={
+                "agent_translation_id": translation_id,
+                "issues": [
+                    {
+                        "dimension": "accuracy",
+                        "subtype": "omission",
+                        "source_text": "test",
+                        "severity": severity,
+                    }
+                ],
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
 
-    response = client.post(
-        f"{prefix}/agent/critique",
-        json=critique_data,
-        headers={"Authorization": f"Bearer {regular_token1}"},
+    assert post(0).status_code == 422
+    assert post(10).status_code == 422
+    assert post(1).status_code == 200
+    assert post(5).status_code == 200
+
+
+def test_add_critique_issues_missing_dimension_or_subtype(
+    client, regular_token1, test_assessment_id
+):
+    """dimension and subtype are required."""
+    translation_id = _create_translation(
+        client, regular_token1, test_assessment_id, "JHN 1:1"
     )
 
+    response = _create_critique(
+        client,
+        regular_token1,
+        translation_id,
+        issues=[{"subtype": "omission", "severity": 1}],
+    )
+    assert response.status_code == 422
+
+    response = _create_critique(
+        client,
+        regular_token1,
+        translation_id,
+        issues=[{"dimension": "accuracy", "severity": 1}],
+    )
     assert response.status_code == 422
 
 
@@ -5093,7 +5179,15 @@ def test_add_critique_issues_nullable_comments(
         client,
         regular_token1,
         translation_id,
-        omissions=[{"source_text": "test phrase", "comments": None, "severity": 3}],
+        issues=[
+            {
+                "dimension": "accuracy",
+                "subtype": "omission",
+                "source_text": "test phrase",
+                "comments": None,
+                "severity": 3,
+            }
+        ],
     )
 
     assert response.status_code == 200
@@ -5104,23 +5198,49 @@ def test_add_critique_issues_nullable_comments(
     assert data[0]["severity"] == 3
 
 
+def _omission_issue(source_text, severity=3, comments="missing"):
+    return {
+        "dimension": "accuracy",
+        "subtype": "omission",
+        "source_text": source_text,
+        "comments": comments,
+        "severity": severity,
+    }
+
+
+def _addition_issue(draft_text, severity=2, comments="added"):
+    return {
+        "dimension": "accuracy",
+        "subtype": "addition",
+        "draft_text": draft_text,
+        "comments": comments,
+        "severity": severity,
+    }
+
+
+def _mistranslation_issue(
+    source_text, draft_text, severity=4, comments="mistranslated"
+):
+    return {
+        "dimension": "accuracy",
+        "subtype": "mistranslation",
+        "source_text": source_text,
+        "draft_text": draft_text,
+        "comments": comments,
+        "severity": severity,
+    }
+
+
 def test_get_critique_issues_by_assessment(client, regular_token1, test_assessment_id):
     """Test getting all critique issues for an assessment."""
-    # Add some test data
     t1 = _create_translation(client, regular_token1, test_assessment_id, "JHN 1:1")
     _create_critique(
-        client,
-        regular_token1,
-        t1,
-        omissions=[{"source_text": "word", "comments": "missing", "severity": 4}],
+        client, regular_token1, t1, issues=[_omission_issue("word", severity=4)]
     )
 
     t2 = _create_translation(client, regular_token1, test_assessment_id, "JHN 1:2")
     _create_critique(
-        client,
-        regular_token1,
-        t2,
-        omissions=[{"source_text": "light", "comments": "missing", "severity": 3}],
+        client, regular_token1, t2, issues=[_omission_issue("light", severity=3)]
     )
 
     # Get all issues for assessment
@@ -5139,21 +5259,14 @@ def test_get_critique_issues_by_vref(client, regular_token1, test_assessment_id)
     """Test filtering critique issues by specific vref."""
     t1 = _create_translation(client, regular_token1, test_assessment_id, "JHN 3:16")
     _create_critique(
-        client,
-        regular_token1,
-        t1,
-        omissions=[{"source_text": "world", "comments": "missing", "severity": 5}],
+        client, regular_token1, t1, issues=[_omission_issue("world", severity=5)]
     )
 
     t2 = _create_translation(client, regular_token1, test_assessment_id, "JHN 3:17")
     _create_critique(
-        client,
-        regular_token1,
-        t2,
-        omissions=[{"source_text": "condemn", "comments": "missing", "severity": 4}],
+        client, regular_token1, t2, issues=[_omission_issue("condemn", severity=4)]
     )
 
-    # Filter by specific vref
     response = client.get(
         f"{prefix}/agent/critique?assessment_id={test_assessment_id}&vref=JHN 3:16",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -5169,21 +5282,14 @@ def test_get_critique_issues_by_book(client, regular_token1, test_assessment_id)
     """Test filtering critique issues by book."""
     t1 = _create_translation(client, regular_token1, test_assessment_id, "ROM 1:1")
     _create_critique(
-        client,
-        regular_token1,
-        t1,
-        omissions=[{"source_text": "Paul", "comments": "missing", "severity": 3}],
+        client, regular_token1, t1, issues=[_omission_issue("Paul", severity=3)]
     )
 
     t2 = _create_translation(client, regular_token1, test_assessment_id, "ROM 1:2")
     _create_critique(
-        client,
-        regular_token1,
-        t2,
-        omissions=[{"source_text": "gospel", "comments": "missing", "severity": 4}],
+        client, regular_token1, t2, issues=[_omission_issue("gospel", severity=4)]
     )
 
-    # Filter by book
     response = client.get(
         f"{prefix}/agent/critique?assessment_id={test_assessment_id}&book=ROM",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -5195,38 +5301,57 @@ def test_get_critique_issues_by_book(client, regular_token1, test_assessment_id)
     assert all(issue["book"] == "ROM" for issue in data)
 
 
-def test_get_critique_issues_by_issue_type(client, regular_token1, test_assessment_id):
-    """Test filtering critique issues by issue type."""
+def test_get_critique_issues_by_dimension(client, regular_token1, test_assessment_id):
+    """Filter by MQM dimension."""
     t1 = _create_translation(client, regular_token1, test_assessment_id, "EPH 1:1")
     _create_critique(
         client,
         regular_token1,
         t1,
-        omissions=[{"source_text": "grace", "comments": "missing", "severity": 3}],
-        additions=[{"draft_text": "extra", "comments": "added", "severity": 2}],
+        issues=[
+            _omission_issue("grace", severity=3),
+            {
+                "dimension": "terminology",
+                "subtype": "wrong-key-term",
+                "draft_text": "Lord",
+                "severity": 2,
+            },
+        ],
     )
 
-    # Filter by omissions only
     response = client.get(
-        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&issue_type=omission",
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&dimension=terminology",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
-
     assert response.status_code == 200
     data = response.json()
-    omissions = [d for d in data if d["vref"] == "EPH 1:1"]
-    assert all(issue["issue_type"] == "omission" for issue in omissions)
+    eph_issues = [d for d in data if d["vref"] == "EPH 1:1"]
+    assert eph_issues
+    assert all(issue["dimension"] == "terminology" for issue in eph_issues)
 
-    # Filter by additions only
-    response = client.get(
-        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&issue_type=addition",
-        headers={"Authorization": f"Bearer {regular_token1}"},
+
+def test_get_critique_issues_by_subtype(client, regular_token1, test_assessment_id):
+    """Filter by MQM subtype."""
+    t1 = _create_translation(client, regular_token1, test_assessment_id, "EPH 2:1")
+    _create_critique(
+        client,
+        regular_token1,
+        t1,
+        issues=[
+            _omission_issue("grace", severity=3),
+            _addition_issue("extra", severity=2),
+        ],
     )
 
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&subtype=omission",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
     assert response.status_code == 200
     data = response.json()
-    additions = [d for d in data if d["vref"] == "EPH 1:1"]
-    assert all(issue["issue_type"] == "addition" for issue in additions)
+    eph_issues = [d for d in data if d["vref"] == "EPH 2:1"]
+    assert eph_issues
+    assert all(issue["subtype"] == "omission" for issue in eph_issues)
 
 
 def test_get_critique_issues_by_min_severity(
@@ -5238,13 +5363,12 @@ def test_get_critique_issues_by_min_severity(
         client,
         regular_token1,
         t1,
-        omissions=[
-            {"source_text": "low", "comments": "low severity", "severity": 1},
-            {"source_text": "high", "comments": "high severity", "severity": 5},
+        issues=[
+            _omission_issue("low", severity=1),
+            _omission_issue("high", severity=5),
         ],
     )
 
-    # Filter by min_severity=4
     response = client.get(
         f"{prefix}/agent/critique?assessment_id={test_assessment_id}&min_severity=4",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -5261,24 +5385,21 @@ def test_get_critique_issues_by_min_severity(
 def test_get_critique_issues_combined_filters(
     client, regular_token1, test_assessment_id
 ):
-    """Test combining multiple filters."""
+    """Combine book, subtype and min_severity filters."""
     t1 = _create_translation(client, regular_token1, test_assessment_id, "COL 1:1")
     _create_critique(
         client,
         regular_token1,
         t1,
-        omissions=[
-            {"source_text": "match", "comments": "should match", "severity": 5},
-            {"source_text": "nomatch", "comments": "wrong severity", "severity": 2},
-        ],
-        additions=[
-            {"draft_text": "wrong_type", "comments": "wrong type", "severity": 5},
+        issues=[
+            _omission_issue("match", severity=5),
+            _omission_issue("nomatch", severity=2),
+            _addition_issue("wrong_type", severity=5),
         ],
     )
 
-    # Filter by book, issue_type, and min_severity
     response = client.get(
-        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&book=COL&issue_type=omission&min_severity=4",
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&book=COL&subtype=omission&min_severity=4",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -5286,7 +5407,7 @@ def test_get_critique_issues_combined_filters(
     data = response.json()
     col_issues = [d for d in data if d["vref"] == "COL 1:1"]
     assert all(issue["book"] == "COL" for issue in col_issues)
-    assert all(issue["issue_type"] == "omission" for issue in col_issues)
+    assert all(issue["subtype"] == "omission" for issue in col_issues)
     assert all(issue["severity"] >= 4 for issue in col_issues)
     assert any(issue["source_text"] == "match" for issue in col_issues)
     assert not any(issue["source_text"] == "nomatch" for issue in col_issues)
@@ -5297,26 +5418,17 @@ def test_get_critique_issues_ordered(client, regular_token1, test_assessment_id)
     """Test that results are ordered by book, chapter, verse, severity."""
     t1 = _create_translation(client, regular_token1, test_assessment_id, "JHN 2:1")
     _create_critique(
-        client,
-        regular_token1,
-        t1,
-        omissions=[{"source_text": "low", "comments": "test", "severity": 1}],
+        client, regular_token1, t1, issues=[_omission_issue("low", severity=1)]
     )
 
     t2 = _create_translation(client, regular_token1, test_assessment_id, "JHN 1:3")
     _create_critique(
-        client,
-        regular_token1,
-        t2,
-        omissions=[{"source_text": "high", "comments": "test", "severity": 5}],
+        client, regular_token1, t2, issues=[_omission_issue("high", severity=5)]
     )
 
     t3 = _create_translation(client, regular_token1, test_assessment_id, "JHN 1:3")
     _create_critique(
-        client,
-        regular_token1,
-        t3,
-        omissions=[{"source_text": "med", "comments": "test", "severity": 3}],
+        client, regular_token1, t3, issues=[_omission_issue("med", severity=3)]
     )
 
     response = client.get(
@@ -5342,6 +5454,75 @@ def test_get_critique_issues_ordered(client, regular_token1, test_assessment_id)
     assert test_issues[2]["verse"] == 1
 
 
+def test_get_critique_issues_null_severity_sorts_last(
+    client, regular_token1, test_assessment_id
+):
+    """Null severity must sort *after* numeric severities within a verse."""
+    t = _create_translation(client, regular_token1, test_assessment_id, "OBA 1:1")
+    _create_critique(
+        client,
+        regular_token1,
+        t,
+        issues=[
+            {
+                "dimension": "accuracy",
+                "subtype": "mistranslation",
+                "source_text": "no-sev-marker",
+                "draft_text": "x",
+                "severity": None,
+            },
+            _omission_issue("with-sev-marker", severity=2),
+        ],
+    )
+
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&book=OBA",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+
+    assert response.status_code == 200
+    oba = [
+        d
+        for d in response.json()
+        if d["source_text"] in {"no-sev-marker", "with-sev-marker"}
+    ]
+    assert len(oba) == 2
+    assert oba[0]["source_text"] == "with-sev-marker"
+    assert oba[1]["source_text"] == "no-sev-marker"
+
+
+def test_get_critique_issues_min_severity_excludes_null_severity(
+    client, regular_token1, test_assessment_id
+):
+    """min_severity uses `severity >= N` which excludes NULL rows in SQL."""
+    t = _create_translation(client, regular_token1, test_assessment_id, "NAM 1:1")
+    _create_critique(
+        client,
+        regular_token1,
+        t,
+        issues=[
+            {
+                "dimension": "accuracy",
+                "subtype": "mistranslation",
+                "source_text": "nam-null-sev",
+                "draft_text": "x",
+                "severity": None,
+            },
+            _omission_issue("nam-sev-3", severity=3),
+        ],
+    )
+
+    response = client.get(
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&book=NAM&min_severity=1",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200
+    nam = [
+        d for d in response.json() if d["source_text"] in {"nam-null-sev", "nam-sev-3"}
+    ]
+    assert {row["source_text"] for row in nam} == {"nam-sev-3"}
+
+
 def test_get_critique_issues_empty_results(client, regular_token1, test_assessment_id):
     """Test getting critique issues with no matching results."""
     response = client.get(
@@ -5356,17 +5537,17 @@ def test_get_critique_issues_empty_results(client, regular_token1, test_assessme
     assert len(rev_issues) == 0
 
 
-def test_get_critique_issues_invalid_issue_type(
+def test_get_critique_issues_unknown_dimension_returns_empty(
     client, regular_token1, test_assessment_id
 ):
-    """Test that invalid issue_type is rejected."""
+    """Unknown dimension is accepted (no enum validation) and yields no rows."""
     response = client.get(
-        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&issue_type=invalid",
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&dimension=bogus",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
-    assert response.status_code == 400
-    assert "issue_type must be" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_get_critique_issues_invalid_severity(
@@ -5379,7 +5560,7 @@ def test_get_critique_issues_invalid_severity(
     )
 
     assert response.status_code == 400
-    assert "min_severity must be between 0 and 5" in response.json()["detail"]
+    assert "min_severity must be between 1 and 5" in response.json()["detail"]
 
 
 def test_get_critique_issues_missing_assessment_id(client, regular_token1):
@@ -5422,10 +5603,9 @@ def test_get_critique_issues_by_revision_reference_ids(
         client,
         regular_token1,
         t1,
-        omissions=[{"source_text": "test", "comments": "test comment", "severity": 3}],
+        issues=[_omission_issue("revref-marker-text", severity=3)],
     )
 
-    # Get using revision_id and reference_id
     response = client.get(
         f"{prefix}/agent/critique?revision_id={test_revision_id}&reference_id={test_revision_id_2}",
         headers={"Authorization": f"Bearer {regular_token1}"},
@@ -5434,10 +5614,12 @@ def test_get_critique_issues_by_revision_reference_ids(
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
-    # Filter to our test data
-    test_issues = [d for d in data if d["vref"] == "MAT 1:1"]
-    assert len(test_issues) > 0
-    assert test_issues[0]["issue_type"] == "omission"
+    marker = next(
+        (d for d in data if d.get("source_text") == "revref-marker-text"), None
+    )
+    assert marker is not None
+    assert marker["vref"] == "MAT 1:1"
+    assert marker["subtype"] == "omission"
 
 
 def test_get_critique_issues_missing_both_id_types(client, regular_token1):
@@ -5525,9 +5707,7 @@ def test_get_critique_issues_all_assessments_true(
         client,
         regular_token1,
         t1,
-        omissions=[
-            {"source_text": "first assessment", "comments": "test 1", "severity": 3}
-        ],
+        issues=[_omission_issue("first assessment", severity=3, comments="test 1")],
     )
 
     t2 = _create_translation(client, regular_token1, assessment2.id, "PHM 1:2")
@@ -5535,9 +5715,7 @@ def test_get_critique_issues_all_assessments_true(
         client,
         regular_token1,
         t2,
-        omissions=[
-            {"source_text": "second assessment", "comments": "test 2", "severity": 4}
-        ],
+        issues=[_omission_issue("second assessment", severity=4, comments="test 2")],
     )
 
     # Get using revision_id and reference_id with all_assessments=True (default)
@@ -5604,9 +5782,7 @@ def test_get_critique_issues_all_assessments_false(
         client,
         regular_token1,
         t1,
-        omissions=[
-            {"source_text": "older assessment", "comments": "old test", "severity": 2}
-        ],
+        issues=[_omission_issue("older assessment", severity=2, comments="old test")],
     )
 
     t2 = _create_translation(client, regular_token1, newer_assessment.id, "TIT 1:2")
@@ -5614,9 +5790,7 @@ def test_get_critique_issues_all_assessments_false(
         client,
         regular_token1,
         t2,
-        omissions=[
-            {"source_text": "newer assessment", "comments": "new test", "severity": 5}
-        ],
+        issues=[_omission_issue("newer assessment", severity=5, comments="new test")],
     )
 
     # Get using revision_id and reference_id with all_assessments=False
@@ -5679,7 +5853,7 @@ def test_get_critique_issues_all_assessments_explicit_true(
         client,
         regular_token1,
         t1,
-        omissions=[{"source_text": "assessment one", "comments": "a1", "severity": 1}],
+        issues=[_omission_issue("assessment one", severity=1, comments="a1")],
     )
 
     t2 = _create_translation(client, regular_token1, assessment2.id, "JUD 1:2")
@@ -5687,7 +5861,7 @@ def test_get_critique_issues_all_assessments_explicit_true(
         client,
         regular_token1,
         t2,
-        omissions=[{"source_text": "assessment two", "comments": "a2", "severity": 2}],
+        issues=[_omission_issue("assessment two", severity=2, comments="a2")],
     )
 
     # Explicitly set all_assessments=True
@@ -5719,13 +5893,13 @@ def test_get_critique_issues_filter_by_translation_id(
         client,
         regular_token1,
         t1,
-        omissions=[{"source_text": "t1 issue", "comments": "from t1", "severity": 3}],
+        issues=[_omission_issue("t1 issue", severity=3, comments="from t1")],
     )
     _create_critique(
         client,
         regular_token1,
         t2,
-        omissions=[{"source_text": "t2 issue", "comments": "from t2", "severity": 4}],
+        issues=[_omission_issue("t2 issue", severity=4, comments="from t2")],
     )
 
     # Filter by first translation
@@ -5751,7 +5925,7 @@ def test_critique_response_includes_translation_id(
         client,
         regular_token1,
         t1,
-        omissions=[{"source_text": "check field", "comments": "verify", "severity": 2}],
+        issues=[_omission_issue("check field", severity=2, comments="verify")],
     )
 
     assert response.status_code == 200
@@ -5760,11 +5934,11 @@ def test_critique_response_includes_translation_id(
     assert data[0]["agent_translation_id"] == t1
 
 
-# ── replacement issue tests ──────────────────────────────────────────
+# ── mistranslation / multi-issue / unconstrained-field tests ─────────
 
 
-def test_add_replacement_issues(client, regular_token1, test_assessment_id):
-    """Test creating replacement issues with both source_text and draft_text."""
+def test_add_mistranslation_issue(client, regular_token1, test_assessment_id):
+    """Mistranslation: both source_text and draft_text populated."""
     translation_id = _create_translation(
         client, regular_token1, test_assessment_id, "GEN 1:2"
     )
@@ -5773,28 +5947,25 @@ def test_add_replacement_issues(client, regular_token1, test_assessment_id):
         client,
         regular_token1,
         translation_id,
-        replacements=[
-            {
-                "source_text": "love",
-                "draft_text": "like",
-                "comments": "Incorrect translation of key term",
-                "severity": 4,
-            }
+        issues=[
+            _mistranslation_issue(
+                "love", "like", severity=4, comments="Incorrect translation of key term"
+            )
         ],
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     data = response.json()
     assert len(data) == 1
-    assert data[0]["issue_type"] == "replacement"
+    assert data[0]["subtype"] == "mistranslation"
     assert data[0]["source_text"] == "love"
     assert data[0]["draft_text"] == "like"
     assert data[0]["comments"] == "Incorrect translation of key term"
     assert data[0]["severity"] == 4
 
 
-def test_add_all_three_issue_types(client, regular_token1, test_assessment_id):
-    """Test creating all three issue types in one request."""
+def test_add_mixed_issues_one_request(client, regular_token1, test_assessment_id):
+    """All three accuracy subtypes plus a terminology one in a single request."""
     translation_id = _create_translation(
         client, regular_token1, test_assessment_id, "GEN 1:3"
     )
@@ -5803,37 +5974,55 @@ def test_add_all_three_issue_types(client, regular_token1, test_assessment_id):
         client,
         regular_token1,
         translation_id,
-        omissions=[{"source_text": "omitted phrase", "severity": 3}],
-        additions=[{"draft_text": "added phrase", "severity": 2}],
-        replacements=[
-            {"source_text": "original", "draft_text": "wrong", "severity": 4}
+        issues=[
+            _omission_issue("omitted phrase", severity=3),
+            _addition_issue("added phrase", severity=2),
+            _mistranslation_issue("original", "wrong", severity=4),
+            {
+                "dimension": "terminology",
+                "subtype": "wrong-key-term",
+                "draft_text": "Lord",
+                "severity": 3,
+                "evidence": ["GEN 1:1"],
+            },
         ],
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 200, response.text
     data = response.json()
-    assert len(data) == 3
+    assert len(data) == 4
 
-    omission = next((d for d in data if d["issue_type"] == "omission"), None)
+    omission = next(
+        (
+            d
+            for d in data
+            if d["subtype"] == "omission" and d["dimension"] == "accuracy"
+        ),
+        None,
+    )
     assert omission is not None
     assert omission["source_text"] == "omitted phrase"
     assert omission["draft_text"] is None
 
-    addition = next((d for d in data if d["issue_type"] == "addition"), None)
+    addition = next((d for d in data if d["subtype"] == "addition"), None)
     assert addition is not None
     assert addition["draft_text"] == "added phrase"
     assert addition["source_text"] is None
 
-    replacement = next((d for d in data if d["issue_type"] == "replacement"), None)
-    assert replacement is not None
-    assert replacement["source_text"] == "original"
-    assert replacement["draft_text"] == "wrong"
+    mistr = next((d for d in data if d["subtype"] == "mistranslation"), None)
+    assert mistr is not None
+    assert mistr["source_text"] == "original"
+    assert mistr["draft_text"] == "wrong"
+
+    term = next((d for d in data if d["dimension"] == "terminology"), None)
+    assert term is not None
+    assert term["evidence"] == ["GEN 1:1"]
 
 
-def test_get_critique_issues_filter_by_replacement(
+def test_get_critique_issues_filter_by_mistranslation(
     client, regular_token1, test_assessment_id
 ):
-    """Test filtering GET by issue_type=replacement."""
+    """Filter GET by subtype=mistranslation."""
     translation_id = _create_translation(
         client, regular_token1, test_assessment_id, "GEN 1:4"
     )
@@ -5842,12 +6031,14 @@ def test_get_critique_issues_filter_by_replacement(
         client,
         regular_token1,
         translation_id,
-        omissions=[{"source_text": "source only", "severity": 2}],
-        replacements=[{"source_text": "src", "draft_text": "dst", "severity": 3}],
+        issues=[
+            _omission_issue("source only", severity=2),
+            _mistranslation_issue("src", "dst", severity=3),
+        ],
     )
 
     response = client.get(
-        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&issue_type=replacement",
+        f"{prefix}/agent/critique?assessment_id={test_assessment_id}&subtype=mistranslation",
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
 
@@ -5855,15 +6046,13 @@ def test_get_critique_issues_filter_by_replacement(
     data = response.json()
     gen14 = [d for d in data if d["vref"] == "GEN 1:4"]
     assert len(gen14) == 1
-    assert gen14[0]["issue_type"] == "replacement"
+    assert gen14[0]["subtype"] == "mistranslation"
     assert gen14[0]["source_text"] == "src"
     assert gen14[0]["draft_text"] == "dst"
 
 
-def test_omission_missing_source_text_returns_422(
-    client, regular_token1, test_assessment_id
-):
-    """Verify omission missing source_text is rejected."""
+def test_add_issue_without_any_text_spans(client, regular_token1, test_assessment_id):
+    """An issue with neither source_text nor draft_text is allowed (e.g., punctuation)."""
     translation_id = _create_translation(
         client, regular_token1, test_assessment_id, "GEN 1:5"
     )
@@ -5872,64 +6061,21 @@ def test_omission_missing_source_text_returns_422(
         client,
         regular_token1,
         translation_id,
-        omissions=[{"comments": "no source_text", "severity": 2}],
+        issues=[
+            {
+                "dimension": "linguistic_conventions",
+                "subtype": "punctuation",
+                "comments": "spans not required",
+                "severity": 2,
+            }
+        ],
     )
 
-    assert response.status_code == 422
-
-
-def test_addition_missing_draft_text_returns_422(
-    client, regular_token1, test_assessment_id
-):
-    """Verify addition missing draft_text is rejected."""
-    translation_id = _create_translation(
-        client, regular_token1, test_assessment_id, "GEN 1:6"
-    )
-
-    response = _create_critique(
-        client,
-        regular_token1,
-        translation_id,
-        additions=[{"comments": "no draft_text", "severity": 2}],
-    )
-
-    assert response.status_code == 422
-
-
-def test_replacement_missing_source_text_returns_422(
-    client, regular_token1, test_assessment_id
-):
-    """Verify replacement missing source_text is rejected."""
-    translation_id = _create_translation(
-        client, regular_token1, test_assessment_id, "GEN 1:7"
-    )
-
-    response = _create_critique(
-        client,
-        regular_token1,
-        translation_id,
-        replacements=[{"draft_text": "only draft", "severity": 2}],
-    )
-
-    assert response.status_code == 422
-
-
-def test_replacement_missing_draft_text_returns_422(
-    client, regular_token1, test_assessment_id
-):
-    """Verify replacement missing draft_text is rejected."""
-    translation_id = _create_translation(
-        client, regular_token1, test_assessment_id, "GEN 1:8"
-    )
-
-    response = _create_critique(
-        client,
-        regular_token1,
-        translation_id,
-        replacements=[{"source_text": "only source", "severity": 2}],
-    )
-
-    assert response.status_code == 422
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["source_text"] is None
+    assert data[0]["draft_text"] is None
 
 
 # ── last_user_edit tests ──────────────────────────────────────────────
