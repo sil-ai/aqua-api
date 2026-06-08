@@ -14,7 +14,23 @@ MQM taxonomy:
     addition    -> dimension='accuracy', subtype='addition'
     replacement -> dimension='accuracy', subtype='mistranslation'
 
-detector and evidence stay NULL for legacy rows.
+detector and evidence stay NULL for legacy rows (truthful provenance — these
+issues predate detector tagging).
+
+Caveat on `replacement -> mistranslation`: the legacy taxonomy did not
+distinguish term-consistency failures (which MQM puts under
+`dimension=terminology`) from generic semantic mistranslations.  Mapping
+everything to `accuracy/mistranslation` is the most defensible default —
+the underlying `source_text` and `draft_text` are preserved, so a later
+re-classification job can split this bucket without data loss.
+
+Operator note: this migration is content-mutable under a stable revision
+ID.  Any environment that previously applied the delete-based draft of
+e8a3f1c2d790 against non-empty data has already lost those rows — alembic
+will consider it up-to-date and the backfill below will not re-fire.  As
+of merge time the only environments at e8a3f1c2d790 were dev + CI
+(ephemeral, empty); prod and other long-lived envs are still on
+91243bb07389 and will receive the backfill.
 """
 
 from typing import Sequence, Union
@@ -37,6 +53,7 @@ _FORWARD_MAP_SQL = """
             WHEN 'omission'    THEN 'omission'
             WHEN 'addition'    THEN 'addition'
             WHEN 'replacement' THEN 'mistranslation'
+            ELSE NULL
         END
 """
 
@@ -83,11 +100,15 @@ def upgrade() -> None:
         )
     ).scalar()
     if unmapped:
-        raise RuntimeError(
+        msg = (
             f"{unmapped} rows in agent_critique_issue could not be mapped "
             "from issue_type to (dimension, subtype). Inspect the table for "
             "unexpected issue_type values before re-running."
         )
+        # Print before raising so the operator sees the message above the
+        # traceback noise alembic emits for any migration exception.
+        print(f"\nMIGRATION ABORT: {msg}\n")
+        raise RuntimeError(msg)
 
     # 5. Enforce NOT NULL now that all rows are populated.
     op.alter_column(
@@ -147,11 +168,13 @@ def downgrade() -> None:
         )
     ).scalar()
     if unmappable:
-        raise RuntimeError(
+        msg = (
             f"Cannot downgrade: {unmappable} rows use a (dimension, subtype) "
             "pair that has no legacy issue_type equivalent. Remove or remap "
             "those rows before downgrading."
         )
+        print(f"\nMIGRATION ABORT: {msg}\n")
+        raise RuntimeError(msg)
 
     op.drop_index("ix_agent_critique_issue_subtype", table_name="agent_critique_issue")
     op.drop_index(
@@ -159,8 +182,10 @@ def downgrade() -> None:
     )
 
     # severity must go back to NOT NULL.  Backfill any NULL severity rows to
-    # 3 (mid-scale) before tightening — the old API treated severity as
-    # required so callers cannot have meant "unknown" via NULL there.
+    # 3 (mid-point of the 1..5 scale) before tightening — the old API treated
+    # severity as required, so callers can never have meant "unknown" via
+    # NULL there.  This is a one-way lossy coercion documented for operators
+    # reading the downgrade output.
     op.execute("UPDATE agent_critique_issue SET severity = 3 WHERE severity IS NULL")
     op.alter_column(
         "agent_critique_issue",
@@ -181,6 +206,10 @@ def downgrade() -> None:
             server_default="omission",
         ),
     )
+    # The unmappable pre-flight check above guarantees every subtype is one of
+    # the three legacy buckets; the explicit `ELSE NULL` makes that contract
+    # visible and ensures any future drift surfaces as a NOT NULL violation
+    # on the column rather than getting silently fixed by `server_default`.
     op.execute(
         """
         UPDATE agent_critique_issue
@@ -188,6 +217,7 @@ def downgrade() -> None:
             WHEN 'omission'       THEN 'omission'
             WHEN 'addition'       THEN 'addition'
             WHEN 'mistranslation' THEN 'replacement'
+            ELSE NULL
         END
         """
     )
