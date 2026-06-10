@@ -957,3 +957,250 @@ def test_delete_training_artifacts_cascades_to_word_morpheme_index(
     ), "WordMorphemeIndex rows should cascade-delete with the morpheme"
 
     _cleanup(db_session, version_id, iso)
+
+
+# ---- DELETE /affixes-by-version/{version_id} (issue #796) ------------------
+
+
+def test_delete_affixes_by_version_clears_stamped_and_iso_keyed_rows(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id_2,
+    db_session,
+):
+    """The DELETE mirrors the GET soft-union: version-stamped rows AND
+    legacy iso-keyed (NULL target) rows both go, while rows stamped to
+    other versions of the same ISO survive. Counts are split by bucket."""
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
+
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.flush()
+    db_session.add_all(
+        [
+            LanguageAffix(
+                iso_639_3=iso,
+                form="v1-",
+                position="prefix",
+                gloss="versioned-1",
+                target_version_id=version_id,
+            ),
+            LanguageAffix(
+                iso_639_3=iso,
+                form="-v2",
+                position="suffix",
+                gloss="versioned-2",
+                target_version_id=version_id,
+            ),
+            LanguageAffix(
+                iso_639_3=iso,
+                form="-leg",
+                position="suffix",
+                gloss="legacy-null",
+                target_version_id=None,
+            ),
+            LanguageAffix(
+                iso_639_3=iso,
+                form="other-",
+                position="prefix",
+                gloss="other-version",
+                target_version_id=test_version_id_2,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    resp = client.delete(
+        f"/{prefix}/affixes-by-version/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "target_version_id": version_id,
+        "iso_639_3": iso,
+        "version_stamped_deleted": 2,
+        "iso_keyed_deleted": 1,
+        "total_deleted": 3,
+    }
+
+    db_session.expire_all()
+    remaining = {
+        row.form
+        for row in db_session.query(LanguageAffix).filter(
+            LanguageAffix.iso_639_3 == iso
+        )
+    }
+    assert remaining == {"other-"}
+
+    resp = client.get(
+        f"/{prefix}/affixes-by-version/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+
+    _cleanup(db_session, version_id, iso, extra_version_ids=(test_version_id_2,))
+
+
+def test_delete_affixes_by_version_idempotent_when_nothing_exists(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Rebuild semantics are 'ensure nothing exists' — zero counts on an
+    empty target, and zero counts again on a repeat call."""
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    for _ in range(2):
+        resp = client.delete(
+            f"/{prefix}/affixes-by-version/{version_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {
+            "target_version_id": version_id,
+            "iso_639_3": iso,
+            "version_stamped_deleted": 0,
+            "iso_keyed_deleted": 0,
+            "total_deleted": 0,
+        }
+
+
+def test_delete_affixes_by_version_preserves_other_isos(
+    client, regular_token1, test_revision_id, db_session
+):
+    """Legacy NULL-target rows belonging to a different ISO are outside
+    this version's soft-union and must survive the wipe."""
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    other_iso = "swh" if iso != "swh" else "eng"
+    _cleanup(db_session, version_id, iso)
+    db_session.query(LanguageAffix).filter(
+        LanguageAffix.iso_639_3 == other_iso
+    ).delete()
+    db_session.query(LanguageProfile).filter(
+        LanguageProfile.iso_639_3 == other_iso
+    ).delete()
+    db_session.commit()
+
+    db_session.add_all(
+        [
+            LanguageProfile(iso_639_3=iso, name="English"),
+            LanguageProfile(iso_639_3=other_iso, name="Swahili"),
+        ]
+    )
+    db_session.flush()
+    db_session.add_all(
+        [
+            LanguageAffix(
+                iso_639_3=iso,
+                form="mine-",
+                position="prefix",
+                gloss="goes",
+                target_version_id=version_id,
+            ),
+            LanguageAffix(
+                iso_639_3=other_iso,
+                form="-stays",
+                position="suffix",
+                gloss="other-iso-legacy",
+                target_version_id=None,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    resp = client.delete(
+        f"/{prefix}/affixes-by-version/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total_deleted"] == 1
+
+    db_session.expire_all()
+    assert (
+        db_session.query(LanguageAffix)
+        .filter(LanguageAffix.iso_639_3 == other_iso)
+        .count()
+        == 1
+    ), "Legacy rows of an unrelated ISO must not be deleted"
+
+    db_session.query(LanguageAffix).filter(
+        LanguageAffix.iso_639_3 == other_iso
+    ).delete()
+    db_session.query(LanguageProfile).filter(
+        LanguageProfile.iso_639_3 == other_iso
+    ).delete()
+    db_session.commit()
+    _cleanup(db_session, version_id, iso)
+
+
+def test_delete_affixes_by_version_403_when_user_lacks_version_access(
+    client, regular_token2, test_revision_id, db_session
+):
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    resp = client.delete(
+        f"/{prefix}/affixes-by-version/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_delete_affixes_by_version_403_when_version_unknown(
+    client, regular_token1, db_session
+):
+    resp = client.delete(
+        f"/{prefix}/affixes-by-version/999999999",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 403, resp.text
+
+
+def test_delete_affixes_by_version_admin_gets_404_for_unknown_version(
+    client, admin_token, db_session
+):
+    resp = client.delete(
+        f"/{prefix}/affixes-by-version/999999999",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 404, resp.text
+
+
+def test_delete_affixes_by_version_without_token(client, test_revision_id, db_session):
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    resp = client.delete(f"/{prefix}/affixes-by-version/{version_id}")
+    assert resp.status_code == 401
+
+
+def test_delete_affixes_by_version_latest_alias(
+    client, regular_token1, test_revision_id, db_session
+):
+    """The affix router is mounted under both /v3 and /latest — the
+    rebuild path in aqua-assessments calls /latest, so pin the alias."""
+    version_id = _resolve_version_id(db_session, test_revision_id)
+    iso = _resolve_iso(db_session, version_id)
+    _cleanup(db_session, version_id, iso)
+
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.flush()
+    db_session.add(
+        LanguageAffix(
+            iso_639_3=iso,
+            form="alias-",
+            position="prefix",
+            gloss="via-latest",
+            target_version_id=version_id,
+        )
+    )
+    db_session.commit()
+
+    resp = client.delete(
+        f"/latest/affixes-by-version/{version_id}",
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total_deleted"] == 1
+
+    _cleanup(db_session, version_id, iso)
