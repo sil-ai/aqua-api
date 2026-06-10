@@ -90,6 +90,38 @@ def downgrade() -> None:
         "ux_language_affixes_version_form_position",
         table_name="language_affixes",
     )
+    # The new write semantics deliberately allow a stamped row and a
+    # legacy NULL row to coexist at the same (iso, form, position) -- see
+    # test_put_affixes_scoped_to_revision_leaves_legacy_null_row_intact.
+    # Restoring the non-partial iso-keyed unique would fail on any such
+    # pair. Drop the NULL-stamped row in those cases (it is reproducible
+    # by re-running the agent without revision_id, and migration
+    # e2ad1ed4a64a already established the precedent of deleting NULL
+    # legacy data).
+    op.execute(
+        """
+        DELETE FROM language_affixes
+        WHERE target_version_id IS NULL
+          AND (iso_639_3, form, position) IN (
+              SELECT iso_639_3, form, position
+              FROM language_affixes
+              WHERE target_version_id IS NOT NULL
+          )
+        """
+    )
+    # If two stamped rows from different versions share (iso, form,
+    # position), the iso-keyed unique can only be restored by dropping
+    # all but one. Keep the lowest-id row and delete the others.
+    op.execute(
+        """
+        DELETE FROM language_affixes a
+        USING language_affixes b
+        WHERE a.iso_639_3 = b.iso_639_3
+          AND a.form = b.form
+          AND a.position = b.position
+          AND a.id > b.id
+        """
+    )
     op.create_index(
         "ux_language_affixes_version_form_position_gloss",
         "language_affixes",

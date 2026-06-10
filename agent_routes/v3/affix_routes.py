@@ -46,6 +46,42 @@ def _normalize(value: str) -> str:
     return unicodedata.normalize("NFC", value).strip()
 
 
+async def _resolve_version_and_validate_iso(db, revision_id, payload_iso):
+    """Resolve ``target_version_id`` from ``revision_id`` and reject any
+    mismatch between the revision's version ISO and ``payload_iso``.
+
+    Returns the resolved ``target_version_id``. Raises 422 if the revision
+    is unknown or its version's ISO doesn't match ``payload_iso``. The
+    cross-check is important under version-scoped writes (#798): without
+    it a caller could write a row whose ``iso_639_3`` belongs to one
+    language but whose ``target_version_id`` belongs to another, leaving
+    the row invisible to both ``GET /affixes-by-version`` (filters by
+    version's iso) and any sensible iso-only listing.
+    """
+    lookup = await db.execute(
+        select(BibleRevision.bible_version_id, BibleVersion.iso_language)
+        .join(BibleVersion, BibleRevision.bible_version_id == BibleVersion.id)
+        .where(BibleRevision.id == revision_id)
+    )
+    row = lookup.first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown revision_id {revision_id}",
+        )
+    target_version_id, version_iso = row
+    if version_iso != payload_iso:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"iso_639_3 {payload_iso!r} does not match the ISO "
+                f"({version_iso!r}) of the version that owns "
+                f"revision_id {revision_id}"
+            ),
+        )
+    return target_version_id
+
+
 @router.get("/affixes-by-version/{version_id}", response_model=AffixListOut)
 async def get_affixes_by_version(
     version_id: int,
@@ -323,17 +359,9 @@ async def commit_affixes(
 
     target_version_id: Optional[int] = None
     if payload.revision_id is not None:
-        revision_lookup = await db.execute(
-            select(BibleRevision.bible_version_id).where(
-                BibleRevision.id == payload.revision_id
-            )
+        target_version_id = await _resolve_version_and_validate_iso(
+            db, payload.revision_id, iso
         )
-        target_version_id = revision_lookup.scalar_one_or_none()
-        if target_version_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Unknown revision_id {payload.revision_id}",
-            )
 
     n_new = 0
     n_updated = 0
@@ -565,17 +593,9 @@ async def replace_affixes(
 
     target_version_id: Optional[int] = None
     if payload.revision_id is not None:
-        revision_lookup = await db.execute(
-            select(BibleRevision.bible_version_id).where(
-                BibleRevision.id == payload.revision_id
-            )
+        target_version_id = await _resolve_version_and_validate_iso(
+            db, payload.revision_id, iso
         )
-        target_version_id = revision_lookup.scalar_one_or_none()
-        if target_version_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Unknown revision_id {payload.revision_id}",
-            )
 
     try:
         # Version-scope the replace: deleting only rows in the current
@@ -744,6 +764,8 @@ async def patch_affix(
         # being patched, mirroring the version-scoped unique indexes
         # (#798): collisions only matter within the same target_version_id
         # (or within the legacy NULL bucket for the same ISO).
+        # For stamped rows, target_version_id uniquely implies the ISO,
+        # so the iso filter is omitted; for NULL rows it is required.
         if affix.target_version_id is None:
             scope_clause = and_(
                 LanguageAffix.iso_639_3 == affix.iso_639_3,

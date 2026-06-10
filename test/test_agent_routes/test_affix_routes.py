@@ -52,7 +52,7 @@ def _revision_for_version(db_session, version_id):
     return new_rev.id
 
 
-def _cleanup_version_scoped(db_session, iso, *version_ids):
+def _cleanup_version_scoped(db_session, iso):
     db_session.query(LanguageAffix).filter(LanguageAffix.iso_639_3 == iso).delete()
     db_session.query(LanguageProfile).filter(LanguageProfile.iso_639_3 == iso).delete()
     db_session.commit()
@@ -349,15 +349,19 @@ def test_affixes_additive_preserves_absent_rows(client, regular_token1, db_sessi
     _cleanup(db_session)
 
 
-def test_affixes_with_revision_id(client, regular_token1, test_revision_id, db_session):
-    _cleanup(db_session)
-    _seed_profile(db_session)
+def test_affixes_with_revision_id(
+    client, regular_token1, test_revision_id, test_version_id, db_session
+):
+    iso = _resolve_iso(db_session, test_version_id)
+    _cleanup_version_scoped(db_session, iso)
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.commit()
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     resp = client.post(
         f"/{prefix}/affixes",
         json={
-            "iso_639_3": TEST_ISO,
+            "iso_639_3": iso,
             "revision_id": test_revision_id,
             "affixes": [
                 {"form": "akha-", "position": "prefix", "gloss": "past"},
@@ -367,9 +371,36 @@ def test_affixes_with_revision_id(client, regular_token1, test_revision_id, db_s
     )
     assert resp.status_code == 200
 
-    resp = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers)
+    resp = client.get(f"/{prefix}/affixes?iso={iso}", headers=headers)
     assert resp.json()["affixes"][0]["first_seen_revision_id"] == test_revision_id
-    _cleanup(db_session)
+    _cleanup_version_scoped(db_session, iso)
+
+
+def test_affixes_post_iso_revision_mismatch_returns_422(
+    client, regular_token1, test_revision_id, test_version_id, db_session
+):
+    """POST with a payload iso that disagrees with the revision's version
+    iso is rejected (#798 — version-scoped writes need the cross-check
+    so the row's iso and target_version_id stay consistent)."""
+    version_iso = _resolve_iso(db_session, test_version_id)
+    wrong_iso = "swh" if version_iso != "swh" else "ngq"
+    _cleanup_version_scoped(db_session, wrong_iso)
+    db_session.add(LanguageProfile(iso_639_3=wrong_iso, name=wrong_iso))
+    db_session.commit()
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": wrong_iso,
+            "revision_id": test_revision_id,
+            "affixes": [{"form": "ba-", "position": "prefix", "gloss": "x"}],
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 422, resp.text
+    assert "does not match" in resp.json()["detail"]
+    _cleanup_version_scoped(db_session, wrong_iso)
 
 
 def test_affixes_get_missing_profile(client, regular_token1, db_session):
@@ -583,32 +614,41 @@ def test_affixes_nfc_normalization_dedupes(client, regular_token1, db_session):
 
 
 def test_affixes_first_seen_revision_preserved_on_upsert(
-    client, regular_token1, test_revision_id, db_session
+    client,
+    regular_token1,
+    test_revision_id,
+    test_revision_id_2,
+    test_version_id,
+    db_session,
 ):
     """An upsert within the same target_version_id bucket must not clobber
     ``first_seen_revision_id`` on the existing row — the column is
-    intentionally omitted from the ON CONFLICT update set."""
-    _cleanup(db_session)
-    _seed_profile(db_session)
+    intentionally omitted from the ON CONFLICT update set. Uses two
+    distinct revisions of the same version to exercise the "later
+    revision must not overwrite the first-seen stamp" path."""
+    iso = _resolve_iso(db_session, test_version_id)
+    _cleanup_version_scoped(db_session, iso)
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.commit()
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     client.post(
         f"/{prefix}/affixes",
         json={
-            "iso_639_3": TEST_ISO,
+            "iso_639_3": iso,
             "revision_id": test_revision_id,
             "affixes": [{"form": "akha-", "position": "prefix", "gloss": "past"}],
         },
         headers=headers,
     )
 
-    # Second commit in the same version bucket with new examples — the
-    # upsert must preserve first_seen_revision_id.
+    # Second commit, different revision of the same version — the upsert
+    # must preserve the original first_seen_revision_id.
     resp = client.post(
         f"/{prefix}/affixes",
         json={
-            "iso_639_3": TEST_ISO,
-            "revision_id": test_revision_id,
+            "iso_639_3": iso,
+            "revision_id": test_revision_id_2,
             "affixes": [
                 {
                     "form": "akha-",
@@ -622,13 +662,9 @@ def test_affixes_first_seen_revision_preserved_on_upsert(
     )
     assert resp.status_code == 200
 
-    row = (
-        db_session.query(LanguageAffix)
-        .filter(LanguageAffix.iso_639_3 == TEST_ISO)
-        .one()
-    )
+    row = db_session.query(LanguageAffix).filter(LanguageAffix.iso_639_3 == iso).one()
     assert row.first_seen_revision_id == test_revision_id
-    _cleanup(db_session)
+    _cleanup_version_scoped(db_session, iso)
 
 
 def test_affixes_source_model_change_counts_as_updated(
@@ -672,7 +708,7 @@ def test_affixes_post_same_form_position_across_versions_no_409(
     relies on this — see #798.
     """
     iso = _resolve_iso(db_session, test_version_id)
-    _cleanup_version_scoped(db_session, iso, test_version_id, test_version_id_2)
+    _cleanup_version_scoped(db_session, iso)
     db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
     db_session.commit()
 
@@ -715,10 +751,13 @@ def test_affixes_post_same_form_position_across_versions_no_409(
         .order_by(LanguageAffix.target_version_id)
         .all()
     )
+    # Both rows land in stamped buckets — guards against a regression that
+    # accidentally routes one of them into the legacy NULL bucket.
+    assert all(r.target_version_id is not None for r in rows)
     by_version = {r.target_version_id: r.gloss for r in rows}
     assert by_version == {test_version_id: "v1-gloss", test_version_id_2: "v2-gloss"}
 
-    _cleanup_version_scoped(db_session, iso, test_version_id, test_version_id_2)
+    _cleanup_version_scoped(db_session, iso)
 
 
 def test_affixes_post_does_not_mutate_other_versions_rows(
@@ -734,7 +773,7 @@ def test_affixes_post_does_not_mutate_other_versions_rows(
     cross-version contamination described in #798.
     """
     iso = _resolve_iso(db_session, test_version_id)
-    _cleanup_version_scoped(db_session, iso, test_version_id, test_version_id_2)
+    _cleanup_version_scoped(db_session, iso)
     db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
     db_session.commit()
 
@@ -791,7 +830,7 @@ def test_affixes_post_does_not_mutate_other_versions_rows(
     assert v2_row.n_runs == 7
     assert v2_row.source_model == "model-v2"
 
-    _cleanup_version_scoped(db_session, iso, test_version_id, test_version_id_2)
+    _cleanup_version_scoped(db_session, iso)
 
 
 def test_affixes_post_same_version_same_form_position_still_409s(
@@ -806,7 +845,7 @@ def test_affixes_post_same_version_same_form_position_still_409s(
     cross-version conflicts).
     """
     iso = _resolve_iso(db_session, test_version_id)
-    _cleanup_version_scoped(db_session, iso, test_version_id)
+    _cleanup_version_scoped(db_session, iso)
     db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
     db_session.commit()
 
@@ -826,7 +865,7 @@ def test_affixes_post_same_version_same_form_position_still_409s(
     assert detail["conflicts"][0]["existing_gloss"] == "first"
     assert detail["conflicts"][0]["submitted_gloss"] == "second"
 
-    _cleanup_version_scoped(db_session, iso, test_version_id)
+    _cleanup_version_scoped(db_session, iso)
 
 
 def test_affixes_put_replace_is_version_scoped(
@@ -840,7 +879,7 @@ def test_affixes_put_replace_is_version_scoped(
     """PUT replace-all for version A must not delete rows owned by
     version B. Replaces the previous iso-wide delete (#798)."""
     iso = _resolve_iso(db_session, test_version_id)
-    _cleanup_version_scoped(db_session, iso, test_version_id, test_version_id_2)
+    _cleanup_version_scoped(db_session, iso)
     db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
     db_session.commit()
 
@@ -881,7 +920,7 @@ def test_affixes_put_replace_is_version_scoped(
     by_version = {r.target_version_id: r.form for r in rows}
     assert by_version == {test_version_id_2: "preserve-", test_version_id: "fresh-"}
 
-    _cleanup_version_scoped(db_session, iso, test_version_id, test_version_id_2)
+    _cleanup_version_scoped(db_session, iso)
 
 
 def test_affixes_patch_only_collides_within_same_version(
@@ -895,7 +934,7 @@ def test_affixes_patch_only_collides_within_same_version(
     """PATCHing an affix's (form, position) into one used by a *different*
     version must succeed — the duplicate check is version-scoped (#798)."""
     iso = _resolve_iso(db_session, test_version_id)
-    _cleanup_version_scoped(db_session, iso, test_version_id, test_version_id_2)
+    _cleanup_version_scoped(db_session, iso)
     db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
     db_session.commit()
 
@@ -936,8 +975,101 @@ def test_affixes_patch_only_collides_within_same_version(
     )
     assert resp.status_code == 200, resp.text
 
-    _cleanup_version_scoped(db_session, iso, test_version_id, test_version_id_2)
+    _cleanup_version_scoped(db_session, iso)
     _cleanup(db_session)
+
+
+def test_affixes_rebuild_does_not_409_against_other_versions_rows(
+    client,
+    regular_token1,
+    test_revision_id,
+    test_version_id,
+    test_version_id_2,
+    db_session,
+):
+    """Reproduces the production scenario from issue #798's ``acw`` log:
+    version B holds rows; version A is being rebuilt (DELETE then POST)
+    and re-extracts overlapping (form, position) entries. Under the old
+    iso-scoped unique, this 409'd against version B's rows and the
+    agent's patch-fallback silently mutated them. Under version-scoping
+    the POST must return 200 with no conflicts."""
+    iso = _resolve_iso(db_session, test_version_id)
+    _cleanup_version_scoped(db_session, iso)
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.commit()
+
+    revision_a = test_revision_id
+    revision_b = _revision_for_version(db_session, test_version_id_2)
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+
+    # Seed version B with rows that share (form, position) with what A
+    # will produce, but with deliberately divergent glosses/examples so
+    # any cross-version mutation would be visible afterwards.
+    overlapping = [
+        {
+            "form": "ku-",
+            "position": "prefix",
+            "gloss": "b-gloss",
+            "examples": ["b-ex"],
+            "n_runs": 5,
+        },
+        {
+            "form": "-ile",
+            "position": "suffix",
+            "gloss": "b-gloss-2",
+            "examples": ["b-ex-2"],
+            "n_runs": 3,
+        },
+    ]
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={
+            "iso_639_3": iso,
+            "revision_id": revision_b,
+            "affixes": overlapping,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    # Simulate A's clean-slate rebuild: bulk DELETE then re-POST.
+    resp = client.delete(
+        f"/{prefix}/affixes-by-version/{test_version_id}", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+
+    a_rows = [
+        {"form": "ku-", "position": "prefix", "gloss": "a-gloss"},
+        {"form": "-ile", "position": "suffix", "gloss": "a-gloss-2"},
+    ]
+    resp = client.post(
+        f"/{prefix}/affixes",
+        json={"iso_639_3": iso, "revision_id": revision_a, "affixes": a_rows},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["n_affixes_new"] == 2
+    assert body["n_affixes_updated"] == 0
+
+    # Version B's rows are untouched (glosses, examples, n_runs preserved).
+    b_rows = (
+        db_session.query(LanguageAffix)
+        .filter(LanguageAffix.target_version_id == test_version_id_2)
+        .order_by(LanguageAffix.form)
+        .all()
+    )
+    db_session.expire_all()
+    b_rows = (
+        db_session.query(LanguageAffix)
+        .filter(LanguageAffix.target_version_id == test_version_id_2)
+        .order_by(LanguageAffix.form)
+        .all()
+    )
+    glosses = {r.form: r.gloss for r in b_rows}
+    assert glosses == {"-ile": "b-gloss-2", "ku-": "b-gloss"}
+
+    _cleanup_version_scoped(db_session, iso)
 
 
 def test_affixes_updated_at_refreshed_on_upsert(client, regular_token1, db_session):
@@ -1119,16 +1251,18 @@ def test_put_affixes_no_prior_rows(client, regular_token1, db_session):
 
 
 def test_put_affixes_scoped_by_revision(
-    client, regular_token1, test_revision_id, db_session
+    client, regular_token1, test_revision_id, test_version_id, db_session
 ):
-    _cleanup(db_session)
-    _seed_profile(db_session)
+    iso = _resolve_iso(db_session, test_version_id)
+    _cleanup_version_scoped(db_session, iso)
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.commit()
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     client.post(
         f"/{prefix}/affixes",
         json={
-            "iso_639_3": TEST_ISO,
+            "iso_639_3": iso,
             "revision_id": test_revision_id,
             "affixes": [
                 {"form": "akha-", "position": "prefix", "gloss": "past"},
@@ -1139,7 +1273,7 @@ def test_put_affixes_scoped_by_revision(
     client.post(
         f"/{prefix}/affixes",
         json={
-            "iso_639_3": TEST_ISO,
+            "iso_639_3": iso,
             "affixes": [
                 {"form": "-ile", "position": "suffix", "gloss": "perfect"},
             ],
@@ -1150,7 +1284,7 @@ def test_put_affixes_scoped_by_revision(
     resp = client.put(
         f"/{prefix}/affixes",
         json={
-            "iso_639_3": TEST_ISO,
+            "iso_639_3": iso,
             "revision_id": test_revision_id,
             "affixes": [
                 {"form": "wa-", "position": "prefix", "gloss": "plural"},
@@ -1163,9 +1297,10 @@ def test_put_affixes_scoped_by_revision(
     assert body["n_deleted"] == 1
     assert body["n_inserted"] == 1
 
-    resp = client.get(f"/{prefix}/affixes?iso={TEST_ISO}", headers=headers)
+    resp = client.get(f"/{prefix}/affixes?iso={iso}", headers=headers)
     forms = {a["form"] for a in resp.json()["affixes"]}
     assert forms == {"-ile", "wa-"}
+    _cleanup_version_scoped(db_session, iso)
     _cleanup(db_session)
 
 
@@ -1245,20 +1380,22 @@ def test_put_affixes_duplicate_in_payload_rejected(client, regular_token1, db_se
 
 
 def test_put_affixes_scoped_to_revision_leaves_legacy_null_row_intact(
-    client, regular_token1, test_revision_id, db_session
+    client, regular_token1, test_revision_id, test_version_id, db_session
 ):
     """Under version-scoped writes (#798), a stamped PUT only deletes
     rows in its own bucket. A pre-existing legacy NULL-stamped row at
     the same (form, position) is left in place rather than being
     clobbered by the PUT's authoritative replace."""
-    _cleanup(db_session)
-    _seed_profile(db_session)
+    iso = _resolve_iso(db_session, test_version_id)
+    _cleanup_version_scoped(db_session, iso)
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.commit()
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     client.post(
         f"/{prefix}/affixes",
         json={
-            "iso_639_3": TEST_ISO,
+            "iso_639_3": iso,
             "affixes": [
                 {"form": "akha-", "position": "prefix", "gloss": "past"},
             ],
@@ -1269,7 +1406,7 @@ def test_put_affixes_scoped_to_revision_leaves_legacy_null_row_intact(
     resp = client.put(
         f"/{prefix}/affixes",
         json={
-            "iso_639_3": TEST_ISO,
+            "iso_639_3": iso,
             "revision_id": test_revision_id,
             "affixes": [
                 {
@@ -1286,7 +1423,7 @@ def test_put_affixes_scoped_to_revision_leaves_legacy_null_row_intact(
 
     rows = (
         db_session.query(LanguageAffix)
-        .filter(LanguageAffix.iso_639_3 == TEST_ISO)
+        .filter(LanguageAffix.iso_639_3 == iso)
         .order_by(LanguageAffix.target_version_id.nulls_first())
         .all()
     )
@@ -1296,7 +1433,7 @@ def test_put_affixes_scoped_to_revision_leaves_legacy_null_row_intact(
     assert stamped_row.target_version_id is not None
     assert stamped_row.examples == ["akhatenda"]
     assert stamped_row.first_seen_revision_id == test_revision_id
-    _cleanup(db_session)
+    _cleanup_version_scoped(db_session, iso)
 
 
 # ── GET /affixes exposes id ─────────────────────────────────────────
@@ -1579,19 +1716,21 @@ def test_patch_affix_n_runs_null_ignored(client, regular_token1, db_session):
 
 
 def test_put_affixes_stamped_does_not_overwrite_legacy_null_gloss(
-    client, regular_token1, test_revision_id, db_session
+    client, regular_token1, test_revision_id, test_version_id, db_session
 ):
     """A stamped PUT must not overwrite the gloss of a legacy
     target_version_id IS NULL row at the same (form, position): the two
     rows live in separate write buckets under #798."""
-    _cleanup(db_session)
-    _seed_profile(db_session)
+    iso = _resolve_iso(db_session, test_version_id)
+    _cleanup_version_scoped(db_session, iso)
+    db_session.add(LanguageProfile(iso_639_3=iso, name="English"))
+    db_session.commit()
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
     client.post(
         f"/{prefix}/affixes",
         json={
-            "iso_639_3": TEST_ISO,
+            "iso_639_3": iso,
             "affixes": [
                 {"form": "akha-", "position": "prefix", "gloss": "past"},
             ],
@@ -1602,7 +1741,7 @@ def test_put_affixes_stamped_does_not_overwrite_legacy_null_gloss(
     resp = client.put(
         f"/{prefix}/affixes",
         json={
-            "iso_639_3": TEST_ISO,
+            "iso_639_3": iso,
             "revision_id": test_revision_id,
             "affixes": [
                 {"form": "akha-", "position": "prefix", "gloss": "perfective"},
@@ -1612,16 +1751,12 @@ def test_put_affixes_stamped_does_not_overwrite_legacy_null_gloss(
     )
     assert resp.status_code == 200
 
-    rows = (
-        db_session.query(LanguageAffix)
-        .filter(LanguageAffix.iso_639_3 == TEST_ISO)
-        .all()
-    )
+    rows = db_session.query(LanguageAffix).filter(LanguageAffix.iso_639_3 == iso).all()
     glosses_by_target = {r.target_version_id: r.gloss for r in rows}
     assert glosses_by_target[None] == "past"
     stamped_gloss = next(v for k, v in glosses_by_target.items() if k is not None)
     assert stamped_gloss == "perfective"
-    _cleanup(db_session)
+    _cleanup_version_scoped(db_session, iso)
 
 
 def test_patch_affix_null_form_position_gloss_ignored(
