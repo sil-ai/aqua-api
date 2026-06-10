@@ -1819,6 +1819,24 @@ class BulkLexemeCardDeleteResponse(BaseModel):
     card_translations_deleted: int
 
 
+class BulkAffixDeleteResponse(BaseModel):
+    """Row counts deleted by DELETE /v3/affixes-by-version/{version_id}.
+
+    Mirrors the soft-union semantics of ``GET /v3/affixes-by-version``:
+    deletes both rows version-stamped to ``version_id`` and legacy
+    iso-keyed rows (``target_version_id IS NULL``) that share the
+    version's ISO. Rows stamped to other versions of the same ISO are
+    left intact. Counts are split so callers can see what came from
+    each bucket.
+    """
+
+    target_version_id: int
+    iso_639_3: str
+    version_stamped_deleted: int
+    iso_keyed_deleted: int
+    total_deleted: int
+
+
 class TokenizerRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

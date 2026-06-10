@@ -28,6 +28,7 @@ from models import (
     AffixOut,
     AffixPatch,
     AffixReplaceResponse,
+    BulkAffixDeleteResponse,
 )
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_bible_version
@@ -117,6 +118,108 @@ async def get_affixes_by_version(
         total=len(rows),
         affixes=[AffixOut.model_validate(a) for a in rows],
     )
+
+
+@router.delete(
+    "/affixes-by-version/{version_id}",
+    response_model=BulkAffixDeleteResponse,
+)
+async def delete_affixes_by_version(
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Wipe every affix the GET soft-union would return for ``version_id``.
+
+    Deletes (atomically, in one transaction):
+    - rows version-stamped to ``version_id`` (``target_version_id == version_id``)
+    - legacy iso-keyed rows (``target_version_id IS NULL``) that share the
+      version's ISO — the same rows ``GET /affixes-by-version/{version_id}``
+      surfaces via its soft union.
+
+    Rows stamped to other versions of the same ISO are left intact, so other
+    versions' soft-union reads stay consistent.
+
+    This is the affix analog of ``DELETE /v3/agent/lexeme-card`` (#703) and
+    lets ``build_mode="rebuild"`` clear affixes the same way it clears cards.
+    The existing ``DELETE /v3/tokenizer/training-artifacts/{version_id}``
+    already removes version-stamped affixes as a side effect, but it leaves
+    iso-keyed legacy rows behind and is awkward as the primary surface for
+    affix-only cleanups.
+
+    Status codes:
+    - 200: returns row counts deleted (zeros if nothing existed — idempotent)
+    - 403: caller is not authorized for this version — also returned for
+      non-existent version_ids when the caller is a regular user, so
+      unauthorized callers can't enumerate valid versions (matches the GET)
+    - 404: admin caller requesting a version_id that doesn't exist
+    """
+    request_start = time.perf_counter()
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
+
+    version_lookup = await db.execute(
+        select(BibleVersion.iso_language).where(BibleVersion.id == version_id)
+    )
+    iso = version_lookup.scalar_one_or_none()
+    if iso is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No bible_version with id {version_id}",
+        )
+
+    try:
+        stamped_result = await db.execute(
+            delete(LanguageAffix).where(LanguageAffix.target_version_id == version_id)
+        )
+        # Migration e2ad1ed4a64a dropped all NULL-target rows, so this
+        # branch usually deletes nothing — but POST/PUT /affixes without a
+        # revision_id can still create NULL-stamped rows, and the GET
+        # soft-union would resurface them, so it is not dead code.
+        iso_keyed_result = await db.execute(
+            delete(LanguageAffix).where(
+                LanguageAffix.iso_639_3 == iso,
+                LanguageAffix.target_version_id.is_(None),
+            )
+        )
+        await db.commit()
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error("Failed to bulk-delete affixes", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {e}",
+        ) from e
+
+    stamped_count = stamped_result.rowcount or 0
+    iso_keyed_count = iso_keyed_result.rowcount or 0
+    response = BulkAffixDeleteResponse(
+        target_version_id=version_id,
+        iso_639_3=iso,
+        version_stamped_deleted=stamped_count,
+        iso_keyed_deleted=iso_keyed_count,
+        total_deleted=stamped_count + iso_keyed_count,
+    )
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"delete_affixes_by_version completed in {duration}s",
+        extra={
+            "method": "DELETE",
+            "path": "/affixes-by-version/{version_id}",
+            "version_id": version_id,
+            "iso": iso,
+            "version_stamped_deleted": stamped_count,
+            "iso_keyed_deleted": iso_keyed_count,
+            "total_deleted": response.total_deleted,
+            "duration_s": duration,
+        },
+    )
+    return response
 
 
 @router.get("/affixes", response_model=AffixListOut)
