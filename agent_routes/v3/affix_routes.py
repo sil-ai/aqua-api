@@ -176,6 +176,10 @@ async def delete_affixes_by_version(
         stamped_result = await db.execute(
             delete(LanguageAffix).where(LanguageAffix.target_version_id == version_id)
         )
+        # Migration e2ad1ed4a64a dropped all NULL-target rows, so this
+        # branch usually deletes nothing — but POST/PUT /affixes without a
+        # revision_id can still create NULL-stamped rows, and the GET
+        # soft-union would resurface them, so it is not dead code.
         iso_keyed_result = await db.execute(
             delete(LanguageAffix).where(
                 LanguageAffix.iso_639_3 == iso,

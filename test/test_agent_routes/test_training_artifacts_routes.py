@@ -1201,6 +1201,12 @@ def test_delete_affixes_by_version_latest_alias(
         headers={"Authorization": f"Bearer {regular_token1}"},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["total_deleted"] == 1
+    assert resp.json() == {
+        "target_version_id": version_id,
+        "iso_639_3": iso,
+        "version_stamped_deleted": 1,
+        "iso_keyed_deleted": 0,
+        "total_deleted": 1,
+    }
 
     _cleanup(db_session, version_id, iso)
