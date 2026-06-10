@@ -463,12 +463,87 @@ class PredictFanoutResponse(BaseModel):
         return data
 
 
+class PredictCritiqueIssue(BaseModel):
+    """One MQM-aligned critique issue, as surfaced on a predict job's pair.
+
+    Mirrors the per-issue shape the agent emits and the storage endpoint
+    accepts (``POST /v3/agent/critique`` / ``IssueIn``). Extra fields the
+    agent may add are preserved on the wire via ``extra="allow"`` rather
+    than dropped, so consumers can rely on the documented fields while
+    forward-compat new agent attributes still reach them.
+    """
+
+    dimension: Literal["accuracy", "terminology", "linguistic_conventions"]
+    subtype: str = Field(
+        description=(
+            "Free-form MQM subtype, e.g. 'omission', 'addition', "
+            "'mistranslation', 'mistranslation/hallucination-numbers'. Not "
+            "an enum — match case-insensitively / by prefix."
+        ),
+        max_length=100,
+    )
+    source_text: Optional[str] = None
+    draft_text: Optional[str] = None
+    comments: Optional[str] = None
+    severity: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=5,
+        description="1–5 when the model assigned one; null when the model omitted it.",
+    )
+    detector: Optional[str] = Field(
+        default=None,
+        max_length=50,
+        description=(
+            "Optional tag identifying the automated detector that "
+            "flagged the issue, e.g. 'number_diff'."
+        ),
+    )
+    evidence: Optional[List[str]] = Field(
+        default=None,
+        description="Optional supporting snippets the detector or model attached.",
+    )
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PredictCritique(BaseModel):
+    """The critique payload surfaced per pair on a predict job.
+
+    Currently exposes ``issues`` (the canonical MQM list, see #793).
+    ``extra="allow"`` keeps any auxiliary keys the agent emits visible to
+    consumers; today there are none documented beyond ``issues``.
+    """
+
+    issues: List[PredictCritiqueIssue] = Field(default_factory=list)
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "example": {
+                "issues": [
+                    {
+                        "dimension": "accuracy",
+                        "subtype": "mistranslation/hallucination-numbers",
+                        "source_text": "forty days",
+                        "draft_text": "fourteen days",
+                        "comments": "Number mistranslated",
+                        "severity": 4,
+                        "detector": "number_diff",
+                        "evidence": ["source: 40", "draft: 14"],
+                    }
+                ]
+            }
+        },
+    )
+
+
 class PredictJobPair(BaseModel):
     vref: Optional[str] = None
     source_text: Optional[str] = None
     target_text: str
     translation: Optional[Dict[str, Any]] = None
-    critique: Optional[Dict[str, Any]] = None
+    critique: Optional[PredictCritique] = None
     lexeme_cards: Optional[List[Dict[str, Any]]] = None
 
 
