@@ -21,7 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import backref, relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 Base = declarative_base()
 
@@ -1130,19 +1130,20 @@ class LanguageAffix(Base):
         ),
         CheckConstraint("n_runs >= 1", name="ck_language_affixes_n_runs_min_1"),
         Index(
-            "ux_language_affixes_iso_form_position",
+            "ux_language_affixes_version_form_position",
+            "target_version_id",
+            "form",
+            "position",
+            unique=True,
+            postgresql_where=text("target_version_id IS NOT NULL"),
+        ),
+        Index(
+            "ux_language_affixes_iso_form_position_legacy",
             "iso_639_3",
             "form",
             "position",
             unique=True,
-        ),
-        Index(
-            "ux_language_affixes_version_form_position_gloss",
-            "target_version_id",
-            "form",
-            "position",
-            "gloss",
-            unique=True,
+            postgresql_where=text("target_version_id IS NULL"),
         ),
         Index("ix_language_affixes_iso", "iso_639_3"),
         Index("ix_language_affixes_iso_position", "iso_639_3", "position"),
