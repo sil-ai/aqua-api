@@ -844,6 +844,92 @@ def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_t
         assert out["translation"]["literal"] == f"{chr(ord('A') + idx)}-translation"
 
 
+def test_predict_job_complete_forwards_critique_issues(client, regular_token1):
+    """Predict poll surfaces the MQM critique payload with the documented
+    `issues` shape, preserves unknown agent fields (extra="allow"), and
+    accepts dimensions / severities outside the documented set so a future
+    agent change can't 500 the poll endpoint."""
+    import modal
+
+    submitted_pairs = [
+        {"vref": "GEN 1:1", "source_text": "src-A", "target_text": "tgt-A"},
+        {"vref": "GEN 1:2", "source_text": "src-B", "target_text": "tgt-B"},
+    ]
+    job_id = _spawn_agent_and_get_job(
+        client,
+        regular_token1,
+        body_overrides={
+            "pairs": submitted_pairs,
+            "include_critique": True,
+        },
+    )
+
+    agent_complete = {
+        "pairs": [
+            {
+                "translation": {"literal": "A-translation"},
+                "critique": {
+                    "issues": [
+                        {
+                            "dimension": "accuracy",
+                            "subtype": "mistranslation/hallucination-numbers",
+                            "source_text": "forty days",
+                            "draft_text": "fourteen days",
+                            "comments": "Number mistranslated",
+                            "severity": 4,
+                            "detector": "number_diff",
+                            "evidence": ["source: 40", "draft: 14"],
+                        }
+                    ],
+                    "agent_run_id": "abc123",  # extra="allow" must keep this
+                },
+            },
+            {
+                "translation": {"literal": "B-translation"},
+                "critique": {
+                    "issues": [
+                        {
+                            # An unrecognised dimension and an out-of-typical-range
+                            # severity must pass through, not 500 the poll.
+                            "dimension": "fluency",
+                            "subtype": "x" * 200,  # > 100 chars
+                            "severity": 9,
+                        }
+                    ]
+                },
+            },
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "complete"
+
+    pair_a = body["pairs"][0]
+    assert pair_a["critique"]["issues"][0]["dimension"] == "accuracy"
+    assert (
+        pair_a["critique"]["issues"][0]["subtype"]
+        == "mistranslation/hallucination-numbers"
+    )
+    assert pair_a["critique"]["issues"][0]["severity"] == 4
+    assert pair_a["critique"]["issues"][0]["detector"] == "number_diff"
+    assert pair_a["critique"]["issues"][0]["evidence"] == ["source: 40", "draft: 14"]
+    # extra="allow" preserves auxiliary keys
+    assert pair_a["critique"]["agent_run_id"] == "abc123"
+
+    pair_b = body["pairs"][1]
+    assert pair_b["critique"]["issues"][0]["dimension"] == "fluency"
+    assert pair_b["critique"]["issues"][0]["subtype"] == "x" * 200
+    assert pair_b["critique"]["issues"][0]["severity"] == 9
+
+
 def test_predict_job_complete_forwards_lexeme_cards(client, regular_token1):
     """Regression for #707: discovered lexeme cards were dropped by the
     poll shaper. The slow path is the only surface where clients see

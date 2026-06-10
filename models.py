@@ -471,29 +471,46 @@ class PredictCritiqueIssue(BaseModel):
     agent may add are preserved on the wire via ``extra="allow"`` rather
     than dropped, so consumers can rely on the documented fields while
     forward-compat new agent attributes still reach them.
+
+    Field constraints deliberately diverge from ``IssueIn`` on the read
+    path: ``dimension`` is typed as ``str`` (not a ``Literal``), and
+    ``subtype`` / ``detector`` / ``severity`` carry no length or range
+    bounds. Validation here runs over data the agent already wrote into
+    a stored job result, so any extra-strict typing would convert a
+    previously-200 response into a 500 if the agent ever emits an
+    unexpected value (a new MQM dimension added agent-side before
+    aqua-api, a legacy row predating a tightened constraint, etc.). The
+    documented values live in each field's ``description`` — callers
+    should match case-insensitively / by prefix.
     """
 
-    dimension: Literal["accuracy", "terminology", "linguistic_conventions"]
+    dimension: str = Field(
+        description=(
+            "MQM dimension. Documented values: 'accuracy', 'terminology', "
+            "'linguistic_conventions'. Typed as a plain string on the read "
+            "path so an unexpected agent value can't 500 the poll endpoint."
+        ),
+    )
     subtype: str = Field(
         description=(
             "Free-form MQM subtype, e.g. 'omission', 'addition', "
-            "'mistranslation', 'mistranslation/hallucination-numbers'. Not "
-            "an enum — match case-insensitively / by prefix."
+            "'mistranslation', 'mistranslation/hallucination-numbers'. "
+            "Not an enum — match case-insensitively / by prefix."
         ),
-        max_length=100,
     )
     source_text: Optional[str] = None
     draft_text: Optional[str] = None
     comments: Optional[str] = None
     severity: Optional[int] = Field(
         default=None,
-        ge=1,
-        le=5,
-        description="1–5 when the model assigned one; null when the model omitted it.",
+        description=(
+            "Severity score the agent assigned, typically 1–5; null when "
+            "the model omitted it. No range constraint on the read path "
+            "(see class docstring)."
+        ),
     )
     detector: Optional[str] = Field(
         default=None,
-        max_length=50,
         description=(
             "Optional tag identifying the automated detector that "
             "flagged the issue, e.g. 'number_diff'."
