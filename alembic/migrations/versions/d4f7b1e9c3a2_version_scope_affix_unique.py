@@ -40,10 +40,12 @@ Existing data already satisfies both partial indexes: after
 which implies at most one row per ``(target_version_id, form, position)``
 too.
 
-Downgrade restores the old iso-keyed unique. The old
-``ux_language_affixes_version_form_position_gloss`` is not restored on
-downgrade -- it was effectively a no-op given the iso-keyed unique
-already covered (form, position) uniqueness per language.
+Downgrade restores the iso-keyed unique and the legacy 4-column
+``ux_language_affixes_version_form_position_gloss`` index, after deduping
+rows the new partial uniques deliberately allowed to coexist (NULL+stamped
+at the same ``(iso, form, position)``; multiple stamped versions sharing
+``(iso, form, position)``). That dedup is lossy by design -- the rows it
+drops are reproducible by re-running the agent.
 """
 
 from typing import Sequence, Union
