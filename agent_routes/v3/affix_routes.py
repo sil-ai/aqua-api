@@ -273,10 +273,17 @@ async def commit_affixes(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Bulk upsert of language affixes, keyed on (iso, form, position).
+    """Bulk upsert of language affixes, scoped to the payload's revision.
+
+    With ``revision_id`` set (the canonical agent path), conflicts are
+    detected against rows stamped to the same ``target_version_id``;
+    rows owned by other versions of the same ISO are untouched (#798).
+    Without a ``revision_id``, conflicts are detected against the legacy
+    ``target_version_id IS NULL`` bucket only.
 
     Same gloss → idempotent upsert of examples/n_runs/source_model.
-    Different gloss for an existing (form, position) → **409** with body:
+    Different gloss for an existing (form, position) within the scope →
+    **409** with body:
 
         {"detail": {"message": ..., "conflicts": [
             {"form", "position", "submitted_gloss",
@@ -362,8 +369,10 @@ async def commit_affixes(
                 }
 
             # Look up existing rows for the (form, position) tuples in the
-            # payload. One OR-of-ANDs clause per tuple is fine at the
-            # ~10-30 affix scale the comment specifies.
+            # payload, scoped to the same target_version_id so a write for
+            # one version doesn't 409 against another version's rows (#798).
+            # When the payload has no revision_id, scope to the legacy
+            # target_version_id IS NULL bucket.
             existing_map: dict[tuple[str, str], dict] = {}
             if incoming:
                 clauses = [
@@ -373,6 +382,13 @@ async def commit_affixes(
                     )
                     for (f, p) in incoming.keys()
                 ]
+                if target_version_id is not None:
+                    scope_clause = LanguageAffix.target_version_id == target_version_id
+                else:
+                    scope_clause = and_(
+                        LanguageAffix.iso_639_3 == iso,
+                        LanguageAffix.target_version_id.is_(None),
+                    )
                 existing_result = await db.execute(
                     select(
                         LanguageAffix.id,
@@ -383,7 +399,7 @@ async def commit_affixes(
                         LanguageAffix.n_runs,
                         LanguageAffix.source_model,
                     ).where(
-                        LanguageAffix.iso_639_3 == iso,
+                        scope_clause,
                         or_(*clauses),
                     )
                 )
@@ -467,16 +483,21 @@ async def commit_affixes(
                     "source_model": stmt.excluded.source_model,
                     "updated_at": func.now(),
                 }
-                # First-writer-wins for target_version_id: only stamp it on
-                # rows where it's currently NULL (Phase 1 backfill semantics).
+                # Conflict target tracks the partial unique that owns this
+                # bucket: (target_version_id, form, position) for stamped
+                # rows, (iso, form, position) for legacy NULL rows (#798).
                 if target_version_id is not None:
-                    set_values["target_version_id"] = func.coalesce(
-                        LanguageAffix.target_version_id, stmt.excluded.target_version_id
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["target_version_id", "form", "position"],
+                        index_where=LanguageAffix.target_version_id.isnot(None),
+                        set_=set_values,
                     )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["iso_639_3", "form", "position"],
-                    set_=set_values,
-                )
+                else:
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["iso_639_3", "form", "position"],
+                        index_where=LanguageAffix.target_version_id.is_(None),
+                        set_=set_values,
+                    )
                 await db.execute(stmt)
 
         await db.commit()
@@ -557,11 +578,16 @@ async def replace_affixes(
             )
 
     try:
-        del_filter = LanguageAffix.iso_639_3 == iso
-        if payload.revision_id is not None:
+        # Version-scope the replace: deleting only rows in the current
+        # write bucket avoids wiping affixes that belong to other versions
+        # of the same ISO (#798). When the caller omits revision_id we
+        # operate on the legacy target_version_id IS NULL bucket only.
+        if target_version_id is not None:
+            del_filter = LanguageAffix.target_version_id == target_version_id
+        else:
             del_filter = and_(
-                del_filter,
-                LanguageAffix.first_seen_revision_id == payload.revision_id,
+                LanguageAffix.iso_639_3 == iso,
+                LanguageAffix.target_version_id.is_(None),
             )
         result = await db.execute(delete(LanguageAffix).where(del_filter))
         n_deleted = result.rowcount
@@ -608,10 +634,12 @@ async def replace_affixes(
                 for (form, position), fields in incoming.items()
             ]
             stmt = pg_insert(LanguageAffix).values(rows)
-            # PUT is "replace": if the scoped delete left a row from another
-            # scope with the same (form, position), authoritatively overwrite
-            # gloss too. This is the one path that may change an existing
-            # row's gloss without an explicit PATCH.
+            # PUT is "replace within scope": if the scoped delete raced
+            # with a concurrent writer and left a row in this bucket,
+            # authoritatively overwrite gloss too. This is the one path
+            # that may change an existing row's gloss without an explicit
+            # PATCH. Conflict target matches the partial unique for the
+            # current write bucket (#798).
             replace_set = {
                 "gloss": stmt.excluded.gloss,
                 "examples": stmt.excluded.examples,
@@ -620,14 +648,18 @@ async def replace_affixes(
                 "first_seen_revision_id": stmt.excluded.first_seen_revision_id,
                 "updated_at": func.now(),
             }
-            # PUT overwrites target_version_id authoritatively when caller
-            # supplies a revision; otherwise preserve any prior stamp.
             if target_version_id is not None:
-                replace_set["target_version_id"] = stmt.excluded.target_version_id
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["iso_639_3", "form", "position"],
-                set_=replace_set,
-            )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["target_version_id", "form", "position"],
+                    index_where=LanguageAffix.target_version_id.isnot(None),
+                    set_=replace_set,
+                )
+            else:
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["iso_639_3", "form", "position"],
+                    index_where=LanguageAffix.target_version_id.is_(None),
+                    set_=replace_set,
+                )
             await db.execute(stmt)
             n_inserted = len(rows)
 
@@ -708,9 +740,20 @@ async def patch_affix(
     )
 
     if (new_form, new_position) != (affix.form, affix.position):
+        # Scope the duplicate check to the same write bucket as the row
+        # being patched, mirroring the version-scoped unique indexes
+        # (#798): collisions only matter within the same target_version_id
+        # (or within the legacy NULL bucket for the same ISO).
+        if affix.target_version_id is None:
+            scope_clause = and_(
+                LanguageAffix.iso_639_3 == affix.iso_639_3,
+                LanguageAffix.target_version_id.is_(None),
+            )
+        else:
+            scope_clause = LanguageAffix.target_version_id == affix.target_version_id
         dup_result = await db.execute(
             select(LanguageAffix.id).where(
-                LanguageAffix.iso_639_3 == affix.iso_639_3,
+                scope_clause,
                 LanguageAffix.form == new_form,
                 LanguageAffix.position == new_position,
                 LanguageAffix.id != affix.id,
