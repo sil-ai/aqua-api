@@ -488,15 +488,23 @@ class PredictCritiqueIssue(BaseModel):
         description=(
             "MQM dimension. Documented values: 'accuracy', 'terminology', "
             "'linguistic_conventions'. Typed as a plain string on the read "
-            "path so an unexpected agent value can't 500 the poll endpoint."
+            "path so an unexpected agent value can't 500 the poll endpoint; "
+            "the documented enum is surfaced via json_schema_extra so "
+            "Swagger UI still shows the canonical values."
         ),
+        json_schema_extra={
+            "enum": ["accuracy", "terminology", "linguistic_conventions"],
+        },
     )
     subtype: str = Field(
         description=(
             "Free-form MQM subtype, e.g. 'omission', 'addition', "
             "'mistranslation', 'mistranslation/hallucination-numbers'. "
-            "Not an enum — match case-insensitively / by prefix."
+            "Not an enum — match case-insensitively / by prefix. The "
+            "documented storage cap of 100 chars is advertised via "
+            "json_schema_extra without being enforced on the read path."
         ),
+        json_schema_extra={"maxLength": 100},
     )
     source_text: Optional[str] = None
     draft_text: Optional[str] = None
@@ -505,16 +513,20 @@ class PredictCritiqueIssue(BaseModel):
         default=None,
         description=(
             "Severity score the agent assigned, typically 1–5; null when "
-            "the model omitted it. No range constraint on the read path "
-            "(see class docstring)."
+            "the model omitted it. Range is advertised via "
+            "json_schema_extra but not enforced on the read path (see "
+            "class docstring)."
         ),
+        json_schema_extra={"minimum": 1, "maximum": 5},
     )
     detector: Optional[str] = Field(
         default=None,
         description=(
             "Optional tag identifying the automated detector that "
-            "flagged the issue, e.g. 'number_diff'."
+            "flagged the issue, e.g. 'number_diff'. Documented length "
+            "cap of 50 chars is advertised but not enforced."
         ),
+        json_schema_extra={"maxLength": 50},
     )
     evidence: Optional[List[str]] = Field(
         default=None,
