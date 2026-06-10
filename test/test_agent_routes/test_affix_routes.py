@@ -877,11 +877,7 @@ def test_affixes_put_replace_is_version_scoped(
     assert body["n_deleted"] == 0
     assert body["n_inserted"] == 1
 
-    rows = (
-        db_session.query(LanguageAffix)
-        .filter(LanguageAffix.iso_639_3 == iso)
-        .all()
-    )
+    rows = db_session.query(LanguageAffix).filter(LanguageAffix.iso_639_3 == iso).all()
     by_version = {r.target_version_id: r.form for r in rows}
     assert by_version == {test_version_id_2: "preserve-", test_version_id: "fresh-"}
 

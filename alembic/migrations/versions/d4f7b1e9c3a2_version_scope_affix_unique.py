@@ -45,6 +45,7 @@ Downgrade restores the old iso-keyed unique. The old
 downgrade -- it was effectively a no-op given the iso-keyed unique
 already covered (form, position) uniqueness per language.
 """
+
 from typing import Sequence, Union
 
 from alembic import op
