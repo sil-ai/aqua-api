@@ -581,10 +581,14 @@ def test_upload_revision_accepts_missing_content_type(
 
     boundary = "----testboundary801"
     body = (
-        f"--{boundary}\r\n"
-        'Content-Disposition: form-data; name="file"; filename="uploadtest.txt"\r\n'
-        "\r\n"
-    ).encode() + file_bytes + f"\r\n--{boundary}--\r\n".encode()
+        (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="uploadtest.txt"\r\n'
+            "\r\n"
+        ).encode()
+        + file_bytes
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
 
     headers = {
         "Authorization": f"Bearer {regular_token1}",
