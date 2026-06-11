@@ -213,7 +213,10 @@ async def upload_revision(
     # DoS where an authenticated user uploads a huge body to exhaust workers.
     # Strip any media-type parameters (e.g. "text/plain; charset=utf-8") so
     # well-formed clients that include a charset aren't falsely rejected.
-    raw_content_type = file.content_type or ""
+    # Treat a missing/empty per-part Content-Type as application/octet-stream:
+    # generic HTTP clients (e.g. requests' 2-tuple file form) omit it entirely,
+    # and #767's intent was for those uploads to succeed.
+    raw_content_type = file.content_type or "application/octet-stream"
     media_type = raw_content_type.split(";", 1)[0].strip().lower()
     if media_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
