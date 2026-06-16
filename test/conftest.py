@@ -8,6 +8,12 @@ import os
 # run before `from app import app` regardless of pytest collection order.
 os.environ["AQUA_DB_POOLCLASS"] = "null"
 
+# security_routes.utilities now raises at import time when SECRET_KEY is
+# missing (issue #716). Provide a dummy value for local/ad-hoc test runs so
+# collection works; CI and real deployments set their own real SECRET_KEY.
+# setdefault so we never override a real value the environment provides.
+os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
+
 from datetime import date  # noqa: E402
 
 import bcrypt  # noqa: E402

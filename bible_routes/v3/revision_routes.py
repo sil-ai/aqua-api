@@ -22,6 +22,40 @@ from security_routes.utilities import (
 
 router = APIRouter()
 
+# Revision uploads are vref-aligned plain-text files. A full Bible plaintext
+# (e.g. the bundled KJV fixture) is ~5MB, so 50MB gives ample headroom for
+# verbose translations / encodings while still capping memory use per upload.
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+# Read in 1MB chunks when streaming to enforce the cap without loading the
+# whole file at once.
+UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
+# Most HTTP clients send plain text as "text/plain"; curl / generic clients
+# fall back to "application/octet-stream". Anything else (images, archives,
+# HTML, etc.) is rejected with 415.
+ALLOWED_CONTENT_TYPES = {"text/plain", "application/octet-stream"}
+
+
+async def read_upload_with_limit(file: UploadFile, max_bytes: int) -> bytes:
+    """Read ``file`` fully into memory, aborting if it exceeds ``max_bytes``.
+
+    Streams in chunks so an oversized upload is rejected before the whole
+    body is buffered. Raises ``HTTPException(413)`` if the cap is exceeded.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(UPLOAD_READ_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"upload too large (limit {max_bytes} bytes)",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
 
 def create_revision_out(
     revision: BibleRevisionModel, version_map: dict[int, BibleVersionModel]
@@ -91,7 +125,8 @@ async def list_revisions(
         # Step 3: Load revisions for that version
         result = await db.execute(
             select(BibleRevisionModel).where(
-                BibleRevisionModel.bible_version_id == version_id
+                BibleRevisionModel.bible_version_id == version_id,
+                BibleRevisionModel.deleted.is_(False),
             )
         )
         revisions = result.scalars().all()
@@ -172,6 +207,25 @@ async def upload_revision(
     """
     start_time = time.time()
 
+    # Validate the upload up-front, before we touch the DB. Reject obviously
+    # wrong content-types (415) and reject anything that already advertises a
+    # size over the cap (413). This guards against the Starlette multipart
+    # DoS where an authenticated user uploads a huge body to exhaust workers.
+    # Strip any media-type parameters (e.g. "text/plain; charset=utf-8") so
+    # well-formed clients that include a charset aren't falsely rejected.
+    raw_content_type = file.content_type or ""
+    media_type = raw_content_type.split(";", 1)[0].strip().lower()
+    if media_type not in ALLOWED_CONTENT_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"unsupported content-type: {raw_content_type}",
+        )
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"upload too large (limit {MAX_UPLOAD_BYTES} bytes)",
+        )
+
     logging.info(f"Uploading new revision: {revision.model_dump()}")
     result = await db.execute(
         select(BibleVersionModel).where(BibleVersionModel.id == revision.version_id)
@@ -212,10 +266,16 @@ async def upload_revision(
     await db.flush()
 
     try:
-        contents = await file.read()
+        # Stream the upload with a byte-count cap; this enforces the limit
+        # even when the client didn't send a Content-Length / file.size is
+        # unset, so a chunked oversize body still fails fast.
+        contents = await read_upload_with_limit(file, MAX_UPLOAD_BYTES)
         await process_and_upload_revision(contents, new_revision.id, db)
         # One commit covers the BibleRevision row + all VerseText inserts.
         await db.commit()
+    except HTTPException:
+        await db.rollback()
+        raise
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

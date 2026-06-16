@@ -1798,8 +1798,9 @@ def test_use_eflomal_derives_version_ids(
 def test_non_eflomal_word_alignment_derives_version_ids(
     client, regular_token1, db_session, test_db_session
 ):
-    """Non-eflomal word-alignment must also forward derived source/target_version_id
-    to the runner — derivation now runs for every assessment type, not just eflomal."""
+    """Fastalign word-alignment (use_eflomal=false) must also forward derived
+    source/target_version_id to the runner — derivation now runs for every
+    assessment type, not just eflomal."""
     target_version_id = create_bible_version(client, regular_token1, db_session)
     source_version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, target_version_id)
@@ -1815,6 +1816,7 @@ def test_non_eflomal_word_alignment_derives_version_ids(
                 "revision_id": revision_id,
                 "reference_id": reference_id,
                 "type": "word-alignment",
+                "use_eflomal": False,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -1822,6 +1824,8 @@ def test_non_eflomal_word_alignment_derives_version_ids(
         kwargs = mock_runner.await_args.kwargs
         assert kwargs["source_version_id"] == source_version_id
         assert kwargs["target_version_id"] == target_version_id
+        # Fastalign stores no flag.
+        assert mock_runner.await_args.args[0].kwargs is None
 
 
 def test_agent_critique_derives_version_ids(
@@ -1983,18 +1987,22 @@ def test_non_eflomal_deleted_revision_returns_404(
 def test_use_eflomal_dedup_separate_from_regular(
     client, regular_token1, db_session, test_db_session
 ):
-    """Eflomal and regular word-alignment use separate in-progress dedup buckets."""
+    """Eflomal and fastalign word-alignment use separate in-progress dedup buckets."""
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
     reference_id = upload_revision(client, regular_token1, version_id)
 
+    # Eflomal is the default, so the fastalign bucket must opt out explicitly.
     base_params = {
         "revision_id": revision_id,
         "reference_id": reference_id,
         "type": "word-alignment",
+        "use_eflomal": False,
     }
     eflomal_params = {
-        **base_params,
+        "revision_id": revision_id,
+        "reference_id": reference_id,
+        "type": "word-alignment",
         "use_eflomal": True,
     }
 
@@ -2011,7 +2019,7 @@ def test_use_eflomal_dedup_separate_from_regular(
         )
         assert eflomal_resp.status_code == 200
 
-        # Regular word-alignment on the same revision pair must NOT be blocked by eflomal
+        # Fastalign word-alignment on the same revision pair must NOT be blocked by eflomal
         regular_resp = client.post(
             f"{prefix}/assessment",
             params=base_params,
@@ -2027,7 +2035,7 @@ def test_use_eflomal_dedup_separate_from_regular(
         )
         assert eflomal_dup.status_code == 409
 
-        # Second regular submission on same params must also be blocked
+        # Second fastalign submission on same params must also be blocked
         regular_dup = client.post(
             f"{prefix}/assessment",
             params=base_params,
@@ -2039,7 +2047,12 @@ def test_use_eflomal_dedup_separate_from_regular(
 def test_kwargs_returned_in_assessment_response(
     client, regular_token1, db_session, test_db_session
 ):
-    """AssessmentOut includes kwargs so callers can tell eflomal from regular word-alignment."""
+    """AssessmentOut includes kwargs so callers can tell eflomal from fastalign.
+
+    Eflomal is the default: an omitted ``use_eflomal`` stores
+    ``{"use_eflomal": true}``. Fastalign is selected with ``use_eflomal=false``
+    and stores no flag (kwargs is None).
+    """
     version_id = create_bible_version(client, regular_token1, db_session)
     revision_id = upload_revision(client, regular_token1, version_id)
     reference_id = upload_revision(client, regular_token1, version_id)
@@ -2049,14 +2062,13 @@ def test_kwargs_returned_in_assessment_response(
     ) as mock_runner:
         mock_runner.return_value = None
 
-        # Eflomal assessment — kwargs should contain use_eflomal: true
+        # Default word-alignment — eflomal — kwargs should contain use_eflomal: true
         eflomal_resp = client.post(
             f"{prefix}/assessment",
             params={
                 "revision_id": revision_id,
                 "reference_id": reference_id,
                 "type": "word-alignment",
-                "use_eflomal": True,
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
@@ -2064,8 +2076,132 @@ def test_kwargs_returned_in_assessment_response(
         eflomal_data = eflomal_resp.json()[0]
         assert eflomal_data["kwargs"] == {"use_eflomal": True}
 
-        # Regular word-alignment — kwargs should be None
-        regular_resp = client.post(
+        # Explicit fastalign (use_eflomal=false) — kwargs should be None
+        fastalign_resp = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+                "use_eflomal": False,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert fastalign_resp.status_code == 200
+        fastalign_data = fastalign_resp.json()[0]
+        assert fastalign_data["kwargs"] is None
+
+
+# -- Atomic duplicate-dispatch tests (#780) --
+
+
+def test_assess_dup_lock_key_is_stable_and_distinct_per_quadruple():
+    """The advisory-lock key must be deterministic, fit in signed int8, and
+    map different quadruples to different keys (#780). A collision would
+    silently serialize two unrelated quadruples — not a correctness bug,
+    but worth catching if the key derivation ever drifts.
+
+    Mirrors the equivalent test for training-job dup-lock (#722 / PR #771)."""
+    from assessment_routes.v3.assessment_routes import (
+        _assess_dup_lock_key,
+        _canonicalize_kwargs,
+    )
+
+    k1 = _assess_dup_lock_key(1, 2, "word-alignment", _canonicalize_kwargs(None))
+    # Stable across calls
+    assert (
+        _assess_dup_lock_key(1, 2, "word-alignment", _canonicalize_kwargs(None)) == k1
+    )
+
+    # Distinct per coordinate
+    assert k1 != _assess_dup_lock_key(
+        2, 1, "word-alignment", _canonicalize_kwargs(None)
+    ), "swap of revision/reference must yield a different key"
+    assert k1 != _assess_dup_lock_key(
+        1, 2, "semantic-similarity", _canonicalize_kwargs(None)
+    ), "different type must yield a different key"
+    assert k1 != _assess_dup_lock_key(
+        1, 3, "word-alignment", _canonicalize_kwargs(None)
+    ), "different reference must yield a different key"
+    assert k1 != _assess_dup_lock_key(
+        1, 2, "word-alignment", _canonicalize_kwargs({"use_eflomal": True})
+    ), "different kwargs must yield a different key"
+
+    # reference_id=None vs. reference_id absent should be the same — and
+    # both should differ from any concrete int reference.
+    k_no_ref = _assess_dup_lock_key(
+        1, None, "sentence-length", _canonicalize_kwargs(None)
+    )
+    assert k_no_ref != _assess_dup_lock_key(
+        1, 0, "sentence-length", _canonicalize_kwargs(None)
+    ), "reference_id None must not collide with reference_id=0"
+
+    # Kwargs canonicalization must be key-order-insensitive (matches the
+    # JSONB-equality dup-check semantics).
+    k_ab = _assess_dup_lock_key(
+        1, 2, "sentence-length", _canonicalize_kwargs({"a": 1, "b": 2})
+    )
+    k_ba = _assess_dup_lock_key(
+        1, 2, "sentence-length", _canonicalize_kwargs({"b": 2, "a": 1})
+    )
+    assert k_ab == k_ba, "kwargs key order must not affect the lock key"
+
+    # Empty-dict kwargs must canonicalize to the same key as None (matches
+    # the dup-check, which normalizes {} → None at request time).
+    assert _assess_dup_lock_key(
+        1, 2, "sentence-length", _canonicalize_kwargs({})
+    ) == _assess_dup_lock_key(1, 2, "sentence-length", _canonicalize_kwargs(None))
+
+    # pg_advisory_xact_lock takes signed int8.
+    for k in [
+        k1,
+        _assess_dup_lock_key(
+            99999999, 99999999, "semantic-similarity", _canonicalize_kwargs(None)
+        ),
+        _assess_dup_lock_key(0, None, "", _canonicalize_kwargs(None)),
+    ]:
+        assert -(2**63) <= k < 2**63
+
+
+def test_add_assessment_acquires_advisory_lock_before_dup_check_and_insert(
+    client, regular_token1, db_session, test_db_session
+):
+    """POST /assessment must take a pg_advisory_xact_lock for the
+    (revision, reference, type, kwargs) quadruple *before* running the
+    duplicate-check SELECT and the INSERT (#780). Without the lock, two
+    concurrent POSTs can both pass the dup-check and both insert.
+
+    We assert ordering by making the lock helper raise on the first call
+    and verifying no Assessment row was created. If the lock were taken
+    after the insert, the row would already exist when the exception
+    fires."""
+    import assessment_routes.v3.assessment_routes as ar
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    db_session.expire_all()
+
+    def _count_active():
+        return (
+            db_session.query(Assessment)
+            .filter(
+                Assessment.revision_id == revision_id,
+                Assessment.reference_id == reference_id,
+                Assessment.type == "word-alignment",
+                Assessment.deleted.is_not(True),
+            )
+            .count()
+        )
+
+    before = _count_active()
+
+    async def _raising_lock(*_args, **_kwargs):
+        raise RuntimeError("simulated advisory-lock acquire failure")
+
+    with patch.object(ar, "_acquire_assess_dup_lock", side_effect=_raising_lock):
+        resp = client.post(
             f"{prefix}/assessment",
             params={
                 "revision_id": revision_id,
@@ -2074,6 +2210,477 @@ def test_kwargs_returned_in_assessment_response(
             },
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
-        assert regular_resp.status_code == 200
-        regular_data = regular_resp.json()[0]
-        assert regular_data["kwargs"] is None
+    assert resp.status_code == 500
+
+    # Crucial assertion: no Assessment row was created. If the lock were
+    # taken *after* the insert, the row would already exist by the time
+    # the exception fires.
+    db_session.expire_all()
+    after = _count_active()
+    assert after == before, (
+        "Assessment was created despite the lock helper raising — the "
+        "lock must be acquired before the duplicate-check SELECT and "
+        "any insert."
+    )
+
+
+def test_add_assessment_calls_advisory_lock_with_correct_quadruple(
+    client, regular_token1, db_session, test_db_session
+):
+    """POST /assessment must take the lock with the correct
+    (revision, reference, type, kwargs) quadruple. Spy on the helper to
+    record args (#780)."""
+    import assessment_routes.v3.assessment_routes as ar
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    lock_calls = []
+    real_helper = ar._acquire_assess_dup_lock
+
+    async def _spy(db, rev, ref, atype, kwargs_canonical):
+        lock_calls.append((rev, ref, atype, kwargs_canonical))
+        return await real_helper(db, rev, ref, atype, kwargs_canonical)
+
+    with patch.object(ar, "_acquire_assess_dup_lock", side_effect=_spy):
+        with patch(
+            f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+        ) as mock_runner:
+            mock_runner.return_value = None
+            resp = client.post(
+                f"{prefix}/assessment",
+                params={
+                    "revision_id": revision_id,
+                    "reference_id": reference_id,
+                    "type": "word-alignment",
+                },
+                headers={"Authorization": f"Bearer {regular_token1}"},
+            )
+
+    assert resp.status_code == 200
+    assert len(lock_calls) == 1
+    rev, ref, atype, kw = lock_calls[0]
+    assert rev == revision_id
+    assert ref == reference_id
+    assert atype == "word-alignment"
+    # Eflomal is the default for word-alignment, so the folded
+    # {"use_eflomal": True} flag is part of the locked quadruple's kwargs.
+    assert kw == ar._canonicalize_kwargs({"use_eflomal": True})
+
+
+def test_advisory_lock_actually_blocks_concurrent_session_on_same_quadruple():
+    """End-to-end check that pg_advisory_xact_lock(K) on one connection
+    actually blocks pg_try_advisory_xact_lock(K) on another connection
+    (#780). Guards against accidentally swapping in a non-locking
+    primitive during a refactor."""
+    from sqlalchemy import create_engine
+    from sqlalchemy import text as _text
+
+    from assessment_routes.v3.assessment_routes import (
+        _assess_dup_lock_key,
+        _canonicalize_kwargs,
+    )
+
+    sync_engine = create_engine(
+        "postgresql://dbuser:dbpassword@localhost:5432/dbname",
+        # Two distinct backend connections — required for advisory-lock
+        # contention to be observable.
+        pool_size=2,
+        max_overflow=0,
+    )
+    try:
+        key = _assess_dup_lock_key(
+            424242, 717171, "word-alignment", _canonicalize_kwargs(None)
+        )
+
+        with sync_engine.connect() as c1:
+            tx1 = c1.begin()
+            c1.execute(_text("SELECT pg_advisory_xact_lock(:k)").bindparams(k=key))
+
+            with sync_engine.connect() as c2:
+                tx2 = c2.begin()
+                got = c2.execute(
+                    _text("SELECT pg_try_advisory_xact_lock(:k)").bindparams(k=key)
+                ).scalar()
+                assert got is False, (
+                    "pg_try_advisory_xact_lock unexpectedly succeeded — "
+                    "the primary lock is not actually held"
+                )
+
+                # Different quadruple → no contention.
+                other_key = _assess_dup_lock_key(
+                    424242, 717171, "semantic-similarity", _canonicalize_kwargs(None)
+                )
+                got_other = c2.execute(
+                    _text("SELECT pg_try_advisory_xact_lock(:k)").bindparams(
+                        k=other_key
+                    )
+                ).scalar()
+                assert (
+                    got_other is True
+                ), "distinct quadruples should not contend on the same key"
+                tx2.rollback()
+
+            tx1.rollback()
+
+            # After rollback the key is free again.
+            with sync_engine.connect() as c3:
+                tx3 = c3.begin()
+                got = c3.execute(
+                    _text("SELECT pg_try_advisory_xact_lock(:k)").bindparams(k=key)
+                ).scalar()
+                assert got is True, "lock was not released on rollback"
+                tx3.rollback()
+    finally:
+        sync_engine.dispose()
+
+
+def test_call_assessment_runner_refuses_to_respawn_non_queued_row(
+    client, regular_token1, db_session, test_db_session
+):
+    """Guard 2 (#780): if call_assessment_runner is invoked on an
+    assessment row that is no longer in `queued` status, it must refuse
+    to re-spawn — return HTTP 409 with the structured detail and not
+    call modal.Function.from_name / f.spawn.aio.
+
+    This catches the actual observed symptom: assessment_id=21288 was
+    dispatched twice because the gap between INSERT (queued) and worker
+    setting (running) let a second dispatch through."""
+    import asyncio
+
+    from fastapi import HTTPException
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+    from sqlalchemy.orm import sessionmaker
+
+    import assessment_routes.v3.assessment_routes as ar
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    # Insert an Assessment row already in `running` status — mimics the
+    # 21288 case where the worker has picked up the job.
+    running_row = Assessment(
+        revision_id=revision_id,
+        reference_id=reference_id,
+        type="word-alignment",
+        status="running",
+    )
+    db_session.add(running_row)
+    db_session.commit()
+    db_session.refresh(running_row)
+    running_id = running_row.id
+
+    # Build a minimal AssessmentIn that references this row.
+    from models import AssessmentIn
+
+    a = AssessmentIn(
+        id=running_id,
+        revision_id=revision_id,
+        reference_id=reference_id,
+        type="word-alignment",
+    )
+
+    async def _run():
+        async_engine = create_async_engine(
+            "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
+        )
+        AsyncSessionLocal = sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=async_engine,
+            class_=AsyncSession,
+        )
+        try:
+            async with AsyncSessionLocal() as session:
+                # Patch modal so any accidental spawn would be observable.
+                with patch.object(ar.modal, "Function") as mod_func:
+                    spawn_aio = Mock()
+                    mod_func.from_name.return_value = Mock(spawn=Mock(aio=spawn_aio))
+                    try:
+                        await ar.call_assessment_runner(
+                            a,
+                            return_all_results=False,
+                            modal_env="dev",
+                            source_version_id=None,
+                            target_version_id=None,
+                            db=session,
+                        )
+                        raised = None
+                    except HTTPException as e:
+                        raised = e
+                # Lock is xact-scoped — release by rolling back our txn.
+                await session.rollback()
+                # Crucial: spawn must NOT have been called.
+                assert (
+                    not spawn_aio.called
+                ), "f.spawn.aio was called for a non-queued row"
+        finally:
+            await async_engine.dispose()
+        return raised
+
+    raised = asyncio.run(_run())
+    assert raised is not None, "call_assessment_runner should have raised 409"
+    assert raised.status_code == 409
+    # Detail shape per plan.
+    detail = raised.detail
+    assert isinstance(
+        detail, dict
+    ), f"expected dict detail, got {type(detail).__name__}"
+    assert detail["detail"] == "Assessment in progress"
+    assert detail["existing_id"] == running_id
+    assert detail["status"] == "running"
+    # requested_time may be None if we didn't set it on the row above —
+    # that's fine, the key must just be present.
+    assert "requested_time" in detail
+
+    # Row is unchanged.
+    db_session.expire_all()
+    assert (
+        db_session.query(Assessment).filter(Assessment.id == running_id).first().status
+        == "running"
+    )
+
+
+def test_call_assessment_runner_transitions_queued_to_running_atomically(
+    client, regular_token1, db_session, test_db_session
+):
+    """Guard 2 (#780): on a queued row, call_assessment_runner must
+    transition the row to `running` before spawning, so a concurrent
+    re-dispatch attempt sees a non-queued status and bails.
+
+    This test exercises the success path through the full POST
+    /assessment endpoint with a mocked Modal spawn, and verifies the
+    row ends up in `running` (not `queued`)."""
+    import assessment_routes.v3.assessment_routes as ar
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    spawn_aio_calls = []
+
+    async def _fake_spawn(*args, **kwargs):
+        spawn_aio_calls.append((args, kwargs))
+
+    with patch.object(ar.modal, "Function") as mod_func:
+        mod_func.from_name.return_value = Mock(spawn=Mock(aio=_fake_spawn))
+        resp = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert resp.status_code == 200
+    assert len(spawn_aio_calls) == 1, "Modal spawn must be invoked exactly once"
+
+    assessment_id = resp.json()[0]["id"]
+    db_session.expire_all()
+    row = db_session.query(Assessment).filter(Assessment.id == assessment_id).first()
+    assert row is not None
+    assert (
+        row.status == "running"
+    ), f"row must be transitioned to running before spawn — saw {row.status}"
+    assert row.start_time is not None, "start_time must be set on transition"
+
+
+def test_create_assessment_blocked_when_existing_row_is_running(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """Defense-in-depth check for the 21288 scenario: even if a stray
+    parallel dispatch somehow attempts to re-spawn an existing running
+    row directly (bypassing the duplicate-check SELECT for an admin),
+    the per-row status guard in call_assessment_runner refuses it.
+
+    This is end-to-end via the API for an admin caller. Admins bypass
+    the duplicate *check*, so without guard 2 they could happily INSERT
+    a second row pointing at the same assessment_id intent — the per-row
+    status guard kicks in for the row we just inserted, but its real
+    value is for the case where the same in-flight assessment_id is
+    re-dispatched (covered by the unit test above)."""
+    import assessment_routes.v3.assessment_routes as ar
+
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    # First POST succeeds and ends up in `running` (guard 2 transitions).
+    with patch.object(ar.modal, "Function") as mod_func:
+        mod_func.from_name.return_value = Mock(spawn=Mock(aio=Mock(return_value=None)))
+
+        async def _ok_spawn(*a, **kw):
+            return None
+
+        mod_func.from_name.return_value = Mock(spawn=Mock(aio=_ok_spawn))
+        first = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert first.status_code == 200
+    first_id = first.json()[0]["id"]
+
+    db_session.expire_all()
+    first_row = db_session.query(Assessment).filter(Assessment.id == first_id).first()
+    assert first_row.status == "running"
+
+    # Regular user submitting same triple sees the in-progress dup-check
+    # 409 (existing behaviour, but now covers `running` not just `queued`).
+    dup = client.post(
+        f"{prefix}/assessment",
+        params={
+            "revision_id": revision_id,
+            "reference_id": reference_id,
+            "type": "word-alignment",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert dup.status_code == 409
+    assert str(first_id) in dup.json()["detail"]
+
+
+# --- POST /assessment/{id}/increment-attempts tests (issue #314) ---
+
+
+def _increment_attempts(client, token, assessment_id):
+    return client.post(
+        f"{prefix}/assessment/{assessment_id}/increment-attempts",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+
+def test_increment_attempts_zero_to_one_to_two(
+    client, regular_token1, db_session, test_db_session
+):
+    """Successive increments return the post-increment value (0→1, 1→2)."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    # Newly-created row should have attempt_count=0 (server_default).
+    db_session.expire_all()
+    row = db_session.query(Assessment).filter(Assessment.id == aid).first()
+    assert row.attempt_count == 0
+
+    resp = _increment_attempts(client, regular_token1, aid)
+    assert resp.status_code == 200
+    assert resp.json() == {"attempt_count": 1}
+
+    resp = _increment_attempts(client, regular_token1, aid)
+    assert resp.status_code == 200
+    assert resp.json() == {"attempt_count": 2}
+
+    db_session.expire_all()
+    row = db_session.query(Assessment).filter(Assessment.id == aid).first()
+    assert row.attempt_count == 2
+
+
+def test_increment_attempts_concurrent_race_free(
+    client, regular_token1, db_session, test_db_session
+):
+    """Two concurrent increments on the same row must observe distinct
+    post-increment values (the UPDATE ... RETURNING is atomic). Asserts
+    the union of results is {1, 2} — never {1, 1}."""
+    import asyncio
+
+    import httpx
+
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    async def _run():
+        from app import app as fastapi_app  # FastAPI app object
+
+        # ASGITransport drives the FastAPI app in-process so the two
+        # requests share the same event loop and can actually interleave.
+        transport = httpx.ASGITransport(app=fastapi_app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            headers = {"Authorization": f"Bearer {regular_token1}"}
+            r1, r2 = await asyncio.gather(
+                ac.post(
+                    f"/{prefix}/assessment/{aid}/increment-attempts", headers=headers
+                ),
+                ac.post(
+                    f"/{prefix}/assessment/{aid}/increment-attempts", headers=headers
+                ),
+            )
+            return r1, r2
+
+    r1, r2 = asyncio.run(_run())
+    assert r1.status_code == 200, r1.text
+    assert r2.status_code == 200, r2.text
+    counts = {r1.json()["attempt_count"], r2.json()["attempt_count"]}
+    assert counts == {1, 2}, f"expected {{1, 2}}, got {counts}"
+
+    db_session.expire_all()
+    row = db_session.query(Assessment).filter(Assessment.id == aid).first()
+    assert row.attempt_count == 2
+
+
+def test_increment_attempts_not_found(
+    client, regular_token1, db_session, test_db_session
+):
+    """404 when the assessment doesn't exist."""
+    resp = _increment_attempts(client, regular_token1, 9999999)
+    assert resp.status_code == 404
+
+
+def test_increment_attempts_deleted(
+    client, regular_token1, db_session, test_db_session
+):
+    """404 when the assessment row is soft-deleted."""
+    aid = _create_assessment(client, regular_token1, db_session)
+    delete_assessment(client, regular_token1, aid)
+
+    resp = _increment_attempts(client, regular_token1, aid)
+    assert resp.status_code == 404
+
+
+def test_increment_attempts_unauthorized_non_owner(
+    client, regular_token1, regular_token2, db_session, test_db_session
+):
+    """A user in a different group is denied (403)."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _increment_attempts(client, regular_token2, aid)
+    assert resp.status_code == 403
+
+
+def test_increment_attempts_admin_can_increment(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """Admin can increment any assessment."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = _increment_attempts(client, admin_token, aid)
+    assert resp.status_code == 200
+    assert resp.json() == {"attempt_count": 1}
+
+
+def test_assessment_out_exposes_attempt_count(
+    client, regular_token1, db_session, test_db_session
+):
+    """GET /assessment includes ``attempt_count`` in the response payload,
+    starting at 0 for a freshly-created row and reflecting subsequent
+    increments."""
+    aid = _create_assessment(client, regular_token1, db_session)
+
+    resp = list_assessment(client, regular_token1, ids=aid)
+    assert resp.status_code == 200
+    bodies = [row for row in resp.json() if row["id"] == aid]
+    assert len(bodies) == 1
+    assert bodies[0]["attempt_count"] == 0
+
+    inc = _increment_attempts(client, regular_token1, aid)
+    assert inc.status_code == 200
+
+    resp = list_assessment(client, regular_token1, ids=aid)
+    assert resp.status_code == 200
+    bodies = [row for row in resp.json() if row["id"] == aid]
+    assert bodies[0]["attempt_count"] == 1

@@ -388,6 +388,186 @@ class TestAdminFlow:
         assert version_in_db_2 is None
 
 
+class TestListExcludesDeleted:
+    def test_admin_list_excludes_deleted_versions(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        """GET /version as admin must hide soft-deleted versions.
+
+        The non-admin path filters on `deleted.is_(False)`; the admin path
+        used to skip that filter and leak deleted rows.
+        """
+        group_1 = db_session.query(Group).filter_by(name="Group1").first()
+        assert group_1 is not None
+        regular_headers = {"Authorization": f"Bearer {regular_token1}"}
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        kept_params = {
+            **new_version_data,
+            "name": "Kept Version",
+            "abbreviation": "KV",
+            "add_to_groups": [group_1.id],
+        }
+        kept_response = client.post(
+            f"{prefix}/version", json=kept_params, headers=regular_headers
+        )
+        assert kept_response.status_code == 200, kept_response.text
+        kept_id = kept_response.json()["id"]
+
+        deleted_params = {
+            **new_version_data,
+            "name": "Doomed Version",
+            "abbreviation": "DV",
+            "add_to_groups": [group_1.id],
+        }
+        deleted_response = client.post(
+            f"{prefix}/version", json=deleted_params, headers=regular_headers
+        )
+        assert deleted_response.status_code == 200, deleted_response.text
+        deleted_id = deleted_response.json()["id"]
+
+        delete_response = client.delete(
+            f"{prefix}/version", params={"id": deleted_id}, headers=admin_headers
+        )
+        assert delete_response.status_code == 200
+
+        list_response = client.get(f"{prefix}/version", headers=admin_headers)
+        assert list_response.status_code == 200
+        listed_ids = {v["id"] for v in list_response.json()}
+        assert kept_id in listed_ids
+        assert deleted_id not in listed_ids
+
+
+class TestIncludeDeleted:
+    """Admins can opt-in to soft-deleted versions via ``include_deleted=true``
+    so downstream mirrors can satisfy FK constraints from /revision.
+    """
+
+    def _create_and_delete_pair(self, client, regular_token, admin_token, db_session):
+        group_1 = db_session.query(Group).filter_by(name="Group1").first()
+        assert group_1 is not None
+        regular_headers = {"Authorization": f"Bearer {regular_token}"}
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        kept_params = {
+            **new_version_data,
+            "name": "Kept Version",
+            "abbreviation": "KV2",
+            "add_to_groups": [group_1.id],
+        }
+        kept_id = client.post(
+            f"{prefix}/version", json=kept_params, headers=regular_headers
+        ).json()["id"]
+
+        deleted_params = {
+            **new_version_data,
+            "name": "Doomed Version",
+            "abbreviation": "DV2",
+            "add_to_groups": [group_1.id],
+        }
+        deleted_id = client.post(
+            f"{prefix}/version", json=deleted_params, headers=regular_headers
+        ).json()["id"]
+
+        delete_response = client.delete(
+            f"{prefix}/version", params={"id": deleted_id}, headers=admin_headers
+        )
+        assert delete_response.status_code == 200
+
+        return kept_id, deleted_id
+
+    def test_admin_include_deleted_true_returns_soft_deleted_versions(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        kept_id, deleted_id = self._create_and_delete_pair(
+            client, regular_token1, admin_token, db_session
+        )
+
+        list_response = client.get(
+            f"{prefix}/version",
+            params={"include_deleted": "true"},
+            headers=admin_headers,
+        )
+        assert list_response.status_code == 200
+        by_id = {v["id"]: v for v in list_response.json()}
+        assert kept_id in by_id
+        assert deleted_id in by_id
+        assert by_id[kept_id]["deleted"] is False
+        assert by_id[deleted_id]["deleted"] is True
+
+    def test_admin_include_deleted_false_still_hides_deleted(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        kept_id, deleted_id = self._create_and_delete_pair(
+            client, regular_token1, admin_token, db_session
+        )
+
+        list_response = client.get(
+            f"{prefix}/version",
+            params={"include_deleted": "false"},
+            headers=admin_headers,
+        )
+        assert list_response.status_code == 200
+        listed_ids = {v["id"] for v in list_response.json()}
+        assert kept_id in listed_ids
+        assert deleted_id not in listed_ids
+
+    def test_non_admin_cannot_see_deleted_even_with_include_deleted(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        regular_headers = {"Authorization": f"Bearer {regular_token1}"}
+        kept_id, deleted_id = self._create_and_delete_pair(
+            client, regular_token1, admin_token, db_session
+        )
+
+        list_response = client.get(
+            f"{prefix}/version",
+            params={"include_deleted": "true"},
+            headers=regular_headers,
+        )
+        assert list_response.status_code == 200
+        by_id = {v["id"]: v for v in list_response.json()}
+        assert kept_id in by_id
+        assert deleted_id not in by_id
+        assert by_id[kept_id]["deleted"] is False
+
+    def test_admin_include_deleted_handles_null_deleted_column(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        # BibleVersion.deleted is a nullable Boolean column; legacy rows may
+        # have NULL. Force one row to NULL and confirm the response coerces
+        # it to False rather than 500ing on Pydantic validation.
+        group_1 = db_session.query(Group).filter_by(name="Group1").first()
+        regular_headers = {"Authorization": f"Bearer {regular_token1}"}
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        legacy_params = {
+            **new_version_data,
+            "name": "Legacy Version",
+            "abbreviation": "LV",
+            "add_to_groups": [group_1.id],
+        }
+        legacy_id = client.post(
+            f"{prefix}/version", json=legacy_params, headers=regular_headers
+        ).json()["id"]
+
+        legacy_row = db_session.query(BibleVersionModel).filter_by(id=legacy_id).first()
+        legacy_row.deleted = None
+        db_session.commit()
+
+        list_response = client.get(
+            f"{prefix}/version",
+            params={"include_deleted": "true"},
+            headers=admin_headers,
+        )
+        assert list_response.status_code == 200, list_response.text
+        by_id = {v["id"]: v for v in list_response.json()}
+        assert legacy_id in by_id
+        assert by_id[legacy_id]["deleted"] is False
+
+
 class TestVersionValidation:
     def test_create_version_without_add_to_groups(self, client, regular_token1):
         """Test that creating a version without add_to_groups fails with 422."""

@@ -93,11 +93,19 @@ def _job_pairs_response(job: PredictJob) -> list[PredictJobPair]:
     """Reconstitute the per-pair slow-path payload, ordered as submitted.
 
     The agent app preserves input order in its response, so translation /
-    critique are pulled positionally from `agent_pairs[idx]`. The vref /
-    source_text / target_text echo always comes from the original
+    critique / lexeme_cards are pulled positionally from `agent_pairs[idx]`.
+    The vref / source_text / target_text echo always comes from the original
     `pairs_input` so callers that omit `vref` (an optional label) can
     still match results to inputs by index, and so a hypothetical agent
     bug that mangled echo fields wouldn't propagate to the response.
+
+    `lexeme_cards` here is the agent's filtered per-pair view of cards
+    relevant to that pair's target text, including any new ones the
+    agent minted during this run. The sync /predict path can't return
+    those discoveries — translation/critique are forced off there
+    (see `spawn_slow_agent` below), so the LLM never runs and no new
+    cards are produced — making this poll endpoint the only surface
+    where clients see them.
     """
     result = job.result or {}
     agent_pairs = result.get("pairs") or []
@@ -111,6 +119,7 @@ def _job_pairs_response(job: PredictJob) -> list[PredictJobPair]:
                 target_text=submitted.get("target_text", ""),
                 translation=agent_pair.get("translation"),
                 critique=agent_pair.get("critique"),
+                lexeme_cards=agent_pair.get("lexeme_cards"),
             )
         )
     return out
@@ -170,21 +179,25 @@ async def predict(
         body.include_translation or body.include_critique
     )
     if spawn_slow_agent:
-        sync_payload = dict(input_payload)
-        sync_payload["include_translation"] = False
-        sync_payload["include_critique"] = False
+        sync_agent_payload = dict(input_payload)
+        sync_agent_payload["include_translation"] = False
+        sync_agent_payload["include_critique"] = False
     else:
-        sync_payload = input_payload
+        sync_agent_payload = input_payload
+
+    # `model` is an agent-only knob; other apps' Pydantic models may not
+    # accept it, so strip it from their fan-out payload. They otherwise
+    # see the same payload as the agent (including any flag suppression).
+    non_agent_payload = {k: v for k, v in sync_agent_payload.items() if k != "model"}
 
     async def call_one(name: str) -> tuple[str, PredictAppResult]:
         started = time.perf_counter()
         modal_app = PREDICT_APPS[name]
         timeout_s = PER_APP_TIMEOUT_S.get(name, DEFAULT_PER_APP_TIMEOUT_S)
+        payload = sync_agent_payload if name == "agent" else non_agent_payload
         try:
             fn = _get_predict_fn(modal_app, modal_env)
-            data = await asyncio.wait_for(
-                fn.remote.aio(sync_payload), timeout=timeout_s
-            )
+            data = await asyncio.wait_for(fn.remote.aio(payload), timeout=timeout_s)
             duration_ms = int((time.perf_counter() - started) * 1000)
             return name, PredictAppResult(
                 status="ok", data=data, duration_ms=duration_ms
@@ -231,6 +244,7 @@ async def predict(
             "assessment_id": body.assessment_id,
             "modal_env": modal_env,
             "spawn_slow_agent": spawn_slow_agent,
+            "model": body.model,
         },
     )
 
@@ -336,6 +350,23 @@ async def get_predict_job(
         try:
             fc = modal.FunctionCall.from_id(job.modal_call_id)
             data = await fc.get.aio(timeout=0)
+        except (
+            modal.exception.FunctionTimeoutError,
+            modal.exception.OutputExpiredError,
+        ) as exc:
+            # The Modal container itself hit its timeout (or the result
+            # expired before we polled). Both subclass the builtin
+            # TimeoutError, so they must be caught BEFORE the bare
+            # `TimeoutError` block below — otherwise they'd be silently
+            # treated as "still running" and the DB status would never flip.
+            logger.warning(
+                f"predict job {job.id} timed out on Modal: {type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+            job.status = "failed"
+            job.error = f"{type(exc).__name__}: {exc}"
+            job.completed_at = datetime.now(timezone.utc)
+            await db.commit()
         except (TimeoutError, modal.exception.TimeoutError):
             # modal._functions.poll_function raises the builtin TimeoutError
             # (not modal.exception.TimeoutError, which doesn't subclass it)

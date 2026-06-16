@@ -69,10 +69,8 @@ def version_exists(db_session, version_id):
     )
 
 
-def test_verse_routes_flow(client, regular_token1, regular_token2, db_session):
-    # Create a Bible version and upload a revision
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+def test_verse_routes_flow(client, regular_token1, db_session, kjv_revision):
+    version_id, revision_id = kjv_revision
 
     # Verify that the revision and version exist in the database
     assert revision_exists(db_session, revision_id)
@@ -139,10 +137,9 @@ def test_verse_routes_flow(client, regular_token1, regular_token2, db_session):
     assert vrefs_response.json()[0]["revision_id"] == revision_id
 
 
-def test_words_endpoint_single_verse(client, regular_token1, db_session):
+def test_words_endpoint_single_verse(client, regular_token1, kjv_revision):
     """Test /words endpoint with a single verse (first_verse == last_verse)."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -168,10 +165,9 @@ def test_words_endpoint_single_verse(client, regular_token1, db_session):
     assert words == sorted(words)
 
 
-def test_words_endpoint_chapter_range(client, regular_token1, db_session):
+def test_words_endpoint_chapter_range(client, regular_token1, kjv_revision):
     """Test /words endpoint with a range of verses within a single chapter."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -197,10 +193,9 @@ def test_words_endpoint_chapter_range(client, regular_token1, db_session):
     assert words == sorted(words)
 
 
-def test_words_endpoint_cross_chapter(client, regular_token1, db_session):
+def test_words_endpoint_cross_chapter(client, regular_token1, kjv_revision):
     """Test /words endpoint with a range spanning multiple chapters."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -226,10 +221,9 @@ def test_words_endpoint_cross_chapter(client, regular_token1, db_session):
     assert words == sorted(words)
 
 
-def test_words_endpoint_verse_not_found(client, regular_token1, db_session):
+def test_words_endpoint_verse_not_found(client, regular_token1, kjv_revision):
     """Test /words endpoint with non-existent verse references."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -247,10 +241,9 @@ def test_words_endpoint_verse_not_found(client, regular_token1, db_session):
     assert "not found" in words_response.json()["detail"].lower()
 
 
-def test_words_endpoint_invalid_range(client, regular_token1, db_session):
+def test_words_endpoint_invalid_range(client, regular_token1, kjv_revision):
     """Test /words endpoint with first_verse after last_verse."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -268,12 +261,9 @@ def test_words_endpoint_invalid_range(client, regular_token1, db_session):
     assert "before" in words_response.json()["detail"].lower()
 
 
-def test_words_endpoint_unauthorized(
-    client, regular_token1, regular_token2, db_session
-):
+def test_words_endpoint_unauthorized(client, regular_token2, kjv_revision):
     """Test /words endpoint with unauthorized user."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     # Try to access with different user's token
     headers = {"Authorization": f"Bearer {regular_token2}"}
@@ -291,10 +281,9 @@ def test_words_endpoint_unauthorized(
     assert "not authorized" in words_response.json()["detail"].lower()
 
 
-def test_words_endpoint_unicode_handling(client, regular_token1, db_session):
+def test_words_endpoint_unicode_handling(client, regular_token1, kjv_revision):
     """Test that /words endpoint properly handles Unicode characters and special cases."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -321,10 +310,9 @@ def test_words_endpoint_unicode_handling(client, regular_token1, db_session):
     assert all(word.strip() == word for word in words)
 
 
-def test_words_endpoint_deduplication(client, regular_token1, db_session):
+def test_words_endpoint_deduplication(client, regular_token1, kjv_revision):
     """Test that /words endpoint properly deduplicates words across verses."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -349,10 +337,9 @@ def test_words_endpoint_deduplication(client, regular_token1, db_session):
     assert words == words_lower
 
 
-def test_words_endpoint_content_verification(client, regular_token1, db_session):
+def test_words_endpoint_content_verification(client, regular_token1, kjv_revision):
     """Test that /words endpoint returns expected words from known KJV text."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -412,10 +399,9 @@ def test_words_endpoint_content_verification(client, regular_token1, db_session)
     assert len(words) == 25  # Should have 25 unique words
 
 
-def test_words_endpoint_cross_book_boundary(client, regular_token1, db_session):
+def test_words_endpoint_cross_book_boundary(client, regular_token1, kjv_revision):
     """Test that /words endpoint correctly handles ranges across book boundaries."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -476,10 +462,9 @@ def test_words_endpoint_cross_book_boundary(client, regular_token1, db_session):
     assert len(words) > 0, "Should have words from both books"
 
 
-def test_words_endpoint_no_range_full_revision(client, regular_token1, db_session):
+def test_words_endpoint_no_range_full_revision(client, regular_token1, kjv_revision):
     """When first_verse/last_verse are omitted, /words scopes to the full revision."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -511,10 +496,9 @@ def test_words_endpoint_no_range_full_revision(client, regular_token1, db_sessio
     assert len(full_words) > len(range_words)
 
 
-def test_words_endpoint_top_n_caps_results(client, regular_token1, db_session):
+def test_words_endpoint_top_n_caps_results(client, regular_token1, kjv_revision):
     """top_n caps the response to N words and selects them by frequency."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -532,10 +516,9 @@ def test_words_endpoint_top_n_caps_results(client, regular_token1, db_session):
     assert "the" in words
 
 
-def test_words_endpoint_include_counts(client, regular_token1, db_session):
+def test_words_endpoint_include_counts(client, regular_token1, kjv_revision):
     """include_counts=true returns [{word, count}] sorted by count desc."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -563,10 +546,9 @@ def test_words_endpoint_include_counts(client, regular_token1, db_session):
     assert the_entry["count"] >= 5
 
 
-def test_words_endpoint_top_n_with_include_counts(client, regular_token1, db_session):
+def test_words_endpoint_top_n_with_include_counts(client, regular_token1, kjv_revision):
     """top_n + include_counts returns N entries sorted by count desc."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -588,10 +570,9 @@ def test_words_endpoint_top_n_with_include_counts(client, regular_token1, db_ses
     assert items[0]["word"] == "the"
 
 
-def test_words_endpoint_partial_range_rejected(client, regular_token1, db_session):
+def test_words_endpoint_partial_range_rejected(client, regular_token1, kjv_revision):
     """Supplying only one of first_verse / last_verse should 400."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -604,10 +585,9 @@ def test_words_endpoint_partial_range_rejected(client, regular_token1, db_sessio
     assert "together" in response.json()["detail"].lower()
 
 
-def test_words_endpoint_top_n_with_range(client, regular_token1, db_session):
+def test_words_endpoint_top_n_with_range(client, regular_token1, kjv_revision):
     """top_n composes correctly with first_verse / last_verse."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -635,7 +615,12 @@ def test_words_endpoint_top_n_with_range(client, regular_token1, db_session):
 def test_words_endpoint_skips_range_markers(client, regular_token1, db_session):
     """Verses stored as the literal "<range>" marker must not contribute "range" to results."""
     version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    revision_id = upload_revision(
+        client,
+        regular_token1,
+        version_id,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
 
     # Replace one verse text with the <range> marker. GEN 1:1-1:5 in KJV does not
     # naturally contain the word "range", so any leak comes from the marker.
@@ -665,10 +650,9 @@ def test_words_endpoint_skips_range_markers(client, regular_token1, db_session):
     assert "range" not in response.json()
 
 
-def test_words_endpoint_top_n_invalid(client, regular_token1, db_session):
+def test_words_endpoint_top_n_invalid(client, regular_token1, kjv_revision):
     """top_n must be >= 1."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -680,10 +664,9 @@ def test_words_endpoint_top_n_invalid(client, regular_token1, db_session):
     assert response.status_code == 422
 
 
-def test_text_endpoint_basic(client, regular_token1, db_session):
+def test_text_endpoint_basic(client, regular_token1, kjv_revision):
     """Test /text endpoint returns verses with correct fields and ids."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
     response = client.get(
@@ -708,7 +691,12 @@ def test_text_endpoint_basic(client, regular_token1, db_session):
 def test_text_endpoint_with_range_markers(client, regular_token1, db_session):
     """Test /text endpoint merges <range> markers into verse ranges."""
     version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    revision_id = upload_revision(
+        client,
+        regular_token1,
+        version_id,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
 
     # Get the DB ids before modifying
     gen_1_1 = (
@@ -762,7 +750,12 @@ def test_text_endpoint_with_range_markers(client, regular_token1, db_session):
 def test_text_endpoint_multi_verse_range(client, regular_token1, db_session):
     """Test /text endpoint with 3+ consecutive <range> markers."""
     version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    revision_id = upload_revision(
+        client,
+        regular_token1,
+        version_id,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
 
     # Set GEN 1:2 and GEN 1:3 to <range>
     for vref in ["GEN 1:2", "GEN 1:3"]:
@@ -830,7 +823,12 @@ def test_text_endpoint_range_at_chapter_boundary(client, regular_token1, db_sess
 def test_text_endpoint_range_on_first_verse(client, regular_token1, db_session):
     """Test <range> on the very first verse of a revision (orphan range)."""
     version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    revision_id = upload_revision(
+        client,
+        regular_token1,
+        version_id,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
 
     # Set GEN 1:1 (first verse) to <range>
     verse = (
@@ -868,7 +866,12 @@ def test_text_endpoint_empty_verse_not_treated_as_range(
 ):
     """Test that empty verses are not treated as <range> markers."""
     version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    revision_id = upload_revision(
+        client,
+        regular_token1,
+        version_id,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
 
     # Set GEN 1:2 to empty string (not a range marker)
     verse = (
@@ -900,10 +903,9 @@ def test_text_endpoint_empty_verse_not_treated_as_range(
     assert "beginning" in gen_1_1["text"].lower()
 
 
-def test_text_endpoint_include_verses_all(client, regular_token1, db_session):
+def test_text_endpoint_include_verses_all(client, regular_token1, kjv_revision):
     """Test /text endpoint with include_verses=all returns all 41,899 canonical verses."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -940,7 +942,15 @@ def test_text_endpoint_include_verses_all_no_merging(
 ):
     """Test /text with include_verses=all returns exactly 41,899 rows even with <range> markers."""
     version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    # Partial fixture is sufficient: include_verses=all pads against the
+    # canonical verse_reference table, so the 41,899-row assertion below holds
+    # regardless of how many VerseText rows were uploaded.
+    revision_id = upload_revision(
+        client,
+        regular_token1,
+        version_id,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
 
     # Set GEN 1:2 to <range>
     verse = (
@@ -964,7 +974,6 @@ def test_text_endpoint_include_verses_all_no_merging(
     assert response.status_code == 200
     data = response.json()
 
-    # Must be exactly 41,899 rows (no merging)
     assert len(data) == 41899
 
     # GEN 1:2 should appear as its own row with empty text (range replaced)
@@ -977,11 +986,10 @@ def test_text_endpoint_include_verses_all_no_merging(
 
 
 def test_text_endpoint_include_verses_union_is_default(
-    client, regular_token1, db_session
+    client, regular_token1, kjv_revision
 ):
     """Test that include_verses=union matches default behavior."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -999,10 +1007,11 @@ def test_text_endpoint_include_verses_union_is_default(
     assert response_default.json() == response_union.json()
 
 
-def test_text_endpoint_include_verses_intersection(client, regular_token1, db_session):
+def test_text_endpoint_include_verses_intersection(
+    client, regular_token1, kjv_revision
+):
     """Test that include_verses=intersection is treated identically to union for single revision."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -1022,14 +1031,10 @@ def test_text_endpoint_include_verses_intersection(client, regular_token1, db_se
     assert response_union.json() == response_intersection.json()
 
 
-def test_texts_endpoint_basic(client, regular_token1, db_session):
+def test_texts_endpoint_basic(client, regular_token1, kjv_revision, kjv_revision_2):
     """Test /texts endpoint with two revisions without ranges."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id1 = upload_revision(client, regular_token1, version_id)
-
-    # Create a second version and revision
-    version_id2 = create_bible_version(client, regular_token1, db_session)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    _, revision_id1 = kjv_revision
+    _, revision_id2 = kjv_revision_2
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -1063,9 +1068,18 @@ def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    # Upload full KJV revisions
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    revision_id1 = upload_revision(
+        client,
+        regular_token1,
+        version_id1,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
+    revision_id2 = upload_revision(
+        client,
+        regular_token1,
+        version_id2,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
 
     # Modify revision 2: set GEN 1:2 to <range> marker
     verse_to_modify = (
@@ -1120,14 +1134,11 @@ def test_texts_endpoint_with_range_markers(client, regular_token1, db_session):
 
 
 def test_texts_endpoint_unauthorized(
-    client, regular_token1, regular_token2, db_session
+    client, regular_token2, kjv_revision, kjv_revision_2
 ):
     """Test /texts endpoint with unauthorized access to one revision."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id1 = upload_revision(client, regular_token1, version_id)
-
-    version_id2 = create_bible_version(client, regular_token1, db_session)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    _, revision_id1 = kjv_revision
+    _, revision_id2 = kjv_revision_2
 
     # Try to access with different user's token
     headers = {"Authorization": f"Bearer {regular_token2}"}
@@ -1141,10 +1152,9 @@ def test_texts_endpoint_unauthorized(
     assert "not authorized" in response.json()["detail"].lower()
 
 
-def test_texts_endpoint_min_revisions_validation(client, regular_token1, db_session):
+def test_texts_endpoint_min_revisions_validation(client, regular_token1, kjv_revision):
     """Test /texts endpoint rejects requests with less than 2 revision IDs."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -1162,9 +1172,18 @@ def test_texts_endpoint_missing_verses(client, regular_token1, db_session):
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    # Upload full KJV revisions
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    revision_id1 = upload_revision(
+        client,
+        regular_token1,
+        version_id1,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
+    revision_id2 = upload_revision(
+        client,
+        regular_token1,
+        version_id2,
+        fixture="fixtures/eng-genesis-partial.txt",
+    )
 
     # Delete GEN 1:3 from revision 2 to simulate missing verse
     db_session.query(VerseTextModel).filter(
@@ -1210,10 +1229,10 @@ def test_texts_endpoint_three_revisions(client, regular_token1, db_session):
     version_id2 = create_bible_version(client, regular_token1, db_session)
     version_id3 = create_bible_version(client, regular_token1, db_session)
 
-    # Upload full KJV revisions
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
-    revision_id3 = upload_revision(client, regular_token1, version_id3)
+    partial = "fixtures/eng-genesis-partial.txt"
+    revision_id1 = upload_revision(client, regular_token1, version_id1, fixture=partial)
+    revision_id2 = upload_revision(client, regular_token1, version_id2, fixture=partial)
+    revision_id3 = upload_revision(client, regular_token1, version_id3, fixture=partial)
 
     # Modify revision 2: set GEN 1:2 to <range> marker
     verse_to_modify = (
@@ -1260,9 +1279,9 @@ def test_texts_endpoint_empty_verse_not_treated_as_range(
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    # Upload full KJV revisions
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    partial = "fixtures/eng-genesis-partial.txt"
+    revision_id1 = upload_revision(client, regular_token1, version_id1, fixture=partial)
+    revision_id2 = upload_revision(client, regular_token1, version_id2, fixture=partial)
 
     # Set GEN 1:2 in revision 1 to empty string (not a range marker)
     verse_to_modify = (
@@ -1308,8 +1327,9 @@ def test_texts_endpoint_multi_verse_range(client, regular_token1, db_session):
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    partial = "fixtures/eng-genesis-partial.txt"
+    revision_id1 = upload_revision(client, regular_token1, version_id1, fixture=partial)
+    revision_id2 = upload_revision(client, regular_token1, version_id2, fixture=partial)
 
     # Set GEN 1:2 and GEN 1:3 to <range> in revision 2
     for vref in ["GEN 1:2", "GEN 1:3"]:
@@ -1450,8 +1470,9 @@ def test_texts_endpoint_range_on_first_verse(client, regular_token1, db_session)
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    partial = "fixtures/eng-genesis-partial.txt"
+    revision_id1 = upload_revision(client, regular_token1, version_id1, fixture=partial)
+    revision_id2 = upload_revision(client, regular_token1, version_id2, fixture=partial)
 
     # Set GEN 1:1 (first verse) to <range> in revision 2
     verse = (
@@ -1494,10 +1515,9 @@ def test_texts_endpoint_range_on_first_verse(client, regular_token1, db_session)
         assert "<range>" not in v["text"]
 
 
-def test_chapters_endpoint_basic(client, regular_token1, db_session):
+def test_chapters_endpoint_basic(client, regular_token1, kjv_revision):
     """Test /chapters endpoint returns available chapters for a revision."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -1530,10 +1550,9 @@ def test_chapters_endpoint_basic(client, regular_token1, db_session):
     assert len(chapters["REV"]) == 22  # KJV has 22 chapters in Revelation
 
 
-def test_chapters_endpoint_canonical_order(client, regular_token1, db_session):
+def test_chapters_endpoint_canonical_order(client, regular_token1, kjv_revision):
     """Test /chapters endpoint returns books in canonical order."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -1560,10 +1579,9 @@ def test_chapters_endpoint_canonical_order(client, regular_token1, db_session):
         assert rev_idx > exo_idx
 
 
-def test_chapters_endpoint_chapters_sorted(client, regular_token1, db_session):
+def test_chapters_endpoint_chapters_sorted(client, regular_token1, kjv_revision):
     """Test /chapters endpoint returns chapters sorted numerically."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -1580,12 +1598,9 @@ def test_chapters_endpoint_chapters_sorted(client, regular_token1, db_session):
         assert chapter_list == sorted(chapter_list), f"Chapters for {book} not sorted"
 
 
-def test_chapters_endpoint_unauthorized(
-    client, regular_token1, regular_token2, db_session
-):
+def test_chapters_endpoint_unauthorized(client, regular_token2, kjv_revision):
     """Test /chapters endpoint returns 403 for unauthorized user."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     # Try to access with different user's token
     headers = {"Authorization": f"Bearer {regular_token2}"}
@@ -1599,10 +1614,9 @@ def test_chapters_endpoint_unauthorized(
     assert "not authorized" in response.json()["detail"].lower()
 
 
-def test_vref_text_endpoint(client, regular_token1, db_session):
+def test_vref_text_endpoint(client, regular_token1, kjv_revision):
     """Test /vref-text endpoint returns 41,899 lines with correct verse text."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
 
@@ -1628,12 +1642,9 @@ def test_vref_text_endpoint(client, regular_token1, db_session):
     assert content_lines[1] != ""
 
 
-def test_vref_text_endpoint_unauthorized(
-    client, regular_token1, regular_token2, db_session
-):
+def test_vref_text_endpoint_unauthorized(client, regular_token2, kjv_revision):
     """Test /vref-text endpoint returns 403 for unauthorized user."""
-    version_id = create_bible_version(client, regular_token1, db_session)
-    revision_id = upload_revision(client, regular_token1, version_id)
+    _, revision_id = kjv_revision
 
     headers = {"Authorization": f"Bearer {regular_token2}"}
 
@@ -1656,8 +1667,9 @@ def test_texts_include_verses_intersection(client, regular_token1, db_session):
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    partial = "fixtures/eng-genesis-partial.txt"
+    revision_id1 = upload_revision(client, regular_token1, version_id1, fixture=partial)
+    revision_id2 = upload_revision(client, regular_token1, version_id2, fixture=partial)
 
     # Delete GEN 1:3 from revision 2 so it has empty text
     db_session.query(VerseTextModel).filter(
@@ -1693,13 +1705,11 @@ def test_texts_include_verses_intersection(client, regular_token1, db_session):
     assert "GEN 1:2" in rev1_vrefs
 
 
-def test_texts_include_verses_all(client, regular_token1, db_session):
+def test_texts_include_verses_all(client, regular_token1, db_session, kjv_revision):
     """Test include_verses=all returns all canonical verses with empty text for missing ones."""
-    version_id1 = create_bible_version(client, regular_token1, db_session)
+    # Rev1: full KJV Bible (shared fixture), Rev2: only Genesis 1:1-3
+    _, revision_id1 = kjv_revision
     version_id2 = create_bible_version(client, regular_token1, db_session)
-
-    # Rev1: full KJV Bible, Rev2: only Genesis 1:1-3
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
     revision_id2 = upload_revision(
         client,
         regular_token1,
@@ -1750,8 +1760,9 @@ def test_texts_include_verses_all_no_merging(client, regular_token1, db_session)
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    partial = "fixtures/eng-genesis-partial.txt"
+    revision_id1 = upload_revision(client, regular_token1, version_id1, fixture=partial)
+    revision_id2 = upload_revision(client, regular_token1, version_id2, fixture=partial)
 
     # Set GEN 1:2 to <range> in revision 1
     verse = (
@@ -1799,8 +1810,9 @@ def test_texts_include_verses_union_default(client, regular_token1, db_session):
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    partial = "fixtures/eng-genesis-partial.txt"
+    revision_id1 = upload_revision(client, regular_token1, version_id1, fixture=partial)
+    revision_id2 = upload_revision(client, regular_token1, version_id2, fixture=partial)
 
     # Delete GEN 1:3 from revision 2
     db_session.query(VerseTextModel).filter(
@@ -1837,8 +1849,9 @@ def test_texts_include_verses_union_removes_when_all_empty(
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    partial = "fixtures/eng-genesis-partial.txt"
+    revision_id1 = upload_revision(client, regular_token1, version_id1, fixture=partial)
+    revision_id2 = upload_revision(client, regular_token1, version_id2, fixture=partial)
 
     # Set GEN 1:3 to empty text in BOTH revisions
     db_session.query(VerseTextModel).filter(
@@ -1880,8 +1893,9 @@ def test_texts_include_verses_whitespace_treated_as_empty(
     version_id1 = create_bible_version(client, regular_token1, db_session)
     version_id2 = create_bible_version(client, regular_token1, db_session)
 
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    partial = "fixtures/eng-genesis-partial.txt"
+    revision_id1 = upload_revision(client, regular_token1, version_id1, fixture=partial)
+    revision_id2 = upload_revision(client, regular_token1, version_id2, fixture=partial)
 
     # Set GEN 1:3 to whitespace-only in both revisions
     db_session.query(VerseTextModel).filter(
@@ -1914,12 +1928,12 @@ def test_texts_include_verses_whitespace_treated_as_empty(
     assert "GEN 1:3" not in rev1_vrefs
 
 
-def test_texts_endpoint_limit_without_random(client, regular_token1, db_session):
+def test_texts_endpoint_limit_without_random(
+    client, regular_token1, kjv_revision, kjv_revision_2
+):
     """Test /texts with ?limit returns the first N verses in canonical order."""
-    version_id1 = create_bible_version(client, regular_token1, db_session)
-    version_id2 = create_bible_version(client, regular_token1, db_session)
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    _, revision_id1 = kjv_revision
+    _, revision_id2 = kjv_revision_2
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
     response = client.get(
@@ -1938,12 +1952,12 @@ def test_texts_endpoint_limit_without_random(client, regular_token1, db_session)
     assert data[str(revision_id1)][0]["verse_reference"] == "GEN 1:1"
 
 
-def test_texts_endpoint_random_sample_deterministic(client, regular_token1, db_session):
+def test_texts_endpoint_random_sample_deterministic(
+    client, regular_token1, kjv_revision, kjv_revision_2
+):
     """Test /texts with ?random&seed returns the same sample on repeat calls."""
-    version_id1 = create_bible_version(client, regular_token1, db_session)
-    version_id2 = create_bible_version(client, regular_token1, db_session)
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    _, revision_id1 = kjv_revision
+    _, revision_id2 = kjv_revision_2
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
     params = {
@@ -1971,13 +1985,11 @@ def test_texts_endpoint_random_sample_deterministic(client, regular_token1, db_s
 
 
 def test_texts_endpoint_limit_with_include_verses_all(
-    client, regular_token1, db_session
+    client, regular_token1, kjv_revision, kjv_revision_2
 ):
     """Test /texts with ?limit respects include_verses=all."""
-    version_id1 = create_bible_version(client, regular_token1, db_session)
-    version_id2 = create_bible_version(client, regular_token1, db_session)
-    revision_id1 = upload_revision(client, regular_token1, version_id1)
-    revision_id2 = upload_revision(client, regular_token1, version_id2)
+    _, revision_id1 = kjv_revision
+    _, revision_id2 = kjv_revision_2
 
     headers = {"Authorization": f"Bearer {regular_token1}"}
     response = client.get(
