@@ -1,0 +1,49 @@
+name: Claude Code Review
+
+# Reviews pull requests with Claude. Findings are posted as PR review comments.
+# Requires the repository (or org) secret ANTHROPIC_API_KEY.
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  claude-review:
+    name: Claude review
+    runs-on: ubuntu-latest
+    # Skip draft PRs to avoid reviewing work in progress.
+    if: github.event.pull_request.draft == false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Review with Claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Review this pull request. Follow the review criteria defined in
+            .github/copilot-instructions.md for this repository.
+
+            Prioritize, in order:
+            1. Endpoint integrity — new or changed endpoints must be complete,
+               safe, and make sense (auth, input validation, error handling,
+               correct status codes, no leaked secrets).
+            2. Consistency — they must follow the same patterns as the
+               endpoints that already exist in this repo (naming, structure,
+               request/response shapes, reuse of shared helpers).
+            3. Sound design and SOLID principles.
+
+            Post concrete, actionable findings as inline PR review comments.
+            Do not comment on formatting/style already enforced by linters.
+          claude_args: "--max-turns 10"
