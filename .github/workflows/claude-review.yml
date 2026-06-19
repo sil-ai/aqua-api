@@ -2,7 +2,7 @@ name: Claude Code Review
 
 # Manual PR review with Claude. It does NOT run automatically on every PR.
 # Trigger it either by:
-#   - commenting "@claude" on a pull request, or
+#   - commenting "@claude-reviewer" on a pull request, or
 #   - running this workflow from the Actions tab (Run workflow) and passing a PR number.
 # Requires the repository (or org) secret CLAUDE_CODE_OAUTH_TOKEN
 # (generated with `claude setup-token` using a Claude Pro/Max subscription).
@@ -29,11 +29,13 @@ jobs:
   claude-review:
     name: Claude review
     runs-on: ubuntu-latest
-    # Run only on a manual dispatch, or on an "@claude" comment that is on a PR.
+    # Run only on a manual dispatch, or on an "@claude-reviewer" comment that is
+    # on a PR. The `user.type != 'Bot'` guard stops the reviewer's own comments
+    # (or any bot) from re-triggering the workflow in a loop.
     if: |
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude'))
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && github.event.comment.user.type != 'Bot' && contains(github.event.comment.body, '@claude-reviewer')) ||
+      (github.event_name == 'pull_request_review_comment' && github.event.comment.user.type != 'Bot' && contains(github.event.comment.body, '@claude-reviewer'))
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -53,6 +55,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          trigger_phrase: "@claude-reviewer"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.inputs.pr_number || github.event.issue.number || github.event.pull_request.number }}
