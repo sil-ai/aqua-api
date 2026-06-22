@@ -1143,6 +1143,12 @@ async def pull_tfidf_artifacts(
 # concurrent writers store identical objects, and nothing iterates the dict.
 _ENCODER_CACHE: Dict[int, tuple] = {}
 
+# Cap on cached encoders per worker. Each entry holds two vectorizers plus a
+# 300×n_features components matrix, so an unbounded cache could accumulate one
+# (potentially large) encoder per assessment ever queried. FIFO-evict the
+# oldest once full — encoders are cheap to rebuild on the next request.
+_ENCODER_CACHE_MAXSIZE = 32
+
 
 def _rehydrate_encoder(word, char, svd) -> tuple:
     """Rebuild (word_vec, char_vec, svd) from stored artifact values.
@@ -1236,6 +1242,12 @@ async def _get_encoder(db: AsyncSession, assessment_id: int) -> tuple:
         (by_kind["char"].vocabulary, by_kind["char"].idf, by_kind["char"].params),
         (svd.components_npy, svd.n_components),
     )
+    if (
+        assessment_id not in _ENCODER_CACHE
+        and len(_ENCODER_CACHE) >= _ENCODER_CACHE_MAXSIZE
+    ):
+        # Evict the oldest entry (dicts preserve insertion order).
+        _ENCODER_CACHE.pop(next(iter(_ENCODER_CACHE)), None)
     _ENCODER_CACHE[assessment_id] = (run.created_at, encoder)
     return encoder
 

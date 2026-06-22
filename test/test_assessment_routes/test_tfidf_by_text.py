@@ -60,7 +60,8 @@ _VOCAB = [
 
 def _real_vrefs(db) -> list:
     """Fetch real GEN/EXO vrefs (tfidf_pca_vector.vref is FK'd to
-    verse_reference). The first _N_EXO results below index 200 are EXO."""
+    verse_reference). Returns _N_GEN GEN vrefs (indices 0.._N_GEN-1) followed
+    by _N_EXO EXO vrefs (indices _N_GEN.._N_DOCS-1)."""
     gen = [
         r[0]
         for r in db.query(VerseReference.full_verse_id)
@@ -115,6 +116,10 @@ def encoded_tfidf_assessment(
         n = int(rng.integers(5, 12))
         corpus.append(" ".join(rng.choice(_VOCAB, size=n)))
     vrefs = _real_vrefs(test_db_session)
+    assert len(vrefs) == _N_DOCS, (
+        f"expected {_N_DOCS} seeded vrefs, got {len(vrefs)} — verse_reference "
+        "fixture data may have changed"
+    )
 
     word = TfidfVectorizer(
         analyzer="word", ngram_range=(1, 2), lowercase=True, max_df=1.0, min_df=1
