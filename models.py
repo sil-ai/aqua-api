@@ -1673,6 +1673,38 @@ class TfidfByVectorsResponse(BaseModel):
     results: List[List[TfidfResult]]
 
 
+class TfidfByTextRequest(BaseModel):
+    assessment_id: int
+    text: str
+    limit: int = Field(default=10, ge=1, le=500)
+    reference_id: Optional[int] = Field(default=None, ge=1)
+    # Drop the result whose vref matches exclude_vref (leakage guard). When
+    # exclude_book is True, drop all results in exclude_vref's book instead.
+    exclude_vref: Optional[str] = None
+    exclude_book: bool = False
+
+
+class TfidfByTextsRequest(BaseModel):
+    assessment_id: int
+    texts: List[str] = Field(..., min_length=1, max_length=TFIDF_MAX_BATCH_VECTORS)
+    limit: int = Field(default=10, ge=1, le=500)
+    reference_id: Optional[int] = Field(default=None, ge=1)
+    # Per-text exclusion: exclude_vrefs[i] applies to texts[i]. Either omit it
+    # or pass a same-length list as texts.
+    exclude_vrefs: Optional[List[str]] = None
+    exclude_book: bool = False
+
+    @model_validator(mode="after")
+    def _exclude_vrefs_length(self) -> "TfidfByTextsRequest":
+        if self.exclude_vrefs is not None and len(self.exclude_vrefs) != len(
+            self.texts
+        ):
+            raise ValueError(
+                "exclude_vrefs must be the same length as texts when provided"
+            )
+        return self
+
+
 # --- Assessment Results Push/Delete models ---
 
 
