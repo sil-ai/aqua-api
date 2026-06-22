@@ -3,7 +3,7 @@ import math
 import re
 import unicodedata
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import (
     BaseModel,
@@ -1673,9 +1673,15 @@ class TfidfByVectorsResponse(BaseModel):
     results: List[List[TfidfResult]]
 
 
+# Upper bound on a single text to encode. A verse is well under this; the cap
+# just stops a pathological multi-MB string from driving a huge transform on a
+# worker thread.
+TFIDF_MAX_TEXT_CHARS = 10_000
+
+
 class TfidfByTextRequest(BaseModel):
     assessment_id: int
-    text: str
+    text: str = Field(..., min_length=1, max_length=TFIDF_MAX_TEXT_CHARS)
     limit: int = Field(default=10, ge=1, le=500)
     reference_id: Optional[int] = Field(default=None, ge=1)
     # Drop the result whose vref matches exclude_vref (leakage guard). When
@@ -1683,10 +1689,18 @@ class TfidfByTextRequest(BaseModel):
     exclude_vref: Optional[str] = None
     exclude_book: bool = False
 
+    @model_validator(mode="after")
+    def _exclude_book_needs_vref(self) -> "TfidfByTextRequest":
+        if self.exclude_book and not self.exclude_vref:
+            raise ValueError("exclude_book=True requires exclude_vref")
+        return self
+
 
 class TfidfByTextsRequest(BaseModel):
     assessment_id: int
-    texts: List[str] = Field(..., min_length=1, max_length=TFIDF_MAX_BATCH_VECTORS)
+    texts: List[
+        Annotated[str, Field(min_length=1, max_length=TFIDF_MAX_TEXT_CHARS)]
+    ] = Field(..., min_length=1, max_length=TFIDF_MAX_BATCH_VECTORS)
     limit: int = Field(default=10, ge=1, le=500)
     reference_id: Optional[int] = Field(default=None, ge=1)
     # Per-text exclusion: exclude_vrefs[i] applies to texts[i]. Either omit it
@@ -1695,13 +1709,15 @@ class TfidfByTextsRequest(BaseModel):
     exclude_book: bool = False
 
     @model_validator(mode="after")
-    def _exclude_vrefs_length(self) -> "TfidfByTextsRequest":
+    def _validate_exclusions(self) -> "TfidfByTextsRequest":
         if self.exclude_vrefs is not None and len(self.exclude_vrefs) != len(
             self.texts
         ):
             raise ValueError(
                 "exclude_vrefs must be the same length as texts when provided"
             )
+        if self.exclude_book and not self.exclude_vrefs:
+            raise ValueError("exclude_book=True requires exclude_vrefs")
         return self
 
 

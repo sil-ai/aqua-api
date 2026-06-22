@@ -105,7 +105,9 @@ async def _rank_against_corpus(
 ) -> List:
     """Return top-`limit` (id, vref, similarity) rows for a single query vector.
 
-    SVD output is L2-normalized, so inner product equals cosine similarity.
+    Ranks by inner product against the stored corpus vectors — the same score
+    `by_vector`/`by_vectors` use (corpus vectors are the raw SVD output, so the
+    query must be too; `_encode_texts` honours that).
 
     Exclusion (leakage guard) is pushed into the WHERE clause so `limit` rows
     survive after dropping — same approach as the vref-keyed GET endpoint.
@@ -122,8 +124,11 @@ async def _rank_against_corpus(
     conditions = [TfidfPcaVector.assessment_id == assessment_id]
     if exclude_vref:
         if exclude_book:
+            # Exact book match (token before the first space) rather than a
+            # LIKE pattern, so a `_`/`%` in caller-supplied exclude_vref can't
+            # act as a SQL wildcard.
             book = exclude_vref.split(" ", 1)[0]
-            conditions.append(~TfidfPcaVector.vref.like(f"{book} %"))
+            conditions.append(func.split_part(TfidfPcaVector.vref, " ", 1) != book)
         else:
             conditions.append(TfidfPcaVector.vref != exclude_vref)
 

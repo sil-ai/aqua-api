@@ -220,7 +220,7 @@ def test_by_text_self_match_round_trip(
     assert data["total_count"] == 10
     top = data["results"][0]
     assert top["vref"] == vref
-    assert top["similarity"] == pytest.approx(1.0, abs=1e-3)
+    assert top["similarity"] == pytest.approx(1.0, abs=1e-4)
     # revision_text hydrated from the corpus revision.
     assert top["revision_text"] == f"src {vref}"
     sims = [r["similarity"] for r in data["results"]]
@@ -375,7 +375,7 @@ def test_by_texts_one_list_per_text(client, regular_token1, encoded_tfidf_assess
     results = resp.json()["results"]
     assert len(results) == len(texts)
     assert [rs[0]["vref"] for rs in results] == expected
-    assert all(rs[0]["similarity"] == pytest.approx(1.0, abs=1e-3) for rs in results)
+    assert all(rs[0]["similarity"] == pytest.approx(1.0, abs=1e-4) for rs in results)
 
 
 def test_by_texts_per_text_exclude_vrefs(
@@ -464,3 +464,96 @@ def test_by_texts_unauthorized(client, regular_token2, encoded_tfidf_assessment)
         headers={"Authorization": f"Bearer {regular_token2}"},
     )
     assert resp.status_code == 403
+
+
+def test_by_texts_no_auth(client, encoded_tfidf_assessment):
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_texts",
+        json={
+            "assessment_id": encoded_tfidf_assessment["assessment_id"],
+            "texts": ["alpha beta"],
+            "limit": 3,
+        },
+    )
+    assert resp.status_code == 401
+
+
+def test_by_texts_exclude_book_drops_whole_book(
+    client, regular_token1, encoded_tfidf_assessment
+):
+    """exclude_book on the batch path filters per-text using exclude_vrefs[i]."""
+    assessment_id = encoded_tfidf_assessment["assessment_id"]
+    # idx 250 → EXO, idx 3 → GEN.
+    idxs = [250, 3]
+    texts = [encoded_tfidf_assessment["corpus"][i] for i in idxs]
+    vrefs = [encoded_tfidf_assessment["vrefs"][i] for i in idxs]
+    assert vrefs[0].startswith("EXO ") and vrefs[1].startswith("GEN ")
+
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_texts",
+        json={
+            "assessment_id": assessment_id,
+            "texts": texts,
+            "limit": 20,
+            "exclude_vrefs": vrefs,
+            "exclude_book": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200, resp.text
+    results = resp.json()["results"]
+    # texts[0] excludes EXO; texts[1] excludes GEN.
+    assert all(not r["vref"].startswith("EXO ") for r in results[0])
+    assert all(not r["vref"].startswith("GEN ") for r in results[1])
+
+
+# ---------------------------------------------------------------------------
+# Request-model validation
+# ---------------------------------------------------------------------------
+
+
+def test_by_text_empty_text_rejected(client, regular_token1, encoded_tfidf_assessment):
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_text",
+        json={
+            "assessment_id": encoded_tfidf_assessment["assessment_id"],
+            "text": "",
+            "limit": 3,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+
+
+def test_by_text_exclude_book_without_vref_rejected(
+    client, regular_token1, encoded_tfidf_assessment
+):
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_text",
+        json={
+            "assessment_id": encoded_tfidf_assessment["assessment_id"],
+            "text": "alpha beta",
+            "limit": 3,
+            "exclude_book": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+    assert "exclude_book" in str(resp.json()["detail"])
+
+
+def test_by_texts_exclude_book_without_vrefs_rejected(
+    client, regular_token1, encoded_tfidf_assessment
+):
+    resp = client.post(
+        f"{prefix}/tfidf_result/by_texts",
+        json={
+            "assessment_id": encoded_tfidf_assessment["assessment_id"],
+            "texts": ["alpha beta"],
+            "limit": 3,
+            "exclude_book": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 422
+    assert "exclude_book" in str(resp.json()["detail"])
