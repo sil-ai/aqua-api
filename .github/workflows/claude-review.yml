@@ -2,15 +2,13 @@ name: Claude Code Review
 
 # Manual PR review with Claude. It does NOT run automatically on every PR.
 # Trigger it either by:
-#   - commenting "@claude-reviewer" on a pull request, or
+#   - adding the "claude-review" label to a pull request, or
 #   - running this workflow from the Actions tab (Run workflow) and passing a PR number.
 # Requires the repository (or org) secret CLAUDE_CODE_OAUTH_TOKEN
 # (generated with `claude setup-token` using a Claude Pro/Max subscription).
 on:
-  issue_comment:
-    types: [created]
-  pull_request_review_comment:
-    types: [created]
+  pull_request:
+    types: [labeled]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -29,36 +27,34 @@ jobs:
   claude-review:
     name: Claude review
     runs-on: ubuntu-latest
-    # Run only on a manual dispatch, or on an "@claude-reviewer" comment that is
-    # on a PR. The `user.type != 'Bot'` guard stops the reviewer's own comments
-    # (or any bot) from re-triggering the workflow in a loop.
+    # Run only on a manual dispatch, or when the "claude-review" label is added.
+    # Triggering by label (not by comment) avoids re-triggering on the reviewer's
+    # own comments and keeps the Actions list free of skipped runs.
     if: |
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null && github.event.comment.user.type != 'Bot' && contains(github.event.comment.body, '@claude-reviewer')) ||
-      (github.event_name == 'pull_request_review_comment' && github.event.comment.user.type != 'Bot' && contains(github.event.comment.body, '@claude-reviewer'))
+      (github.event_name == 'pull_request' && github.event.label.name == 'claude-review')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # On manual dispatch the default branch is checked out, not the PR, so
-      # check out the PR head here. This gives Claude the changed code (for
-      # accurate line numbers) without it needing any extra tool permission.
-      - name: Checkout PR (manual dispatch)
-        if: github.event_name == 'workflow_dispatch'
+      # Check out the PR head so Claude sees the changed code (for accurate line
+      # numbers) without needing any extra tool permission. Works for both the
+      # label event and manual dispatch.
+      - name: Checkout PR
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh pr checkout ${{ github.event.inputs.pr_number }}
+        run: gh pr checkout ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
 
       - name: Review with Claude
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          trigger_phrase: "@claude-reviewer"
+          label_trigger: "claude-review"
           prompt: |
             REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.inputs.pr_number || github.event.issue.number || github.event.pull_request.number }}
+            PR NUMBER: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
 
             The PR branch is already checked out locally — read files directly
             for accurate line numbers, and use `gh pr diff <PR NUMBER>` /
