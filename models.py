@@ -1034,7 +1034,7 @@ class CardTranslationOut(BaseModel):
 class SuggestionItem(BaseModel):
     """A proposed replacement/rendering, used for span suggestions and whole-verse alternatives."""
 
-    text: str
+    text: str = Field(min_length=1)
     note: Optional[str] = None
 
     model_config = {"str_strip_whitespace": True}
@@ -1258,6 +1258,12 @@ class AgentTranslationBulkRequest(BaseModel):
                         "draft_text": "Na mwanzo kulikuwa na Neno",
                         "hyper_literal_translation": "And beginning there-was with Word",
                         "literal_translation": "In the beginning was the Word",
+                        "alternatives": [
+                            {
+                                "text": "In the beginning the Word already existed",
+                                "note": "smoother English phrasing",
+                            }
+                        ],
                     },
                     {
                         "vref": "JHN 1:2",
