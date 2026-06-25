@@ -784,6 +784,7 @@ class AgentCritiqueIssue(Base):
     comments = Column(Text, nullable=True)
     severity = Column(Integer, nullable=True)  # 1..5, NULL when the agent omits it
     evidence = Column(JSONB, nullable=True)  # list[str]
+    suggestions = Column(JSONB, nullable=True)  # list[{text, note?}]
 
     # Resolution tracking
     is_resolved = Column(Boolean, default=False, nullable=False)
@@ -839,6 +840,7 @@ class AgentTranslation(Base):
     hyper_literal_translation = Column(Text, nullable=True)
     literal_translation = Column(Text, nullable=True)
     english_translation = Column(Text, nullable=True)
+    alternatives = Column(JSONB, nullable=True)  # list[{text, note?}]
     created_at = Column(TIMESTAMP, default=func.now())
 
     assessment = relationship("Assessment")
