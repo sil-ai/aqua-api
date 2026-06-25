@@ -112,6 +112,16 @@ def sanitize_text(text: Optional[str]) -> Optional[str]:
     return text.strip()
 
 
+def sanitize_alternatives(alternatives):
+    """Sanitize a list of SuggestionItem alternatives into JSONB-ready dicts."""
+    if alternatives is None:
+        return None
+    return [
+        {"text": sanitize_text(a.text), "note": sanitize_text(a.note)}
+        for a in alternatives
+    ]
+
+
 @router.post("/agent/word-alignment", response_model=AgentWordAlignmentOut)
 async def add_word_alignment(
     alignment: AgentWordAlignmentIn,
@@ -440,6 +450,7 @@ async def add_critique_issues(
                 if issue_in.evidence is not None
                 else None
             )
+            suggestions = sanitize_alternatives(issue_in.suggestions)
             issue = AgentCritiqueIssue(
                 assessment_id=assessment_id,
                 agent_translation_id=critique.agent_translation_id,
@@ -455,6 +466,7 @@ async def add_critique_issues(
                 comments=sanitize_text(issue_in.comments),
                 severity=issue_in.severity,
                 evidence=evidence,
+                suggestions=suggestions,
             )
             db.add(issue)
             created_issues.append(issue)
@@ -3726,6 +3738,7 @@ async def add_agent_translation(
         hyper_literal = sanitize_text(translation.hyper_literal_translation)
         literal = sanitize_text(translation.literal_translation)
         english = sanitize_text(translation.english_translation)
+        alternatives = sanitize_alternatives(translation.alternatives)
 
         # Create the translation record
         agent_translation = AgentTranslation(
@@ -3739,6 +3752,7 @@ async def add_agent_translation(
             hyper_literal_translation=hyper_literal,
             literal_translation=literal,
             english_translation=english,
+            alternatives=alternatives,
         )
 
         db.add(agent_translation)
@@ -3874,6 +3888,7 @@ async def add_agent_translations_bulk(
                 ),
                 literal_translation=sanitize_text(trans.literal_translation),
                 english_translation=sanitize_text(trans.english_translation),
+                alternatives=sanitize_alternatives(trans.alternatives),
             )
             for trans in request.translations
         ]

@@ -1031,6 +1031,15 @@ class CardTranslationOut(BaseModel):
     examples: List[CardTranslationExampleOut] = []
 
 
+class SuggestionItem(BaseModel):
+    """A proposed replacement/rendering, used for span suggestions and whole-verse alternatives."""
+
+    text: str
+    note: Optional[str] = None
+
+    model_config = {"str_strip_whitespace": True}
+
+
 class IssueIn(BaseModel):
     """A single MQM-aligned critique issue."""
 
@@ -1042,6 +1051,7 @@ class IssueIn(BaseModel):
     severity: Optional[int] = Field(default=None, ge=1, le=5)
     detector: Optional[str] = Field(default=None, max_length=50)
     evidence: Optional[List[str]] = None
+    suggestions: Optional[List[SuggestionItem]] = None
 
     model_config = {"str_strip_whitespace": True}
 
@@ -1070,6 +1080,9 @@ class CritiqueStorageRequest(BaseModel):
                         "severity": 4,
                         "detector": "number_diff",
                         "evidence": ["source: 40", "draft: 14"],
+                        "suggestions": [
+                            {"text": "forty days", "note": "match the source number"}
+                        ],
                     }
                 ],
             }
@@ -1095,6 +1108,7 @@ class CritiqueIssueOut(BaseModel):
     severity: Optional[int] = None
     detector: Optional[str] = None
     evidence: Optional[List[str]] = None
+    suggestions: Optional[List[SuggestionItem]] = None
     is_resolved: bool = False
     resolved_by_id: Optional[int] = None
     resolved_at: Optional[datetime.datetime] = None
@@ -1119,6 +1133,9 @@ class CritiqueIssueOut(BaseModel):
                 "severity": 4,
                 "detector": "number_diff",
                 "evidence": ["source: 40", "draft: 14"],
+                "suggestions": [
+                    {"text": "forty days", "note": "match the source number"}
+                ],
                 "is_resolved": False,
                 "resolved_by_id": None,
                 "resolved_at": None,
@@ -1173,6 +1190,7 @@ class AgentTranslationIn(BaseModel):
     hyper_literal_translation: Optional[str] = None
     literal_translation: Optional[str] = None
     english_translation: Optional[str] = None
+    alternatives: Optional[List[SuggestionItem]] = None
 
     model_config = {
         "json_schema_extra": {
@@ -1182,6 +1200,12 @@ class AgentTranslationIn(BaseModel):
                 "hyper_literal_translation": "And beginning there-was with Word",
                 "literal_translation": "In the beginning was the Word",
                 "english_translation": "In the beginning was the Word",
+                "alternatives": [
+                    {
+                        "text": "In the beginning the Word already existed",
+                        "note": "smoother English phrasing",
+                    }
+                ],
             }
         }
     }
@@ -1196,6 +1220,7 @@ class AgentTranslationStorageRequest(BaseModel):
     hyper_literal_translation: Optional[str] = None
     literal_translation: Optional[str] = None
     english_translation: Optional[str] = None
+    alternatives: Optional[List[SuggestionItem]] = None
 
     model_config = {
         "json_schema_extra": {
@@ -1206,6 +1231,12 @@ class AgentTranslationStorageRequest(BaseModel):
                 "hyper_literal_translation": "And beginning there-was with Word",
                 "literal_translation": "In the beginning was the Word",
                 "english_translation": "In the beginning was the Word",
+                "alternatives": [
+                    {
+                        "text": "In the beginning the Word already existed",
+                        "note": "smoother English phrasing",
+                    }
+                ],
             }
         }
     }
@@ -1254,6 +1285,7 @@ class AgentTranslationOut(BaseModel):
     hyper_literal_translation: Optional[str] = None
     literal_translation: Optional[str] = None
     english_translation: Optional[str] = None
+    alternatives: Optional[List[SuggestionItem]] = None
     created_at: Optional[datetime.datetime] = None
 
     model_config = {
@@ -1270,6 +1302,12 @@ class AgentTranslationOut(BaseModel):
                 "hyper_literal_translation": "And beginning there-was with Word",
                 "literal_translation": "In the beginning was the Word",
                 "english_translation": "In the beginning was the Word",
+                "alternatives": [
+                    {
+                        "text": "In the beginning the Word already existed",
+                        "note": "smoother English phrasing",
+                    }
+                ],
                 "created_at": "2024-06-01T12:00:00",
             }
         },
