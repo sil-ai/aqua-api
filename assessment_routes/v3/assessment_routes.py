@@ -600,8 +600,9 @@ async def add_assessment(
             )
         # Distinguish agent-critique runs by the transcribed_audio flag so a
         # transcribed run and a plain one dedup as separate assessments.
-        # `is_transcribed` is resolved above (from the version default or an
-        # explicit extra_kwargs override) before the version-id derivation.
+        # `is_transcribed` is resolved above, just after the version-id
+        # derivation (the target version id is needed to load the version flag),
+        # from the version default or an explicit extra_kwargs override.
         if a.type == "agent-critique":
             if is_transcribed:
                 completed_stmt = completed_stmt.where(
