@@ -531,7 +531,7 @@ async def add_assessment(
             is_transcribed = injected_transcribed
         else:
             version = await db.get(BibleVersion, target_version_id)
-            is_transcribed = bool(version and version.transcribed_audio)
+            is_transcribed = version.transcribed_audio if version else False
         # Fold the resolved flag into kwargs so it reaches Modal, the create-time
         # dedup check, and the read endpoints. Stored as {"transcribed_audio":
         # true} when on; on an explicit opt-out we strip any injected flag so the
@@ -600,6 +600,8 @@ async def add_assessment(
             )
         # Distinguish agent-critique runs by the transcribed_audio flag so a
         # transcribed run and a plain one dedup as separate assessments.
+        # `is_transcribed` is resolved above (from the version default or an
+        # explicit extra_kwargs override) before the version-id derivation.
         if a.type == "agent-critique":
             if is_transcribed:
                 completed_stmt = completed_stmt.where(

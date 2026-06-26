@@ -56,7 +56,7 @@ class VersionIn(BaseModel):
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
     is_reference: Optional[bool] = False
-    transcribed_audio: Optional[bool] = False
+    transcribed_audio: bool = False
     add_to_groups: List[int]
 
     model_config = {
