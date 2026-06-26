@@ -605,6 +605,21 @@ async def add_assessment(
                     ~Assessment.kwargs.has_key("last_vref"),
                 )
             )
+        # Distinguish agent-critique runs by the transcribed_audio flag so a
+        # flagged run and an unflagged run dedup as separate assessments — same
+        # role the eflomal_method_clause plays for word-alignment above.
+        if a.type == "agent-critique":
+            if is_transcribed:
+                completed_stmt = completed_stmt.where(
+                    Assessment.kwargs.op("@>")({"transcribed_audio": True})
+                )
+            else:
+                completed_stmt = completed_stmt.where(
+                    or_(
+                        Assessment.kwargs.is_(None),
+                        ~Assessment.kwargs.has_key("transcribed_audio"),
+                    )
+                )
         result = await db.execute(completed_stmt)
         existing = result.scalars().first()
         if existing is not None:
