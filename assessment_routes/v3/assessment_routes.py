@@ -20,7 +20,7 @@ from sqlalchemy.orm import aliased
 
 from assessment_routes.v3.alignment_filters import eflomal_method_clause
 from database.dependencies import get_db
-from database.models import Assessment, BibleRevision, BibleVersionAccess
+from database.models import Assessment, BibleRevision, BibleVersion, BibleVersionAccess
 from database.models import UserDB as UserModel
 from database.models import UserGroup
 
@@ -509,6 +509,47 @@ async def add_assessment(
         reference.bible_version_id if reference is not None else None
     )
 
+    # For agent-critique, default the transcribed_audio flag from the version
+    # being assessed (the draft/target) unless the request set it explicitly via
+    # extra_kwargs. The flag tells the agent the draft is an ASR transcription
+    # (#811/#813); promoting it to the version (#815) lets it be set once and
+    # applied to every assessment of that version's revisions.
+    is_transcribed = False
+    if a.type == "agent-critique":
+        injected_transcribed = a.kwargs.get("transcribed_audio") if a.kwargs else None
+        # The dedup filter below uses JSONB containment (strictly typed), so a
+        # truthy-but-non-bool injected value would silently bypass it. Reject it.
+        if injected_transcribed is not None and not isinstance(
+            injected_transcribed, bool
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="transcribed_audio must be a boolean.",
+            )
+        # An explicit extra_kwargs value wins over the version default.
+        if injected_transcribed is not None:
+            is_transcribed = injected_transcribed
+        else:
+            version = await db.get(BibleVersion, target_version_id)
+            is_transcribed = bool(version and version.transcribed_audio)
+        # Fold the resolved flag into kwargs so it reaches Modal, the create-time
+        # dedup check, and the read endpoints. Stored as {"transcribed_audio":
+        # true} when on; on an explicit opt-out we strip any injected flag so the
+        # row reads as off and dedup stays correct.
+        if is_transcribed:
+            combined_kwargs = dict(a.kwargs or {})
+            combined_kwargs["transcribed_audio"] = True
+            try:
+                combined_kwargs = AssessmentIn.validate_kwargs(combined_kwargs)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            a.kwargs = combined_kwargs
+            parsed_kwargs = combined_kwargs
+        elif a.kwargs and "transcribed_audio" in a.kwargs:
+            stripped = {k: v for k, v in a.kwargs.items() if k != "transcribed_audio"}
+            a.kwargs = stripped or None
+            parsed_kwargs = a.kwargs
+
     # Check for already-completed assessment (force=true bypasses this)
     if not force:
         completed_stmt = (
@@ -557,6 +598,20 @@ async def add_assessment(
                     ~Assessment.kwargs.has_key("last_vref"),
                 )
             )
+        # Distinguish agent-critique runs by the transcribed_audio flag so a
+        # transcribed run and a plain one dedup as separate assessments.
+        if a.type == "agent-critique":
+            if is_transcribed:
+                completed_stmt = completed_stmt.where(
+                    Assessment.kwargs.op("@>")({"transcribed_audio": True})
+                )
+            else:
+                completed_stmt = completed_stmt.where(
+                    or_(
+                        Assessment.kwargs.is_(None),
+                        ~Assessment.kwargs.has_key("transcribed_audio"),
+                    )
+                )
         result = await db.execute(completed_stmt)
         existing = result.scalars().first()
         if existing is not None:

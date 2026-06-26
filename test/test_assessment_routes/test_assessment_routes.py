@@ -1858,6 +1858,127 @@ def test_agent_critique_derives_version_ids(
         assert kwargs["target_version_id"] == target_version_id
 
 
+# --- per-version transcribed_audio default (#815) ---
+
+
+def _set_version_transcribed(test_db_session, version_id, value):
+    from database.models import BibleVersion as BibleVersionModel
+
+    version = test_db_session.query(BibleVersionModel).filter_by(id=version_id).one()
+    version.transcribed_audio = value
+    test_db_session.commit()
+
+
+def test_agent_critique_inherits_version_transcribed_audio(
+    client, regular_token1, db_session, test_db_session
+):
+    """When the draft's version has transcribed_audio=true, an agent-critique
+    auto-applies the flag into the assessment kwargs and forwards it."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+    _set_version_transcribed(test_db_session, target_version_id, True)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()[0]["kwargs"] == {"transcribed_audio": True}
+        assert mock_runner.await_args.args[0].kwargs == {"transcribed_audio": True}
+
+
+def test_agent_critique_version_not_transcribed_no_flag(
+    client, regular_token1, db_session, test_db_session
+):
+    """A version with the default (false) flag leaves agent-critique kwargs
+    unchanged (None)."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()[0]["kwargs"] is None
+
+
+def test_agent_critique_explicit_false_overrides_version_true(
+    client, regular_token1, db_session, test_db_session
+):
+    """An explicit transcribed_audio=false in extra_kwargs wins over a version
+    whose flag is true — the stored kwargs read as off (None)."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+    _set_version_transcribed(test_db_session, target_version_id, True)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+                "extra_kwargs": '{"transcribed_audio": false}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()[0]["kwargs"] is None
+
+
+def test_non_agent_critique_ignores_version_transcribed_audio(
+    client, regular_token1, db_session, test_db_session
+):
+    """The version flag is only consulted for agent-critique; other assessment
+    types ignore it."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    _set_version_transcribed(test_db_session, version_id, True)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()[0]["kwargs"] is None
+
+
 def test_no_reference_assessment_derives_target_only(
     client, regular_token1, db_session, test_db_session
 ):

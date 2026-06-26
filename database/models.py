@@ -316,6 +316,9 @@ class BibleVersion(Base):
     )
     machine_translation = Column(Boolean)
     is_reference = Column(Boolean)
+    transcribed_audio = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
