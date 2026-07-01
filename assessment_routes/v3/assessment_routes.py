@@ -367,6 +367,10 @@ async def add_assessment(
         None,
         description="Word-alignment runner selector. true runs eflomal, false runs fastalign. When omitted, eflomal runs by default unless use_eflomal was injected via extra_kwargs, in which case the injected value is honored — the typed query param always wins over an injected value. Source/target version IDs are derived from reference_id/revision_id.",
     ),
+    transcribed_audio: Optional[bool] = Query(
+        None,
+        description="agent-critique only. true tells the agent the draft is a transcription of recorded audio (ASR), so the back-translation/critique prompts expect surface transcription noise while still flagging genuine content differences. Default off (unset). The typed query param wins over a transcribed_audio value injected via extra_kwargs.",
+    ),
     force: bool = Query(
         False,
         description="Force rerun even if a completed assessment already exists",
@@ -391,7 +395,9 @@ async def add_assessment(
     - ngrams
     - tfidf
     - text-lengths
-    - agent-critique (requires reference)
+    - agent-critique (requires reference; pass `transcribed_audio=true` when the
+      draft is a transcription of recorded audio so the agent expects ASR
+      surface noise. Default off.)
 
     For those assessments that require a reference, the reference_id should be the id of the revision with which the revision will be compared.
 
@@ -488,6 +494,31 @@ async def add_assessment(
         a.kwargs = stripped or None
         parsed_kwargs = a.kwargs
 
+    # Strict-bool check, mirroring use_eflomal: a caller could route around the
+    # typed query param by injecting `transcribed_audio: 1` (or "true", etc.)
+    # via extra_kwargs, which would silently bypass the JSONB-strict dedup
+    # filter. Reject a truthy-but-non-bool value before the flag gets folded in.
+    injected_transcribed = a.kwargs.get("transcribed_audio") if a.kwargs else None
+    if injected_transcribed is not None and not isinstance(injected_transcribed, bool):
+        raise HTTPException(
+            status_code=400,
+            detail="transcribed_audio must be a boolean.",
+        )
+
+    # An explicit request wins: the typed query param beats an extra_kwargs
+    # value. It is resolved into the effective flag after the version lookup
+    # below, where the version supplies the default if neither is set. Only
+    # agent-critique honors the flag; an explicit request on any other type is
+    # rejected here.
+    explicit_transcribed = (
+        transcribed_audio if transcribed_audio is not None else injected_transcribed
+    )
+    if explicit_transcribed and a.type != "agent-critique":
+        raise HTTPException(
+            status_code=400,
+            detail="transcribed_audio is only valid for agent-critique assessments.",
+        )
+
     # Derive source/target version IDs from the reference and revision rows
     # for every assessment type (not just eflomal). Downstream consumers
     # (agent runner, eflomal pipeline, version-id-keyed artifact stores) all
@@ -509,46 +540,36 @@ async def add_assessment(
         reference.bible_version_id if reference is not None else None
     )
 
-    # For agent-critique, default the transcribed_audio flag from the version
-    # being assessed (the draft/target) unless the request set it explicitly via
-    # extra_kwargs. The flag tells the agent the draft is an ASR transcription
-    # (#811/#813); promoting it to the version (#815) lets it be set once and
-    # applied to every assessment of that version's revisions.
+    # Resolve the effective transcribed_audio flag. Precedence: an explicit
+    # request (typed param or extra_kwargs, resolved above) wins; otherwise
+    # agent-critique inherits the draft version's transcribed_audio default
+    # (#815). The flag tells the agent the draft is an ASR transcription
+    # (#811/#813). Only agent-critique honors it.
     is_transcribed = False
     if a.type == "agent-critique":
-        injected_transcribed = a.kwargs.get("transcribed_audio") if a.kwargs else None
-        # The dedup filter below uses JSONB containment (strictly typed), so a
-        # truthy-but-non-bool injected value would silently bypass it. Reject it.
-        if injected_transcribed is not None and not isinstance(
-            injected_transcribed, bool
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="transcribed_audio must be a boolean.",
-            )
-        # An explicit extra_kwargs value wins over the version default.
-        if injected_transcribed is not None:
-            is_transcribed = injected_transcribed
+        if explicit_transcribed is not None:
+            is_transcribed = explicit_transcribed
         else:
             version = await db.get(BibleVersion, target_version_id)
             is_transcribed = version.transcribed_audio if version else False
-        # Fold the resolved flag into kwargs so it reaches Modal, the create-time
-        # dedup check, and the read endpoints. Stored as {"transcribed_audio":
-        # true} when on; on an explicit opt-out we strip any injected flag so the
-        # row reads as off and dedup stays correct.
-        if is_transcribed:
-            combined_kwargs = dict(a.kwargs or {})
-            combined_kwargs["transcribed_audio"] = True
-            try:
-                combined_kwargs = AssessmentIn.validate_kwargs(combined_kwargs)
-            except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e)) from e
-            a.kwargs = combined_kwargs
-            parsed_kwargs = combined_kwargs
-        elif a.kwargs and "transcribed_audio" in a.kwargs:
-            stripped = {k: v for k, v in a.kwargs.items() if k != "transcribed_audio"}
-            a.kwargs = stripped or None
-            parsed_kwargs = a.kwargs
+
+    # Fold the resolved flag into kwargs so it reaches Modal, the create-time
+    # dedup check, and the read endpoints. Stored as {"transcribed_audio": true}
+    # when on; on an explicit opt-out (or a non-agent-critique type) we strip any
+    # injected flag so the row reads as off and dedup stays correct.
+    if is_transcribed:
+        combined_kwargs = dict(a.kwargs or {})
+        combined_kwargs["transcribed_audio"] = True
+        try:
+            combined_kwargs = AssessmentIn.validate_kwargs(combined_kwargs)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        a.kwargs = combined_kwargs
+        parsed_kwargs = combined_kwargs
+    elif a.kwargs and "transcribed_audio" in a.kwargs:
+        stripped = {k: v for k, v in a.kwargs.items() if k != "transcribed_audio"}
+        a.kwargs = stripped or None
+        parsed_kwargs = a.kwargs
 
     # Check for already-completed assessment (force=true bypasses this)
     if not force:
@@ -599,10 +620,10 @@ async def add_assessment(
                 )
             )
         # Distinguish agent-critique runs by the transcribed_audio flag so a
-        # transcribed run and a plain one dedup as separate assessments.
-        # `is_transcribed` is resolved above, just after the version-id
-        # derivation (the target version id is needed to load the version flag),
-        # from the version default or an explicit extra_kwargs override.
+        # transcribed run and a plain one dedup as separate assessments — same
+        # role the eflomal_method_clause plays for word-alignment above.
+        # `is_transcribed` is resolved above, just after the version-id derivation
+        # (the target version id is needed to load the version default).
         if a.type == "agent-critique":
             if is_transcribed:
                 completed_stmt = completed_stmt.where(

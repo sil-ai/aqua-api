@@ -2233,6 +2233,311 @@ def test_non_eflomal_deleted_revision_returns_404(
         assert mock_runner.await_count == 0
 
 
+# --- transcribed_audio (agent-critique) tests ---
+
+
+def test_transcribed_audio_typed_param_forwarded(
+    client, regular_token1, db_session, test_db_session
+):
+    """transcribed_audio=true on agent-critique persists {"transcribed_audio": true}
+    so the agent receives it in assess() kwargs."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+                "transcribed_audio": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()[0]["kwargs"] == {"transcribed_audio": True}
+        assert mock_runner.await_args.args[0].kwargs == {"transcribed_audio": True}
+
+
+def test_transcribed_audio_via_extra_kwargs(
+    client, regular_token1, db_session, test_db_session
+):
+    """A caller can activate transcribed_audio by injecting it into extra_kwargs
+    instead of the dedicated query param."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+                "extra_kwargs": '{"transcribed_audio": true}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()[0]["kwargs"] == {"transcribed_audio": True}
+
+
+def test_transcribed_audio_typed_param_wins_over_injected(
+    client, regular_token1, db_session, test_db_session
+):
+    """The typed query param wins over an injected extra_kwargs value, matching
+    use_eflomal: typed false strips an injected true, typed true overrides an
+    injected false."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        # typed false beats injected true -> stripped to None
+        off_resp = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+                "transcribed_audio": False,
+                "extra_kwargs": '{"transcribed_audio": true}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert off_resp.status_code == 200, off_resp.text
+        assert off_resp.json()[0]["kwargs"] is None
+
+        # typed true beats injected false -> {"transcribed_audio": true}
+        on_resp = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+                "transcribed_audio": True,
+                "extra_kwargs": '{"transcribed_audio": false}',
+                "force": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert on_resp.status_code == 200, on_resp.text
+        assert on_resp.json()[0]["kwargs"] == {"transcribed_audio": True}
+
+
+def test_transcribed_audio_on_wrong_assessment_type_returns_400(
+    client, regular_token1, db_session, test_db_session
+):
+    """transcribed_audio=true on a non-agent-critique type returns 400."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "type": "sentence-length",
+                "transcribed_audio": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+    assert response.status_code == 400
+    assert "transcribed_audio" in response.json()["detail"]
+
+
+def test_transcribed_audio_non_bool_in_extra_kwargs_returns_400(
+    client, regular_token1, db_session, test_db_session
+):
+    """A truthy-but-non-bool transcribed_audio in extra_kwargs must be rejected
+    with 400, otherwise it would silently bypass the JSONB-strict dedup filter."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        for bad_value in ('"true"', "1", "0"):
+            response = client.post(
+                f"{prefix}/assessment",
+                params={
+                    "revision_id": revision_id,
+                    "reference_id": reference_id,
+                    "type": "agent-critique",
+                    "extra_kwargs": '{"transcribed_audio": ' + bad_value + "}",
+                },
+                headers={"Authorization": f"Bearer {regular_token1}"},
+            )
+            assert response.status_code == 400, (bad_value, response.text)
+            assert "transcribed_audio" in response.json()["detail"]
+        assert mock_runner.await_count == 0
+
+
+def test_transcribed_audio_omitted_unchanged(
+    client, regular_token1, db_session, test_db_session
+):
+    """Omitting transcribed_audio leaves agent-critique kwargs unchanged (None)."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()[0]["kwargs"] is None
+
+
+def test_transcribed_audio_in_progress_dedup_distinct(
+    client, regular_token1, db_session, test_db_session
+):
+    """A transcribed-audio agent-critique and a plain one are separate in-progress
+    dedup buckets: the two variants coexist, but each blocks its own duplicate."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    plain_params = {
+        "revision_id": revision_id,
+        "reference_id": reference_id,
+        "type": "agent-critique",
+    }
+    transcribed_params = {**plain_params, "transcribed_audio": True}
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        plain = client.post(
+            f"{prefix}/assessment",
+            params=plain_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert plain.status_code == 200, plain.text
+
+        # Transcribed variant is NOT blocked by the queued plain run.
+        transcribed = client.post(
+            f"{prefix}/assessment",
+            params=transcribed_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert transcribed.status_code == 200, transcribed.text
+
+        # Each variant blocks its own duplicate.
+        assert (
+            client.post(
+                f"{prefix}/assessment",
+                params=plain_params,
+                headers={"Authorization": f"Bearer {regular_token1}"},
+            ).status_code
+            == 409
+        )
+        assert (
+            client.post(
+                f"{prefix}/assessment",
+                params=transcribed_params,
+                headers={"Authorization": f"Bearer {regular_token1}"},
+            ).status_code
+            == 409
+        )
+
+
+def test_transcribed_audio_completed_dedup_distinct(
+    client, regular_token1, db_session, test_db_session
+):
+    """A finished plain agent-critique must not block a transcribed-audio run on
+    the completed-assessment dedup path, but must block another plain run.
+
+    Regression guard: the completed-assessment query filters on transcribed_audio
+    the same way it filters on the eflomal method, so the two variants dedup
+    independently."""
+    from datetime import datetime
+
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    plain_params = {
+        "revision_id": revision_id,
+        "reference_id": reference_id,
+        "type": "agent-critique",
+    }
+    transcribed_params = {**plain_params, "transcribed_audio": True}
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+
+        plain = client.post(
+            f"{prefix}/assessment",
+            params=plain_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert plain.status_code == 200, plain.text
+        plain_id = plain.json()[0]["id"]
+
+        finished = (
+            db_session.query(Assessment).filter(Assessment.id == plain_id).first()
+        )
+        finished.status = "finished"
+        finished.end_time = datetime.now()
+        db_session.commit()
+
+        # Finished plain run does NOT block a transcribed-audio run.
+        transcribed = client.post(
+            f"{prefix}/assessment",
+            params=transcribed_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert transcribed.status_code == 200, transcribed.text
+
+        # ...but it DOES block another plain run.
+        plain_again = client.post(
+            f"{prefix}/assessment",
+            params=plain_params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert plain_again.status_code == 409
+        assert str(plain_id) in plain_again.json()["detail"]
+
+
 def test_use_eflomal_dedup_separate_from_regular(
     client, regular_token1, db_session, test_db_session
 ):
