@@ -26,6 +26,7 @@ class VersionUpdate(BaseModel):
     forwardTranslation: Union[int, None] = None
     backTranslation: Union[int, None] = None
     machineTranslation: bool = False
+    transcribed_audio: bool = False
     add_to_groups: Optional[List[int]] = None
     remove_from_groups: Optional[List[int]] = None
 
@@ -55,6 +56,7 @@ class VersionIn(BaseModel):
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
     is_reference: Optional[bool] = False
+    transcribed_audio: bool = False
     add_to_groups: List[int]
 
     model_config = {
@@ -98,6 +100,7 @@ class VersionOut_v3(BaseModel):
     owner_id: Union[int, None] = None
     group_ids: List[int] = []
     is_reference: bool = False
+    transcribed_audio: bool = False
     deleted: bool = False
 
     @field_validator("deleted", mode="before")

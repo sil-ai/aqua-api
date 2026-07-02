@@ -568,6 +568,77 @@ class TestIncludeDeleted:
         assert by_id[legacy_id]["deleted"] is False
 
 
+class TestTranscribedAudioFlag:
+    def test_create_version_with_transcribed_audio(
+        self, client, regular_token1, db_session
+    ):
+        group_1 = db_session.query(Group).filter_by(name="Group1").first()
+        headers = {"Authorization": f"Bearer {regular_token1}"}
+        params = {
+            **new_version_data,
+            "abbreviation": "TAV",
+            "transcribed_audio": True,
+            "add_to_groups": [group_1.id],
+        }
+        resp = client.post(f"{prefix}/version", json=params, headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["transcribed_audio"] is True
+        row = (
+            db_session.query(BibleVersionModel).filter_by(id=resp.json()["id"]).first()
+        )
+        assert row.transcribed_audio is True
+
+    def test_create_version_defaults_transcribed_audio_false(
+        self, client, regular_token1, db_session
+    ):
+        group_1 = db_session.query(Group).filter_by(name="Group1").first()
+        headers = {"Authorization": f"Bearer {regular_token1}"}
+        params = {
+            **new_version_data,
+            "abbreviation": "TAV2",
+            "add_to_groups": [group_1.id],
+        }
+        resp = client.post(f"{prefix}/version", json=params, headers=headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["transcribed_audio"] is False
+        row = (
+            db_session.query(BibleVersionModel).filter_by(id=resp.json()["id"]).first()
+        )
+        assert row.transcribed_audio is False
+
+    def test_update_version_transcribed_audio(self, client, regular_token1, db_session):
+        group_1 = db_session.query(Group).filter_by(name="Group1").first()
+        headers = {"Authorization": f"Bearer {regular_token1}"}
+        params = {
+            **new_version_data,
+            "abbreviation": "TAV3",
+            "add_to_groups": [group_1.id],
+        }
+        version_id = client.post(
+            f"{prefix}/version", json=params, headers=headers
+        ).json()["id"]
+
+        on = client.put(
+            f"{prefix}/version",
+            json={"id": version_id, "transcribed_audio": True},
+            headers=headers,
+        )
+        assert on.status_code == 200, on.text
+        db_session.expire_all()
+        row = db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+        assert row.transcribed_audio is True
+
+        off = client.put(
+            f"{prefix}/version",
+            json={"id": version_id, "transcribed_audio": False},
+            headers=headers,
+        )
+        assert off.status_code == 200, off.text
+        db_session.expire_all()
+        row = db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+        assert row.transcribed_audio is False
+
+
 class TestVersionValidation:
     def test_create_version_without_add_to_groups(self, client, regular_token1):
         """Test that creating a version without add_to_groups fails with 422."""
