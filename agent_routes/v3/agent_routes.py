@@ -3629,7 +3629,11 @@ def _header_safe(value: str) -> str:
         value.encode("latin-1")
         return value
     except UnicodeEncodeError:
-        return Header(value, "utf-8", maxlinelen=len(value) * 4 + 32).encode()
+        # maxlinelen discourages folding, but 4-byte-heavy input can still
+        # exceed it; strip any residual fold (adjacent RFC 2047 encoded-words
+        # separated by whitespace concatenate correctly on decode)
+        encoded = Header(value, "utf-8", maxlinelen=len(value) * 4 + 32).encode()
+        return encoded.replace("\r", "").replace("\n", "")
 
 
 @router.get("/agent/chapter_notes_email", response_model=None)

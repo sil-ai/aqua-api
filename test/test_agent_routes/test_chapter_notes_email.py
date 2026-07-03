@@ -450,8 +450,10 @@ def test_chapter_notes_email_subject_sanitized(
 
     user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
     group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+    # CRLF injection payload + Cyrillic (forces RFC 2047) + a run of 4-byte
+    # emoji (forces base64 expansion past the folding threshold)
     version = BibleVersion(
-        name="Evil\r\nBcc: attacker@example.com Кириллическое имя черновика перевода",
+        name="Evil\r\nBcc: attacker@example.com Кириллическое имя " + "😀" * 100,
         iso_language="eng",
         iso_script="Latn",
         abbreviation="EVILV",
