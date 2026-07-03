@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ subject }}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f3f4f6;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f3f4f6;">
+<tr>
+<td align="center" style="padding:16px 8px;">
+<table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0" style="max-width:640px;width:100%;background-color:#ffffff;border:1px solid #e5e7eb;border-radius:8px;font-family:Arial,Helvetica,sans-serif;">
+
+  <!-- Header -->
+  <tr>
+  <td style="padding:20px 24px;background-color:#1f2937;border-radius:8px 8px 0 0;">
+    <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:#9ca3af;">AI Translation Notes</p>
+    <p style="margin:4px 0 0;font-size:22px;font-weight:bold;color:#ffffff;">{{ book_name }} {{ chapter }}</p>
+    <p style="margin:8px 0 0;font-size:13px;color:#d1d5db;">
+      Draft: <strong style="color:#ffffff;">{{ draft_name }}</strong>{% if draft_iso %} ({{ draft_iso }}){% endif %}
+      {% if reference_name %}&nbsp;&middot;&nbsp; Reference: <strong style="color:#ffffff;">{{ reference_name }}</strong>{% if reference_iso %} ({{ reference_iso }}){% endif %}{% endif %}
+    </p>
+    <p style="margin:4px 0 0;font-size:12px;color:#9ca3af;">Generated {{ generated_date }}</p>
+  </td>
+  </tr>
+
+  <!-- Summary banner -->
+  <tr>
+  <td style="padding:14px 24px;background-color:#f9fafb;border-bottom:1px solid #e5e7eb;">
+    {% if problem_count or suggestion_count %}
+    <p style="margin:0;font-size:14px;color:#374151;">
+      <span style="display:inline-block;padding:2px 8px;border-radius:10px;background-color:#fee2e2;color:#b91c1c;font-weight:bold;font-size:13px;">! {{ problem_count }} problem{{ 's' if problem_count != 1 }}</span>
+      &nbsp;<span style="display:inline-block;padding:2px 8px;border-radius:10px;background-color:#fef3c7;color:#92400e;font-weight:bold;font-size:13px;">&#10022; {{ suggestion_count }} suggestion{{ 's' if suggestion_count != 1 }}</span>
+      &nbsp;<span style="color:#6b7280;font-size:13px;">{{ problem_count + suggestion_count }} note{{ 's' if problem_count + suggestion_count != 1 }} total{% if include_dismissed and dismissed_count %} ({{ dismissed_count }} dismissed){% endif %}</span>
+    </p>
+    {% else %}
+    <p style="margin:0;font-size:14px;color:#6b7280;">No notes at or above priority {{ min_severity }} in this chapter.</p>
+    {% endif %}
+  </td>
+  </tr>
+
+  <!-- Verses -->
+  {% for verse in verses %}
+  <tr>
+  <td style="padding:10px 16px 0 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"{% if verse.accent.border %} style="border-left:4px solid {{ verse.accent.border }};background-color:{{ verse.accent.bg }};border-radius:6px;"{% endif %}>
+    <tr>
+    <td width="40" valign="top" style="padding:10px 4px 10px 10px;">
+      <p style="margin:0;font-size:15px;font-weight:bold;color:#4b5563;">{{ verse.number }}</p>
+      {% if verse.problem_count %}
+      <p style="margin:4px 0 0;"><span style="display:inline-block;padding:1px 5px;border-radius:4px;background-color:#fee2e2;color:#b91c1c;font-size:11px;font-weight:bold;">! {{ verse.problem_count }}</span></p>
+      {% endif %}
+      {% if verse.suggestion_count %}
+      <p style="margin:4px 0 0;"><span style="display:inline-block;padding:1px 5px;border-radius:4px;background-color:#fef3c7;color:#92400e;font-size:11px;font-weight:bold;">&#10022; {{ verse.suggestion_count }}</span></p>
+      {% endif %}
+    </td>
+    <td valign="top" style="padding:10px 12px 10px 4px;">
+
+      <!-- Draft text -->
+      <p style="margin:0;font-size:11px;font-weight:bold;letter-spacing:0.5px;text-transform:uppercase;color:#6b7280;">Revision</p>
+      <p style="margin:2px 0 0;font-size:15px;line-height:1.5;color:#1f2937;">{{ verse.draft_text or '' }}</p>
+
+      <!-- Reference text -->
+      {% if verse.reference_text %}
+      <p style="margin:8px 0 0;font-size:11px;font-weight:bold;letter-spacing:0.5px;text-transform:uppercase;color:#6b7280;">Reference</p>
+      <p style="margin:2px 0 0;font-size:14px;line-height:1.5;color:#374151;">{{ verse.reference_text }}</p>
+      {% endif %}
+
+      <!-- Notes -->
+      {% for issue in verse.issues %}
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;">
+      <tr>
+      <td style="padding:8px 10px;background-color:#ffffff;border:1px solid #bfdbfe;border-radius:6px;{% if issue.is_resolved %}opacity:0.6;{% endif %}">
+        <p style="margin:0;">
+          <span style="display:inline-block;padding:1px 8px;border-radius:10px;border:1px solid {{ issue.dimension_style.border }};color:{{ issue.dimension_style.color }};font-size:12px;font-weight:bold;">{{ issue.dimension_label }}</span>
+          {% if issue.subtype_label %}&nbsp;<span style="font-size:12px;font-weight:bold;color:#4b5563;">{{ issue.subtype_label }}</span>{% endif %}
+          {% if issue.severity is not none %}&nbsp;<span style="display:inline-block;padding:1px 8px;border-radius:10px;background-color:{{ issue.severity_style.bg }};color:{{ issue.severity_style.color }};font-size:12px;font-weight:bold;">P{{ issue.severity }}</span>{% endif %}
+          {% if issue.is_resolved %}&nbsp;<span style="font-size:12px;font-style:italic;color:#9ca3af;">dismissed</span>{% endif %}
+        </p>
+        {% if issue.source_text or issue.draft_text %}
+        <p style="margin:6px 0 0;font-size:13px;font-weight:bold;color:#111827;">
+          {% if issue.source_text and issue.draft_text %}&ldquo;{{ issue.source_text }}&rdquo; &rarr; &ldquo;{{ issue.draft_text }}&rdquo;{% else %}&ldquo;{{ issue.source_text or issue.draft_text }}&rdquo;{% endif %}
+        </p>
+        {% endif %}
+        {% if issue.comments %}
+        <p style="margin:4px 0 0;font-size:13px;line-height:1.5;color:#4b5563;">{{ issue.comments }}</p>
+        {% endif %}
+        {% if issue.suggestions %}
+        <p style="margin:8px 0 0;font-size:11px;font-weight:bold;letter-spacing:0.5px;text-transform:uppercase;color:#6b7280;">&#128161; Suggested</p>
+        {% for suggestion in issue.suggestions %}
+        <p style="margin:2px 0 0;font-size:13px;color:#111827;">{{ suggestion.text }}</p>
+        {% if suggestion.note %}<p style="margin:0;font-size:12px;font-style:italic;color:#6b7280;">{{ suggestion.note }}</p>{% endif %}
+        {% endfor %}
+        {% endif %}
+        {% if issue.evidence %}
+        <p style="margin:8px 0 0;font-size:11px;color:#9ca3af;">Evidence:</p>
+        {% for item in issue.evidence %}
+        <p style="margin:0 0 0 10px;font-size:11px;color:#9ca3af;">&bull; {{ item }}</p>
+        {% endfor %}
+        {% endif %}
+      </td>
+      </tr>
+      </table>
+      {% endfor %}
+
+      <!-- Back translations -->
+      {% if verse.english_translation %}
+      <p style="margin:8px 0 0;font-size:11px;font-weight:bold;letter-spacing:0.5px;text-transform:uppercase;color:#6b7280;">English</p>
+      <p style="margin:2px 0 0;font-size:13px;line-height:1.5;color:#374151;">{{ verse.english_translation }}</p>
+      {% endif %}
+      {% if verse.literal_translation %}
+      <p style="margin:8px 0 0;font-size:11px;font-weight:bold;letter-spacing:0.5px;text-transform:uppercase;color:#6b7280;">Auto Back Translation</p>
+      <p style="margin:2px 0 0;font-size:13px;line-height:1.5;color:#374151;">{{ verse.literal_translation }}</p>
+      {% endif %}
+
+      <!-- Alternative renderings -->
+      {% if verse.alternatives %}
+      <p style="margin:8px 0 0;font-size:11px;font-weight:bold;letter-spacing:0.5px;text-transform:uppercase;color:#6b7280;">Alternative rendering{{ 's' if verse.alternatives|length > 1 }}</p>
+      {% for alternative in verse.alternatives %}
+      <p style="margin:2px 0 0;font-size:13px;line-height:1.5;color:#374151;">{% if verse.alternatives|length > 1 %}<strong style="color:#92400e;">Option {{ 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[loop.index0 % 26] }}:</strong> {% endif %}{{ alternative.text }}</p>
+      {% if alternative.note %}<p style="margin:0;font-size:12px;font-style:italic;color:#6b7280;">{{ alternative.note }}</p>{% endif %}
+      {% endfor %}
+      {% endif %}
+
+    </td>
+    </tr>
+    </table>
+  </td>
+  </tr>
+  {% endfor %}
+
+  <!-- Footer -->
+  <tr>
+  <td style="padding:16px 24px;border-top:1px solid #e5e7eb;">
+    <p style="margin:0;font-size:11px;color:#9ca3af;">These notes were generated automatically by the AQuA translation assessment agent. Notes are suggestions for review, not corrections.</p>
+  </td>
+  </tr>
+
+</table>
+</td>
+</tr>
+</table>
+</body>
+</html>
