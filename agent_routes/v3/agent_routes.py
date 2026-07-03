@@ -3335,7 +3335,7 @@ async def resolve_assessment_ids(
             detail="Must provide either assessment_id OR (revision_id and reference_id)",
         )
 
-    if has_assessment_id and has_revision_pair:
+    if has_assessment_id and (revision_id is not None or reference_id is not None):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot provide both assessment_id and revision/reference IDs. Choose one.",
