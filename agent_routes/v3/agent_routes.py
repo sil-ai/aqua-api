@@ -20,6 +20,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Text as TextType
+from starlette.concurrency import run_in_threadpool
 
 from database.dependencies import get_db
 from database.models import (
@@ -3381,6 +3382,17 @@ async def resolve_assessment_ids(
                 )
             assessment_ids = [assessment.id]
     else:
+        assessment_result = await db.execute(
+            select(Assessment).filter(
+                Assessment.id == assessment_id,
+                Assessment.deleted.is_not(True),
+            )
+        )
+        if not assessment_result.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Assessment with id {assessment_id} not found",
+            )
         assessment_ids = [assessment_id]
 
     # Check user authorization for this assessment (all assessments in a
@@ -3441,6 +3453,9 @@ async def get_critique_issues(
         assessment_ids = await resolve_assessment_ids(
             db, current_user, assessment_id, revision_id, reference_id, all_assessments
         )
+        # Keep the resolved ID in the structured logs below when the caller
+        # identified the assessment by revision/reference pair
+        assessment_id = assessment_ids[0]
 
         # Start with base query filtered by assessment(s)
         query = select(AgentCritiqueIssue).where(
@@ -3605,12 +3620,16 @@ def _issue_display(issue: AgentCritiqueIssue) -> dict:
 
 
 def _header_safe(value: str) -> str:
-    """HTTP header values must be latin-1; RFC 2047-encode anything that isn't."""
+    """HTTP header values must be latin-1 with no CR/LF: collapse whitespace
+    (version/revision names are user-supplied), then RFC 2047-encode anything
+    that isn't latin-1 — unfolded, since the default RFC 2822 folding would put
+    a literal newline inside the header value."""
+    value = " ".join(value.split())
     try:
         value.encode("latin-1")
         return value
     except UnicodeEncodeError:
-        return Header(value, "utf-8").encode()
+        return Header(value, "utf-8", maxlinelen=len(value) * 4 + 32).encode()
 
 
 @router.get("/agent/chapter_notes_email", response_model=None)
@@ -3675,9 +3694,12 @@ async def get_chapter_notes_email(
         assessment_ids = await resolve_assessment_ids(
             db, current_user, assessment_id, revision_id, reference_id
         )
+        # Keep the resolved ID in the structured logs below when the caller
+        # identified the assessment by revision/reference pair
+        assessment_id = assessment_ids[0]
 
         assessment_result = await db.execute(
-            select(Assessment).where(Assessment.id == assessment_ids[0])
+            select(Assessment).where(Assessment.id == assessment_id)
         )
         assessment = assessment_result.scalar_one_or_none()
         if not assessment:
@@ -3708,7 +3730,12 @@ async def get_chapter_notes_email(
         book_result = await db.execute(
             select(BookReference.name).where(BookReference.abbreviation == book)
         )
-        book_name = book_result.scalar() or book
+        book_name = book_result.scalar()
+        if not book_name:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Unknown book code: {book}",
+            )
 
         # Draft and reference verse text for the chapter
         verse_query = select(
@@ -3807,11 +3834,20 @@ async def get_chapter_notes_email(
             suggestion_count += len(active) - verse_problems
             dismissed_count += len(issues) - len(active)
             translation = translations_by_verse.get(verse_num)
+            # "<range>" marks a verse whose text was merged into the previous
+            # (bridged) verse — flag it so the template can say so instead of
+            # rendering the marker literally
+            draft_text = draft_texts.get(verse_num)
+            reference_text = reference_texts.get(verse_num)
             verses.append(
                 {
                     "number": verse_num,
-                    "draft_text": draft_texts.get(verse_num),
-                    "reference_text": reference_texts.get(verse_num),
+                    "draft_text": None if draft_text == "<range>" else draft_text,
+                    "draft_is_range": draft_text == "<range>",
+                    "reference_text": (
+                        None if reference_text == "<range>" else reference_text
+                    ),
+                    "reference_is_range": reference_text == "<range>",
                     "issues": [_issue_display(i) for i in issues],
                     "problem_count": verse_problems,
                     "suggestion_count": len(active) - verse_problems,
@@ -3841,11 +3877,17 @@ async def get_chapter_notes_email(
             if draft_meta
             else f"Revision {draft_revision_id}"
         )
-        subject = f"AI Translation Notes - {book_name} {chapter} ({draft_label})"
+        # Collapse newlines/whitespace: the subject goes into an HTTP header
+        # and, via format=json, into a downstream mailer's Subject header —
+        # version/revision names are user-supplied
+        subject = " ".join(
+            f"AI Translation Notes - {book_name} {chapter} ({draft_label})".split()
+        )
 
-        html = _CHAPTER_NOTES_TEMPLATES.get_template(
-            "chapter_notes_email.html.j2"
-        ).render(
+        template = _CHAPTER_NOTES_TEMPLATES.get_template("chapter_notes_email.html.j2")
+        # Render off the event loop — cost scales with chapter size and note count
+        html = await run_in_threadpool(
+            template.render,
             subject=subject,
             book_name=book_name,
             chapter=chapter,

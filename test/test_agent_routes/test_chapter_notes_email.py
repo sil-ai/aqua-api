@@ -326,6 +326,188 @@ def test_chapter_notes_email_no_notes_still_renders(
     assert "No notes at or above priority 3" in resp.text
 
 
+def test_chapter_notes_email_range_verses(
+    client,
+    regular_token1,
+    test_db_session,
+    test_revision_id,
+    test_revision_id_2,
+    test_assessment_id,
+    notes_setup,
+):
+    # JON 4: draft verse 1 bridges verse 2, whose row stores the <range> marker
+    test_db_session.add_all(
+        [
+            VerseText(
+                text="Bridged draft verses one and two",
+                revision_id=test_revision_id,
+                verse_reference="JON 4:1",
+                book="JON",
+                chapter=4,
+                verse=1,
+            ),
+            VerseText(
+                text="<range>",
+                revision_id=test_revision_id,
+                verse_reference="JON 4:2",
+                book="JON",
+                chapter=4,
+                verse=2,
+            ),
+            VerseText(
+                text="Reference verse four one",
+                revision_id=test_revision_id_2,
+                verse_reference="JON 4:1",
+                book="JON",
+                chapter=4,
+                verse=1,
+            ),
+            VerseText(
+                text="Reference verse four two",
+                revision_id=test_revision_id_2,
+                verse_reference="JON 4:2",
+                book="JON",
+                chapter=4,
+                verse=2,
+            ),
+        ]
+    )
+    test_db_session.commit()
+
+    resp = client.get(
+        f"{prefix}/agent/chapter_notes_email",
+        params={"book": "JON", "chapter": 4, "assessment_id": test_assessment_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200
+    assert "<range>" not in resp.text
+    assert "&lt;range&gt;" not in resp.text
+    assert "(combined with previous verse)" in resp.text
+    assert "Bridged draft verses one and two" in resp.text
+    assert "Reference verse four two" in resp.text
+
+
+def test_chapter_notes_email_unknown_book(
+    client, regular_token1, test_assessment_id, notes_setup
+):
+    resp = client.get(
+        f"{prefix}/agent/chapter_notes_email",
+        params={"book": "XXX", "chapter": 1, "assessment_id": test_assessment_id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 404
+    assert "Unknown book" in resp.json()["detail"]
+
+
+def test_chapter_notes_email_deleted_assessment(
+    client,
+    regular_token1,
+    test_db_session,
+    test_revision_id,
+    test_revision_id_2,
+    notes_setup,
+):
+    from database.models import Assessment
+
+    deleted = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent_critique",
+        status="finished",
+        deleted=True,
+    )
+    test_db_session.add(deleted)
+    test_db_session.commit()
+    test_db_session.refresh(deleted)
+
+    resp = _get_email(client, regular_token1, assessment_id=deleted.id)
+    assert resp.status_code == 404
+
+    # /agent/critique's direct-assessment_id path also rejects deleted assessments
+    resp = client.get(
+        f"{prefix}/agent/critique",
+        params={"assessment_id": deleted.id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 404
+
+
+def test_chapter_notes_email_subject_sanitized(
+    client, regular_token1, test_db_session, chapter_verse_texts
+):
+    """CRLF in a version name can't reach the header or JSON subject, and a
+    long non-latin-1 subject is RFC 2047-encoded without folding newlines."""
+    from datetime import date
+
+    from database.models import (
+        Assessment,
+        BibleRevision,
+        BibleVersion,
+        BibleVersionAccess,
+        Group,
+        UserDB,
+    )
+
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+    version = BibleVersion(
+        name="Evil\r\nBcc: attacker@example.com Кириллическое имя черновика перевода",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="EVILV",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add(version)
+    test_db_session.commit()
+    test_db_session.refresh(version)
+    test_db_session.add(
+        BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+    )
+    rev1 = BibleRevision(
+        date=date.today(), bible_version_id=version.id, published=False
+    )
+    rev2 = BibleRevision(
+        date=date.today(), bible_version_id=version.id, published=False
+    )
+    test_db_session.add_all([rev1, rev2])
+    test_db_session.commit()
+    test_db_session.refresh(rev1)
+    test_db_session.refresh(rev2)
+    assessment = Assessment(
+        revision_id=rev1.id,
+        reference_id=rev2.id,
+        type="agent_critique",
+        status="finished",
+    )
+    test_db_session.add(assessment)
+    test_db_session.add(
+        VerseText(
+            text="Poisoned version draft verse",
+            revision_id=rev1.id,
+            verse_reference="JON 1:1",
+            book="JON",
+            chapter=1,
+            verse=1,
+        )
+    )
+    test_db_session.commit()
+    test_db_session.refresh(assessment)
+
+    resp = _get_email(client, regular_token1, assessment_id=assessment.id)
+    assert resp.status_code == 200
+    header = resp.headers["x-email-subject"]
+    assert "\r" not in header and "\n" not in header
+
+    resp = _get_email(
+        client, regular_token1, assessment_id=assessment.id, format="json"
+    )
+    assert resp.status_code == 200
+    subject = resp.json()["subject"]
+    assert "\r" not in subject and "\n" not in subject
+    assert "Bcc:" in subject  # content preserved, newlines collapsed to spaces
+
+
 def test_critique_chapter_filter(
     client, regular_token1, test_assessment_id, notes_setup
 ):
