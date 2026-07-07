@@ -168,7 +168,7 @@ jobs:
             # (the base config in the repo targets the main domain).
             if [ "\$BRANCH" = "release" ]; then
               echo "Configuring nginx for release domain..."
-              sed -i 's/aqua-async-main\.multilingualai\.com/aqua-async-release.multilingualai.com/g' nginx/conf.d/default.conf
+              sed -i 's/aqua-api-main\.multilingualai\.com/aqua-api-release.multilingualai.com/g' nginx/conf.d/default.conf
             fi
 
             echo "🔐 Authenticating to DigitalOcean registry..."
