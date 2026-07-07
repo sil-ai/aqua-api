@@ -1,0 +1,191 @@
+name: CI-CD-Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - release
+  workflow_dispatch:
+
+# Serialize deploys per branch so a slower older build can't overwrite a newer
+# one on the droplet / in the registry. A newer push cancels the in-flight one.
+concurrency:
+  group: cicd-${{ github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  DO_REGISTRY: registry.digitalocean.com/aqua-api
+  IMAGE_NAME: aqua-api
+
+jobs:
+  build-test-deploy:
+    name: Build, test and deploy to droplet
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Docker Compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+          docker-compose --version
+
+      # Single branch conditional (release vs main). It sets the values that
+      # change per branch and writes the two env files with heredocs:
+      #   - .env         → the app config/secrets (EXACTLY these 13 vars)
+      #   - .env.deploy  → deploy-time interpolation vars (kept out of the app .env)
+      # The 4 vars that change per branch: ENVIRONMENT_LOKI, MODAL_ENV,
+      # MODAL_TOKEN_ID, MODAL_TOKEN_SECRET.
+      - name: Setup environment variables
+        run: |
+          if [ "${{ github.ref_name }}" = "release" ]; then
+            IMAGE_NAME_FULL="${{ env.IMAGE_NAME }}-release"
+            MODAL_ENV_VALUE="main"
+            ENVIRONMENT_LOKI_VALUE="release"
+            HOSTNAME_ENV="aqua-api-release"
+            MODAL_TOKEN_ID_VALUE="${{ secrets.MODAL_TOKEN_ID_RELEASE }}"
+            MODAL_TOKEN_SECRET_VALUE="${{ secrets.MODAL_TOKEN_SECRET_RELEASE }}"
+          else
+            IMAGE_NAME_FULL="${{ env.IMAGE_NAME }}-main"
+            MODAL_ENV_VALUE="dev"
+            ENVIRONMENT_LOKI_VALUE="main"
+            HOSTNAME_ENV="aqua-api-main"
+            MODAL_TOKEN_ID_VALUE="${{ secrets.MODAL_TOKEN_ID_MAIN }}"
+            MODAL_TOKEN_SECRET_VALUE="${{ secrets.MODAL_TOKEN_SECRET_MAIN }}"
+          fi
+
+          # Expose to later steps (build / test / push / deploy).
+          echo "IMAGE_NAME_FULL=$IMAGE_NAME_FULL" >> $GITHUB_ENV
+          echo "MODAL_ENV=$MODAL_ENV_VALUE" >> $GITHUB_ENV
+
+          # App .env — the ONLY vars injected into the api container.
+          cat > .env << EOL
+          AQUA_DB=${{ secrets.AQUA_DB }}
+          AWS_ACCESS_KEY=${{ secrets.AWS_ACCESS_KEY }}
+          AWS_SECRET_KEY=${{ secrets.AWS_SECRET_KEY }}
+          ENVIRONMENT_LOKI=$ENVIRONMENT_LOKI_VALUE
+          KEY_VAULT=${{ secrets.KEY_VAULT }}
+          LOKI_AUTH_TOKEN=${{ secrets.LOKI_AUTH_TOKEN }}
+          LOKI_ENABLED=true
+          LOKI_URL=${{ secrets.LOKI_URL }}
+          MODAL_ENV=$MODAL_ENV_VALUE
+          MODAL_TOKEN_ID=$MODAL_TOKEN_ID_VALUE
+          MODAL_TOKEN_SECRET=$MODAL_TOKEN_SECRET_VALUE
+          MODAL_WEBHOOK_TOKEN=${{ secrets.MODAL_WEBHOOK_TOKEN }}
+          SECRET_KEY=${{ secrets.SECRET_KEY }}
+          EOL
+
+          # Deploy-time interpolation vars for docker compose (NOT the app .env).
+          cat > .env.deploy << EOL
+          DO_REGISTRY=${{ env.DO_REGISTRY }}
+          IMAGE_NAME=$IMAGE_NAME_FULL
+          IMAGE_TAG=${{ github.sha }}
+          PROJECT_NAME=aqua-api
+          HOSTNAME=$HOSTNAME_ENV
+          METRICS_USERNAME=prometheus
+          METRICS_PASSWORD=${{ secrets.METRICS_PASSWORD }}
+          EOL
+
+      - name: Linting (Black, Flake8 and isort)
+        run: |
+          python -m pip install --upgrade pip
+          pip install black==23.12.1 isort==6.0.0 flake8==7.0.0
+          make linting
+
+      - name: Set up DigitalOcean CLI and registry login
+        run: |
+          cd ~
+          wget -q https://github.com/digitalocean/doctl/releases/download/v1.104.0/doctl-1.104.0-linux-amd64.tar.gz
+          tar xf doctl-1.104.0-linux-amd64.tar.gz
+          sudo mv doctl /usr/local/bin
+          rm doctl-1.104.0-linux-amd64.tar.gz
+          doctl version
+          doctl auth init --access-token ${{ secrets.DO_TOKEN }}
+          doctl registry login --expiry-seconds 3600
+
+      - name: Build API image
+        run: make build-actions
+        env:
+          REGISTRY: ${{ env.DO_REGISTRY }}
+          IMAGENAME: ${{ env.IMAGE_NAME_FULL }}
+
+      - name: Test API
+        env:
+          OMIT_PREVIOUS_VERSIONS: true
+          MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          AIOHTTP_NO_EXTENSIONS: 1
+          MODAL_ENV: ${{ env.MODAL_ENV }}
+        run: |
+          pip install -r requirements.txt
+          make test
+
+      - name: Push API image to DigitalOcean registry
+        run: make push-branch
+        env:
+          REGISTRY: ${{ env.DO_REGISTRY }}
+          IMAGENAME: ${{ env.IMAGE_NAME_FULL }}
+
+      - name: Set up SSH for deployment
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DROPLET_SSH_KEY }}
+
+      - name: Deploy to DigitalOcean droplet
+        run: |
+          if [ "${{ github.ref_name }}" = "release" ]; then
+            DROPLET_IP=${{ secrets.DROPLET_IP_RELEASE }}
+          else
+            DROPLET_IP=${{ secrets.DROPLET_IP_MAIN }}
+          fi
+
+          echo "🚀 Deploying to $DROPLET_IP (tag ${{ github.sha }})"
+
+          # Ship both env files. They are gitignored on the droplet (.env*), so
+          # the `git clean` below never removes them.
+          scp -o StrictHostKeyChecking=no .env        ${{ secrets.DROPLET_USER }}@$DROPLET_IP:aqua-api/.env
+          scp -o StrictHostKeyChecking=no .env.deploy ${{ secrets.DROPLET_USER }}@$DROPLET_IP:aqua-api/.env.deploy
+
+          ssh -o StrictHostKeyChecking=no ${{ secrets.DROPLET_USER }}@$DROPLET_IP << ENDSSH
+            set -e
+            cd aqua-api
+
+            echo "🔄 Syncing repo to branch ${{ github.ref_name }}..."
+            BRANCH="${{ github.ref_name }}"
+            git fetch --all
+            git checkout \$BRANCH || git checkout -b \$BRANCH origin/\$BRANCH
+            git reset --hard origin/\$BRANCH
+            git clean -fd
+
+            # Swap the nginx server_name / cert paths for the release domain
+            # (the base config in the repo targets the main domain).
+            if [ "\$BRANCH" = "release" ]; then
+              echo "Configuring nginx for release domain..."
+              sed -i 's/aqua-async-main\.multilingualai\.com/aqua-async-release.multilingualai.com/g' nginx/conf.d/default.conf
+            fi
+
+            echo "🔐 Authenticating to DigitalOcean registry..."
+            doctl auth init --access-token ${{ secrets.DO_TOKEN }}
+            doctl registry login
+
+            echo "📥 Pulling new image..."
+            sudo docker compose --env-file .env --env-file .env.deploy -f docker-compose.prod.yml pull
+
+            echo "🛑 Stopping current containers..."
+            sudo docker compose --env-file .env --env-file .env.deploy -f docker-compose.prod.yml down
+
+            echo "🚀 Starting containers..."
+            sudo docker compose --env-file .env --env-file .env.deploy -f docker-compose.prod.yml up -d
+
+            echo "🧹 Pruning old images..."
+            sudo docker image prune -af
+
+            echo "✅ Deployment completed!"
+          ENDSSH

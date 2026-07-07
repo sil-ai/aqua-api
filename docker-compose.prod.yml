@@ -1,0 +1,79 @@
+services:
+  api:
+    image: ${DO_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    # Only the app config/secrets in .env are injected into the container
+    # (exactly the set the CI/CD writes). Deploy-time interpolation vars
+    # (DO_REGISTRY, IMAGE_NAME, IMAGE_TAG, METRICS_*, PROJECT_NAME, HOSTNAME)
+    # come from .env.deploy via `--env-file`, not from this app .env.
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  node-exporter:
+    image: prom/node-exporter:v1.7.0
+    container_name: ${PROJECT_NAME:-aqua-api}-node-exporter
+    hostname: ${HOSTNAME:-aqua-api-development}
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--path.rootfs=/rootfs'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    ports:
+      - "127.0.0.1:9100:9100"
+    pid: host
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: ${PROJECT_NAME:-aqua-api}-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/docker-entrypoint.sh:/docker-entrypoint.d/40-generate-htpasswd.sh:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
+      - reload-signal:/reload:ro
+      - ./nginx/reload-on-renewal.sh:/reload-on-renewal.sh:ro
+    environment:
+      - METRICS_USERNAME=${METRICS_USERNAME:-prometheus}
+      - METRICS_PASSWORD=${METRICS_PASSWORD}
+    # Reload nginx only when certbot renews the cert (see nginx/reload-on-renewal.sh).
+    command: ["/bin/sh", "/reload-on-renewal.sh"]
+    depends_on:
+      - api
+      - node-exporter
+    restart: unless-stopped
+
+  # Auto-renews the Let's Encrypt certificate via the HTTP-01 webroot challenge
+  # and signals nginx to reload only on an actual renewal (see scripts/certbot-renew.sh).
+  certbot:
+    image: certbot/certbot:latest
+    container_name: ${PROJECT_NAME:-aqua-api}-certbot
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/www/certbot:/var/www/certbot
+      - reload-signal:/reload
+      - ./scripts/certbot-renew.sh:/renew.sh:ro
+    entrypoint: ["/bin/sh", "/renew.sh"]
+    depends_on:
+      - nginx
+    restart: unless-stopped
+
+volumes:
+  # Tiny shared volume used only as a renewal signal channel between certbot
+  # (writes /reload/trigger via --deploy-hook) and nginx (watches it).
+  reload-signal:
