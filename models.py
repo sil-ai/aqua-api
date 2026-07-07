@@ -26,6 +26,7 @@ class VersionUpdate(BaseModel):
     forwardTranslation: Union[int, None] = None
     backTranslation: Union[int, None] = None
     machineTranslation: bool = False
+    transcribed_audio: bool = False
     add_to_groups: Optional[List[int]] = None
     remove_from_groups: Optional[List[int]] = None
 
@@ -55,6 +56,7 @@ class VersionIn(BaseModel):
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
     is_reference: Optional[bool] = False
+    transcribed_audio: bool = False
     add_to_groups: List[int]
 
     model_config = {
@@ -98,6 +100,7 @@ class VersionOut_v3(BaseModel):
     owner_id: Union[int, None] = None
     group_ids: List[int] = []
     is_reference: bool = False
+    transcribed_audio: bool = False
     deleted: bool = False
 
     @field_validator("deleted", mode="before")
@@ -1031,6 +1034,15 @@ class CardTranslationOut(BaseModel):
     examples: List[CardTranslationExampleOut] = []
 
 
+class SuggestionItem(BaseModel):
+    """A proposed replacement/rendering, used for span suggestions and whole-verse alternatives."""
+
+    text: str = Field(min_length=1)
+    note: Optional[str] = None
+
+    model_config = {"str_strip_whitespace": True}
+
+
 class IssueIn(BaseModel):
     """A single MQM-aligned critique issue."""
 
@@ -1042,6 +1054,7 @@ class IssueIn(BaseModel):
     severity: Optional[int] = Field(default=None, ge=1, le=5)
     detector: Optional[str] = Field(default=None, max_length=50)
     evidence: Optional[List[str]] = None
+    suggestions: Optional[List[SuggestionItem]] = None
 
     model_config = {"str_strip_whitespace": True}
 
@@ -1070,6 +1083,9 @@ class CritiqueStorageRequest(BaseModel):
                         "severity": 4,
                         "detector": "number_diff",
                         "evidence": ["source: 40", "draft: 14"],
+                        "suggestions": [
+                            {"text": "forty days", "note": "match the source number"}
+                        ],
                     }
                 ],
             }
@@ -1095,6 +1111,7 @@ class CritiqueIssueOut(BaseModel):
     severity: Optional[int] = None
     detector: Optional[str] = None
     evidence: Optional[List[str]] = None
+    suggestions: Optional[List[SuggestionItem]] = None
     is_resolved: bool = False
     resolved_by_id: Optional[int] = None
     resolved_at: Optional[datetime.datetime] = None
@@ -1119,6 +1136,9 @@ class CritiqueIssueOut(BaseModel):
                 "severity": 4,
                 "detector": "number_diff",
                 "evidence": ["source: 40", "draft: 14"],
+                "suggestions": [
+                    {"text": "forty days", "note": "match the source number"}
+                ],
                 "is_resolved": False,
                 "resolved_by_id": None,
                 "resolved_at": None,
@@ -1173,6 +1193,7 @@ class AgentTranslationIn(BaseModel):
     hyper_literal_translation: Optional[str] = None
     literal_translation: Optional[str] = None
     english_translation: Optional[str] = None
+    alternatives: Optional[List[SuggestionItem]] = None
 
     model_config = {
         "json_schema_extra": {
@@ -1182,6 +1203,12 @@ class AgentTranslationIn(BaseModel):
                 "hyper_literal_translation": "And beginning there-was with Word",
                 "literal_translation": "In the beginning was the Word",
                 "english_translation": "In the beginning was the Word",
+                "alternatives": [
+                    {
+                        "text": "In the beginning the Word already existed",
+                        "note": "smoother English phrasing",
+                    }
+                ],
             }
         }
     }
@@ -1196,6 +1223,7 @@ class AgentTranslationStorageRequest(BaseModel):
     hyper_literal_translation: Optional[str] = None
     literal_translation: Optional[str] = None
     english_translation: Optional[str] = None
+    alternatives: Optional[List[SuggestionItem]] = None
 
     model_config = {
         "json_schema_extra": {
@@ -1206,6 +1234,12 @@ class AgentTranslationStorageRequest(BaseModel):
                 "hyper_literal_translation": "And beginning there-was with Word",
                 "literal_translation": "In the beginning was the Word",
                 "english_translation": "In the beginning was the Word",
+                "alternatives": [
+                    {
+                        "text": "In the beginning the Word already existed",
+                        "note": "smoother English phrasing",
+                    }
+                ],
             }
         }
     }
@@ -1227,6 +1261,12 @@ class AgentTranslationBulkRequest(BaseModel):
                         "draft_text": "Na mwanzo kulikuwa na Neno",
                         "hyper_literal_translation": "And beginning there-was with Word",
                         "literal_translation": "In the beginning was the Word",
+                        "alternatives": [
+                            {
+                                "text": "In the beginning the Word already existed",
+                                "note": "smoother English phrasing",
+                            }
+                        ],
                     },
                     {
                         "vref": "JHN 1:2",
@@ -1254,6 +1294,7 @@ class AgentTranslationOut(BaseModel):
     hyper_literal_translation: Optional[str] = None
     literal_translation: Optional[str] = None
     english_translation: Optional[str] = None
+    alternatives: Optional[List[SuggestionItem]] = None
     created_at: Optional[datetime.datetime] = None
 
     model_config = {
@@ -1270,6 +1311,12 @@ class AgentTranslationOut(BaseModel):
                 "hyper_literal_translation": "And beginning there-was with Word",
                 "literal_translation": "In the beginning was the Word",
                 "english_translation": "In the beginning was the Word",
+                "alternatives": [
+                    {
+                        "text": "In the beginning the Word already existed",
+                        "note": "smoother English phrasing",
+                    }
+                ],
                 "created_at": "2024-06-01T12:00:00",
             }
         },
