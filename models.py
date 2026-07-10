@@ -275,6 +275,11 @@ def _validate_assessment_kwargs(v):
     """
     if v is None:
         return v
+    # The LLM is fixed by the deploy config; the per-call "model" override
+    # is no longer offered. Drop the key silently — on every path that can
+    # reach the runner (/v3/train options and /v3/assessment kwargs) — so
+    # older clients that still send it keep working.
+    v.pop("model", None)
     if len(v) > 20:
         raise ValueError("kwargs may not contain more than 20 keys")
     for key, val in v.items():
@@ -394,13 +399,8 @@ class PredictInput(BaseModel):
     target_version_id: Optional[int] = None
     limit: Optional[int] = Field(default=None, ge=1, le=10000)
     apps: Optional[List[str]] = None
-    include_translation: bool = False
-    include_critique: bool = False
-    # Agent-only override for the LLM the agent should use. The allowlist
-    # lives in the agent's separate Modal repo (models.selectable_models in
-    # its config.yaml), so we can't validate the name here — agent rejects
-    # unknown names server-side. max_length caps abuse at this boundary.
-    model: Optional[str] = Field(default=None, max_length=200)
+    include_translation: bool = True
+    include_critique: bool = True
 
     model_config = {
         "json_schema_extra": {
@@ -417,9 +417,8 @@ class PredictInput(BaseModel):
                 "source_version_id": 1,
                 "target_version_id": 2,
                 "apps": ["ngrams", "tfidf", "agent"],
-                "include_translation": False,
-                "include_critique": False,
-                "model": "claude-opus-4-7",
+                "include_translation": True,
+                "include_critique": True,
             }
         }
     }
@@ -431,8 +430,18 @@ class PredictInput(BaseModel):
         # asking for it without translation is a bug, not a silent no-op.
         # Reject early at the API boundary so the caller sees a 422 rather
         # than a per-app error string in the fan-out response.
+        # Both flags default to True, so a caller opting out of translation
+        # without mentioning critique means "fast path only" — turn critique
+        # off with it rather than 422ing on the unset default. (The
+        # assignment adds include_critique to model_fields_set, so after
+        # validation that set no longer reflects only caller-sent fields.)
         if self.include_critique and not self.include_translation:
-            raise ValueError("include_critique=True requires include_translation=True")
+            if "include_critique" not in self.model_fields_set:
+                self.include_critique = False
+            else:
+                raise ValueError(
+                    "include_critique=True requires include_translation=True"
+                )
         return self
 
 
