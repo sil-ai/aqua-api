@@ -179,11 +179,11 @@ async def predict(
         body.include_translation or body.include_critique
     )
     if spawn_slow_agent:
-        sync_agent_payload = dict(input_payload)
-        sync_agent_payload["include_translation"] = False
-        sync_agent_payload["include_critique"] = False
+        sync_payload = dict(input_payload)
+        sync_payload["include_translation"] = False
+        sync_payload["include_critique"] = False
     else:
-        sync_agent_payload = input_payload
+        sync_payload = input_payload
 
     async def call_one(name: str) -> tuple[str, PredictAppResult]:
         started = time.perf_counter()
@@ -192,7 +192,7 @@ async def predict(
         try:
             fn = _get_predict_fn(modal_app, modal_env)
             data = await asyncio.wait_for(
-                fn.remote.aio(sync_agent_payload), timeout=timeout_s
+                fn.remote.aio(sync_payload), timeout=timeout_s
             )
             duration_ms = int((time.perf_counter() - started) * 1000)
             return name, PredictAppResult(

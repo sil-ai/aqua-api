@@ -2293,6 +2293,36 @@ def test_transcribed_audio_via_extra_kwargs(
         assert response.json()[0]["kwargs"] == {"transcribed_audio": True}
 
 
+def test_model_key_silently_dropped_from_extra_kwargs(
+    client, regular_token1, db_session, test_db_session
+):
+    """The per-call "model" override is no longer offered — the LLM is fixed
+    by the deploy config. /v3/assessment is the third path that reaches the
+    runner kwargs (besides /v3/train options and /v3/predict), so the shared
+    kwargs validator must strip the key here too."""
+    target_version_id = create_bible_version(client, regular_token1, db_session)
+    source_version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, target_version_id)
+    reference_id = upload_revision(client, regular_token1, source_version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "agent-critique",
+                "extra_kwargs": '{"model": "claude-opus-4-7", "top_k": 5}',
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()[0]["kwargs"] == {"top_k": 5}
+
+
 def test_transcribed_audio_typed_param_wins_over_injected(
     client, regular_token1, db_session, test_db_session
 ):

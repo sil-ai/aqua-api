@@ -275,6 +275,11 @@ def _validate_assessment_kwargs(v):
     """
     if v is None:
         return v
+    # The LLM is fixed by the deploy config; the per-call "model" override
+    # is no longer offered. Drop the key silently — on every path that can
+    # reach the runner (/v3/train options and /v3/assessment kwargs) — so
+    # older clients that still send it keep working.
+    v.pop("model", None)
     if len(v) > 20:
         raise ValueError("kwargs may not contain more than 20 keys")
     for key, val in v.items():
@@ -427,7 +432,9 @@ class PredictInput(BaseModel):
         # than a per-app error string in the fan-out response.
         # Both flags default to True, so a caller opting out of translation
         # without mentioning critique means "fast path only" — turn critique
-        # off with it rather than 422ing on the unset default.
+        # off with it rather than 422ing on the unset default. (The
+        # assignment adds include_critique to model_fields_set, so after
+        # validation that set no longer reflects only caller-sent fields.)
         if self.include_critique and not self.include_translation:
             if "include_critique" not in self.model_fields_set:
                 self.include_critique = False
@@ -1468,11 +1475,6 @@ class TrainingJobIn(BaseModel):
     @field_validator("options")
     @classmethod
     def validate_options(cls, v):
-        # The LLM is fixed by the deploy config; the per-call "model"
-        # override is no longer offered. Drop the key silently so older
-        # clients that still send it keep working.
-        if v is not None:
-            v.pop("model", None)
         return _validate_assessment_kwargs(v)
 
     @model_validator(mode="after")
