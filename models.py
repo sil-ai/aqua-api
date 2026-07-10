@@ -394,8 +394,8 @@ class PredictInput(BaseModel):
     target_version_id: Optional[int] = None
     limit: Optional[int] = Field(default=None, ge=1, le=10000)
     apps: Optional[List[str]] = None
-    include_translation: bool = False
-    include_critique: bool = False
+    include_translation: bool = True
+    include_critique: bool = True
     # Agent-only override for the LLM the agent should use. The allowlist
     # lives in the agent's separate Modal repo (models.selectable_models in
     # its config.yaml), so we can't validate the name here — agent rejects
@@ -417,8 +417,8 @@ class PredictInput(BaseModel):
                 "source_version_id": 1,
                 "target_version_id": 2,
                 "apps": ["ngrams", "tfidf", "agent"],
-                "include_translation": False,
-                "include_critique": False,
+                "include_translation": True,
+                "include_critique": True,
                 "model": "claude-opus-4-7",
             }
         }
@@ -431,8 +431,16 @@ class PredictInput(BaseModel):
         # asking for it without translation is a bug, not a silent no-op.
         # Reject early at the API boundary so the caller sees a 422 rather
         # than a per-app error string in the fan-out response.
+        # Both flags default to True, so a caller opting out of translation
+        # without mentioning critique means "fast path only" — turn critique
+        # off with it rather than 422ing on the unset default.
         if self.include_critique and not self.include_translation:
-            raise ValueError("include_critique=True requires include_translation=True")
+            if "include_critique" not in self.model_fields_set:
+                self.include_critique = False
+            else:
+                raise ValueError(
+                    "include_critique=True requires include_translation=True"
+                )
         return self
 
 

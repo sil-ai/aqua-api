@@ -216,14 +216,16 @@ def test_predict_authorized_revision_fans_out(client, regular_token1, test_revis
 
 
 def test_predict_defaults_to_all_registered_apps(client, regular_token1):
-    """Omitting apps fans out to every registered app."""
+    """Omitting apps fans out to every registered app. Since
+    include_translation/include_critique default to True, the pure-default
+    call also spawns the slow agent path and returns a job handle."""
     results = {
         modal_app: {"app": modal_app}
         for modal_app in predict_routes.PREDICT_APPS.values()
     }
     with patch(
         "predict_routes.v3.predict_routes.modal.Function",
-        _make_modal_mock(results),
+        _make_modal_mock(results, spawn_id_by_app={"agent-critique": "fc-defaults"}),
     ):
         response = client.post(
             f"/{prefix}/predict",
@@ -232,7 +234,10 @@ def test_predict_defaults_to_all_registered_apps(client, regular_token1):
         )
 
     assert response.status_code == 200
-    assert set(response.json()["results"].keys()) == set(predict_routes.PREDICT_APPS)
+    body = response.json()
+    assert set(body["results"].keys()) == set(predict_routes.PREDICT_APPS)
+    assert body["job"]["status"] == "running"
+    assert body["job"]["includes"] == ["translation", "critique"]
 
 
 def test_predict_missing_pairs_returns_422(client, regular_token1):
@@ -303,18 +308,23 @@ def test_predict_forwards_payload_to_modal(client, regular_token1):
             True,
         ),
         ("include_critique", {"include_critique": False}, False),
-        ("include_critique", {}, False),
+        ("include_critique", {}, True),
         ("include_translation", {"include_translation": True}, True),
         ("include_translation", {"include_translation": False}, False),
-        ("include_translation", {}, False),
+        ("include_translation", {}, True),
+        # Translation explicitly off + critique unset: the unset critique
+        # default is coerced off rather than 422ing (see PredictInput's
+        # cross-flag validator).
+        ("include_critique", {"include_translation": False}, False),
     ],
     ids=[
         "critique_explicit_true",
         "critique_explicit_false",
-        "critique_omitted_defaults_false",
+        "critique_omitted_defaults_true",
         "translation_explicit_true",
         "translation_explicit_false",
-        "translation_omitted_defaults_false",
+        "translation_omitted_defaults_true",
+        "critique_coerced_off_with_translation_off",
     ],
 )
 def test_predict_forwards_include_flags_to_modal(
@@ -322,9 +332,8 @@ def test_predict_forwards_include_flags_to_modal(
 ):
     """`include_translation` and `include_critique` both survive
     `model_dump(exclude={"apps"})` and reach Modal — regression guard for
-    the bug where a missing field is silently stripped (predict's agent
-    side defaults both to False, so a dropped True flag silently disables
-    the feature)."""
+    the bug where a missing field is silently stripped. Both flags default
+    to True, so omitted flags forward as True."""
     captured = {}
 
     async def capture(payload):
@@ -368,7 +377,11 @@ def test_predict_forwards_model_override_to_agent_only(client, regular_token1):
     with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["agent", "ngrams"], model="claude-opus-4-7"),
+            json=_body(
+                apps=["agent", "ngrams"],
+                model="claude-opus-4-7",
+                include_translation=False,
+            ),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
@@ -401,7 +414,7 @@ def test_predict_omitted_model_round_trips_as_none(client, regular_token1):
     with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["agent"]),
+            json=_body(apps=["agent"], include_translation=False),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
@@ -454,7 +467,7 @@ def test_predict_agent_fast_slice_round_trips(client, regular_token1):
     ):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["agent"]),
+            json=_body(apps=["agent"], include_translation=False),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
@@ -523,17 +536,18 @@ def test_predict_spawns_slow_agent_when_translation_requested(client, regular_to
 
 def test_predict_no_job_when_translation_not_requested(client, regular_token1):
     """`include_translation=False` must skip the spawn entirely — clients
-    that aren't paying the LLM-latency cost get the existing zero-job
+    that opt out of the LLM-latency cost get the existing zero-job
     response shape unchanged. The `job` key must be absent from the
     response (not present-but-null), so existing callers that didn't
-    know about `job` see a byte-identical response shape."""
+    know about `job` see a byte-identical response shape. Opting out now
+    requires the explicit False since the flags default to True."""
     with patch(
         "predict_routes.v3.predict_routes.modal.Function",
         _make_modal_mock({"agent-critique": {"pairs": []}}),
     ):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["agent"]),
+            json=_body(apps=["agent"], include_translation=False),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
@@ -693,8 +707,12 @@ def test_predict_unauthorized_assessment_returns_403(
 
 
 def _spawn_agent_and_get_job(client, token, body_overrides=None):
-    """Helper: POST a slow-path predict request and return the job_id."""
-    overrides = body_overrides or {}
+    """Helper: POST a slow-path predict request and return the job_id.
+
+    Defaults to a translation-only job (critique explicitly off, since it
+    defaults to True on the wire); pass include_critique=True in
+    body_overrides for a critique job."""
+    overrides = {"include_critique": False, **(body_overrides or {})}
 
     async def fast_resp(_payload):
         return {"pairs": []}
