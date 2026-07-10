@@ -185,19 +185,15 @@ async def predict(
     else:
         sync_agent_payload = input_payload
 
-    # `model` is an agent-only knob; other apps' Pydantic models may not
-    # accept it, so strip it from their fan-out payload. They otherwise
-    # see the same payload as the agent (including any flag suppression).
-    non_agent_payload = {k: v for k, v in sync_agent_payload.items() if k != "model"}
-
     async def call_one(name: str) -> tuple[str, PredictAppResult]:
         started = time.perf_counter()
         modal_app = PREDICT_APPS[name]
         timeout_s = PER_APP_TIMEOUT_S.get(name, DEFAULT_PER_APP_TIMEOUT_S)
-        payload = sync_agent_payload if name == "agent" else non_agent_payload
         try:
             fn = _get_predict_fn(modal_app, modal_env)
-            data = await asyncio.wait_for(fn.remote.aio(payload), timeout=timeout_s)
+            data = await asyncio.wait_for(
+                fn.remote.aio(sync_agent_payload), timeout=timeout_s
+            )
             duration_ms = int((time.perf_counter() - started) * 1000)
             return name, PredictAppResult(
                 status="ok", data=data, duration_ms=duration_ms
@@ -244,7 +240,6 @@ async def predict(
             "assessment_id": body.assessment_id,
             "modal_env": modal_env,
             "spawn_slow_agent": spawn_slow_agent,
-            "model": body.model,
         },
     )
 

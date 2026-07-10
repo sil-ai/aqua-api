@@ -396,11 +396,6 @@ class PredictInput(BaseModel):
     apps: Optional[List[str]] = None
     include_translation: bool = True
     include_critique: bool = True
-    # Agent-only override for the LLM the agent should use. The allowlist
-    # lives in the agent's separate Modal repo (models.selectable_models in
-    # its config.yaml), so we can't validate the name here — agent rejects
-    # unknown names server-side. max_length caps abuse at this boundary.
-    model: Optional[str] = Field(default=None, max_length=200)
 
     model_config = {
         "json_schema_extra": {
@@ -419,7 +414,6 @@ class PredictInput(BaseModel):
                 "apps": ["ngrams", "tfidf", "agent"],
                 "include_translation": True,
                 "include_critique": True,
-                "model": "claude-opus-4-7",
             }
         }
     }
@@ -1474,6 +1468,11 @@ class TrainingJobIn(BaseModel):
     @field_validator("options")
     @classmethod
     def validate_options(cls, v):
+        # The LLM is fixed by the deploy config; the per-call "model"
+        # override is no longer offered. Drop the key silently so older
+        # clients that still send it keep working.
+        if v is not None:
+            v.pop("model", None)
         return _validate_assessment_kwargs(v)
 
     @model_validator(mode="after")

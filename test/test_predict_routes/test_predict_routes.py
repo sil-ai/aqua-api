@@ -355,11 +355,11 @@ def test_predict_forwards_include_flags_to_modal(
     assert captured["payload"][field] is expected
 
 
-def test_predict_forwards_model_override_to_agent_only(client, regular_token1):
-    """`model` is an agent-only knob — it must reach the agent's payload and
-    must NOT appear in non-agent app payloads (which may not accept the
-    field on their input model).
-    """
+def test_predict_ignores_model_override(client, regular_token1):
+    """The per-call `model` override is no longer offered — the LLM is fixed
+    by the agent's deploy config. A client that still sends `model` must not
+    break: the request succeeds and the field reaches no app's payload (the
+    agent falls back to its deploy-time model via its own default)."""
     captured: dict[str, dict] = {}
 
     def from_name(app_name, fn_name, environment_name=None):
@@ -386,42 +386,8 @@ def test_predict_forwards_model_override_to_agent_only(client, regular_token1):
         )
 
     assert response.status_code == 200, response.text
-    # The agent app receives the field; ngrams does not.
-    agent_payloads = [v for k, v in captured.items() if "agent" in k]
-    assert agent_payloads, captured
-    assert all(p.get("model") == "claude-opus-4-7" for p in agent_payloads)
-    assert "model" not in captured["ngrams"]
-
-
-def test_predict_omitted_model_round_trips_as_none(client, regular_token1):
-    """When the caller omits `model`, the agent payload still carries
-    `model: None` (round-trip default), letting the agent fall back to its
-    deploy-time PREDICT_MODEL without a presence check."""
-    captured: dict[str, dict] = {}
-
-    def from_name(app_name, fn_name, environment_name=None):
-        mock_fn = AsyncMock()
-
-        async def capture(payload):
-            captured[app_name] = payload
-            return {"ok": True}
-
-        mock_fn.remote.aio = AsyncMock(side_effect=capture)
-        return mock_fn
-
-    mock_cls = AsyncMock()
-    mock_cls.from_name = from_name
-    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
-        response = client.post(
-            f"/{prefix}/predict",
-            json=_body(apps=["agent"], include_translation=False),
-            headers={"Authorization": f"Bearer {regular_token1}"},
-        )
-
-    assert response.status_code == 200, response.text
-    agent_payloads = [v for k, v in captured.items() if "agent" in k]
-    assert agent_payloads, captured
-    assert all(p.get("model") is None for p in agent_payloads)
+    assert captured
+    assert all("model" not in payload for payload in captured.values())
 
 
 def test_predict_rejects_critique_without_translation(client, regular_token1):
