@@ -25,6 +25,6 @@ ENV PYTHONPATH=/app:$PYTHONPATH
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -fsS http://localhost:8000/health || exit 1
 
-# Keep-alive must outlive the App Runner ingress idle timeout (120s); uvicorn's
-# 5s default races the ingress's connection reuse and yields sporadic 502s.
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "8", "--timeout-keep-alive", "120"]
+# Keep-alive must exceed the App Runner ingress idle timeout (120s) with margin;
+# uvicorn's 5s default races the ingress's connection reuse and yields sporadic 502s.
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "8", "--timeout-keep-alive", "130"]
