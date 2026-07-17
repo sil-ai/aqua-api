@@ -1,7 +1,6 @@
 __version__ = "v3"
 
 import logging
-import os
 
 import fastapi
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +25,7 @@ from bible_routes.v3.language_routes import router as language_router_v3
 from bible_routes.v3.revision_routes import router as revision_router_v3
 from bible_routes.v3.verse_routes import router as verse_router_v3
 from bible_routes.v3.version_routes import router as version_router_v3
+from config import Settings
 from database.dependencies import engine as async_engine
 from middleware import LoggingMiddleware
 from predict_routes.v3.predict_routes import router as predict_router_v3
@@ -105,7 +105,11 @@ def configure_cors(app):
     because credentialed CORS with a wildcard origin is unsafe (and browsers
     reject it).
     """
-    env_origins = _parse_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
+    # Read a fresh Settings() so configure_cors reflects the current
+    # ALLOWED_ORIGINS env var each time it runs. Tests build several apps in one
+    # process with different values (test/test_cors.py), so this must not be
+    # frozen to the value captured by the shared settings singleton at import.
+    env_origins = _parse_allowed_origins(Settings().allowed_origins)
     combined = list(DEFAULT_ALLOWED_ORIGINS) + env_origins
     has_wildcard = "*" in combined
     if has_wildcard:

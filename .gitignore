@@ -4,6 +4,8 @@ __pycache__/
 *$py.class
 launch.json
 .env*
+# ...but the committed, secret-free template must be tracked.
+!.env.example
 .vscode/
 .vscode/*
 # C extensions
