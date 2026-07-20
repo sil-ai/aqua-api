@@ -135,8 +135,13 @@ def setup_logger(
 
             logger.addHandler(loki_handler)
         except Exception as e:
-            # Fail gracefully if Loki is unavailable
-            logger.warning(f"Failed to initialize Loki handler: {e}")
+            # Fail gracefully if Loki is unavailable. Log the exception *type*
+            # rather than its str(): the message originates in the private
+            # observability-library and could embed the Loki auth token or URL
+            # (e.g. an auth/URL-validation error that echoes its input), which
+            # would then land in plaintext in console logs. The type name is
+            # enough to diagnose without risking credential exposure.
+            logger.warning("Failed to initialize Loki handler: %s", type(e).__name__)
 
     return logger
 
