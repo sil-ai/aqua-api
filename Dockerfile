@@ -1,13 +1,10 @@
 FROM python:3.11
 
-COPY requirements.txt requirements-observability.txt ./
+COPY requirements.txt ./
 
-# Install the observability superset so the deployed image includes the Loki
-# handler (observability-library) that ships logs when LOKI_ENABLED=true.
-# requirements-observability.txt `-r`'s the base requirements, so this installs
-# everything. Contributors without the extra still build from requirements.txt
-# directly; only the deployed image needs the observability dependency.
-RUN pip install -r requirements-observability.txt
+# requirements.txt includes observability-library, so the deployed image gets
+# the Loki handler that ships logs when LOKI_ENABLED=true.
+RUN pip install -r requirements.txt
 
 RUN mkdir /app
 COPY *.py /app/

@@ -14,11 +14,14 @@ from pythonjsonlogger import jsonlogger
 
 from config import settings
 
-# The Loki integration lives in the private observability-library, which
-# external contributors can't install. Import it optionally so this module —
-# and therefore the whole app, which imports setup_logger everywhere — loads
-# cleanly without it. Loki logging is off by default (settings.loki_enabled),
-# so the missing dependency only matters when Loki is explicitly turned on.
+# The Loki integration lives in observability-library (a public repo, pulled
+# in via requirements.txt). Import it optionally anyway, as cheap insurance:
+# this module is imported by setup_logger everywhere, so guarding the import
+# keeps app boot decoupled from an optional, off-by-default backend if the
+# install ever fails for reasons unrelated to the code (a GitHub outage, a
+# moved/deleted tag, restrictive egress rules). Loki logging is off by default
+# (settings.loki_enabled), so a missing dependency only matters when Loki is
+# explicitly turned on.
 #
 # Catch ImportError broadly (not just ModuleNotFoundError): observability is a
 # best-effort feature that must never break app import — the same stance the
@@ -110,8 +113,8 @@ def setup_logger(
             if not _loki_unavailable_warned:
                 logger.warning(
                     "observability-library unavailable; Loki logging disabled "
-                    "(%s). Install the optional dependency to enable it "
-                    "(pip install -r requirements-observability.txt).",
+                    "(%s). Reinstall dependencies to enable it "
+                    "(pip install -r requirements.txt).",
                     _OBSERVABILITY_IMPORT_ERROR,
                 )
                 _loki_unavailable_warned = True
@@ -136,7 +139,7 @@ def setup_logger(
             logger.addHandler(loki_handler)
         except Exception as e:
             # Fail gracefully if Loki is unavailable. Log the exception *type*
-            # rather than its str(): the message originates in the private
+            # rather than its str(): the message originates in
             # observability-library and could embed the Loki auth token or URL
             # (e.g. an auth/URL-validation error that echoes its input), which
             # would then land in plaintext in console logs. The type name is

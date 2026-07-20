@@ -110,6 +110,9 @@ pre-commit==4.2.0
 black==23.12.1
 pgvector==0.2.0
 
-# Observability / Loki logging is optional and lives in a private repo.
-# See requirements-observability.txt. Installing it is only needed when
-# LOKI_ENABLED=true; the app runs fine on console logging without it.
+# Observability library providing the Loki logging handler used by
+# utils/logging_config.py. The repo is public, so it installs anonymously
+# here for local dev, CI, and the Docker image alike. Loki shipping is
+# off by default (LOKI_ENABLED); the app falls back to console logging if
+# this is ever absent (utils/logging_config.py guards the import).
+git+https://github.com/sil-ai/observability-library.git@v0.1.0
