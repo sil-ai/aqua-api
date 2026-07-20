@@ -67,6 +67,23 @@ def test_loki_enabled_without_library_warns_and_continues(monkeypatch, capsys):
     assert "observability-library not installed" in capsys.readouterr().err
 
 
+def test_missing_library_warning_emitted_once_per_process(monkeypatch, capsys):
+    """The unavailable-library warning fires once, not once per logger name.
+
+    setup_logger runs for ~15 modules at startup; without the once-per-process
+    guard each distinct logger name would emit its own warning.
+    """
+    module = _reload_logging_config(monkeypatch, lib_available=False)
+    monkeypatch.setattr(module.settings, "loki_enabled", True)
+
+    for name in ("test.issue835.warn_once.a", "test.issue835.warn_once.b"):
+        logging.getLogger(name).handlers.clear()
+        module.setup_logger(name)
+
+    warnings = capsys.readouterr().err.count("observability-library not installed")
+    assert warnings == 1
+
+
 def test_loki_enabled_with_library_attaches_loki_handler(monkeypatch):
     """Lib present + Loki enabled: behaves as before — a Loki handler is added.
 
