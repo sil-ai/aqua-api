@@ -113,8 +113,7 @@ def setup_logger(
             if not _loki_unavailable_warned:
                 logger.warning(
                     "observability-library unavailable; Loki logging disabled "
-                    "(%s). Reinstall dependencies to enable it "
-                    "(pip install -r requirements.txt).",
+                    "(%s). Reinstall the project dependencies to enable it.",
                     _OBSERVABILITY_IMPORT_ERROR,
                 )
                 _loki_unavailable_warned = True
