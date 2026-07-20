@@ -5671,7 +5671,10 @@ def test_get_critique_issues_nonexistent_revision_pair(client, regular_token1):
     )
 
     assert response.status_code == 404
-    assert "no completed assessment found" in response.json()["detail"].lower()
+    assert (
+        "no completed agent-critique assessment found"
+        in response.json()["detail"].lower()
+    )
 
 
 def test_get_critique_issues_all_assessments_true(
@@ -5684,7 +5687,7 @@ def test_get_critique_issues_all_assessments_true(
     assessment1 = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add(assessment1)
@@ -5694,7 +5697,7 @@ def test_get_critique_issues_all_assessments_true(
     assessment2 = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add(assessment2)
@@ -5754,7 +5757,7 @@ def test_get_critique_issues_all_assessments_false(
     older_assessment = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
         end_time=base_time,
     )
@@ -5768,7 +5771,7 @@ def test_get_critique_issues_all_assessments_false(
     newer_assessment = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
         end_time=base_time + timedelta(hours=1),
     )
@@ -5830,7 +5833,7 @@ def test_get_critique_issues_all_assessments_explicit_true(
     assessment1 = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add(assessment1)
@@ -5840,7 +5843,7 @@ def test_get_critique_issues_all_assessments_explicit_true(
     assessment2 = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add(assessment2)

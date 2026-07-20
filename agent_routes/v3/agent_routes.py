@@ -3353,6 +3353,7 @@ async def resolve_assessment_ids(
         assessment_query = select(Assessment).filter(
             Assessment.revision_id == revision_id,
             Assessment.reference_id == reference_id,
+            Assessment.type == "agent-critique",
             Assessment.status == "finished",
             Assessment.deleted.is_not(True),
         )
@@ -3364,7 +3365,7 @@ async def resolve_assessment_ids(
             if not assessments:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No completed assessment found for the given revision_id and reference_id",
+                    detail="No completed agent-critique assessment found for the given revision_id and reference_id",
                 )
             assessment_ids = [a.id for a in assessments]
         else:
@@ -3378,20 +3379,21 @@ async def resolve_assessment_ids(
             if not assessment:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail="No completed assessment found for the given revision_id and reference_id",
+                    detail="No completed agent-critique assessment found for the given revision_id and reference_id",
                 )
             assessment_ids = [assessment.id]
     else:
         assessment_result = await db.execute(
             select(Assessment).filter(
                 Assessment.id == assessment_id,
+                Assessment.type == "agent-critique",
                 Assessment.deleted.is_not(True),
             )
         )
         if not assessment_result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Assessment with id {assessment_id} not found",
+                detail=f"No agent-critique assessment with id {assessment_id} found",
             )
         assessment_ids = [assessment_id]
 

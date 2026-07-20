@@ -197,7 +197,7 @@ def test_assessment_id(test_db_session, test_revision_id, test_revision_id_2):
     assessment = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     test_db_session.add(assessment)

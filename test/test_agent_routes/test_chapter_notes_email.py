@@ -412,7 +412,7 @@ def test_chapter_notes_email_deleted_assessment(
     deleted = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
         deleted=True,
     )
@@ -479,7 +479,7 @@ def test_chapter_notes_email_subject_sanitized(
     assessment = Assessment(
         revision_id=rev1.id,
         reference_id=rev2.id,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     test_db_session.add(assessment)
@@ -532,3 +532,115 @@ def test_critique_chapter_filter(
     )
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+def test_chapter_notes_email_non_critique_assessment_id_404(
+    client, regular_token1, test_db_session, test_revision_id, test_revision_id_2
+):
+    """A non-critique assessment_id must 404, not render a misleading 'all clear'
+    email. resolve_assessment_ids only resolves agent-critique assessments."""
+    from database.models import Assessment
+
+    word_alignment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="word-alignment",
+        status="finished",
+    )
+    test_db_session.add(word_alignment)
+    test_db_session.commit()
+    test_db_session.refresh(word_alignment)
+
+    resp = _get_email(client, regular_token1, assessment_id=word_alignment.id)
+    assert resp.status_code == 404
+
+    resp = client.get(
+        f"{prefix}/agent/critique",
+        params={"assessment_id": word_alignment.id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 404
+
+
+def test_chapter_notes_email_revision_pair_no_critique_404(
+    client, regular_token1, test_db_session
+):
+    """A revision/reference pair with only non-critique assessments must 404 with
+    a critique-specific message, not resolve to the other assessment and render an
+    empty 'all clear' email."""
+    from datetime import date
+
+    from database.models import Assessment, BibleRevision, BibleVersion
+
+    version = test_db_session.query(BibleVersion).first()
+    rev1 = BibleRevision(
+        date=date.today(), bible_version_id=version.id, published=False
+    )
+    rev2 = BibleRevision(
+        date=date.today(), bible_version_id=version.id, published=False
+    )
+    test_db_session.add_all([rev1, rev2])
+    test_db_session.commit()
+    test_db_session.refresh(rev1)
+    test_db_session.refresh(rev2)
+    test_db_session.add(
+        Assessment(
+            revision_id=rev1.id,
+            reference_id=rev2.id,
+            type="word-alignment",
+            status="finished",
+        )
+    )
+    test_db_session.commit()
+
+    resp = _get_email(client, regular_token1, revision_id=rev1.id, reference_id=rev2.id)
+    assert resp.status_code == 404
+    assert "agent-critique" in resp.json()["detail"]
+
+    resp = client.get(
+        f"{prefix}/agent/critique",
+        params={"revision_id": rev1.id, "reference_id": rev2.id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 404
+
+
+def test_critique_latest_skips_newer_non_critique_assessment(
+    client,
+    regular_token1,
+    test_assessment_id,
+    test_revision_id,
+    test_revision_id_2,
+    test_db_session,
+    notes_setup,
+):
+    """all_assessments=False must resolve the latest *critique* assessment, not a
+    more-recently-finished assessment of another type on the same pair."""
+    from datetime import datetime
+
+    from database.models import Assessment
+
+    newer_word_alignment = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="word-alignment",
+        status="finished",
+        end_time=datetime(2999, 1, 1),
+    )
+    test_db_session.add(newer_word_alignment)
+    test_db_session.commit()
+
+    resp = client.get(
+        f"{prefix}/agent/critique",
+        params={
+            "revision_id": test_revision_id,
+            "reference_id": test_revision_id_2,
+            "all_assessments": False,
+            "book": "JON",
+            "chapter": 1,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 200
+    comments = [i["comments"] for i in resp.json()]
+    assert any("Severity five problem comment" in c for c in comments)
