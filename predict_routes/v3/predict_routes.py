@@ -1,7 +1,6 @@
 __version__ = "v3"
 
 import asyncio
-import os
 import secrets
 import socket
 import time
@@ -14,6 +13,7 @@ from fastapi import Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database.dependencies import get_db
 from database.models import PredictJob
 from database.models import UserDB as UserModel
@@ -51,7 +51,7 @@ PREDICT_APPS: dict[str, str] = {
     "word_alignment": "word-alignment",
 }
 
-DEFAULT_PER_APP_TIMEOUT_S = float(os.getenv("PREDICT_PER_APP_TIMEOUT_S", "60"))
+DEFAULT_PER_APP_TIMEOUT_S = settings.predict_per_app_timeout_s
 
 # agent.predict does translation + critique via Bedrock and has a 600s
 # Modal-side timeout; 60s is too tight and will produce spurious timeouts.
@@ -93,11 +93,19 @@ def _job_pairs_response(job: PredictJob) -> list[PredictJobPair]:
     """Reconstitute the per-pair slow-path payload, ordered as submitted.
 
     The agent app preserves input order in its response, so translation /
-    critique are pulled positionally from `agent_pairs[idx]`. The vref /
-    source_text / target_text echo always comes from the original
+    critique / lexeme_cards are pulled positionally from `agent_pairs[idx]`.
+    The vref / source_text / target_text echo always comes from the original
     `pairs_input` so callers that omit `vref` (an optional label) can
     still match results to inputs by index, and so a hypothetical agent
     bug that mangled echo fields wouldn't propagate to the response.
+
+    `lexeme_cards` here is the agent's filtered per-pair view of cards
+    relevant to that pair's target text, including any new ones the
+    agent minted during this run. The sync /predict path can't return
+    those discoveries — translation/critique are forced off there
+    (see `spawn_slow_agent` below), so the LLM never runs and no new
+    cards are produced — making this poll endpoint the only surface
+    where clients see them.
     """
     result = job.result or {}
     agent_pairs = result.get("pairs") or []
@@ -111,6 +119,7 @@ def _job_pairs_response(job: PredictJob) -> list[PredictJobPair]:
                 target_text=submitted.get("target_text", ""),
                 translation=agent_pair.get("translation"),
                 critique=agent_pair.get("critique"),
+                lexeme_cards=agent_pair.get("lexeme_cards"),
             )
         )
     return out
@@ -157,7 +166,7 @@ async def predict(
             detail=f"Not authorized for assessment {body.assessment_id}",
         )
 
-    modal_env = os.getenv("MODAL_ENV", "main")
+    modal_env = settings.modal_env
     input_payload = body.model_dump(exclude={"apps"})
 
     # Translation/critique are the only slow legs of the agent app — both
@@ -336,6 +345,23 @@ async def get_predict_job(
         try:
             fc = modal.FunctionCall.from_id(job.modal_call_id)
             data = await fc.get.aio(timeout=0)
+        except (
+            modal.exception.FunctionTimeoutError,
+            modal.exception.OutputExpiredError,
+        ) as exc:
+            # The Modal container itself hit its timeout (or the result
+            # expired before we polled). Both subclass the builtin
+            # TimeoutError, so they must be caught BEFORE the bare
+            # `TimeoutError` block below — otherwise they'd be silently
+            # treated as "still running" and the DB status would never flip.
+            logger.warning(
+                f"predict job {job.id} timed out on Modal: {type(exc).__name__}: {exc}",
+                exc_info=True,
+            )
+            job.status = "failed"
+            job.error = f"{type(exc).__name__}: {exc}"
+            job.completed_at = datetime.now(timezone.utc)
+            await db.commit()
         except (TimeoutError, modal.exception.TimeoutError):
             # modal._functions.poll_function raises the builtin TimeoutError
             # (not modal.exception.TimeoutError, which doesn't subclass it)
@@ -383,7 +409,7 @@ async def semantic_similarity_inference(
     request: SemanticSimilarityRequest,
     current_user: UserModel = Depends(get_current_user),
 ):
-    modal_env = os.getenv("MODAL_ENV", "main")
+    modal_env = settings.modal_env
     logger.info(
         "Semantic similarity inference request",
         extra={

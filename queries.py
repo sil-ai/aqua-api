@@ -190,28 +190,24 @@ def fetch_version_data():
     return fetch_version
 
 
-def get_chapter_query(chapter_reference):
+def get_chapter_query():
     get_chapter = """
                 SELECT * FROM "verse_text" "vt"
                   INNER JOIN "verse_reference" "vr" ON vt.verse_reference = fullverseid
                   WHERE bible_revision=(%s)
-                    AND vr.chapter = {}
+                    AND vr.chapter = (%s)
                     ORDER BY vt.id;
-                """.format(
-        chapter_reference
-    )
+                """
 
     return get_chapter
 
 
-def get_verses_query(verse_reference):
+def get_verses_query():
     get_verses = """
                 SELECT * FROM "verse_text"
                   WHERE bible_revision=(%s)
-                    AND verse_reference={};
-                """.format(
-        verse_reference
-    )
+                    AND verse_reference=(%s);
+                """
 
     return get_verses
 

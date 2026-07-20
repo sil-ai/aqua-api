@@ -7,12 +7,13 @@ with optional integration to Loki for centralized log aggregation.
 """
 
 import logging
-import os
 import socket
 from typing import Optional
 
 from observability_library import LokiHandler, LokiLoggerLabels
 from pythonjsonlogger import jsonlogger
+
+from config import settings
 
 
 def setup_logger(
@@ -72,28 +73,21 @@ def setup_logger(
     logger.addHandler(console_handler)
 
     # 2. Loki Handler (optional, controlled by feature flag)
-    loki_enabled = os.getenv("LOKI_ENABLED", "false").lower() == "true"
-    if loki_enabled:
+    if settings.loki_enabled:
         try:
-            # Get configuration from environment
-            loki_url = os.getenv("LOKI_URL")
-            loki_auth_token = os.getenv("LOKI_AUTH_TOKEN")
-            project_name = os.getenv("PROJECT_NAME", "aqua-api")
-            environment_loki = os.getenv("ENVIRONMENT_LOKI", "local")
-
             # Define labels for log organization
             labels = LokiLoggerLabels(
-                project=project_name,
-                environment=environment_loki,
+                project=settings.project_name,
+                environment=settings.environment_loki,
                 container_id=container_id,
             )
 
             # Create and configure Loki handler
             loki_handler = LokiHandler(
-                url=loki_url,
+                url=settings.loki_url,
                 labels=labels.to_loki_labels(),
                 timeout=5,  # seconds
-                auth_token=loki_auth_token,
+                auth_token=settings.loki_auth_token,
             )
             loki_handler.setLevel(logging.INFO)
 

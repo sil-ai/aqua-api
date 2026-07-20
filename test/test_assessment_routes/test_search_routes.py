@@ -1,6 +1,6 @@
 import re
 import unicodedata
-from datetime import date
+from datetime import date, datetime
 
 from database.models import (
     AlignmentTopSourceScores,
@@ -2561,13 +2561,17 @@ def _setup_alignment_assessment(
     """Create a finished word-alignment assessment plus alignment rows.
 
     ``rows`` is a list of ``(vref, source, target, score)`` tuples. Returns
-    the assessment id.
+    the assessment id. As the only assessment for its pair it resolves under
+    the omitted default (most recent regardless of runner); it is stored as
+    eflomal (``kwargs={"use_eflomal": True}``) so explicit ``use_eflomal=true``
+    queries also match it. Runner-specific tests use ``_setup_runner_assessment``.
     """
     assessment = Assessment(
         revision_id=revision_id,
         reference_id=reference_id,
         type="word-alignment",
         status=status,
+        kwargs={"use_eflomal": True},
     )
     db_session.add(assessment)
     db_session.commit()
@@ -3151,3 +3155,208 @@ def test_search_include_alignments_empty_array_when_no_links_above_threshold(
     jhn = next(r for r in data["results"] if r["verse"] == 16)
     assert "alignments" in jhn
     assert jhn["alignments"] == []
+
+
+def _setup_runner_assessment(
+    db_session, revision_id, reference_id, *, use_eflomal, end_time, rows
+):
+    """Create a finished word-alignment assessment for a specific runner.
+
+    ``rows`` is a list of ``(vref, source, target, score)`` tuples.
+    """
+    assessment = Assessment(
+        revision_id=revision_id,
+        reference_id=reference_id,
+        type="word-alignment",
+        status="finished",
+        kwargs={"use_eflomal": True} if use_eflomal else None,
+        end_time=end_time,
+    )
+    db_session.add(assessment)
+    db_session.commit()
+    db_session.refresh(assessment)
+    for vref, source, target, score in rows:
+        book, rest = vref.split(" ")
+        chapter, verse = rest.split(":")
+        db_session.add(
+            AlignmentTopSourceScores(
+                assessment_id=assessment.id,
+                vref=vref,
+                source=source,
+                target=target,
+                score=score,
+                book=book,
+                chapter=int(chapter),
+                verse=int(verse),
+                hide=False,
+                flag=False,
+            )
+        )
+    db_session.commit()
+    return assessment.id
+
+
+def test_search_include_alignments_use_eflomal_selects_runner(
+    client, regular_token1, test_db_session
+):
+    """include_alignments sources links from the runner chosen by use_eflomal,
+    even when the eflomal assessment for the pair finished more recently."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=False,
+        end_time=datetime(2024, 1, 1),
+        rows=[("JHN 3:16", "loved", "fasttarget", 0.92)],
+    )
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=True,
+        end_time=datetime(2024, 6, 1),
+        rows=[("JHN 3:16", "loved", "efltarget", 0.92)],
+    )
+
+    def _alignment_targets(use_eflomal):
+        params = {
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        }
+        if use_eflomal is not None:
+            params["use_eflomal"] = use_eflomal
+        response = client.get(
+            "/v3/textsearch",
+            params=params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        jhn = next(
+            r
+            for r in response.json()["results"]
+            if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+        )
+        return {a["target"] for a in jhn["alignments"]}
+
+    assert _alignment_targets(True) == {"efltarget"}
+    # No runner given -> source from the most recent assessment regardless of
+    # runner; eflomal finished later here, so the default returns its links.
+    # See test_search_include_alignments_default_takes_most_recent for the
+    # inverse, which proves recency (not an eflomal default) decides.
+    assert _alignment_targets(None) == {"efltarget"}
+    assert _alignment_targets(False) == {"fasttarget"}
+
+
+def test_search_include_alignments_default_takes_most_recent(
+    client, regular_token1, test_db_session
+):
+    """With no use_eflomal given, include_alignments sources from the most
+    recent finished assessment regardless of runner. Here the fastalign
+    assessment finished more recently (2024-06-01) than the eflomal one
+    (2024-01-01), so the omitted default returns the fastalign links — the
+    inverse of test_search_include_alignments_use_eflomal_selects_runner,
+    proving recency (not an eflomal default) decides. Explicit use_eflomal=true
+    still selects the older eflomal assessment."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=True,
+        end_time=datetime(2024, 1, 1),
+        rows=[("JHN 3:16", "loved", "efltarget", 0.92)],
+    )
+    _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=False,
+        end_time=datetime(2024, 6, 1),
+        rows=[("JHN 3:16", "loved", "fasttarget", 0.92)],
+    )
+
+    def _alignment_targets(use_eflomal):
+        params = {
+            "revision_id": main_revision_id,
+            "comparison_revision_id": comp_revision_id,
+            "term": "loved",
+            "include_alignments": True,
+        }
+        if use_eflomal is not None:
+            params["use_eflomal"] = use_eflomal
+        response = client.get(
+            "/v3/textsearch",
+            params=params,
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200, response.text
+        jhn = next(
+            r
+            for r in response.json()["results"]
+            if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+        )
+        return {a["target"] for a in jhn["alignments"]}
+
+    # Fastalign is the most recent, so the omitted default sources from it.
+    assert _alignment_targets(None) == {"fasttarget"}
+    assert _alignment_targets(True) == {"efltarget"}
+    assert _alignment_targets(False) == {"fasttarget"}
+
+
+def test_search_include_alignments_explicit_id_runner_mismatch_drops_alignments(
+    client, regular_token1, test_db_session
+):
+    """Passing an explicit eflomal alignment_assessment_id while requesting the
+    fastalign runner (use_eflomal=false) makes the runner clause reject the
+    pinned id — the response is returned without the ``alignments`` field
+    rather than erroring. This is the documented behaviour from issue #661
+    extended to the runner mismatch case."""
+    main_revision_id, comp_revision_id = setup_search_test_data(test_db_session)
+    eflomal_id = _setup_runner_assessment(
+        test_db_session,
+        main_revision_id,
+        comp_revision_id,
+        use_eflomal=True,
+        end_time=datetime(2024, 6, 1),
+        rows=[("JHN 3:16", "loved", "efltarget", 0.92)],
+    )
+
+    base_params = {
+        "revision_id": main_revision_id,
+        "comparison_revision_id": comp_revision_id,
+        "term": "loved",
+        "include_alignments": True,
+        "alignment_assessment_id": eflomal_id,
+    }
+
+    # Pinned eflomal id + runner=eflomal -> alignments come through.
+    matched = client.get(
+        "/v3/textsearch",
+        params={**base_params, "use_eflomal": True},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert matched.status_code == 200, matched.text
+    jhn = next(
+        r
+        for r in matched.json()["results"]
+        if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+    )
+    assert {a["target"] for a in jhn["alignments"]} == {"efltarget"}
+
+    # Pinned eflomal id but fastalign runner (use_eflomal=false) -> clause
+    # rejects the pinned id, response carries no alignments key (silent fallback).
+    mismatched = client.get(
+        "/v3/textsearch",
+        params={**base_params, "use_eflomal": False},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert mismatched.status_code == 200, mismatched.text
+    jhn_mm = next(
+        r
+        for r in mismatched.json()["results"]
+        if (r["book"], r["chapter"], r["verse"]) == ("JHN", 3, 16)
+    )
+    assert "alignments" not in jhn_mm
