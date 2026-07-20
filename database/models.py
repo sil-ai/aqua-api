@@ -1,5 +1,6 @@
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    DDL,
     TIMESTAMP,
     Boolean,
     CheckConstraint,
@@ -15,11 +16,12 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import backref, relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import func, text
 
 Base = declarative_base()
 
@@ -146,6 +148,7 @@ class Assessment(Base):
     deletedAt = Column(TIMESTAMP, default=None)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
     kwargs = Column(JSONB, nullable=True, default=None)
+    attempt_count = Column(Integer, nullable=False, server_default="0", default=0)
 
     results = relationship(
         "AssessmentResult", cascade="all, delete", back_populates="assessment"
@@ -242,7 +245,6 @@ class AssessmentResult(Base):
     chapter = Column(Integer)
     verse = Column(Integer)
 
-    assessment_id = Column(Integer, ForeignKey("assessment.id"))
     assessment = relationship("Assessment", back_populates="results")
 
     __table_args__ = (
@@ -313,6 +315,9 @@ class BibleVersion(Base):
     )
     machine_translation = Column(Boolean)
     is_reference = Column(Boolean)
+    transcribed_audio = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
@@ -458,6 +463,18 @@ class AgentLexemeCard(Base):
     target_lemma = Column(Text, nullable=False)
     source_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
     target_version_id = Column(Integer, ForeignKey("bible_version.id"), nullable=False)
+    # Pivot-language card identity: the ISO 639-3 code of the source language
+    # the canonical card was built against. Auto-filled from source_version_id
+    # by a BEFORE INSERT/UPDATE trigger if callers omit it.
+    source_language_iso = Column(
+        String(3), ForeignKey("iso_language.iso639"), nullable=False
+    )
+    # Opaque token bumped when the canonical card-builder rebuilds the card.
+    # Nullable forever; only the most recent build sets it.
+    build_version = Column(Text, nullable=True)
+    # Provenance: model id/name that built this card (e.g. "claude-sonnet-...",
+    # "gpt-oss-..."). Nullable forever; older/back-filled cards stay NULL.
+    model = Column(Text, nullable=True)
     pos = Column(Text)
     surface_forms = Column(JSONB)  # JSON array of target language surface forms
     source_surface_forms = Column(JSONB)  # JSON array of source language surface forms
@@ -471,12 +488,13 @@ class AgentLexemeCard(Base):
     last_user_edit = Column(TIMESTAMP, nullable=True)
 
     __table_args__ = (
-        # Case-insensitive unique constraint to prevent duplicate cards
-        # Each LOWER(target_lemma) can only have one card per version pair
+        # Case-insensitive language-keyed unique constraint (pivot-language
+        # architecture): one canonical card per (lemma, source language,
+        # target revision's version). Replaces the older version-keyed v4.
         Index(
-            "ix_agent_lexeme_cards_unique_v4",
+            "ix_agent_lexeme_cards_unique_v5",
             func.lower(target_lemma),
-            "source_version_id",
+            "source_language_iso",
             "target_version_id",
             unique=True,
         ),
@@ -559,6 +577,143 @@ class AgentLexemeCardExample(Base):
     revision = relationship("BibleRevision")
 
 
+class CardTranslation(Base):
+    """Cheap MT-derived translation of a canonical lexeme card.
+
+    Canonical card content stays on AgentLexemeCard; this table only
+    carries the per-output-language overlay (source-side lemma, surface
+    forms, senses) plus build-version provenance so consumers can detect
+    when a translation is stale relative to its parent card.
+    """
+
+    __tablename__ = "card_translations"
+
+    id = Column(Integer, primary_key=True)
+    card_id = Column(
+        Integer,
+        ForeignKey("agent_lexeme_cards.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    language_iso = Column(String(3), ForeignKey("iso_language.iso639"), nullable=False)
+    source_lemma = Column(Text, nullable=True)
+    source_surface_forms = Column(JSONB, nullable=True)
+    senses = Column(JSONB, nullable=True)
+    parent_build_version = Column(Text, nullable=True)
+    build_version = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+    last_updated = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+    last_user_edit = Column(TIMESTAMP, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "ix_card_translations_unique",
+            "card_id",
+            "language_iso",
+            unique=True,
+        ),
+        Index("ix_card_translations_card_id", "card_id"),
+    )
+
+    card = relationship("AgentLexemeCard")
+    examples = relationship(
+        "CardTranslationExample",
+        back_populates="card_translation",
+        cascade="all, delete-orphan",
+    )
+
+
+class CardTranslationExample(Base):
+    """Per-example translation of a card example.
+
+    The canonical AgentLexemeCardExample owns the target-language text;
+    this row stores only the MT'd source-side text. Reading the full
+    translated example means joining example_id back to
+    agent_lexeme_card_examples for the target text.
+    """
+
+    __tablename__ = "card_translation_examples"
+
+    id = Column(Integer, primary_key=True)
+    card_translation_id = Column(
+        Integer,
+        ForeignKey("card_translations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    example_id = Column(
+        Integer,
+        ForeignKey("agent_lexeme_card_examples.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_text = Column(Text, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_card_translation_examples_unique",
+            "card_translation_id",
+            "example_id",
+            unique=True,
+        ),
+        Index(
+            "ix_card_translation_examples_translation",
+            "card_translation_id",
+        ),
+    )
+
+    card_translation = relationship("CardTranslation", back_populates="examples")
+    example = relationship("AgentLexemeCardExample")
+
+
+# Auto-fill trigger for agent_lexeme_cards.source_language_iso.
+# Defined here as well as in the alembic migration so test DBs (which
+# bootstrap via Base.metadata.create_all rather than alembic) get it on
+# table creation. Production picks it up from the migration.
+_LEXEME_CARD_FILL_LANG_FN = DDL(
+    """
+    CREATE OR REPLACE FUNCTION fill_lexeme_card_source_language_iso()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        IF NEW.source_language_iso IS NULL AND NEW.source_version_id IS NOT NULL THEN
+            SELECT iso_language INTO NEW.source_language_iso
+            FROM bible_version WHERE id = NEW.source_version_id;
+        END IF;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    """
+)
+
+# Split into separate DROP and CREATE so each DDL string is a single
+# statement — asyncpg rejects multi-statement prepared queries, which
+# matters if a test path bootstraps via an async engine.
+_LEXEME_CARD_FILL_LANG_TRIGGER_DROP = DDL(
+    "DROP TRIGGER IF EXISTS trg_fill_lexeme_card_source_language_iso "
+    "ON agent_lexeme_cards"
+)
+
+_LEXEME_CARD_FILL_LANG_TRIGGER_CREATE = DDL(
+    """
+    CREATE TRIGGER trg_fill_lexeme_card_source_language_iso
+    BEFORE INSERT OR UPDATE OF source_version_id ON agent_lexeme_cards
+    FOR EACH ROW
+    EXECUTE FUNCTION fill_lexeme_card_source_language_iso();
+    """
+)
+
+# Listener order matters: function first, then trigger drop, then trigger create.
+event.listen(AgentLexemeCard.__table__, "after_create", _LEXEME_CARD_FILL_LANG_FN)
+event.listen(
+    AgentLexemeCard.__table__,
+    "after_create",
+    _LEXEME_CARD_FILL_LANG_TRIGGER_DROP,
+)
+event.listen(
+    AgentLexemeCard.__table__,
+    "after_create",
+    _LEXEME_CARD_FILL_LANG_TRIGGER_CREATE,
+)
+
+
 class AgentWordAlignment(Base):
     __tablename__ = "agent_word_alignments"
 
@@ -620,16 +775,18 @@ class AgentCritiqueIssue(Base):
     chapter = Column(Integer, nullable=False)
     verse = Column(Integer, nullable=False)
 
-    # Issue classification
-    issue_type = Column(
-        String(15), nullable=False
-    )  # 'omission', 'addition', or 'replacement'
+    # MQM classification
+    dimension = Column(String(50), nullable=False)
+    subtype = Column(String(100), nullable=False)
+    detector = Column(String(50), nullable=True)
 
     # Issue details
-    source_text = Column(Text, nullable=True)  # The source text (omission/replacement)
-    draft_text = Column(Text, nullable=True)  # The draft text (addition/replacement)
-    comments = Column(Text, nullable=True)  # Explanation of why this is an issue
-    severity = Column(Integer, nullable=False)  # 0=none, 5=critical
+    source_text = Column(Text, nullable=True)
+    draft_text = Column(Text, nullable=True)
+    comments = Column(Text, nullable=True)
+    severity = Column(Integer, nullable=True)  # 1..5, NULL when the agent omits it
+    evidence = Column(JSONB, nullable=True)  # list[str]
+    suggestions = Column(JSONB, nullable=True)  # list[{text, note?}]
 
     # Resolution tracking
     is_resolved = Column(Boolean, default=False, nullable=False)
@@ -656,23 +813,12 @@ class AgentCritiqueIssue(Base):
         Index("ix_agent_critique_issue_assessment", "assessment_id"),
         Index("ix_agent_critique_issue_vref", "vref"),
         Index("ix_agent_critique_issue_book_chapter_verse", "book", "chapter", "verse"),
-        Index("ix_agent_critique_issue_type", "issue_type"),
+        Index("ix_agent_critique_issue_dimension", "dimension"),
+        Index("ix_agent_critique_issue_subtype", "subtype"),
         Index("ix_agent_critique_issue_severity", "severity"),
         Index("ix_agent_critique_issue_resolved", "is_resolved"),
         Index("ix_agent_critique_issue_resolved_by", "resolved_by_id"),
         Index("ix_agent_critique_issue_translation", "agent_translation_id"),
-        # The both-NULL clause permits legacy rows that existed before this
-        # migration with no text fields set.  New rows always satisfy the
-        # type-specific requirements via Pydantic validation.
-        CheckConstraint(
-            """
-            (issue_type = 'omission'    AND source_text IS NOT NULL AND draft_text IS NULL) OR
-            (issue_type = 'addition'    AND source_text IS NULL     AND draft_text IS NOT NULL) OR
-            (issue_type = 'replacement' AND source_text IS NOT NULL AND draft_text IS NOT NULL) OR
-            (source_text IS NULL AND draft_text IS NULL)
-            """,
-            name="ck_critique_issue_text_fields",
-        ),
     )
 
 
@@ -696,6 +842,7 @@ class AgentTranslation(Base):
     hyper_literal_translation = Column(Text, nullable=True)
     literal_translation = Column(Text, nullable=True)
     english_translation = Column(Text, nullable=True)
+    alternatives = Column(JSONB, nullable=True)  # list[{text, note?}]
     created_at = Column(TIMESTAMP, default=func.now())
 
     assessment = relationship("Assessment")
@@ -794,43 +941,6 @@ class EflomalDictionary(Base):
     )
 
 
-class EflomalCooccurrence(Base):
-    """Verse-level co-occurrence statistics for word pairs.
-
-    Separate from EflomalDictionary because the key space differs:
-    - Dictionary contains only pairs the model actually aligned.
-    - This table contains ALL word pairs that co-occurred in any verse,
-      including pairs that were never aligned (co_occur > 0, aligned = 0).
-    Words are stored in normalized form (lowercase, alphanumeric only).
-
-    - co_occur_count: number of verses where both words appear.
-    - aligned_count: number of those verses where the model aligned them.
-
-    The ratio aligned/co_occur is used as a co-occurrence consistency signal
-    in the scoring formula (weighted geometric mean with dictionary probability).
-    """
-
-    __tablename__ = "eflomal_cooccurrence"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    assessment_id = Column(
-        Integer, ForeignKey("eflomal_assessment.id", ondelete="CASCADE"), nullable=False
-    )
-    source_word = Column(String, nullable=False)
-    target_word = Column(String, nullable=False)
-    co_occur_count = Column(Integer, nullable=False)
-    aligned_count = Column(Integer, nullable=False)
-
-    __table_args__ = (
-        Index(
-            "ix_eflomal_cooccurrence_lookup",
-            "assessment_id",
-            "source_word",
-            "target_word",
-        ),
-    )
-
-
 class EflomalTargetWordCount(Base):
     """Corpus-wide frequency of each target-language word.
 
@@ -840,8 +950,8 @@ class EflomalTargetWordCount(Base):
 
     Used as the denominator in missing-word detection: a word that appears
     500 times but is only aligned 10 times behaves very differently from one
-    that appears and is aligned 10 times.  Neither EflomalDictionary nor
-    EflomalCooccurrence captures this marginal frequency.
+    that appears and is aligned 10 times.  EflomalDictionary does not
+    capture this marginal frequency.
     """
 
     __tablename__ = "eflomal_target_word_count"
@@ -964,6 +1074,11 @@ class LanguageMorpheme(Base):
         nullable=True,
     )
     first_seen_at = Column(TIMESTAMP, server_default=func.now())
+    target_version_id = Column(
+        Integer,
+        ForeignKey("bible_version.id", ondelete="CASCADE"),
+        nullable=True,
+    )
 
     __table_args__ = (
         Index(
@@ -972,8 +1087,15 @@ class LanguageMorpheme(Base):
             "morpheme",
             unique=True,
         ),
+        Index(
+            "ux_language_morphemes_version_morpheme",
+            "target_version_id",
+            "morpheme",
+            unique=True,
+        ),
         Index("ix_language_morphemes_iso", "iso_639_3"),
         Index("ix_language_morphemes_iso_class", "iso_639_3", "morpheme_class"),
+        Index("ix_language_morphemes_target_version_id", "target_version_id"),
     )
 
 
@@ -999,6 +1121,11 @@ class LanguageAffix(Base):
     )
     first_seen_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+    target_version_id = Column(
+        Integer,
+        ForeignKey("bible_version.id", ondelete="CASCADE"),
+        nullable=True,
+    )
 
     __table_args__ = (
         CheckConstraint(
@@ -1007,16 +1134,39 @@ class LanguageAffix(Base):
         ),
         CheckConstraint("n_runs >= 1", name="ck_language_affixes_n_runs_min_1"),
         Index(
-            "ux_language_affixes_iso_form_position_gloss",
+            "ux_language_affixes_version_form_position",
+            "target_version_id",
+            "form",
+            "position",
+            unique=True,
+            postgresql_where=text("target_version_id IS NOT NULL"),
+        ),
+        Index(
+            "ux_language_affixes_iso_form_position_legacy",
             "iso_639_3",
             "form",
             "position",
-            "gloss",
             unique=True,
+            postgresql_where=text("target_version_id IS NULL"),
         ),
         Index("ix_language_affixes_iso", "iso_639_3"),
         Index("ix_language_affixes_iso_position", "iso_639_3", "position"),
+        Index("ix_language_affixes_target_version_id", "target_version_id"),
     )
+
+
+class TrainingArtifact(Base):
+    __tablename__ = "training_artifacts"
+
+    target_version_id = Column(
+        Integer,
+        ForeignKey("bible_version.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    grammar_sketch = Column(Text, nullable=True)
+    source_model = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
 
 
 class TokenizerRun(Base):
@@ -1262,3 +1412,56 @@ class PredictJob(Base):
         ),
         Index("ix_predict_jobs_owner_created", "owner_id", "created_at"),
     )
+
+
+class PivotCandidate(Base):
+    """Curated whitelist of pivot languages used for routing translations.
+
+    The pivot is the well-resourced language we route a target through. Choice
+    matters: Malila A/B (swh vs eng pivot) showed ~44% fewer back-translation
+    placeholders for the closer-family swh pivot.
+    """
+
+    __tablename__ = "pivot_candidate"
+
+    pivot_iso = Column(String(3), ForeignKey("iso_language.iso639"), primary_key=True)
+    pivot_revision_id = Column(Integer, ForeignKey("bible_revision.id"), nullable=False)
+    notes = Column(Text, nullable=True)
+    created_at = Column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class LanguagePivot(Base):
+    """Resolved target_iso -> pivot_iso routing decisions.
+
+    Populated by curator seed for known targets and by the agent's self-bootstrap
+    flow for unknown targets. Keyed on target_iso only: each target has one pivot.
+    """
+
+    __tablename__ = "language_pivot"
+
+    target_iso = Column(String(3), ForeignKey("iso_language.iso639"), primary_key=True)
+    pivot_iso = Column(
+        String(3),
+        ForeignKey("pivot_candidate.pivot_iso"),
+        nullable=False,
+    )
+    notes = Column(Text, nullable=True)
+    created_at = Column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at = Column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (Index("ix_language_pivot_pivot_iso", "pivot_iso"),)

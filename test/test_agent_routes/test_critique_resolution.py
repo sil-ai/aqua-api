@@ -20,20 +20,37 @@ def _create_translation(client, token, assessment_id, vref, draft_text="test"):
     return resp.json()["id"]
 
 
-def _create_critique(
-    client, token, translation_id, omissions=None, additions=None, replacements=None
-):
+def _create_critique(client, token, translation_id, issues=None):
     """Helper: create critique issues for a translation and return the response."""
     return client.post(
         f"{prefix}/agent/critique",
         json={
             "agent_translation_id": translation_id,
-            "omissions": omissions or [],
-            "additions": additions or [],
-            "replacements": replacements or [],
+            "issues": issues or [],
         },
         headers={"Authorization": f"Bearer {token}"},
     )
+
+
+def _omission_issue(source_text, severity=3, comments=None):
+    return {
+        "dimension": "accuracy",
+        "subtype": "omission",
+        "source_text": source_text,
+        "comments": comments,
+        "severity": severity,
+    }
+
+
+def _mistranslation_issue(source_text, draft_text, severity=4, comments=None):
+    return {
+        "dimension": "accuracy",
+        "subtype": "mistranslation",
+        "source_text": source_text,
+        "draft_text": draft_text,
+        "comments": comments,
+        "severity": severity,
+    }
 
 
 def test_resolve_critique_issue_success(client, regular_token1, test_assessment_id):
@@ -47,7 +64,7 @@ def test_resolve_critique_issue_success(client, regular_token1, test_assessment_
         client,
         regular_token1,
         translation_id,
-        omissions=[{"source_text": "word", "comments": "missing word", "severity": 4}],
+        issues=[_omission_issue("word", severity=4, comments="missing word")],
     )
     assert create_response.status_code == 200
     created_issues = create_response.json()
@@ -84,7 +101,7 @@ def test_unresolve_critique_issue_success(client, regular_token1, test_assessmen
         client,
         regular_token1,
         translation_id,
-        omissions=[{"source_text": "made", "comments": "missing made", "severity": 3}],
+        issues=[_omission_issue("made", severity=3, comments="missing made")],
     )
     issue_id = create_response.json()[0]["id"]
 
@@ -125,21 +142,15 @@ def test_get_critique_issues_filter_by_resolved(
         client,
         regular_token1,
         t1,
-        omissions=[
-            {
-                "source_text": "unresolved",
-                "comments": "this stays unresolved",
-                "severity": 2,
-            }
+        issues=[
+            _omission_issue("unresolved", severity=2, comments="this stays unresolved")
         ],
     )
     resolved_response = _create_critique(
         client,
         regular_token1,
         t2,
-        omissions=[
-            {"source_text": "resolved", "comments": "this gets resolved", "severity": 3}
-        ],
+        issues=[_omission_issue("resolved", severity=3, comments="this gets resolved")],
     )
 
     assert unresolved_response.status_code == 200
@@ -181,8 +192,10 @@ def test_get_critique_issues_filter_by_resolved(
     assert all(not issue["is_resolved"] for issue in unresolved_issues)
 
 
-def test_resolve_replacement_issue_success(client, regular_token1, test_assessment_id):
-    """Test that replacement issues can be resolved just like omissions."""
+def test_resolve_mistranslation_issue_success(
+    client, regular_token1, test_assessment_id
+):
+    """Mistranslation issues can be resolved just like omissions."""
     translation_id = _create_translation(
         client, regular_token1, test_assessment_id, "JHN 1:4"
     )
@@ -191,13 +204,8 @@ def test_resolve_replacement_issue_success(client, regular_token1, test_assessme
         client,
         regular_token1,
         translation_id,
-        replacements=[
-            {
-                "source_text": "love",
-                "draft_text": "like",
-                "comments": "wrong term",
-                "severity": 4,
-            }
+        issues=[
+            _mistranslation_issue("love", "like", severity=4, comments="wrong term")
         ],
     )
     assert create_response.status_code == 200
@@ -214,7 +222,8 @@ def test_resolve_replacement_issue_success(client, regular_token1, test_assessme
     resolved = resolve_response.json()
     assert resolved["is_resolved"] is True
     assert resolved["resolution_notes"] == "Fixed translation to use 'love'"
-    assert resolved["issue_type"] == "replacement"
+    assert resolved["dimension"] == "accuracy"
+    assert resolved["subtype"] == "mistranslation"
     assert resolved["source_text"] == "love"
     assert resolved["draft_text"] == "like"
 

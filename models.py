@@ -3,7 +3,7 @@ import math
 import re
 import unicodedata
 from enum import Enum
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 
 from pydantic import (
     BaseModel,
@@ -26,6 +26,7 @@ class VersionUpdate(BaseModel):
     forwardTranslation: Union[int, None] = None
     backTranslation: Union[int, None] = None
     machineTranslation: bool = False
+    transcribed_audio: bool = False
     add_to_groups: Optional[List[int]] = None
     remove_from_groups: Optional[List[int]] = None
 
@@ -55,6 +56,7 @@ class VersionIn(BaseModel):
     backTranslation: Optional[int] = None
     machineTranslation: Optional[bool] = False
     is_reference: Optional[bool] = False
+    transcribed_audio: bool = False
     add_to_groups: List[int]
 
     model_config = {
@@ -98,6 +100,14 @@ class VersionOut_v3(BaseModel):
     owner_id: Union[int, None] = None
     group_ids: List[int] = []
     is_reference: bool = False
+    transcribed_audio: bool = False
+    deleted: bool = False
+
+    @field_validator("deleted", mode="before")
+    @classmethod
+    def _coerce_deleted_null_to_false(cls, value):
+        # BibleVersion.deleted column is nullable; legacy rows have NULL.
+        return False if value is None else value
 
     model_config = {
         "json_schema_extra": {
@@ -111,6 +121,7 @@ class VersionOut_v3(BaseModel):
                 "is_reference": False,
                 "owner_id": 1,
                 "group_ids": [1, 2],
+                "deleted": False,
             }
         },
         "from_attributes": True,
@@ -264,6 +275,11 @@ def _validate_assessment_kwargs(v):
     """
     if v is None:
         return v
+    # The LLM is fixed by the deploy config; the per-call "model" override
+    # is no longer offered. Drop the key silently — on every path that can
+    # reach the runner (/v3/train options and /v3/assessment kwargs) — so
+    # older clients that still send it keep working.
+    v.pop("model", None)
     if len(v) > 20:
         raise ValueError("kwargs may not contain more than 20 keys")
     for key, val in v.items():
@@ -319,6 +335,7 @@ class AssessmentOut(BaseModel):
     percent_complete: Optional[float] = None
     is_training: bool = False
     kwargs: Optional[Dict[str, Any]] = None
+    attempt_count: int = 0
 
     model_config = {
         "json_schema_extra": {
@@ -333,6 +350,7 @@ class AssessmentOut(BaseModel):
                 "end_time": "2024-06-01T12:00:00",
                 "owner_id": 1,
                 "kwargs": None,
+                "attempt_count": 0,
             }
         },
         "from_attributes": True,
@@ -381,8 +399,8 @@ class PredictInput(BaseModel):
     target_version_id: Optional[int] = None
     limit: Optional[int] = Field(default=None, ge=1, le=10000)
     apps: Optional[List[str]] = None
-    include_translation: bool = False
-    include_critique: bool = False
+    include_translation: bool = True
+    include_critique: bool = True
 
     model_config = {
         "json_schema_extra": {
@@ -398,9 +416,9 @@ class PredictInput(BaseModel):
                 "reference_id": 2,
                 "source_version_id": 1,
                 "target_version_id": 2,
-                "apps": ["ngrams", "tfidf"],
-                "include_translation": False,
-                "include_critique": False,
+                "apps": ["ngrams", "tfidf", "agent"],
+                "include_translation": True,
+                "include_critique": True,
             }
         }
     }
@@ -412,8 +430,18 @@ class PredictInput(BaseModel):
         # asking for it without translation is a bug, not a silent no-op.
         # Reject early at the API boundary so the caller sees a 422 rather
         # than a per-app error string in the fan-out response.
+        # Both flags default to True, so a caller opting out of translation
+        # without mentioning critique means "fast path only" — turn critique
+        # off with it rather than 422ing on the unset default. (The
+        # assignment adds include_critique to model_fields_set, so after
+        # validation that set no longer reflects only caller-sent fields.)
         if self.include_critique and not self.include_translation:
-            raise ValueError("include_critique=True requires include_translation=True")
+            if "include_critique" not in self.model_fields_set:
+                self.include_critique = False
+            else:
+                raise ValueError(
+                    "include_critique=True requires include_translation=True"
+                )
         return self
 
 
@@ -447,12 +475,117 @@ class PredictFanoutResponse(BaseModel):
         return data
 
 
+class PredictCritiqueIssue(BaseModel):
+    """One MQM-aligned critique issue, as surfaced on a predict job's pair.
+
+    Mirrors the per-issue shape the agent emits and the storage endpoint
+    accepts (``POST /v3/agent/critique`` / ``IssueIn``). Extra fields the
+    agent may add are preserved on the wire via ``extra="allow"`` rather
+    than dropped, so consumers can rely on the documented fields while
+    forward-compat new agent attributes still reach them.
+
+    Field constraints deliberately diverge from ``IssueIn`` on the read
+    path: ``dimension`` is typed as ``str`` (not a ``Literal``), and
+    ``subtype`` / ``detector`` / ``severity`` carry no length or range
+    bounds. Validation here runs over data the agent already wrote into
+    a stored job result, so any extra-strict typing would convert a
+    previously-200 response into a 500 if the agent ever emits an
+    unexpected value (a new MQM dimension added agent-side before
+    aqua-api, a legacy row predating a tightened constraint, etc.). The
+    documented values live in each field's ``description`` — callers
+    should match case-insensitively / by prefix.
+    """
+
+    dimension: str = Field(
+        description=(
+            "MQM dimension. Documented values: 'accuracy', 'terminology', "
+            "'linguistic_conventions'. Typed as a plain string on the read "
+            "path so an unexpected agent value can't 500 the poll endpoint; "
+            "the documented enum is surfaced via json_schema_extra so "
+            "Swagger UI still shows the canonical values."
+        ),
+        json_schema_extra={
+            "enum": ["accuracy", "terminology", "linguistic_conventions"],
+        },
+    )
+    subtype: str = Field(
+        description=(
+            "Free-form MQM subtype, e.g. 'omission', 'addition', "
+            "'mistranslation', 'mistranslation/hallucination-numbers'. "
+            "Not an enum — match case-insensitively / by prefix. The "
+            "documented storage cap of 100 chars is advertised via "
+            "json_schema_extra without being enforced on the read path."
+        ),
+        json_schema_extra={"maxLength": 100},
+    )
+    source_text: Optional[str] = None
+    draft_text: Optional[str] = None
+    comments: Optional[str] = None
+    severity: Optional[int] = Field(
+        default=None,
+        description=(
+            "Severity score the agent assigned, typically 1–5; null when "
+            "the model omitted it. Range is advertised via "
+            "json_schema_extra but not enforced on the read path (see "
+            "class docstring)."
+        ),
+        json_schema_extra={"minimum": 1, "maximum": 5},
+    )
+    detector: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional tag identifying the automated detector that "
+            "flagged the issue, e.g. 'number_diff'. Documented length "
+            "cap of 50 chars is advertised but not enforced."
+        ),
+        json_schema_extra={"maxLength": 50},
+    )
+    evidence: Optional[List[str]] = Field(
+        default=None,
+        description="Optional supporting snippets the detector or model attached.",
+    )
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PredictCritique(BaseModel):
+    """The critique payload surfaced per pair on a predict job.
+
+    Currently exposes ``issues`` (the canonical MQM list, see #793).
+    ``extra="allow"`` keeps any auxiliary keys the agent emits visible to
+    consumers; today there are none documented beyond ``issues``.
+    """
+
+    issues: List[PredictCritiqueIssue] = Field(default_factory=list)
+
+    model_config = ConfigDict(
+        extra="allow",
+        json_schema_extra={
+            "example": {
+                "issues": [
+                    {
+                        "dimension": "accuracy",
+                        "subtype": "mistranslation/hallucination-numbers",
+                        "source_text": "forty days",
+                        "draft_text": "fourteen days",
+                        "comments": "Number mistranslated",
+                        "severity": 4,
+                        "detector": "number_diff",
+                        "evidence": ["source: 40", "draft: 14"],
+                    }
+                ]
+            }
+        },
+    )
+
+
 class PredictJobPair(BaseModel):
     vref: Optional[str] = None
     source_text: Optional[str] = None
     target_text: str
     translation: Optional[Dict[str, Any]] = None
-    critique: Optional[Dict[str, Any]] = None
+    critique: Optional[PredictCritique] = None
+    lexeme_cards: Optional[List[Dict[str, Any]]] = None
 
 
 class PredictJobStatusResponse(BaseModel):
@@ -751,7 +884,7 @@ class LexemeCardIn(BaseModel):
     @field_validator("source_lemma")
     @classmethod
     def normalize_source_lemma(cls, v):
-        return unicodedata.normalize("NFC", v) if v else v
+        return unicodedata.normalize("NFC", v).lower() if v else v
 
     pos: Optional[str] = None
     surface_forms: Optional[list] = None
@@ -761,6 +894,13 @@ class LexemeCardIn(BaseModel):
     confidence: Optional[float] = None
     english_lemma: Optional[str] = None
     alignment_scores: Optional[Dict[str, float]] = None
+    # Opaque token bumped when the canonical card-builder rebuilds the card.
+    # Derived translations record this in parent_build_version so cache
+    # invalidation can detect when the canonical has moved on.
+    build_version: Optional[str] = None
+    # Provenance: model id/name that built this card (e.g. "claude-sonnet-...",
+    # "gpt-oss-..."). Lets downstream consumers harvest only trusted cards.
+    model: Optional[str] = None
 
     @field_validator("surface_forms")
     @classmethod
@@ -812,6 +952,8 @@ class LexemeCardIn(BaseModel):
                 "confidence": 0.95,
                 "english_lemma": "love",
                 "alignment_scores": {"love": 0.92, "you": 0.88},
+                "build_version": "agent-20260514T123000Z",
+                "model": "claude-sonnet-4-6",
             }
         }
     }
@@ -827,13 +969,25 @@ class LexemeCardOut(BaseModel):
     surface_forms: Optional[list] = None
     source_surface_forms: Optional[list] = None  # Source language surface forms
     senses: Optional[list] = None
-    examples: Optional[list] = None  # Filtered list for the requested revision_id
+    # Each example dict has shape {"id": int, "source": str | None, "target": str};
+    # source is None when a translation overlay was requested (either via
+    # ?lang= or auto-derived by pivot routing) but no card_translations row
+    # exists for this card. Filtered to the requested revision_id when set.
+    examples: Optional[list] = None
     confidence: Optional[float] = None
     english_lemma: Optional[str] = None
     alignment_scores: Optional[Dict[str, float]] = None
+    build_version: Optional[str] = None
+    model: Optional[str] = None
     created_at: Optional[datetime.datetime] = None
     last_updated: Optional[datetime.datetime] = None
     last_user_edit: Optional[datetime.datetime] = None
+    # True when the response reflects the requested language: either canonical
+    # source matched ?lang, or a card_translations overlay was applied. False
+    # only on the bulk endpoint when ?lang was requested but no overlay
+    # existed — in that case source-side fields above are null. The by-id
+    # endpoint never returns False (it 404s instead, to trigger derivation).
+    has_translation_overlay: bool = True
 
 
 class ListMode(str, Enum):
@@ -855,6 +1009,10 @@ class LexemeCardPatch(BaseModel):
     def normalize_target_lemma(cls, v):
         return unicodedata.normalize("NFC", v).lower() if v else v
 
+    # NFC-only here (no .lower()). The canonical write path lowercases at the
+    # call site to honor the canonical source_lemma index; the overlay write
+    # path preserves casing (overlay source_lemma has no lookup-key role and
+    # is display data, matching CardTranslationIn's preservation contract).
     @field_validator("source_lemma")
     @classmethod
     def normalize_source_lemma(cls, v):
@@ -869,6 +1027,8 @@ class LexemeCardPatch(BaseModel):
     examples: Optional[List[dict]] = None  # Each dict has: source, target, revision_id
     # Dict values can be float or None (None means remove that key)
     alignment_scores: Optional[Dict[str, Optional[float]]] = None
+    build_version: Optional[str] = None
+    model: Optional[str] = None
 
     @field_validator("surface_forms")
     @classmethod
@@ -900,73 +1060,145 @@ class LexemeCardPatch(BaseModel):
     }
 
 
-class OmissionIssueIn(BaseModel):
-    """Omission critique issue: source text missing from the draft."""
+class CardTranslationExampleIn(BaseModel):
+    example_id: int
+    source_text: str
 
-    source_text: str = Field(min_length=1)
-    comments: Optional[str] = None
-    severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
+    @field_validator("source_text")
+    @classmethod
+    def normalize_source_text(cls, v):
+        return unicodedata.normalize("NFC", v) if v else v
+
+
+class CardTranslationIn(BaseModel):
+    """Write-side payload for a single (card, target_language) translation overlay."""
+
+    language_iso: str = Field(min_length=3, max_length=3)
+    source_lemma: Optional[str] = None
+    source_surface_forms: Optional[List[str]] = None
+    senses: Optional[List[dict]] = None
+    parent_build_version: Optional[str] = None
+    build_version: Optional[str] = None
+    examples: List[CardTranslationExampleIn] = []
+
+    @field_validator("language_iso")
+    @classmethod
+    def normalize_language_iso(cls, v):
+        return v.lower() if v else v
+
+    # Unlike LexemeCardIn.source_lemma (lowercased to match target_lemma's
+    # case-insensitive uniqueness), card_translations.source_lemma has no
+    # lookup-key role, so casing is preserved.
+    @field_validator("source_lemma")
+    @classmethod
+    def normalize_source_lemma(cls, v):
+        return unicodedata.normalize("NFC", v) if v else v
+
+    @field_validator("source_surface_forms")
+    @classmethod
+    def normalize_source_surface_forms(cls, v):
+        if v is None:
+            return v
+        return [unicodedata.normalize("NFC", s) if isinstance(s, str) else s for s in v]
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "language_iso": "spa",
+                "source_lemma": "camino",
+                "source_surface_forms": ["camino", "caminos"],
+                "senses": [
+                    {"definition": "camino, ruta, sendero"},
+                ],
+                "parent_build_version": "v1",
+                "build_version": "spa-v1",
+                "examples": [
+                    {
+                        "example_id": 12345,
+                        "source_text": "nos salvó al renovarnos al nacer de nuevo",
+                    },
+                ],
+            }
+        }
+    }
+
+
+class CardTranslationExampleOut(BaseModel):
+    id: int
+    example_id: int
+    source_text: str
+    created_at: Optional[datetime.datetime] = None
+
+
+class CardTranslationOut(BaseModel):
+    """Read-side shape of a stored translation overlay."""
+
+    id: int
+    card_id: int
+    language_iso: str
+    source_lemma: Optional[str] = None
+    source_surface_forms: Optional[list] = None
+    senses: Optional[list] = None
+    parent_build_version: Optional[str] = None
+    build_version: Optional[str] = None
+    created_at: Optional[datetime.datetime] = None
+    last_updated: Optional[datetime.datetime] = None
+    last_user_edit: Optional[datetime.datetime] = None
+    examples: List[CardTranslationExampleOut] = []
+
+
+class SuggestionItem(BaseModel):
+    """A proposed replacement/rendering, used for span suggestions and whole-verse alternatives."""
+
+    text: str = Field(min_length=1)
+    note: Optional[str] = None
 
     model_config = {"str_strip_whitespace": True}
 
 
-class AdditionIssueIn(BaseModel):
-    """Addition critique issue: draft text not present in the source."""
+class IssueIn(BaseModel):
+    """A single MQM-aligned critique issue."""
 
-    draft_text: str = Field(min_length=1)
+    dimension: Literal["accuracy", "terminology", "linguistic_conventions"]
+    subtype: str = Field(min_length=1, max_length=100)
+    source_text: Optional[str] = None
+    draft_text: Optional[str] = None
     comments: Optional[str] = None
-    severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
-
-    model_config = {"str_strip_whitespace": True}
-
-
-class ReplacementIssueIn(BaseModel):
-    """Replacement critique issue: source text incorrectly rendered as draft text."""
-
-    source_text: str = Field(min_length=1)
-    draft_text: str = Field(min_length=1)
-    comments: Optional[str] = None
-    severity: int = Field(ge=0, le=5)  # 0=none, 5=critical
+    severity: Optional[int] = Field(default=None, ge=1, le=5)
+    detector: Optional[str] = Field(default=None, max_length=50)
+    evidence: Optional[List[str]] = None
+    suggestions: Optional[List[SuggestionItem]] = None
 
     model_config = {"str_strip_whitespace": True}
 
 
 class CritiqueStorageRequest(BaseModel):
-    """Request to store critique results for a verse.
+    """Request to store MQM-aligned critique issues for a verse.
 
     The critique is linked to a specific agent translation by agent_translation_id.
     The assessment_id and vref are derived from the referenced translation.
     """
 
     agent_translation_id: int
-    omissions: list[OmissionIssueIn] = []
-    additions: list[AdditionIssueIn] = []
-    replacements: list[ReplacementIssueIn] = []
+    issues: list[IssueIn] = []
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "agent_translation_id": 1,
-                "omissions": [
+                "issues": [
                     {
-                        "source_text": "in the beginning",
-                        "comments": "Missing key phrase",
+                        "dimension": "accuracy",
+                        "subtype": "mistranslation/hallucination-numbers",
+                        "source_text": "forty days",
+                        "draft_text": "fourteen days",
+                        "comments": "Number mistranslated",
                         "severity": 4,
-                    }
-                ],
-                "additions": [
-                    {
-                        "draft_text": "extra words",
-                        "comments": "Not in source",
-                        "severity": 2,
-                    }
-                ],
-                "replacements": [
-                    {
-                        "source_text": "love",
-                        "draft_text": "like",
-                        "comments": "Incorrect translation",
-                        "severity": 3,
+                        "detector": "number_diff",
+                        "evidence": ["source: 40", "draft: 14"],
+                        "suggestions": [
+                            {"text": "forty days", "note": "match the source number"}
+                        ],
                     }
                 ],
             }
@@ -984,11 +1216,15 @@ class CritiqueIssueOut(BaseModel):
     book: str
     chapter: int
     verse: int
-    issue_type: Literal["omission", "addition", "replacement"]
+    dimension: str
+    subtype: str
     source_text: Optional[str] = None
     draft_text: Optional[str] = None
     comments: Optional[str] = None
-    severity: int
+    severity: Optional[int] = None
+    detector: Optional[str] = None
+    evidence: Optional[List[str]] = None
+    suggestions: Optional[List[SuggestionItem]] = None
     is_resolved: bool = False
     resolved_by_id: Optional[int] = None
     resolved_at: Optional[datetime.datetime] = None
@@ -1005,11 +1241,17 @@ class CritiqueIssueOut(BaseModel):
                 "book": "JHN",
                 "chapter": 1,
                 "verse": 1,
-                "issue_type": "omission",
-                "source_text": "in the beginning",
-                "draft_text": None,
-                "comments": "Missing key phrase from source text",
+                "dimension": "accuracy",
+                "subtype": "mistranslation/hallucination-numbers",
+                "source_text": "forty days",
+                "draft_text": "fourteen days",
+                "comments": "Number mistranslated",
                 "severity": 4,
+                "detector": "number_diff",
+                "evidence": ["source: 40", "draft: 14"],
+                "suggestions": [
+                    {"text": "forty days", "note": "match the source number"}
+                ],
                 "is_resolved": False,
                 "resolved_by_id": None,
                 "resolved_at": None,
@@ -1064,6 +1306,7 @@ class AgentTranslationIn(BaseModel):
     hyper_literal_translation: Optional[str] = None
     literal_translation: Optional[str] = None
     english_translation: Optional[str] = None
+    alternatives: Optional[List[SuggestionItem]] = None
 
     model_config = {
         "json_schema_extra": {
@@ -1073,6 +1316,12 @@ class AgentTranslationIn(BaseModel):
                 "hyper_literal_translation": "And beginning there-was with Word",
                 "literal_translation": "In the beginning was the Word",
                 "english_translation": "In the beginning was the Word",
+                "alternatives": [
+                    {
+                        "text": "In the beginning the Word already existed",
+                        "note": "smoother English phrasing",
+                    }
+                ],
             }
         }
     }
@@ -1087,6 +1336,7 @@ class AgentTranslationStorageRequest(BaseModel):
     hyper_literal_translation: Optional[str] = None
     literal_translation: Optional[str] = None
     english_translation: Optional[str] = None
+    alternatives: Optional[List[SuggestionItem]] = None
 
     model_config = {
         "json_schema_extra": {
@@ -1097,6 +1347,12 @@ class AgentTranslationStorageRequest(BaseModel):
                 "hyper_literal_translation": "And beginning there-was with Word",
                 "literal_translation": "In the beginning was the Word",
                 "english_translation": "In the beginning was the Word",
+                "alternatives": [
+                    {
+                        "text": "In the beginning the Word already existed",
+                        "note": "smoother English phrasing",
+                    }
+                ],
             }
         }
     }
@@ -1118,6 +1374,12 @@ class AgentTranslationBulkRequest(BaseModel):
                         "draft_text": "Na mwanzo kulikuwa na Neno",
                         "hyper_literal_translation": "And beginning there-was with Word",
                         "literal_translation": "In the beginning was the Word",
+                        "alternatives": [
+                            {
+                                "text": "In the beginning the Word already existed",
+                                "note": "smoother English phrasing",
+                            }
+                        ],
                     },
                     {
                         "vref": "JHN 1:2",
@@ -1145,6 +1407,7 @@ class AgentTranslationOut(BaseModel):
     hyper_literal_translation: Optional[str] = None
     literal_translation: Optional[str] = None
     english_translation: Optional[str] = None
+    alternatives: Optional[List[SuggestionItem]] = None
     created_at: Optional[datetime.datetime] = None
 
     model_config = {
@@ -1161,6 +1424,12 @@ class AgentTranslationOut(BaseModel):
                 "hyper_literal_translation": "And beginning there-was with Word",
                 "literal_translation": "In the beginning was the Word",
                 "english_translation": "In the beginning was the Word",
+                "alternatives": [
+                    {
+                        "text": "In the beginning the Word already existed",
+                        "note": "smoother English phrasing",
+                    }
+                ],
                 "created_at": "2024-06-01T12:00:00",
             }
         },
@@ -1311,15 +1580,6 @@ class EflomalDictionaryItem(BaseModel):
     probability: float
 
 
-class EflomalCooccurrenceItem(BaseModel):
-    """Co-occurrence entry. Words in normalized form (lowercase, alphanumeric)."""
-
-    source_word: str
-    target_word: str
-    co_occur_count: int
-    aligned_count: int
-
-
 class EflomalTargetWordCountItem(BaseModel):
     """Target word frequency. Word in normalized form."""
 
@@ -1330,8 +1590,8 @@ class EflomalTargetWordCountItem(BaseModel):
 class EflomalResultsPushRequest(BaseModel):
     """Create the eflomal_assessment metadata row (no bulk data).
 
-    After this call succeeds, push dictionary, cooccurrences, and
-    target-word-counts via their own endpoints, then PATCH the
+    After this call succeeds, push dictionary, target-word-counts,
+    priors, and BPE models via their own endpoints, then PATCH the
     assessment status to 'finished'.
     """
 
@@ -1573,6 +1833,54 @@ class TfidfByVectorsResponse(BaseModel):
     results: List[List[TfidfResult]]
 
 
+# Upper bound on a single text to encode. A verse is well under this; the cap
+# just stops a pathological multi-MB string from driving a huge transform on a
+# worker thread.
+TFIDF_MAX_TEXT_CHARS = 10_000
+
+
+class TfidfByTextRequest(BaseModel):
+    assessment_id: int
+    text: str = Field(..., min_length=1, max_length=TFIDF_MAX_TEXT_CHARS)
+    limit: int = Field(default=10, ge=1, le=500)
+    reference_id: Optional[int] = Field(default=None, ge=1)
+    # Drop the result whose vref matches exclude_vref (leakage guard). When
+    # exclude_book is True, drop all results in exclude_vref's book instead.
+    exclude_vref: Optional[str] = None
+    exclude_book: bool = False
+
+    @model_validator(mode="after")
+    def _exclude_book_needs_vref(self) -> "TfidfByTextRequest":
+        if self.exclude_book and not self.exclude_vref:
+            raise ValueError("exclude_book=True requires exclude_vref")
+        return self
+
+
+class TfidfByTextsRequest(BaseModel):
+    assessment_id: int
+    texts: List[
+        Annotated[str, Field(min_length=1, max_length=TFIDF_MAX_TEXT_CHARS)]
+    ] = Field(..., min_length=1, max_length=TFIDF_MAX_BATCH_VECTORS)
+    limit: int = Field(default=10, ge=1, le=500)
+    reference_id: Optional[int] = Field(default=None, ge=1)
+    # Per-text exclusion: exclude_vrefs[i] applies to texts[i]. Either omit it
+    # or pass a same-length list as texts.
+    exclude_vrefs: Optional[List[str]] = None
+    exclude_book: bool = False
+
+    @model_validator(mode="after")
+    def _validate_exclusions(self) -> "TfidfByTextsRequest":
+        if self.exclude_vrefs is not None and len(self.exclude_vrefs) != len(
+            self.texts
+        ):
+            raise ValueError(
+                "exclude_vrefs must be the same length as texts when provided"
+            )
+        if self.exclude_book and not self.exclude_vrefs:
+            raise ValueError("exclude_book=True requires exclude_vrefs")
+        return self
+
+
 # --- Assessment Results Push/Delete models ---
 
 
@@ -1668,6 +1976,75 @@ class MorphemeListOut(BaseModel):
     morphemes: List[MorphemeOut]
 
 
+class TrainingArtifactOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    target_version_id: int
+    iso_639_3: str
+    grammar_sketch: Optional[str] = None
+    source_model: Optional[str] = None
+    # `source` indicates which store satisfied the grammar_sketch read:
+    # "training_artifacts" = the version-keyed row supplied grammar_sketch.
+    # "language_profile"   = grammar_sketch came from the iso-keyed
+    #                         language_profiles row. This covers two cases:
+    #                         (a) no training_artifacts row exists for this
+    #                         version yet, and (b) a training_artifacts row
+    #                         exists but its grammar_sketch is NULL. In case
+    #                         (b), `source_model` is still surfaced from the
+    #                         version-keyed row even though the sketch fell
+    #                         back, so provenance isn't lost.
+    source: Literal["training_artifacts", "language_profile"]
+    created_at: Optional[datetime.datetime] = None
+    updated_at: Optional[datetime.datetime] = None
+
+
+class TrainingArtifactsDeleteResponse(BaseModel):
+    """Row counts deleted by DELETE /v3/tokenizer/training-artifacts/{version_id}.
+
+    The DELETE only touches rows version-stamped to this version_id;
+    legacy `target_version_id IS NULL` rows and rows stamped to other
+    versions of the same ISO are left intact. Lexeme cards are also
+    untouched — they have their own DELETE endpoint.
+    """
+
+    target_version_id: int
+    training_artifacts_deleted: int
+    affixes_deleted: int
+    morphemes_deleted: int
+
+
+class BulkLexemeCardDeleteResponse(BaseModel):
+    """Row counts deleted by DELETE /v3/agent/lexeme-card?target_version_id=X.
+
+    Wipes every lexeme card for the given target_version_id regardless of
+    source_version_id (cards built under different pivots all go), plus
+    cascades to examples and card_translations.
+    """
+
+    target_version_id: int
+    lexeme_cards_deleted: int
+    examples_deleted: int
+    card_translations_deleted: int
+
+
+class BulkAffixDeleteResponse(BaseModel):
+    """Row counts deleted by DELETE /v3/affixes-by-version/{version_id}.
+
+    Mirrors the soft-union semantics of ``GET /v3/affixes-by-version``:
+    deletes both rows version-stamped to ``version_id`` and legacy
+    iso-keyed rows (``target_version_id IS NULL``) that share the
+    version's ISO. Rows stamped to other versions of the same ISO are
+    left intact. Counts are split so callers can see what came from
+    each bucket.
+    """
+
+    target_version_id: int
+    iso_639_3: str
+    version_stamped_deleted: int
+    iso_keyed_deleted: int
+    total_deleted: int
+
+
 class TokenizerRunOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -1733,6 +2110,7 @@ class AffixIn(BaseModel):
 class AffixOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
+    id: int
     form: str
     position: AffixPosition
     gloss: str
@@ -1764,6 +2142,27 @@ class AffixCommitResponse(BaseModel):
 class AffixReplaceResponse(BaseModel):
     n_deleted: int
     n_inserted: int
+
+
+class AffixPatch(BaseModel):
+    """Partial update model for language affixes — all fields optional."""
+
+    form: Optional[str] = Field(default=None, min_length=1)
+    position: Optional[AffixPosition] = None
+    gloss: Optional[str] = Field(default=None, min_length=1)
+    examples: Optional[List[str]] = None
+    n_runs: Optional[int] = Field(default=None, ge=1, le=32767)
+    source_model: Optional[str] = None
+
+    @field_validator("form", "gloss", mode="after")
+    @classmethod
+    def _nfc_strip(cls, v):
+        if v is None:
+            return v
+        v = unicodedata.normalize("NFC", v).strip()
+        if not v:
+            raise ValueError("must not be empty after NFC + strip")
+        return v
 
 
 class WordIndexRequest(BaseModel):
@@ -1804,3 +2203,54 @@ class MorphemeSearchResponse(BaseModel):
     iso_639_3: str
     result_count: int
     results: List[MorphemeSearchResult]
+
+
+class PivotCandidateIn(BaseModel):
+    pivot_iso: str = Field(..., min_length=3, max_length=3)
+    pivot_revision_id: int
+    notes: Optional[str] = None
+
+
+class PivotCandidateOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    pivot_iso: str
+    pivot_revision_id: int
+    pivot_version_id: int  # derived via bible_revision.bible_version_id
+    notes: Optional[str] = None
+    language_profile: Optional[LanguageProfileOut] = None
+    created_at: Optional[datetime.datetime] = None
+    updated_at: Optional[datetime.datetime] = None
+
+
+class PivotCandidateListOut(BaseModel):
+    candidates: List[PivotCandidateOut]
+
+
+class LanguagePivotIn(BaseModel):
+    target_iso: str = Field(..., min_length=3, max_length=3)
+    pivot_iso: str = Field(..., min_length=3, max_length=3)
+    notes: Optional[str] = None
+
+
+class LanguagePivotOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    target_iso: str
+    pivot_iso: str
+    pivot_revision_id: int
+    pivot_version_id: int  # derived via bible_revision.bible_version_id
+    notes: Optional[str] = None
+    language_profile: Optional[LanguageProfileOut] = None
+    created_at: Optional[datetime.datetime] = None
+    updated_at: Optional[datetime.datetime] = None
+
+
+class LanguagePivotListOut(BaseModel):
+    mappings: List[LanguagePivotOut]
+
+
+class LanguagePivotMissOut(BaseModel):
+    target_iso: str
+    candidates: List[PivotCandidateOut]
+    hint: str
