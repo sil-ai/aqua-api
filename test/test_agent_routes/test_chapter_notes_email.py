@@ -644,3 +644,97 @@ def test_critique_latest_skips_newer_non_critique_assessment(
     assert resp.status_code == 200
     comments = [i["comments"] for i in resp.json()]
     assert any("Severity five problem comment" in c for c in comments)
+
+
+def test_chapter_notes_email_unfinished_assessment_id_404(
+    client, regular_token1, test_db_session, test_revision_id, test_revision_id_2
+):
+    """A not-yet-finished critique assessment_id must 404, not render a partial
+    or empty email from whatever issues happen to exist mid-run."""
+    from database.models import Assessment
+
+    running = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent-critique",
+        status="running",
+    )
+    test_db_session.add(running)
+    test_db_session.commit()
+    test_db_session.refresh(running)
+
+    resp = _get_email(client, regular_token1, assessment_id=running.id)
+    assert resp.status_code == 404
+
+    resp = client.get(
+        f"{prefix}/agent/critique",
+        params={"assessment_id": running.id},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert resp.status_code == 404
+
+
+def test_chapter_notes_email_aggregates_multiple_critique_assessments(
+    client,
+    regular_token1,
+    test_assessment_id,
+    test_revision_id,
+    test_revision_id_2,
+    test_db_session,
+    notes_setup,
+):
+    """all_assessments defaults True, so the email aggregates issues from every
+    finished agent-critique assessment on the revision/reference pair."""
+    from database.models import Assessment
+
+    second = Assessment(
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+        type="agent-critique",
+        status="finished",
+    )
+    test_db_session.add(second)
+    test_db_session.commit()
+    test_db_session.refresh(second)
+
+    headers = {"Authorization": f"Bearer {regular_token1}"}
+    translation_resp = client.post(
+        f"{prefix}/agent/translation",
+        json={
+            "assessment_id": second.id,
+            "vref": "JON 1:3",
+            "draft_text": DRAFT_TEXTS[3],
+            "literal_translation": "Second run back translation of verse three",
+        },
+        headers=headers,
+    )
+    assert translation_resp.status_code == 200, translation_resp.json()
+    translation_id = translation_resp.json()["id"]
+
+    critique_resp = client.post(
+        f"{prefix}/agent/critique",
+        json={
+            "agent_translation_id": translation_id,
+            "issues": [
+                {
+                    "dimension": "accuracy",
+                    "subtype": "mistranslation",
+                    "comments": "Second assessment severity five comment",
+                    "severity": 5,
+                }
+            ],
+        },
+        headers=headers,
+    )
+    assert critique_resp.status_code == 200, critique_resp.json()
+
+    resp = _get_email(
+        client,
+        regular_token1,
+        revision_id=test_revision_id,
+        reference_id=test_revision_id_2,
+    )
+    assert resp.status_code == 200, resp.text
+    # Issues from both the first (notes_setup) and the second critique render
+    assert "Severity five problem comment" in resp.text
+    assert "Second assessment severity five comment" in resp.text

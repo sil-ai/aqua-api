@@ -3387,13 +3387,14 @@ async def resolve_assessment_ids(
             select(Assessment).filter(
                 Assessment.id == assessment_id,
                 Assessment.type == "agent-critique",
+                Assessment.status == "finished",
                 Assessment.deleted.is_not(True),
             )
         )
         if not assessment_result.scalars().first():
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No agent-critique assessment with id {assessment_id} found",
+                detail=f"No completed agent-critique assessment with id {assessment_id} found",
             )
         assessment_ids = [assessment_id]
 
@@ -3541,6 +3542,7 @@ async def get_critique_issues(
 _CHAPTER_NOTES_TEMPLATES = Environment(
     loader=FileSystemLoader(pathlib.Path(__file__).parent / "templates"),
     autoescape=True,
+    auto_reload=False,
 )
 
 _DIMENSION_LABELS = {
@@ -3711,7 +3713,7 @@ async def get_chapter_notes_email(
         if not assessment:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Assessment with id {assessment_ids[0]} not found",
+                detail=f"Assessment with id {assessment_id} not found",
             )
         draft_revision_id = assessment.revision_id
         reference_revision_id = assessment.reference_id
@@ -3727,7 +3729,15 @@ async def get_chapter_notes_email(
                 BibleVersion.iso_script,
             )
             .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
-            .where(BibleRevision.id.in_([draft_revision_id, reference_revision_id]))
+            .where(
+                BibleRevision.id.in_(
+                    [
+                        rid
+                        for rid in (draft_revision_id, reference_revision_id)
+                        if rid is not None
+                    ]
+                )
+            )
         )
         meta_rows = {row.rev_id: row for row in await db.execute(meta_query)}
         draft_meta = meta_rows.get(draft_revision_id)
