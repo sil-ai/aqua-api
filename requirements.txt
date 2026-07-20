@@ -113,5 +113,6 @@ pre-commit==4.2.0
 black==23.12.1
 pgvector==0.2.0
 
-# Observability - Centralized Logging
-git+https://github.com/sil-ai/observability-library.git@v0.1.0
+# Observability / Loki logging is optional and lives in a private repo.
+# See requirements-observability.txt. Installing it is only needed when
+# LOKI_ENABLED=true; the app runs fine on console logging without it.

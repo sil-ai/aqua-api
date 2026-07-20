@@ -10,10 +10,23 @@ import logging
 import socket
 from typing import Optional
 
-from observability_library import LokiHandler, LokiLoggerLabels
 from pythonjsonlogger import jsonlogger
 
 from config import settings
+
+# The Loki integration lives in the private observability-library, which
+# external contributors can't install. Import it optionally so this module —
+# and therefore the whole app, which imports setup_logger everywhere — loads
+# cleanly without it. Loki logging is off by default (settings.loki_enabled),
+# so the missing dependency only matters when Loki is explicitly turned on.
+try:
+    from observability_library import LokiHandler, LokiLoggerLabels
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError:
+    LokiHandler = None
+    LokiLoggerLabels = None
+    OBSERVABILITY_AVAILABLE = False
 
 
 def setup_logger(
@@ -74,6 +87,15 @@ def setup_logger(
 
     # 2. Loki Handler (optional, controlled by feature flag)
     if settings.loki_enabled:
+        if not OBSERVABILITY_AVAILABLE:
+            # Loki was requested but the optional library isn't installed.
+            # Warn and carry on with console logging rather than crashing.
+            logger.warning(
+                "observability-library not installed; Loki logging disabled. "
+                "Install the optional dependency to enable it "
+                "(pip install -r requirements-observability.txt)."
+            )
+            return logger
         try:
             # Define labels for log organization
             labels = LokiLoggerLabels(
