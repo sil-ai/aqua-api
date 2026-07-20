@@ -1,15 +1,13 @@
 FROM python:3.11
 
 COPY requirements.txt requirements-observability.txt ./
-# RUN apt update
 
 # Install the observability superset so the deployed image includes the Loki
 # handler (observability-library) that ships logs when LOKI_ENABLED=true.
 # requirements-observability.txt `-r`'s the base requirements, so this installs
 # everything. Contributors without the extra still build from requirements.txt
 # directly; only the deployed image needs the observability dependency.
-RUN pip install -r requirements-observability.txt && \
-    rm -rf var/lin/apt/lists/*
+RUN pip install -r requirements-observability.txt
 
 RUN mkdir /app
 COPY *.py /app/
