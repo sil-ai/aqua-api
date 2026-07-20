@@ -69,10 +69,16 @@ cp .env.example .env
 with safe placeholder values and inline documentation. The application
 configuration (database, auth, CORS, Modal, thresholds, and Loki) is loaded
 and type-validated at startup by the typed settings object in
-[`config.py`](config.py) (`config.Settings`), so a missing or malformed
-**required** variable — `AQUA_DB` or `SECRET_KEY` — makes the app fail fast at
-boot instead of surfacing as a subtle runtime bug. See `.env.example` for the
-full set of optional variables and their defaults.
+[`config.py`](config.py) (`config.Settings`). `AQUA_DB` is a required field on
+`config.Settings`, so a missing or empty value fails validation at boot (the
+value's shape as a DB URL is not checked here — that surfaces when the engine
+connects). `SECRET_KEY` is optional on `config.Settings` (so config-only consumers
+like Alembic can import it) and its non-empty requirement is enforced at import
+in [`security_routes/utilities.py`](security_routes/utilities.py) — also
+fail-fast at boot, just in the security layer rather than in `config.Settings`
+itself. Either way, a missing required variable makes the app fail fast at boot
+instead of surfacing as a subtle runtime bug. See `.env.example` for the full
+set of optional variables and their defaults.
 
 ## Swagger
 

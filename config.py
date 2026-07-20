@@ -27,6 +27,7 @@ wiring in ``app.configure_cors`` rely on.
 from typing import Optional
 
 from dotenv import load_dotenv
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Load .env into os.environ before Settings reads it. Existing environment
@@ -47,6 +48,17 @@ class Settings(BaseSettings):
     # Required: the async SQLAlchemy URL (postgresql+asyncpg://...). A missing
     # value fails validation here, at boot, rather than deep inside a request.
     aqua_db: str
+
+    @field_validator("aqua_db")
+    @classmethod
+    def _aqua_db_nonempty(cls, v: str) -> str:
+        # A required str is satisfied by an explicitly-empty ``AQUA_DB=``, which
+        # would otherwise slip past boot validation and only fail later as an
+        # opaque SQLAlchemy error. Reject empty/whitespace to keep the fail-fast
+        # guarantee (mirrors the SECRET_KEY check in security_routes.utilities).
+        if not v.strip():
+            raise ValueError("AQUA_DB environment variable must not be empty")
+        return v
 
     # "null" forces SQLAlchemy's NullPool (used by the test suite, whose
     # TestClient spawns a fresh event loop per request). Anything else uses the
