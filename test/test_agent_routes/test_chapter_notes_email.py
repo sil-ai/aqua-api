@@ -435,8 +435,9 @@ def test_chapter_notes_email_deleted_assessment(
 def test_chapter_notes_email_subject_sanitized(
     client, regular_token1, test_db_session, chapter_verse_texts
 ):
-    """CRLF in a version name can't reach the header or JSON subject, and a
-    long non-latin-1 subject is RFC 2047-encoded without folding newlines."""
+    """CRLF in a version name can't reach the header or JSON subject. The
+    HTTP X-Email-Subject header RFC 2047-encodes non-latin-1 text without
+    folding newlines; the JSON subject carries Unicode directly."""
     from datetime import date
 
     from database.models import (
@@ -532,6 +533,14 @@ def test_critique_chapter_filter(
     )
     assert resp.status_code == 200
     assert resp.json() == []
+
+    # chapter without book is rejected (chapter numbers repeat across books)
+    resp = client.get(
+        f"{prefix}/agent/critique",
+        params={"assessment_id": test_assessment_id, "chapter": 1},
+        headers=headers,
+    )
+    assert resp.status_code == 400
 
 
 def test_chapter_notes_email_non_critique_assessment_id_404(

@@ -3439,7 +3439,7 @@ async def get_critique_issues(
     - agent_translation_id: int (optional) - Filter by specific agent translation ID
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - book: str (optional) - Filter by book code (e.g., "JHN")
-    - chapter: int (optional) - Filter by chapter number (use with book)
+    - chapter: int (optional) - Filter by chapter number (requires book; chapter numbers repeat across books)
     - dimension: str (optional) - Filter by MQM dimension (e.g., "accuracy")
     - subtype: str (optional) - Filter by MQM subtype (e.g., "wrong-key-term")
     - min_severity: int (optional) - Minimum severity level (1-5). Issues with
@@ -3452,6 +3452,12 @@ async def get_critique_issues(
     request_start = time.perf_counter()
     try:
         from sqlalchemy import desc, select
+
+        if chapter is not None and not book:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="chapter filter requires book",
+            )
 
         assessment_ids = await resolve_assessment_ids(
             db, current_user, assessment_id, revision_id, reference_id, all_assessments
