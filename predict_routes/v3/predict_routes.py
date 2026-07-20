@@ -1,7 +1,6 @@
 __version__ = "v3"
 
 import asyncio
-import os
 import secrets
 import socket
 import time
@@ -14,6 +13,7 @@ from fastapi import Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database.dependencies import get_db
 from database.models import PredictJob
 from database.models import UserDB as UserModel
@@ -51,7 +51,7 @@ PREDICT_APPS: dict[str, str] = {
     "word_alignment": "word-alignment",
 }
 
-DEFAULT_PER_APP_TIMEOUT_S = float(os.getenv("PREDICT_PER_APP_TIMEOUT_S", "60"))
+DEFAULT_PER_APP_TIMEOUT_S = settings.predict_per_app_timeout_s
 
 # agent.predict does translation + critique via Bedrock and has a 600s
 # Modal-side timeout; 60s is too tight and will produce spurious timeouts.
@@ -166,7 +166,7 @@ async def predict(
             detail=f"Not authorized for assessment {body.assessment_id}",
         )
 
-    modal_env = os.getenv("MODAL_ENV", "main")
+    modal_env = settings.modal_env
     input_payload = body.model_dump(exclude={"apps"})
 
     # Translation/critique are the only slow legs of the agent app — both
@@ -179,25 +179,21 @@ async def predict(
         body.include_translation or body.include_critique
     )
     if spawn_slow_agent:
-        sync_agent_payload = dict(input_payload)
-        sync_agent_payload["include_translation"] = False
-        sync_agent_payload["include_critique"] = False
+        sync_payload = dict(input_payload)
+        sync_payload["include_translation"] = False
+        sync_payload["include_critique"] = False
     else:
-        sync_agent_payload = input_payload
-
-    # `model` is an agent-only knob; other apps' Pydantic models may not
-    # accept it, so strip it from their fan-out payload. They otherwise
-    # see the same payload as the agent (including any flag suppression).
-    non_agent_payload = {k: v for k, v in sync_agent_payload.items() if k != "model"}
+        sync_payload = input_payload
 
     async def call_one(name: str) -> tuple[str, PredictAppResult]:
         started = time.perf_counter()
         modal_app = PREDICT_APPS[name]
         timeout_s = PER_APP_TIMEOUT_S.get(name, DEFAULT_PER_APP_TIMEOUT_S)
-        payload = sync_agent_payload if name == "agent" else non_agent_payload
         try:
             fn = _get_predict_fn(modal_app, modal_env)
-            data = await asyncio.wait_for(fn.remote.aio(payload), timeout=timeout_s)
+            data = await asyncio.wait_for(
+                fn.remote.aio(sync_payload), timeout=timeout_s
+            )
             duration_ms = int((time.perf_counter() - started) * 1000)
             return name, PredictAppResult(
                 status="ok", data=data, duration_ms=duration_ms
@@ -244,7 +240,6 @@ async def predict(
             "assessment_id": body.assessment_id,
             "modal_env": modal_env,
             "spawn_slow_agent": spawn_slow_agent,
-            "model": body.model,
         },
     )
 
@@ -416,7 +411,7 @@ async def semantic_similarity_inference(
     request: SemanticSimilarityRequest,
     current_user: UserModel = Depends(get_current_user),
 ):
-    modal_env = os.getenv("MODAL_ENV", "main")
+    modal_env = settings.modal_env
     logger.info(
         "Semantic similarity inference request",
         extra={

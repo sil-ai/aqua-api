@@ -28,6 +28,7 @@ from models import (
     AffixOut,
     AffixPatch,
     AffixReplaceResponse,
+    BulkAffixDeleteResponse,
 )
 from security_routes.auth_routes import get_current_user
 from security_routes.utilities import is_user_authorized_for_bible_version
@@ -43,6 +44,42 @@ def _normalize(value: str) -> str:
     # NFC + strip only — no casefold. Affix forms and glosses are
     # case-sensitive linguistic annotations, unlike morphemes.
     return unicodedata.normalize("NFC", value).strip()
+
+
+async def _resolve_version_and_validate_iso(db, revision_id, payload_iso):
+    """Resolve ``target_version_id`` from ``revision_id`` and reject any
+    mismatch between the revision's version ISO and ``payload_iso``.
+
+    Returns the resolved ``target_version_id``. Raises 422 if the revision
+    is unknown or its version's ISO doesn't match ``payload_iso``. The
+    cross-check is important under version-scoped writes (#798): without
+    it a caller could write a row whose ``iso_639_3`` belongs to one
+    language but whose ``target_version_id`` belongs to another, leaving
+    the row invisible to both ``GET /affixes-by-version`` (filters by
+    version's iso) and any sensible iso-only listing.
+    """
+    lookup = await db.execute(
+        select(BibleRevision.bible_version_id, BibleVersion.iso_language)
+        .join(BibleVersion, BibleRevision.bible_version_id == BibleVersion.id)
+        .where(BibleRevision.id == revision_id)
+    )
+    row = lookup.first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown revision_id {revision_id}",
+        )
+    target_version_id, version_iso = row
+    if version_iso != payload_iso:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"iso_639_3 {payload_iso!r} does not match the ISO "
+                f"({version_iso!r}) of the version that owns "
+                f"revision_id {revision_id}"
+            ),
+        )
+    return target_version_id
 
 
 @router.get("/affixes-by-version/{version_id}", response_model=AffixListOut)
@@ -119,6 +156,108 @@ async def get_affixes_by_version(
     )
 
 
+@router.delete(
+    "/affixes-by-version/{version_id}",
+    response_model=BulkAffixDeleteResponse,
+)
+async def delete_affixes_by_version(
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Wipe every affix the GET soft-union would return for ``version_id``.
+
+    Deletes (atomically, in one transaction):
+    - rows version-stamped to ``version_id`` (``target_version_id == version_id``)
+    - legacy iso-keyed rows (``target_version_id IS NULL``) that share the
+      version's ISO — the same rows ``GET /affixes-by-version/{version_id}``
+      surfaces via its soft union.
+
+    Rows stamped to other versions of the same ISO are left intact, so other
+    versions' soft-union reads stay consistent.
+
+    This is the affix analog of ``DELETE /v3/agent/lexeme-card`` (#703) and
+    lets ``build_mode="rebuild"`` clear affixes the same way it clears cards.
+    The existing ``DELETE /v3/tokenizer/training-artifacts/{version_id}``
+    already removes version-stamped affixes as a side effect, but it leaves
+    iso-keyed legacy rows behind and is awkward as the primary surface for
+    affix-only cleanups.
+
+    Status codes:
+    - 200: returns row counts deleted (zeros if nothing existed — idempotent)
+    - 403: caller is not authorized for this version — also returned for
+      non-existent version_ids when the caller is a regular user, so
+      unauthorized callers can't enumerate valid versions (matches the GET)
+    - 404: admin caller requesting a version_id that doesn't exist
+    """
+    request_start = time.perf_counter()
+
+    if not await is_user_authorized_for_bible_version(current_user.id, version_id, db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to access this bible_version",
+        )
+
+    version_lookup = await db.execute(
+        select(BibleVersion.iso_language).where(BibleVersion.id == version_id)
+    )
+    iso = version_lookup.scalar_one_or_none()
+    if iso is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No bible_version with id {version_id}",
+        )
+
+    try:
+        stamped_result = await db.execute(
+            delete(LanguageAffix).where(LanguageAffix.target_version_id == version_id)
+        )
+        # Migration e2ad1ed4a64a dropped all NULL-target rows, so this
+        # branch usually deletes nothing — but POST/PUT /affixes without a
+        # revision_id can still create NULL-stamped rows, and the GET
+        # soft-union would resurface them, so it is not dead code.
+        iso_keyed_result = await db.execute(
+            delete(LanguageAffix).where(
+                LanguageAffix.iso_639_3 == iso,
+                LanguageAffix.target_version_id.is_(None),
+            )
+        )
+        await db.commit()
+    except SQLAlchemyError as e:
+        await db.rollback()
+        logger.error("Failed to bulk-delete affixes", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {e}",
+        ) from e
+
+    stamped_count = stamped_result.rowcount or 0
+    iso_keyed_count = iso_keyed_result.rowcount or 0
+    response = BulkAffixDeleteResponse(
+        target_version_id=version_id,
+        iso_639_3=iso,
+        version_stamped_deleted=stamped_count,
+        iso_keyed_deleted=iso_keyed_count,
+        total_deleted=stamped_count + iso_keyed_count,
+    )
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"delete_affixes_by_version completed in {duration}s",
+        extra={
+            "method": "DELETE",
+            "path": "/affixes-by-version/{version_id}",
+            "version_id": version_id,
+            "iso": iso,
+            "version_stamped_deleted": stamped_count,
+            "iso_keyed_deleted": iso_keyed_count,
+            "total_deleted": response.total_deleted,
+            "duration_s": duration,
+        },
+    )
+    return response
+
+
 @router.get("/affixes", response_model=AffixListOut)
 async def get_affixes(
     iso: str = Query(..., min_length=3, max_length=3),
@@ -170,10 +309,17 @@ async def commit_affixes(
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Bulk upsert of language affixes, keyed on (iso, form, position).
+    """Bulk upsert of language affixes, scoped to the payload's revision.
+
+    With ``revision_id`` set (the canonical agent path), conflicts are
+    detected against rows stamped to the same ``target_version_id``;
+    rows owned by other versions of the same ISO are untouched (#798).
+    Without a ``revision_id``, conflicts are detected against the legacy
+    ``target_version_id IS NULL`` bucket only.
 
     Same gloss → idempotent upsert of examples/n_runs/source_model.
-    Different gloss for an existing (form, position) → **409** with body:
+    Different gloss for an existing (form, position) within the scope →
+    **409** with body:
 
         {"detail": {"message": ..., "conflicts": [
             {"form", "position", "submitted_gloss",
@@ -213,17 +359,9 @@ async def commit_affixes(
 
     target_version_id: Optional[int] = None
     if payload.revision_id is not None:
-        revision_lookup = await db.execute(
-            select(BibleRevision.bible_version_id).where(
-                BibleRevision.id == payload.revision_id
-            )
+        target_version_id = await _resolve_version_and_validate_iso(
+            db, payload.revision_id, iso
         )
-        target_version_id = revision_lookup.scalar_one_or_none()
-        if target_version_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Unknown revision_id {payload.revision_id}",
-            )
 
     n_new = 0
     n_updated = 0
@@ -259,8 +397,10 @@ async def commit_affixes(
                 }
 
             # Look up existing rows for the (form, position) tuples in the
-            # payload. One OR-of-ANDs clause per tuple is fine at the
-            # ~10-30 affix scale the comment specifies.
+            # payload, scoped to the same target_version_id so a write for
+            # one version doesn't 409 against another version's rows (#798).
+            # When the payload has no revision_id, scope to the legacy
+            # target_version_id IS NULL bucket.
             existing_map: dict[tuple[str, str], dict] = {}
             if incoming:
                 clauses = [
@@ -270,6 +410,13 @@ async def commit_affixes(
                     )
                     for (f, p) in incoming.keys()
                 ]
+                if target_version_id is not None:
+                    scope_clause = LanguageAffix.target_version_id == target_version_id
+                else:
+                    scope_clause = and_(
+                        LanguageAffix.iso_639_3 == iso,
+                        LanguageAffix.target_version_id.is_(None),
+                    )
                 existing_result = await db.execute(
                     select(
                         LanguageAffix.id,
@@ -280,7 +427,7 @@ async def commit_affixes(
                         LanguageAffix.n_runs,
                         LanguageAffix.source_model,
                     ).where(
-                        LanguageAffix.iso_639_3 == iso,
+                        scope_clause,
                         or_(*clauses),
                     )
                 )
@@ -364,16 +511,21 @@ async def commit_affixes(
                     "source_model": stmt.excluded.source_model,
                     "updated_at": func.now(),
                 }
-                # First-writer-wins for target_version_id: only stamp it on
-                # rows where it's currently NULL (Phase 1 backfill semantics).
+                # Conflict target tracks the partial unique that owns this
+                # bucket: (target_version_id, form, position) for stamped
+                # rows, (iso, form, position) for legacy NULL rows (#798).
                 if target_version_id is not None:
-                    set_values["target_version_id"] = func.coalesce(
-                        LanguageAffix.target_version_id, stmt.excluded.target_version_id
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["target_version_id", "form", "position"],
+                        index_where=LanguageAffix.target_version_id.isnot(None),
+                        set_=set_values,
                     )
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["iso_639_3", "form", "position"],
-                    set_=set_values,
-                )
+                else:
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["iso_639_3", "form", "position"],
+                        index_where=LanguageAffix.target_version_id.is_(None),
+                        set_=set_values,
+                    )
                 await db.execute(stmt)
 
         await db.commit()
@@ -441,24 +593,21 @@ async def replace_affixes(
 
     target_version_id: Optional[int] = None
     if payload.revision_id is not None:
-        revision_lookup = await db.execute(
-            select(BibleRevision.bible_version_id).where(
-                BibleRevision.id == payload.revision_id
-            )
+        target_version_id = await _resolve_version_and_validate_iso(
+            db, payload.revision_id, iso
         )
-        target_version_id = revision_lookup.scalar_one_or_none()
-        if target_version_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=f"Unknown revision_id {payload.revision_id}",
-            )
 
     try:
-        del_filter = LanguageAffix.iso_639_3 == iso
-        if payload.revision_id is not None:
+        # Version-scope the replace: deleting only rows in the current
+        # write bucket avoids wiping affixes that belong to other versions
+        # of the same ISO (#798). When the caller omits revision_id we
+        # operate on the legacy target_version_id IS NULL bucket only.
+        if target_version_id is not None:
+            del_filter = LanguageAffix.target_version_id == target_version_id
+        else:
             del_filter = and_(
-                del_filter,
-                LanguageAffix.first_seen_revision_id == payload.revision_id,
+                LanguageAffix.iso_639_3 == iso,
+                LanguageAffix.target_version_id.is_(None),
             )
         result = await db.execute(delete(LanguageAffix).where(del_filter))
         n_deleted = result.rowcount
@@ -505,10 +654,12 @@ async def replace_affixes(
                 for (form, position), fields in incoming.items()
             ]
             stmt = pg_insert(LanguageAffix).values(rows)
-            # PUT is "replace": if the scoped delete left a row from another
-            # scope with the same (form, position), authoritatively overwrite
-            # gloss too. This is the one path that may change an existing
-            # row's gloss without an explicit PATCH.
+            # PUT is "replace within scope": if the scoped delete raced
+            # with a concurrent writer and left a row in this bucket,
+            # authoritatively overwrite gloss too. This is the one path
+            # that may change an existing row's gloss without an explicit
+            # PATCH. Conflict target matches the partial unique for the
+            # current write bucket (#798).
             replace_set = {
                 "gloss": stmt.excluded.gloss,
                 "examples": stmt.excluded.examples,
@@ -517,14 +668,18 @@ async def replace_affixes(
                 "first_seen_revision_id": stmt.excluded.first_seen_revision_id,
                 "updated_at": func.now(),
             }
-            # PUT overwrites target_version_id authoritatively when caller
-            # supplies a revision; otherwise preserve any prior stamp.
             if target_version_id is not None:
-                replace_set["target_version_id"] = stmt.excluded.target_version_id
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["iso_639_3", "form", "position"],
-                set_=replace_set,
-            )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["target_version_id", "form", "position"],
+                    index_where=LanguageAffix.target_version_id.isnot(None),
+                    set_=replace_set,
+                )
+            else:
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["iso_639_3", "form", "position"],
+                    index_where=LanguageAffix.target_version_id.is_(None),
+                    set_=replace_set,
+                )
             await db.execute(stmt)
             n_inserted = len(rows)
 
@@ -605,9 +760,22 @@ async def patch_affix(
     )
 
     if (new_form, new_position) != (affix.form, affix.position):
+        # Scope the duplicate check to the same write bucket as the row
+        # being patched, mirroring the version-scoped unique indexes
+        # (#798): collisions only matter within the same target_version_id
+        # (or within the legacy NULL bucket for the same ISO).
+        # For stamped rows, target_version_id uniquely implies the ISO,
+        # so the iso filter is omitted; for NULL rows it is required.
+        if affix.target_version_id is None:
+            scope_clause = and_(
+                LanguageAffix.iso_639_3 == affix.iso_639_3,
+                LanguageAffix.target_version_id.is_(None),
+            )
+        else:
+            scope_clause = LanguageAffix.target_version_id == affix.target_version_id
         dup_result = await db.execute(
             select(LanguageAffix.id).where(
-                LanguageAffix.iso_639_3 == affix.iso_639_3,
+                scope_clause,
                 LanguageAffix.form == new_form,
                 LanguageAffix.position == new_position,
                 LanguageAffix.id != affix.id,

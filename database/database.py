@@ -1,20 +1,12 @@
-import os
-
-from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 
+from config import settings
 from database.models import Base
 
-# Load environment variables from .env file
-load_dotenv()
-
-DATABASE_URL = os.getenv("AQUA_DB")
-
-
-# If the DATABASE_URL is not set, we should raise an exception
-if not DATABASE_URL:
-    raise ValueError("No DATABASE_URL.")
+# AQUA_DB is a required setting, validated when `config` is imported, so it is
+# guaranteed to be present (non-empty) here.
+DATABASE_URL = settings.aqua_db
 
 engine = create_engine(DATABASE_URL)
 db_session = scoped_session(

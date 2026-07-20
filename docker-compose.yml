@@ -34,6 +34,9 @@ services:
       - LOKI_AUTH_TOKEN=${LOKI_AUTH_TOKEN:-}
       - PROJECT_NAME=aqua-api
       - ENVIRONMENT_LOKI=${ENVIRONMENT_LOKI:-docker}
+      # Comma-separated list of allowed CORS origins (e.g. https://aqua.sil.org).
+      # Empty / unset blocks all cross-origin requests.
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-}
     depends_on:
       - db
 

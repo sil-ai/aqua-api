@@ -5,6 +5,7 @@ import socket
 import time
 import unicodedata
 from collections import Counter
+from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
@@ -92,7 +93,7 @@ def _effective_source_version_expr(source_version_id: int, target_version_id: in
     return func.coalesce(pivot_version_subquery, source_version_id)
 
 
-def sanitize_text(text: str) -> str:
+def sanitize_text(text: Optional[str]) -> Optional[str]:
     """Sanitize text fields to remove control characters.
 
     LLM responses can contain literal newlines, tabs, or other control characters.
@@ -109,6 +110,20 @@ def sanitize_text(text: str) -> str:
     # Collapse multiple spaces into one
     text = re.sub(r" +", " ", text)
     return text.strip()
+
+
+def sanitize_suggestion_items(items):
+    """Sanitize a list of SuggestionItem (suggestions/alternatives) into JSONB-ready dicts.
+
+    An empty or absent list is normalized to None so "none provided" and
+    "explicitly empty" persist identically (NULL).
+    """
+    if not items:
+        return None
+    return [
+        {"text": sanitize_text(item.text), "note": sanitize_text(item.note)}
+        for item in items
+    ]
 
 
 @router.post("/agent/word-alignment", response_model=AgentWordAlignmentOut)
@@ -378,13 +393,12 @@ async def add_critique_issues(
     current_user: UserModel = Depends(get_current_user),
 ):
     """
-    Store critique issues (omissions, additions, and replacements) linked to a specific agent translation.
+    Store MQM-aligned critique issues linked to a specific agent translation.
 
     Input:
     - agent_translation_id: int - The ID of the translation being critiqued
-    - omissions: list[OmissionIssueIn] - source_text present in source but missing from draft
-    - additions: list[AdditionIssueIn] - draft_text present in draft but not in source
-    - replacements: list[ReplacementIssueIn] - source_text incorrectly rendered as draft_text
+    - issues: list[IssueIn] - MQM-aligned issues (dimension, subtype, optional
+      source_text/draft_text/comments/severity/detector/evidence)
 
     Returns:
     - List[CritiqueIssueOut]: List of all created critique issue entries
@@ -434,25 +448,13 @@ async def add_critique_issues(
 
         created_issues = []
 
-        # Create records for omissions
-        for omission in critique.omissions:
-            issue = AgentCritiqueIssue(
-                assessment_id=assessment_id,
-                agent_translation_id=critique.agent_translation_id,
-                vref=vref,
-                book=book,
-                chapter=chapter,
-                verse=verse,
-                issue_type="omission",
-                source_text=sanitize_text(omission.source_text),
-                comments=sanitize_text(omission.comments),
-                severity=omission.severity,
+        for issue_in in critique.issues:
+            evidence = (
+                [sanitize_text(item) for item in issue_in.evidence]
+                if issue_in.evidence is not None
+                else None
             )
-            db.add(issue)
-            created_issues.append(issue)
-
-        # Create records for additions
-        for addition in critique.additions:
+            suggestions = sanitize_suggestion_items(issue_in.suggestions)
             issue = AgentCritiqueIssue(
                 assessment_id=assessment_id,
                 agent_translation_id=critique.agent_translation_id,
@@ -460,28 +462,15 @@ async def add_critique_issues(
                 book=book,
                 chapter=chapter,
                 verse=verse,
-                issue_type="addition",
-                draft_text=sanitize_text(addition.draft_text),
-                comments=sanitize_text(addition.comments),
-                severity=addition.severity,
-            )
-            db.add(issue)
-            created_issues.append(issue)
-
-        # Create records for replacements
-        for replacement in critique.replacements:
-            issue = AgentCritiqueIssue(
-                assessment_id=assessment_id,
-                agent_translation_id=critique.agent_translation_id,
-                vref=vref,
-                book=book,
-                chapter=chapter,
-                verse=verse,
-                issue_type="replacement",
-                source_text=sanitize_text(replacement.source_text),
-                draft_text=sanitize_text(replacement.draft_text),
-                comments=sanitize_text(replacement.comments),
-                severity=replacement.severity,
+                dimension=sanitize_text(issue_in.dimension),
+                subtype=sanitize_text(issue_in.subtype),
+                detector=sanitize_text(issue_in.detector),
+                source_text=sanitize_text(issue_in.source_text),
+                draft_text=sanitize_text(issue_in.draft_text),
+                comments=sanitize_text(issue_in.comments),
+                severity=issue_in.severity,
+                evidence=evidence,
+                suggestions=suggestions,
             )
             db.add(issue)
             created_issues.append(issue)
@@ -682,6 +671,7 @@ async def add_lexeme_card(
             existing_card.english_lemma = card.english_lemma
             existing_card.alignment_scores = sorted_alignment_scores
             existing_card.build_version = card.build_version
+            existing_card.model = card.model
             existing_card.last_updated = func.now()
             if is_user_edit:
                 existing_card.last_user_edit = func.now()
@@ -814,6 +804,7 @@ async def add_lexeme_card(
                 "english_lemma": existing_card.english_lemma,
                 "alignment_scores": sorted_alignment_scores,
                 "build_version": existing_card.build_version,
+                "model": existing_card.model,
                 "created_at": existing_card.created_at,
                 "last_updated": existing_card.last_updated,
                 "last_user_edit": existing_card.last_user_edit,
@@ -844,6 +835,7 @@ async def add_lexeme_card(
                 english_lemma=card.english_lemma,
                 alignment_scores=sorted_alignment_scores,
                 build_version=card.build_version,
+                model=card.model,
                 last_user_edit=func.now() if is_user_edit else None,
             )
 
@@ -907,6 +899,7 @@ async def add_lexeme_card(
                 "english_lemma": lexeme_card.english_lemma,
                 "alignment_scores": sorted_alignment_scores,
                 "build_version": lexeme_card.build_version,
+                "model": lexeme_card.model,
                 "created_at": lexeme_card.created_at,
                 "last_updated": lexeme_card.last_updated,
                 "last_user_edit": lexeme_card.last_user_edit,
@@ -1060,6 +1053,8 @@ async def _apply_lexeme_card_patch(
         card.english_lemma = patch_data.english_lemma
     if "build_version" in provided_fields:
         card.build_version = patch_data.build_version
+    if "model" in provided_fields:
+        card.model = patch_data.model
 
     # Handle alignment_scores (dict) - merge keys, null value removes key
     if "alignment_scores" in provided_fields:
@@ -1222,6 +1217,7 @@ async def _apply_lexeme_card_patch(
         "english_lemma": card.english_lemma,
         "alignment_scores": card.alignment_scores,
         "build_version": card.build_version,
+        "model": card.model,
         "created_at": card.created_at,
         "last_updated": card.last_updated,
         "last_user_edit": card.last_user_edit,
@@ -1240,6 +1236,7 @@ _CANONICAL_PATCH_FIELDS = {
     "english_lemma",
     "alignment_scores",
     "build_version",
+    "model",
 }
 # Fields routed to the card_translations overlay row for (card_id, language_iso)
 # in overlay-mode patching. Source-side identity and senses.
@@ -1278,8 +1275,8 @@ async def patch_lexeme_card_translation(
       upserted on conflict. The canonical's source-side stays untouched, so
       edits in (target, eng) view can't corrupt the (target, swh) pivot.
     - Target-side and shared fields (target_lemma, surface_forms, pos,
-      confidence, english_lemma, alignment_scores, build_version) land in
-      the canonical ``agent_lexeme_cards`` row. There is only one target
+      confidence, english_lemma, alignment_scores, build_version, model) land
+      in the canonical ``agent_lexeme_cards`` row. There is only one target
       column physically, so all overlays project the same target text — fixing
       a typo from any language view fixes it everywhere.
     - When ``language_iso`` equals the card's canonical ``source_language_iso``
@@ -1479,6 +1476,9 @@ async def patch_lexeme_card_translation(
             canonical_touched = True
         if "build_version" in canonical_fields:
             card.build_version = patch_data.build_version
+            canonical_touched = True
+        if "model" in canonical_fields:
+            card.model = patch_data.model
             canonical_touched = True
         if "alignment_scores" in canonical_fields:
             if patch_data.alignment_scores is None:
@@ -1742,6 +1742,7 @@ async def _build_lexeme_card_out_for_lang(
             "english_lemma": card.english_lemma,
             "alignment_scores": card.alignment_scores,
             "build_version": card.build_version,
+            "model": card.model,
             "created_at": card.created_at,
             "last_updated": card.last_updated,
             "last_user_edit": effective_last_user_edit,
@@ -1885,13 +1886,15 @@ async def patch_lexeme_card_by_lemma_DEPRECATED(
         from sqlalchemy.sql import func as sql_func
 
         query = select(AgentLexemeCard).where(
-            sql_func.lower(AgentLexemeCard.target_lemma) == target_lemma.lower(),
+            sql_func.lower(AgentLexemeCard.target_lemma)
+            == unicodedata.normalize("NFC", target_lemma).lower(),
             AgentLexemeCard.source_version_id == source_version_id,
             AgentLexemeCard.target_version_id == target_version_id,
         )
         if source_lemma is not None:
             query = query.where(
-                sql_func.lower(AgentLexemeCard.source_lemma) == source_lemma.lower()
+                sql_func.lower(AgentLexemeCard.source_lemma)
+                == unicodedata.normalize("NFC", source_lemma).lower()
             )
         cards = (await db.execute(query)).scalars().all()
 
@@ -2433,6 +2436,7 @@ async def get_lexeme_cards(
     target_word: str = None,
     target_words: str = None,
     pos: str = None,
+    model: str | None = Query(default=None, min_length=1),
     lang: str | None = Query(default=None, min_length=3, max_length=3),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
@@ -2460,6 +2464,10 @@ async def get_lexeme_cards(
       cards where target_lemma or any surface_form matches any of the given words
       (case-insensitive, NFC-normalized). Cannot be used with target_word.
     - pos: str (optional) - Filter by part of speech
+    - model: str (optional) - Filter by the model id/name that built the card.
+      Lets harvesters fetch only cards built by a trusted model (e.g. Sonnet)
+      and exclude poisoned ones. Exact match; cards with NULL ``model`` are
+      excluded when this filter is set.
     - lang: str (optional) - ISO 639-3 code for the desired source-side language.
       When omitted or equal to the cards' canonical source_language_iso, returns
       cards in their canonical shape (back-compat). When it differs, source-side
@@ -2521,6 +2529,13 @@ async def get_lexeme_cards(
         # Add POS filter if provided
         if pos:
             conditions.append(AgentLexemeCard.pos == pos)
+
+        # Filter by build-provenance model when provided. Exact match — NULLs
+        # are excluded by SQL ``=`` semantics, which is what we want (the
+        # caller is asking for "cards built by model X", so unstamped cards
+        # don't qualify).
+        if model:
+            conditions.append(AgentLexemeCard.model == model)
 
         # Word filtering: both source_word and target_word search
         # lemma OR surface_forms (case-insensitive exact match, NFC-normalized)
@@ -2782,6 +2797,7 @@ async def get_lexeme_cards(
                 "english_lemma": card.english_lemma,
                 "alignment_scores": card.alignment_scores,
                 "build_version": card.build_version,
+                "model": card.model,
                 "created_at": card.created_at,
                 "last_updated": card.last_updated,
                 "last_user_edit": card.last_user_edit,
@@ -2851,8 +2867,10 @@ async def check_word_in_lexeme_cards(
     try:
         from sqlalchemy import func, select, text
 
-        # Normalize the word for case-insensitive comparison
-        word_lower = word.strip().lower()
+        # Normalize the word for case-insensitive comparison.
+        # NFC matches the storage normalization performed by LexemeCardIn so
+        # NFD-decomposed inputs find NFC-stored rows (see issue #779).
+        word_lower = unicodedata.normalize("NFC", word.strip()).lower()
 
         effective_source_version = _effective_source_version_expr(
             source_version_id, target_version_id
@@ -3249,6 +3267,7 @@ async def get_lexeme_card_by_id(
             "english_lemma": card.english_lemma,
             "alignment_scores": card.alignment_scores,
             "build_version": card.build_version,
+            "model": card.model,
             "created_at": card.created_at,
             "last_updated": card.last_updated,
             "last_user_edit": card.last_user_edit,
@@ -3289,7 +3308,8 @@ async def get_critique_issues(
     agent_translation_id: int = None,
     vref: str = None,
     book: str = None,
-    issue_type: str = None,
+    dimension: str = None,
+    subtype: str = None,
     min_severity: int = None,
     is_resolved: bool = None,
     db: AsyncSession = Depends(get_db),
@@ -3306,8 +3326,10 @@ async def get_critique_issues(
     - agent_translation_id: int (optional) - Filter by specific agent translation ID
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - book: str (optional) - Filter by book code (e.g., "JHN")
-    - issue_type: str (optional) - Filter by issue type ("omission" or "addition")
-    - min_severity: int (optional) - Minimum severity level (0-5)
+    - dimension: str (optional) - Filter by MQM dimension (e.g., "accuracy")
+    - subtype: str (optional) - Filter by MQM subtype (e.g., "wrong-key-term")
+    - min_severity: int (optional) - Minimum severity level (1-5). Issues with
+      severity=NULL are excluded by this filter (SQL three-valued logic).
     - is_resolved: bool (optional) - Filter by resolution status (true=resolved, false=unresolved)
 
     Returns:
@@ -3413,31 +3435,31 @@ async def get_critique_issues(
         if book:
             query = query.where(AgentCritiqueIssue.book == book)
 
-        if issue_type:
-            if issue_type not in ["omission", "addition", "replacement"]:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="issue_type must be 'omission', 'addition', or 'replacement'",
-                )
-            query = query.where(AgentCritiqueIssue.issue_type == issue_type)
+        if dimension:
+            query = query.where(AgentCritiqueIssue.dimension == dimension)
+
+        if subtype:
+            query = query.where(AgentCritiqueIssue.subtype == subtype)
 
         if min_severity is not None:
-            if min_severity < 0 or min_severity > 5:
+            if min_severity < 1 or min_severity > 5:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="min_severity must be between 0 and 5",
+                    detail="min_severity must be between 1 and 5",
                 )
             query = query.where(AgentCritiqueIssue.severity >= min_severity)
 
         if is_resolved is not None:
             query = query.where(AgentCritiqueIssue.is_resolved == is_resolved)
 
-        # Order by book, chapter, verse, and severity (descending)
+        # Order by book, chapter, verse, severity (desc, NULLs last so issues
+        # that omit severity sort to the bottom rather than to the top under
+        # PostgreSQL's default DESC-puts-NULLs-first behaviour).
         query = query.order_by(
             AgentCritiqueIssue.book,
             AgentCritiqueIssue.chapter,
             AgentCritiqueIssue.verse,
-            desc(AgentCritiqueIssue.severity),
+            desc(AgentCritiqueIssue.severity).nulls_last(),
         )
 
         # Execute query
@@ -3455,7 +3477,8 @@ async def get_critique_issues(
                 "reference_id": reference_id,
                 "vref": vref,
                 "book": book,
-                "issue_type": issue_type,
+                "dimension": dimension,
+                "subtype": subtype,
                 "duration_s": duration,
             },
         )
@@ -3719,6 +3742,7 @@ async def add_agent_translation(
         hyper_literal = sanitize_text(translation.hyper_literal_translation)
         literal = sanitize_text(translation.literal_translation)
         english = sanitize_text(translation.english_translation)
+        alternatives = sanitize_suggestion_items(translation.alternatives)
 
         # Create the translation record
         agent_translation = AgentTranslation(
@@ -3732,6 +3756,7 @@ async def add_agent_translation(
             hyper_literal_translation=hyper_literal,
             literal_translation=literal,
             english_translation=english,
+            alternatives=alternatives,
         )
 
         db.add(agent_translation)
@@ -3867,6 +3892,7 @@ async def add_agent_translations_bulk(
                 ),
                 literal_translation=sanitize_text(trans.literal_translation),
                 english_translation=sanitize_text(trans.english_translation),
+                alternatives=sanitize_suggestion_items(trans.alternatives),
             )
             for trans in request.translations
         ]
