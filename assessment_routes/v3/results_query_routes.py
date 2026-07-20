@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import Float, Text, case, cast, func, text
+from sqlalchemy import Float, Text, case, cast, func, literal, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
@@ -36,7 +36,10 @@ from models import AlignmentMatch, MultipleResult, NgramResult
 from models import Result_v2 as Result
 from models import TextLengthsResult, TfidfResult, WordAlignment
 from security_routes.auth_routes import get_current_user
-from security_routes.utilities import is_user_authorized_for_assessment
+from security_routes.utilities import (
+    get_authorized_revision_ids,
+    is_user_authorized_for_assessment,
+)
 from utils.logging_config import setup_logger
 from utils.verse_range_utils import merge_verse_ranges
 
@@ -236,6 +239,106 @@ async def build_results_query(
         base_query,
         final_count_query,
     )
+
+
+async def build_average_results_query(
+    assessment_ids: List[int],
+    assessment_type: str,
+    book: Optional[str],
+    chapter: Optional[int],
+    verse: Optional[int],
+    page: Optional[int],
+    page_size: Optional[int],
+    aggregate: Optional[aggType],
+    reverse: Optional[bool],
+) -> Tuple:
+    """Build the averaged-results query for ``/averageresult``.
+
+    Mirrors ``build_results_query`` but averages ``score`` across *all*
+    the supplied ``assessment_ids`` (the deduplicated set of assessments
+    for one revision + type) instead of a single assessment. Because
+    every assessment writes at most one result row per verse, grouping by
+    the vref/aggregation columns without grouping on ``assessment_id``
+    yields the mean score across the reference texts for each vref.
+    """
+    base_query = select(AssessmentResult).where(
+        AssessmentResult.assessment_id.in_(assessment_ids)
+    )
+
+    if book is not None:
+        base_query = base_query.where(func.upper(AssessmentResult.book) == book.upper())
+    if chapter is not None:
+        base_query = base_query.where(AssessmentResult.chapter == chapter)
+    if verse is not None:
+        base_query = base_query.where(AssessmentResult.verse == verse)
+
+    # Mirror /result's missing-words handling: for these types only the
+    # non-null source rows are meaningful unless the caller asks for the
+    # reverse view.
+    only_non_null = (
+        assessment_type in ["question-answering", "word-tests"] and not reverse
+    )
+    if only_non_null:
+        base_query = base_query.where(AssessmentResult.source.isnot(None))
+
+    subquery = base_query.subquery()
+
+    if aggregate == aggType.chapter:
+        group_by_columns = ["book", "chapter"]
+    elif aggregate == aggType.book:
+        group_by_columns = ["book"]
+    elif aggregate == aggType.text:
+        group_by_columns = []
+    else:
+        group_by_columns = ["book", "chapter", "verse"]
+
+    # For text-level aggregation there are no grouping columns — every row
+    # collapses into a single average. We still GROUP BY (rather than emit a
+    # bare aggregate) so that an empty input yields zero rows instead of one
+    # all-NULL row that would fail Result validation. A plain constant is
+    # rejected by Postgres ("non-integer constant in GROUP BY"), so group by a
+    # scalar subquery, which is a valid single-group expression.
+    if group_by_columns:
+        main_group_by = [getattr(subquery.c, col) for col in group_by_columns]
+        count_group_by = [getattr(AssessmentResult, col) for col in group_by_columns]
+    else:
+        main_group_by = [select(literal(1)).scalar_subquery()]
+        count_group_by = [select(literal(1)).scalar_subquery()]
+
+    base_query = (
+        select(
+            func.min(subquery.c.id).label("id"),
+            *[getattr(subquery.c, col) for col in group_by_columns],
+            func.avg(subquery.c.score).label("score"),
+            func.bool_or(subquery.c.flag).label("flag"),
+            func.bool_or(subquery.c.hide).label("hide"),
+        )
+        .group_by(*main_group_by)
+        .order_by("id")
+    )
+    if page is not None and page_size is not None:
+        base_query = base_query.offset((page - 1) * page_size).limit(page_size)
+
+    count_query = (
+        select(func.count())
+        .select_from(AssessmentResult)
+        .where(AssessmentResult.assessment_id.in_(assessment_ids))
+    )
+    if book is not None:
+        count_query = count_query.where(
+            func.upper(AssessmentResult.book) == book.upper()
+        )
+    if chapter is not None:
+        count_query = count_query.where(AssessmentResult.chapter == chapter)
+    if verse is not None:
+        count_query = count_query.where(AssessmentResult.verse == verse)
+    if only_non_null:
+        count_query = count_query.where(AssessmentResult.source.isnot(None))
+
+    count_subquery = count_query.group_by(*count_group_by).subquery()
+    final_count_query = select(func.count()).select_from(count_subquery)
+
+    return base_query, final_count_query
 
 
 # Process-local memoization of `ngrams_table` total counts, keyed by
@@ -735,6 +838,213 @@ async def get_result(
             "page": page,
             "page_size": page_size,
             "aggregate": aggregate.value if aggregate else None,
+            "total_count": total_count,
+            "results_returned": len(result_list),
+            "duration_s": duration,
+        },
+    )
+
+    return {"results": result_list, "total_count": total_count}
+
+
+@router.get(
+    "/averageresult",
+    response_model=Dict[str, Union[List[Result], int]],
+)
+async def get_average_result(
+    revision_id: int,
+    assessment_type: str,
+    book: Optional[str] = None,
+    chapter: Optional[int] = None,
+    verse: Optional[int] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    aggregate: Optional[aggType] = None,
+    include_text: bool = False,
+    reverse: Optional[bool] = False,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Returns the average assessment result for a revision, averaged across every
+    reference text it has been assessed against for the given assessment type.
+
+    All finished assessments for ``revision_id`` of type ``assessment_type`` are
+    collected (each has a different ``reference_id``); where the same reference
+    has been assessed more than once only the most recent assessment is used.
+    The scores are then averaged, preserving the ``vref`` dimension so a single
+    average score is returned per verse (or per aggregation group), exactly as
+    ``GET /result`` returns per-verse scores for a single assessment.
+
+    Parameters
+    ----------
+    revision_id : int
+        The ID of the revision to average results for.
+    assessment_type : str
+        The assessment type to average (e.g. "word-alignment").
+    book : str, optional
+        Restrict results to one book.
+    chapter : int, optional
+        Restrict results to one chapter. If set, book must also be set.
+    verse : int, optional
+        Restrict results to one verse. If set, book and chapter must also be set.
+    page : int, optional
+        The page of results to return. If set, page_size must also be set.
+    page_size : int, optional
+        The number of results to return per page. If set, page must also be set.
+    aggregate : str, optional
+        If set to "chapter"/"book"/"text", results are aggregated to that level.
+        Otherwise results are returned at the verse level.
+    include_text : bool, optional
+        If true, include the revision's verse text for each result. Only valid
+        for verse-level results (i.e. when aggregate is not set).
+    reverse : bool, optional
+        For question-answering / word-tests assessments, include the null-source
+        rows as well (matching the /result endpoint's behaviour).
+
+    Returns
+    -------
+    Dict[str, Union[List[Result], int]]
+        A dictionary containing the list of averaged results and the total count.
+    """
+    request_start = time.perf_counter()
+
+    await validate_parameters(book, chapter, verse, aggregate, page, page_size)
+
+    if include_text and aggregate is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "include_text and aggregate cannot both be set. Text can only be "
+                "included for verse-level results."
+            ),
+        )
+
+    # The user must be able to see the revision itself. References they are
+    # not authorised for are simply excluded from the average below, so no
+    # score is ever leaked for a reference the user cannot access.
+    authorized_revision_ids = await get_authorized_revision_ids(current_user.id, db)
+    if revision_id not in authorized_revision_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this revision",
+        )
+
+    # Discover the assessments for this revision + type, keeping only the most
+    # recent assessment per reference (DISTINCT ON reference_id, newest first).
+    candidate_assessments = (
+        await db.execute(
+            select(Assessment.id, Assessment.reference_id)
+            .where(
+                Assessment.revision_id == revision_id,
+                Assessment.type == assessment_type,
+                Assessment.status == "finished",
+                Assessment.deleted.is_not(True),
+            )
+            .order_by(
+                Assessment.reference_id,
+                Assessment.end_time.desc().nullslast(),
+                Assessment.id.desc(),
+            )
+            .distinct(Assessment.reference_id)
+        )
+    ).all()
+
+    assessment_ids = [
+        row.id
+        for row in candidate_assessments
+        if row.reference_id is None or row.reference_id in authorized_revision_ids
+    ]
+
+    if not assessment_ids:
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"get_average_result completed in {duration}s (no assessments)",
+            extra={
+                "method": "GET",
+                "path": "/averageresult",
+                "revision_id": revision_id,
+                "assessment_type": assessment_type,
+                "total_count": 0,
+                "results_returned": 0,
+                "duration_s": duration,
+            },
+        )
+        return {"results": [], "total_count": 0}
+
+    query, count_query = await build_average_results_query(
+        assessment_ids,
+        assessment_type,
+        book,
+        chapter,
+        verse,
+        page,
+        page_size,
+        aggregate,
+        reverse,
+    )
+
+    result_data, total_count = await execute_query(query, count_query, db)
+
+    result_list = []
+    for row in result_data:
+        if aggregate == aggType.chapter:
+            vref = f"{row.book} {row.chapter}"
+        elif aggregate == aggType.book:
+            vref = f"{row.book}"
+        elif aggregate == aggType.text:
+            vref = None
+        else:
+            # Verse level. chapter/verse are nullable, so append them only
+            # when present — degrade gracefully like /result rather than
+            # emitting "GEN None:None".
+            vref = f"{row.book}"
+            if row.chapter is not None:
+                vref += f" {row.chapter}"
+                if row.verse is not None:
+                    vref += f":{row.verse}"
+
+        result_obj = Result(
+            id=row.id if hasattr(row, "id") else None,
+            assessment_id=None,
+            vref=vref,
+            score=row.score if hasattr(row, "score") else None,
+            flag=row.flag if hasattr(row, "flag") else None,
+            hide=row.hide if hasattr(row, "hide") else None,
+        )
+        result_list.append(result_obj)
+
+    # Optionally attach the revision's verse text for each verse-level result.
+    if include_text and result_list:
+        vrefs = [r.vref for r in result_list if r.vref is not None]
+        text_by_vref: Dict[str, Optional[str]] = {}
+        if vrefs:
+            text_rows = await db.execute(
+                select(VerseText.verse_reference, VerseText.text).where(
+                    VerseText.revision_id == revision_id,
+                    VerseText.verse_reference.in_(vrefs),
+                )
+            )
+            text_by_vref = {row.verse_reference: row.text for row in text_rows.all()}
+        for result_obj in result_list:
+            result_obj.revision_text = text_by_vref.get(result_obj.vref)
+
+    duration = round(time.perf_counter() - request_start, 2)
+    logger.info(
+        f"get_average_result completed in {duration}s",
+        extra={
+            "method": "GET",
+            "path": "/averageresult",
+            "revision_id": revision_id,
+            "assessment_type": assessment_type,
+            "assessments_averaged": len(assessment_ids),
+            "book": book,
+            "chapter": chapter,
+            "verse": verse,
+            "page": page,
+            "page_size": page_size,
+            "aggregate": aggregate.value if aggregate else None,
+            "include_text": include_text,
             "total_count": total_count,
             "results_returned": len(result_list),
             "duration_s": duration,

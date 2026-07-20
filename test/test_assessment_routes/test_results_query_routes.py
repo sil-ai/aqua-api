@@ -2548,3 +2548,396 @@ def test_textalignmentmatches_use_eflomal_false_is_fastalign(
     sources = {row["source_word"] for row in response.json()["results"]}
     assert "alpha" in sources
     assert "beta" not in sources
+
+
+# ----- /v3/averageresult --------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class AverageResultDataset:
+    """IDs created by the `average_result_dataset` fixture.
+
+    One revision assessed (type "word-alignment") against three references:
+    two the test user can access (ref_a, ref_b) and one they cannot (ref_c).
+    ref_a carries two assessments so the dedup-by-reference (most recent wins)
+    behaviour can be verified. Scores are chosen so the expected averages are
+    exact, and the "wrong" values on the excluded assessments (the stale ref_a
+    assessment and the unauthorized ref_c assessment) differ from the winners
+    so any leak changes the average.
+    """
+
+    revision_id: int
+    ref_a_id: int
+    ref_b_id: int
+    ref_c_id: int
+    unauth_reference_id: int  # ref_c: revision the test user cannot access
+    # An authorized revision with a finished assessment that wrote zero result
+    # rows — exercises the empty-set paths (esp. text aggregation).
+    empty_results_revision_id: int
+
+
+@pytest.fixture(scope="module")
+def average_result_dataset(test_db_session):
+    user = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group = test_db_session.query(Group).first()
+
+    def _version(name, abbr):
+        return BibleVersion(
+            name=name,
+            iso_language="eng",
+            iso_script="Latn",
+            abbreviation=abbr,
+            owner_id=user.id if user else None,
+        )
+
+    v_rev = _version("avg_res_revision", "avg-rev")
+    v_ref_a = _version("avg_res_reference_a", "avg-ra")
+    v_ref_b = _version("avg_res_reference_b", "avg-rb")
+    v_ref_c = _version("avg_res_reference_c", "avg-rc")
+    v_empty = _version("avg_res_empty", "avg-empty")
+    test_db_session.add_all([v_rev, v_ref_a, v_ref_b, v_ref_c, v_empty])
+    test_db_session.flush()
+
+    # Grant the test user's group access to the revision, refs A and B, and the
+    # empty-results revision; ref C is deliberately left inaccessible.
+    for v in (v_rev, v_ref_a, v_ref_b, v_empty):
+        test_db_session.add(
+            BibleVersionAccess(bible_version_id=v.id, group_id=group.id)
+        )
+
+    def _revision(version_id, d):
+        return BibleRevision(date=d, bible_version_id=version_id, published=False)
+
+    r_rev = _revision(v_rev.id, date(2023, 1, 1))
+    r_ref_a = _revision(v_ref_a.id, date(2023, 1, 2))
+    r_ref_b = _revision(v_ref_b.id, date(2023, 1, 3))
+    r_ref_c = _revision(v_ref_c.id, date(2023, 1, 4))
+    r_empty = _revision(v_empty.id, date(2023, 1, 5))
+    test_db_session.add_all([r_rev, r_ref_a, r_ref_b, r_ref_c, r_empty])
+    test_db_session.flush()
+
+    def _assessment(reference_id, end_time):
+        return Assessment(
+            revision_id=r_rev.id,
+            reference_id=reference_id,
+            type="word-alignment",
+            status="finished",
+            end_time=end_time,
+        )
+
+    # ref_a assessed twice: the newer one (2024-06) is the winner; the older
+    # one (2024-01) carries stale scores that must be excluded by dedup.
+    a_ref_a_new = _assessment(r_ref_a.id, datetime(2024, 6, 1))
+    a_ref_a_old = _assessment(r_ref_a.id, datetime(2024, 1, 1))
+    a_ref_b = _assessment(r_ref_b.id, datetime(2024, 3, 1))
+    a_ref_c = _assessment(r_ref_c.id, datetime(2024, 5, 1))
+    # A finished assessment for the empty-results revision, with NO result rows.
+    a_empty = Assessment(
+        revision_id=r_empty.id,
+        reference_id=r_ref_a.id,
+        type="word-alignment",
+        status="finished",
+        end_time=datetime(2024, 2, 1),
+    )
+    test_db_session.add_all([a_ref_a_new, a_ref_a_old, a_ref_b, a_ref_c, a_empty])
+    test_db_session.flush()
+
+    def _result(assessment_id, book, chapter, verse, score):
+        return AssessmentResult(
+            assessment_id=assessment_id,
+            vref=None,
+            score=score,
+            book=book,
+            chapter=chapter,
+            verse=verse,
+            flag=False,
+            note=None,
+            source=None,
+            target=None,
+            hide=False,
+        )
+
+    test_db_session.add_all(
+        [
+            # Winner for ref_a
+            _result(a_ref_a_new.id, "GEN", 1, 1, 0.4),
+            _result(a_ref_a_new.id, "GEN", 1, 2, 0.6),
+            _result(a_ref_a_new.id, "EXO", 1, 1, 0.2),
+            # Stale ref_a (must be excluded by dedup) — deliberately 0.9 so any
+            # leak would inflate the averages.
+            _result(a_ref_a_old.id, "GEN", 1, 1, 0.9),
+            _result(a_ref_a_old.id, "GEN", 1, 2, 0.9),
+            _result(a_ref_a_old.id, "EXO", 1, 1, 0.9),
+            # ref_b
+            _result(a_ref_b.id, "GEN", 1, 1, 0.6),
+            _result(a_ref_b.id, "GEN", 1, 2, 0.8),
+            _result(a_ref_b.id, "EXO", 1, 1, 0.4),
+            # ref_c (must be excluded by authorization) — deliberately 0.0 so
+            # any leak would deflate the averages.
+            _result(a_ref_c.id, "GEN", 1, 1, 0.0),
+            _result(a_ref_c.id, "GEN", 1, 2, 0.0),
+            _result(a_ref_c.id, "EXO", 1, 1, 0.0),
+        ]
+    )
+
+    # Revision verse text for the include_text path.
+    test_db_session.add_all(
+        [
+            VerseText(
+                revision_id=r_rev.id,
+                verse_reference="GEN 1:1",
+                text="in the beginning",
+                book="GEN",
+                chapter=1,
+                verse=1,
+            ),
+            VerseText(
+                revision_id=r_rev.id,
+                verse_reference="GEN 1:2",
+                text="and the earth",
+                book="GEN",
+                chapter=1,
+                verse=2,
+            ),
+        ]
+    )
+    test_db_session.commit()
+
+    return AverageResultDataset(
+        revision_id=r_rev.id,
+        ref_a_id=r_ref_a.id,
+        ref_b_id=r_ref_b.id,
+        ref_c_id=r_ref_c.id,
+        unauth_reference_id=r_ref_c.id,
+        empty_results_revision_id=r_empty.id,
+    )
+
+
+def _avg_by_vref(response):
+    return {r["vref"]: r["score"] for r in response.json()["results"]}
+
+
+def test_averageresult_verse_level_averages_across_references(
+    client, regular_token1, average_result_dataset
+):
+    """Averages across the (deduplicated, authorized) references, per vref.
+
+    GEN 1:1 = mean(0.4, 0.6) = 0.5, GEN 1:2 = mean(0.6, 0.8) = 0.7,
+    EXO 1:1 = mean(0.2, 0.4) = 0.3. The stale ref_a assessment (0.9s) and the
+    unauthorized ref_c assessment (0.0s) are both excluded — any leak from
+    either would shift these averages.
+    """
+    response = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.revision_id,
+            "assessment_type": "word-alignment",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total_count"] == 3
+    scores = _avg_by_vref(response)
+    assert scores["GEN 1:1"] == pytest.approx(0.5)
+    assert scores["GEN 1:2"] == pytest.approx(0.7)
+    assert scores["EXO 1:1"] == pytest.approx(0.3)
+
+
+def test_averageresult_book_filter(client, regular_token1, average_result_dataset):
+    """book filter restricts to that book; matching is case-insensitive."""
+    response = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.revision_id,
+            "assessment_type": "word-alignment",
+            "book": "gen",  # lowercase to exercise case-insensitive match
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total_count"] == 2
+    scores = _avg_by_vref(response)
+    assert set(scores) == {"GEN 1:1", "GEN 1:2"}
+
+
+def test_averageresult_book_aggregation(client, regular_token1, average_result_dataset):
+    """aggregate=book collapses each book to a single averaged row."""
+    response = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.revision_id,
+            "assessment_type": "word-alignment",
+            "aggregate": "book",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    scores = _avg_by_vref(response)
+    # GEN: mean(0.4, 0.6, 0.6, 0.8) = 0.6 ; EXO: mean(0.2, 0.4) = 0.3
+    assert scores["GEN"] == pytest.approx(0.6)
+    assert scores["EXO"] == pytest.approx(0.3)
+
+
+def test_averageresult_text_aggregation(client, regular_token1, average_result_dataset):
+    """aggregate=text returns one row averaging every included result."""
+    response = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.revision_id,
+            "assessment_type": "word-alignment",
+            "aggregate": "text",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total_count"] == 1
+    assert len(body["results"]) == 1
+    result = body["results"][0]
+    assert result["vref"] is None
+    # mean(0.4, 0.6, 0.2, 0.6, 0.8, 0.4) = 3.0 / 6 = 0.5
+    assert result["score"] == pytest.approx(0.5)
+
+
+def test_averageresult_pagination(client, regular_token1, average_result_dataset):
+    """Pagination returns page slices while total_count reflects the full set."""
+    page1 = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.revision_id,
+            "assessment_type": "word-alignment",
+            "page": 1,
+            "page_size": 2,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    page2 = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.revision_id,
+            "assessment_type": "word-alignment",
+            "page": 2,
+            "page_size": 2,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert page1.status_code == 200 and page2.status_code == 200
+    assert page1.json()["total_count"] == 3
+    assert page2.json()["total_count"] == 3
+    assert len(page1.json()["results"]) == 2
+    assert len(page2.json()["results"]) == 1
+    # No overlap between pages.
+    page1_vrefs = {r["vref"] for r in page1.json()["results"]}
+    page2_vrefs = {r["vref"] for r in page2.json()["results"]}
+    assert page1_vrefs.isdisjoint(page2_vrefs)
+
+
+def test_averageresult_include_text(client, regular_token1, average_result_dataset):
+    """include_text attaches the revision's verse text to each verse-level row."""
+    response = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.revision_id,
+            "assessment_type": "word-alignment",
+            "book": "GEN",
+            "include_text": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    texts = {r["vref"]: r["revision_text"] for r in response.json()["results"]}
+    assert texts["GEN 1:1"] == "in the beginning"
+    assert texts["GEN 1:2"] == "and the earth"
+
+
+def test_averageresult_include_text_with_aggregate_is_rejected(
+    client, regular_token1, average_result_dataset
+):
+    """include_text only makes sense at verse level, so it 400s with aggregate."""
+    response = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.revision_id,
+            "assessment_type": "word-alignment",
+            "aggregate": "book",
+            "include_text": True,
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 400
+    assert "include_text" in response.json()["detail"]
+
+
+def test_averageresult_unauthorized_revision(
+    client, regular_token2, average_result_dataset
+):
+    """A user without access to the revision gets 403."""
+    response = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.revision_id,
+            "assessment_type": "word-alignment",
+        },
+        headers={"Authorization": f"Bearer {regular_token2}"},
+    )
+    assert response.status_code == 403
+
+
+def test_averageresult_no_matching_assessments_returns_empty(
+    client, regular_token1, average_result_dataset
+):
+    """An authorized revision with no assessments of the type yields an empty
+    set (200), not a 404."""
+    response = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.revision_id,
+            "assessment_type": "no-such-type",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["results"] == []
+    assert body["total_count"] == 0
+
+
+def test_averageresult_text_aggregation_empty_results(
+    client, regular_token1, average_result_dataset
+):
+    """A finished assessment that wrote no result rows must not 500 under text
+    aggregation — the collapsed single group should yield zero rows, not one
+    all-NULL row that fails Result validation."""
+    response = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.empty_results_revision_id,
+            "assessment_type": "word-alignment",
+            "aggregate": "text",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["results"] == []
+    assert body["total_count"] == 0
+
+
+def test_averageresult_verse_level_empty_results(
+    client, regular_token1, average_result_dataset
+):
+    """Verse-level averaging over an assessment with no result rows is empty."""
+    response = client.get(
+        "/v3/averageresult",
+        params={
+            "revision_id": average_result_dataset.empty_results_revision_id,
+            "assessment_type": "word-alignment",
+        },
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["results"] == []
+    assert body["total_count"] == 0
