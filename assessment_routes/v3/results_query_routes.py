@@ -1,7 +1,6 @@
 __version__ = "v3"
 
 import ast
-import os
 import socket
 import time
 from enum import Enum
@@ -16,6 +15,7 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.sql import select
 
 from assessment_routes.v3.alignment_filters import eflomal_method_clause
+from config import settings
 from database.dependencies import get_db
 from database.models import (
     AlignmentThresholdScores,
@@ -2200,9 +2200,9 @@ async def get_missing_words(
         baseline_ids = []
 
     if threshold is None:
-        threshold = os.getenv("MISSING_WORDS_MISSING_THRESHOLD", 0.15)
+        threshold = settings.missing_words_missing_threshold
 
-    match_threshold = os.getenv("MISSING_WORDS_MATCH_THRESHOLD", 0.2)
+    match_threshold = settings.missing_words_match_threshold
 
     # Remove baseline ids for revisions belonging to the same version as the revision or reference
     revision_version_query = select(BibleRevision.bible_version_id).where(
@@ -2377,7 +2377,7 @@ async def get_word_alignments(
     request_start = time.perf_counter()
 
     if threshold is None:
-        threshold = os.getenv("ALIGNMENT_THRESHOLD", 0.2)
+        threshold = settings.alignment_threshold
 
     main_assessment_result = await db.execute(
         select(Assessment)
