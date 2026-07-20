@@ -6,10 +6,12 @@
 # when Loki is turned on (LOKI_ENABLED=true).
 #
 # External contributors without access to the private repo can build and run
-# the app from requirements.txt alone; install this file only when you need
-# Loki log shipping:
+# the app from requirements.txt alone. To enable Loki log shipping, install
+# this file — it includes the base requirements below, so this one command
+# gives a complete environment:
 #
 #     pip install -r requirements-observability.txt
 #
 # (v4 will formalize this as an optional extra in pyproject.toml.)
+-r requirements.txt
 git+https://github.com/sil-ai/observability-library.git@v0.1.0

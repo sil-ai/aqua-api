@@ -64,7 +64,9 @@ def test_loki_enabled_without_library_warns_and_continues(monkeypatch, capsys):
     # Console handler still attached, no Loki handler, no exception raised.
     assert len(result.handlers) == 1
     assert isinstance(result.handlers[0], logging.StreamHandler)
-    assert "observability-library not installed" in capsys.readouterr().err
+    # Match the stable core of the message, not the "unavailable"/"not
+    # installed" phrasing, so wording tweaks don't fail a behavioral test.
+    assert "Loki logging disabled" in capsys.readouterr().err
 
 
 def test_missing_library_warning_emitted_once_per_process(monkeypatch, capsys):
@@ -80,7 +82,7 @@ def test_missing_library_warning_emitted_once_per_process(monkeypatch, capsys):
         logging.getLogger(name).handlers.clear()
         module.setup_logger(name)
 
-    warnings = capsys.readouterr().err.count("observability-library not installed")
+    warnings = capsys.readouterr().err.count("Loki logging disabled")
     assert warnings == 1
 
 
