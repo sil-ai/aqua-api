@@ -1,0 +1,17 @@
+# Optional observability dependencies.
+#
+# This pulls in the private sil-ai/observability-library, which provides the
+# Loki logging handler used by utils/logging_config.py. It is NOT part of the
+# base install: the app defaults to console/JSON logging and only needs this
+# when Loki is turned on (LOKI_ENABLED=true).
+#
+# External contributors without access to the private repo can build and run
+# the app from requirements.txt alone. To enable Loki log shipping, install
+# this file — it includes the base requirements below, so this one command
+# gives a complete environment:
+#
+#     pip install -r requirements-observability.txt
+#
+# (v4 will formalize this as an optional extra in pyproject.toml.)
+-r requirements.txt
+git+https://github.com/sil-ai/observability-library.git@v0.1.0

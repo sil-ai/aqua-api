@@ -10,10 +10,37 @@ import logging
 import socket
 from typing import Optional
 
-from observability_library import LokiHandler, LokiLoggerLabels
 from pythonjsonlogger import jsonlogger
 
 from config import settings
+
+# The Loki integration lives in the private observability-library, which
+# external contributors can't install. Import it optionally so this module —
+# and therefore the whole app, which imports setup_logger everywhere — loads
+# cleanly without it. Loki logging is off by default (settings.loki_enabled),
+# so the missing dependency only matters when Loki is explicitly turned on.
+#
+# Catch ImportError broadly (not just ModuleNotFoundError): observability is a
+# best-effort feature that must never break app import — the same stance the
+# `except Exception` around handler creation below takes. To avoid *silently*
+# disabling Loki when the library is present but broken (e.g. a missing
+# transitive dep), we keep the failure reason and surface it in the warning
+# emitted when Loki is enabled.
+_OBSERVABILITY_IMPORT_ERROR: Optional[str] = None
+try:
+    from observability_library import LokiHandler, LokiLoggerLabels
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError as exc:
+    LokiHandler = None
+    LokiLoggerLabels = None
+    OBSERVABILITY_AVAILABLE = False
+    _OBSERVABILITY_IMPORT_ERROR = str(exc)
+
+# Guard so the "Loki enabled but library unavailable" warning is emitted once
+# per process rather than once per logger name (setup_logger runs for ~15
+# modules at startup).
+_loki_unavailable_warned = False
 
 
 def setup_logger(
@@ -74,6 +101,21 @@ def setup_logger(
 
     # 2. Loki Handler (optional, controlled by feature flag)
     if settings.loki_enabled:
+        if not OBSERVABILITY_AVAILABLE:
+            # Loki was requested but the optional library is unavailable. Warn
+            # (once per process) and carry on with console logging rather than
+            # crashing. The captured reason distinguishes "not installed" from
+            # a broken install so the latter isn't silently swallowed.
+            global _loki_unavailable_warned
+            if not _loki_unavailable_warned:
+                logger.warning(
+                    "observability-library unavailable; Loki logging disabled "
+                    "(%s). Install the optional dependency to enable it "
+                    "(pip install -r requirements-observability.txt).",
+                    _OBSERVABILITY_IMPORT_ERROR,
+                )
+                _loki_unavailable_warned = True
+            return logger
         try:
             # Define labels for log organization
             labels = LokiLoggerLabels(
