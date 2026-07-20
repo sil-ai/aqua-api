@@ -24,16 +24,27 @@ router = fastapi.APIRouter()
 
 @router.get("/version", response_model=List[VersionOut])
 async def list_version(
+    include_deleted: bool = False,
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
     """
     Get a list of all versions that the current user is authorized to access.
+
+    Admins may pass ``include_deleted=true`` to also return soft-deleted
+    versions, so downstream mirrors can satisfy FK constraints against
+    revisions whose parent version has been soft-deleted. Non-admin callers
+    never receive soft-deleted versions regardless of this flag.
     """
+
+    admin_include_deleted = include_deleted and current_user.is_admin
 
     # Step 1: Fetch all versions the user can access
     if current_user.is_admin:
-        result = await db.execute(select(BibleVersionModel))
+        stmt = select(BibleVersionModel).order_by(BibleVersionModel.id)
+        if not admin_include_deleted:
+            stmt = stmt.where(BibleVersionModel.deleted.is_(False))
+        result = await db.execute(stmt)
         versions = result.scalars().all()
     else:
         user_groups_subq = (
@@ -114,6 +125,9 @@ async def add_version(
     Description: Whether the version is machine translated.
     - is_reference: bool
     Description: Whether the version is a reference version.
+    - transcribed_audio: bool
+    Description: Whether the version's revisions are transcriptions of recorded
+    audio (ASR). Auto-applied to agent-critique assessments. Defaults to false.
     - add_to_groups: List[int] (required)
     Description: The IDs of the groups to add the version to.
     At least one group must be specified.
@@ -140,6 +154,7 @@ async def add_version(
         machine_translation=v.machineTranslation,
         owner_id=current_user.id,
         is_reference=v.is_reference,
+        transcribed_audio=v.transcribed_audio,
     )
 
     db.add(new_version)
@@ -239,6 +254,9 @@ async def modify_version(
     Description: Whether the version is machine translated.
     - is_reference: bool
     Description: Whether the version is a reference version.
+    - transcribed_audio: bool
+    Description: Whether the version's revisions are transcriptions of recorded
+    audio (ASR). Auto-applied to agent-critique assessments. Defaults to false.
     - add_to_groups: Optional[List[int]]
     Description: The IDs of the groups to add the version to,
     the version will only be added to this groups, not to all tha groups of the user as usual.

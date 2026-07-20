@@ -216,14 +216,16 @@ def test_predict_authorized_revision_fans_out(client, regular_token1, test_revis
 
 
 def test_predict_defaults_to_all_registered_apps(client, regular_token1):
-    """Omitting apps fans out to every registered app."""
+    """Omitting apps fans out to every registered app. Since
+    include_translation/include_critique default to True, the pure-default
+    call also spawns the slow agent path and returns a job handle."""
     results = {
         modal_app: {"app": modal_app}
         for modal_app in predict_routes.PREDICT_APPS.values()
     }
     with patch(
         "predict_routes.v3.predict_routes.modal.Function",
-        _make_modal_mock(results),
+        _make_modal_mock(results, spawn_id_by_app={"agent-critique": "fc-defaults"}),
     ):
         response = client.post(
             f"/{prefix}/predict",
@@ -232,7 +234,10 @@ def test_predict_defaults_to_all_registered_apps(client, regular_token1):
         )
 
     assert response.status_code == 200
-    assert set(response.json()["results"].keys()) == set(predict_routes.PREDICT_APPS)
+    body = response.json()
+    assert set(body["results"].keys()) == set(predict_routes.PREDICT_APPS)
+    assert body["job"]["status"] == "running"
+    assert body["job"]["includes"] == ["translation", "critique"]
 
 
 def test_predict_missing_pairs_returns_422(client, regular_token1):
@@ -303,18 +308,23 @@ def test_predict_forwards_payload_to_modal(client, regular_token1):
             True,
         ),
         ("include_critique", {"include_critique": False}, False),
-        ("include_critique", {}, False),
+        ("include_critique", {}, True),
         ("include_translation", {"include_translation": True}, True),
         ("include_translation", {"include_translation": False}, False),
-        ("include_translation", {}, False),
+        ("include_translation", {}, True),
+        # Translation explicitly off + critique unset: the unset critique
+        # default is coerced off rather than 422ing (see PredictInput's
+        # cross-flag validator).
+        ("include_critique", {"include_translation": False}, False),
     ],
     ids=[
         "critique_explicit_true",
         "critique_explicit_false",
-        "critique_omitted_defaults_false",
+        "critique_omitted_defaults_true",
         "translation_explicit_true",
         "translation_explicit_false",
-        "translation_omitted_defaults_false",
+        "translation_omitted_defaults_true",
+        "critique_coerced_off_with_translation_off",
     ],
 )
 def test_predict_forwards_include_flags_to_modal(
@@ -322,9 +332,8 @@ def test_predict_forwards_include_flags_to_modal(
 ):
     """`include_translation` and `include_critique` both survive
     `model_dump(exclude={"apps"})` and reach Modal — regression guard for
-    the bug where a missing field is silently stripped (predict's agent
-    side defaults both to False, so a dropped True flag silently disables
-    the feature)."""
+    the bug where a missing field is silently stripped. Both flags default
+    to True, so omitted flags forward as True."""
     captured = {}
 
     async def capture(payload):
@@ -344,6 +353,41 @@ def test_predict_forwards_include_flags_to_modal(
     assert response.status_code == 200, response.text
     assert field in captured["payload"]
     assert captured["payload"][field] is expected
+
+
+def test_predict_ignores_model_override(client, regular_token1):
+    """The per-call `model` override is no longer offered — the LLM is fixed
+    by the agent's deploy config. A client that still sends `model` must not
+    break: the request succeeds and the field reaches no app's payload (the
+    agent falls back to its deploy-time model via its own default)."""
+    captured: dict[str, dict] = {}
+
+    def from_name(app_name, fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+
+        async def capture(payload):
+            captured[app_name] = payload
+            return {"ok": True}
+
+        mock_fn.remote.aio = AsyncMock(side_effect=capture)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(
+                apps=["agent", "ngrams"],
+                model="claude-opus-4-7",
+                include_translation=False,
+            ),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert captured
+    assert all("model" not in payload for payload in captured.values())
 
 
 def test_predict_rejects_critique_without_translation(client, regular_token1):
@@ -389,7 +433,7 @@ def test_predict_agent_fast_slice_round_trips(client, regular_token1):
     ):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["agent"]),
+            json=_body(apps=["agent"], include_translation=False),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
@@ -458,17 +502,18 @@ def test_predict_spawns_slow_agent_when_translation_requested(client, regular_to
 
 def test_predict_no_job_when_translation_not_requested(client, regular_token1):
     """`include_translation=False` must skip the spawn entirely — clients
-    that aren't paying the LLM-latency cost get the existing zero-job
+    that opt out of the LLM-latency cost get the existing zero-job
     response shape unchanged. The `job` key must be absent from the
     response (not present-but-null), so existing callers that didn't
-    know about `job` see a byte-identical response shape."""
+    know about `job` see a byte-identical response shape. Opting out now
+    requires the explicit False since the flags default to True."""
     with patch(
         "predict_routes.v3.predict_routes.modal.Function",
         _make_modal_mock({"agent-critique": {"pairs": []}}),
     ):
         response = client.post(
             f"/{prefix}/predict",
-            json=_body(apps=["agent"]),
+            json=_body(apps=["agent"], include_translation=False),
             headers={"Authorization": f"Bearer {regular_token1}"},
         )
 
@@ -628,8 +673,12 @@ def test_predict_unauthorized_assessment_returns_403(
 
 
 def _spawn_agent_and_get_job(client, token, body_overrides=None):
-    """Helper: POST a slow-path predict request and return the job_id."""
-    overrides = body_overrides or {}
+    """Helper: POST a slow-path predict request and return the job_id.
+
+    Defaults to a translation-only job (critique explicitly off, since it
+    defaults to True on the wire); pass include_critique=True in
+    body_overrides for a critique job."""
+    overrides = {"include_critique": False, **(body_overrides or {})}
 
     async def fast_resp(_payload):
         return {"pairs": []}
@@ -699,6 +748,9 @@ def test_predict_job_running_returns_retry_after(client, regular_token1, timeout
     assert body["pairs"][0]["vref"] == "GEN 1:1"
     assert body["pairs"][0]["translation"] is None
     assert body["pairs"][0]["critique"] is None
+    # Discovered cards likewise null until the slow path lands; pinned
+    # so a future change that leaks partial cards mid-run gets caught.
+    assert body["pairs"][0]["lexeme_cards"] is None
 
 
 def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_token1):
@@ -776,6 +828,309 @@ def test_predict_job_complete_returns_pairs_in_submitted_order(client, regular_t
         assert out["translation"]["literal"] == f"{chr(ord('A') + idx)}-translation"
 
 
+def test_predict_job_complete_forwards_critique_issues(client, regular_token1):
+    """Predict poll surfaces the MQM critique payload with the documented
+    `issues` shape, preserves unknown agent fields (extra="allow"), and
+    accepts dimensions / severities outside the documented set so a future
+    agent change can't 500 the poll endpoint."""
+    import modal
+
+    submitted_pairs = [
+        {"vref": "GEN 1:1", "source_text": "src-A", "target_text": "tgt-A"},
+        {"vref": "GEN 1:2", "source_text": "src-B", "target_text": "tgt-B"},
+    ]
+    job_id = _spawn_agent_and_get_job(
+        client,
+        regular_token1,
+        body_overrides={
+            "pairs": submitted_pairs,
+            "include_critique": True,
+        },
+    )
+
+    agent_complete = {
+        "pairs": [
+            {
+                "translation": {"literal": "A-translation"},
+                "critique": {
+                    "issues": [
+                        {
+                            "dimension": "accuracy",
+                            "subtype": "mistranslation/hallucination-numbers",
+                            "source_text": "forty days",
+                            "draft_text": "fourteen days",
+                            "comments": "Number mistranslated",
+                            "severity": 4,
+                            "detector": "number_diff",
+                            "evidence": ["source: 40", "draft: 14"],
+                        }
+                    ],
+                    "agent_run_id": "abc123",  # extra="allow" must keep this
+                },
+            },
+            {
+                "translation": {"literal": "B-translation"},
+                "critique": {
+                    "issues": [
+                        {
+                            # An unrecognised dimension and an out-of-typical-range
+                            # severity must pass through, not 500 the poll.
+                            "dimension": "fluency",
+                            "subtype": "x" * 200,  # > 100 chars
+                            "severity": 9,
+                        }
+                    ]
+                },
+            },
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "complete"
+
+    pair_a = body["pairs"][0]
+    assert pair_a["critique"]["issues"][0]["dimension"] == "accuracy"
+    assert (
+        pair_a["critique"]["issues"][0]["subtype"]
+        == "mistranslation/hallucination-numbers"
+    )
+    assert pair_a["critique"]["issues"][0]["severity"] == 4
+    assert pair_a["critique"]["issues"][0]["detector"] == "number_diff"
+    assert pair_a["critique"]["issues"][0]["evidence"] == ["source: 40", "draft: 14"]
+    # extra="allow" preserves auxiliary keys
+    assert pair_a["critique"]["agent_run_id"] == "abc123"
+
+    pair_b = body["pairs"][1]
+    assert pair_b["critique"]["issues"][0]["dimension"] == "fluency"
+    assert pair_b["critique"]["issues"][0]["subtype"] == "x" * 200
+    assert pair_b["critique"]["issues"][0]["severity"] == 9
+
+
+def test_predict_job_complete_forwards_lexeme_cards(client, regular_token1):
+    """Regression for #707: discovered lexeme cards were dropped by the
+    poll shaper. The slow path is the only surface where clients see
+    cards discovered during a predict run (sync /predict forces
+    translation/critique off, so its agent leg can't produce new ones).
+    """
+    import modal
+
+    submitted_pairs = [
+        {"vref": "GEN 1:1", "source_text": "src-A", "target_text": "tgt-A"},
+        {"vref": "GEN 1:2", "source_text": "src-B", "target_text": "tgt-B"},
+    ]
+    job_id = _spawn_agent_and_get_job(
+        client,
+        regular_token1,
+        body_overrides={"pairs": submitted_pairs},
+    )
+
+    # Pair 1 has two cards, pair 2 has one — exercising per-pair independence.
+    agent_complete = {
+        "pairs": [
+            {
+                "translation": {"literal": "A-translation"},
+                "critique": None,
+                "lexeme_cards": [
+                    {"id": 100, "target_lemma": "tgt-A-lemma-1", "confidence": 0.9},
+                    {"id": 101, "target_lemma": "tgt-A-lemma-2", "confidence": 0.8},
+                ],
+            },
+            {
+                "translation": {"literal": "B-translation"},
+                "critique": None,
+                "lexeme_cards": [
+                    {"id": 200, "target_lemma": "tgt-B-lemma", "confidence": 0.95},
+                ],
+            },
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "complete"
+    assert len(body["pairs"]) == 2
+
+    # Pair 1: two cards, in agent-supplied order
+    cards_a = body["pairs"][0]["lexeme_cards"]
+    assert cards_a is not None
+    assert [c["id"] for c in cards_a] == [100, 101]
+    assert [c["target_lemma"] for c in cards_a] == ["tgt-A-lemma-1", "tgt-A-lemma-2"]
+
+    # Pair 2: one card
+    cards_b = body["pairs"][1]["lexeme_cards"]
+    assert cards_b is not None
+    assert [c["id"] for c in cards_b] == [200]
+
+
+def test_predict_job_complete_handles_missing_lexeme_cards(client, regular_token1):
+    """When the agent's per-pair payload omits `lexeme_cards` (e.g. a
+    pair the agent didn't process, or an older agent build), the poll
+    response surfaces `None` rather than 500ing. Belt-and-suspenders for
+    #707 — the route shouldn't assume the agent always populates the
+    field."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    agent_complete = {
+        "pairs": [
+            {"translation": {"literal": "ok"}, "critique": None},  # no lexeme_cards key
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "complete"
+    assert body["pairs"][0]["lexeme_cards"] is None
+
+
+def test_predict_job_complete_lexeme_cards_empty_list(client, regular_token1):
+    """An explicit empty list is semantically distinct from None: the
+    agent ran lexeme discovery and found nothing for this pair, vs the
+    agent didn't include the field at all. The shaper must preserve the
+    distinction since clients may render the two states differently."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    agent_complete = {
+        "pairs": [
+            {"translation": {"literal": "ok"}, "critique": None, "lexeme_cards": []},
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pairs"][0]["lexeme_cards"] == []
+
+
+def test_predict_job_complete_lexeme_cards_partial_agent_response(
+    client, regular_token1
+):
+    """If the agent returns fewer pairs than the client submitted (mid-
+    stream snapshot, agent-side filter dropped some), pairs without an
+    agent counterpart must surface `lexeme_cards=None` alongside the
+    `None` translation/critique. Verifies the `else {}` fallback at the
+    `idx >= len(agent_pairs)` boundary in the shaper."""
+    import modal
+
+    submitted_pairs = [
+        {"vref": "GEN 1:1", "source_text": "src-A", "target_text": "tgt-A"},
+        {"vref": "GEN 1:2", "source_text": "src-B", "target_text": "tgt-B"},
+        {"vref": "GEN 1:3", "source_text": "src-C", "target_text": "tgt-C"},
+    ]
+    job_id = _spawn_agent_and_get_job(
+        client,
+        regular_token1,
+        body_overrides={"pairs": submitted_pairs},
+    )
+
+    agent_complete = {
+        "pairs": [
+            {
+                "translation": {"literal": "A"},
+                "critique": None,
+                "lexeme_cards": [{"id": 1, "target_lemma": "lemma-A"}],
+            },
+            {
+                "translation": {"literal": "B"},
+                "critique": None,
+                "lexeme_cards": [{"id": 2, "target_lemma": "lemma-B"}],
+            },
+            # Agent omitted pair index 2.
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    pairs = response.json()["pairs"]
+    assert len(pairs) == 3
+    # First two pairs carry their agent-supplied cards
+    assert pairs[0]["lexeme_cards"][0]["id"] == 1
+    assert pairs[1]["lexeme_cards"][0]["id"] == 2
+    # Third pair is echoed back with everything from the agent side null
+    assert pairs[2]["vref"] == "GEN 1:3"
+    assert pairs[2]["translation"] is None
+    assert pairs[2]["lexeme_cards"] is None
+
+
+def test_predict_job_cached_read_preserves_lexeme_cards(client, regular_token1):
+    """The cached path (terminal job re-served from the DB without
+    calling Modal) must also surface lexeme_cards. job.result is
+    persisted as JSONB; this pins the round-trip so a future change to
+    that storage shape doesn't silently drop the field."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    agent_complete = {
+        "pairs": [
+            {
+                "translation": {"literal": "ok"},
+                "critique": None,
+                "lexeme_cards": [
+                    {"id": 42, "target_lemma": "stored-lemma", "confidence": 0.9},
+                ],
+            }
+        ]
+    }
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(return_value=agent_complete)
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock) as patched:
+        first = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        second = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        # Second poll served from cache; Modal not consulted again.
+        assert patched.call_count == 1
+
+    assert first.json()["pairs"][0]["lexeme_cards"] == [
+        {"id": 42, "target_lemma": "stored-lemma", "confidence": 0.9}
+    ]
+    assert second.json()["pairs"][0]["lexeme_cards"] == [
+        {"id": 42, "target_lemma": "stored-lemma", "confidence": 0.9}
+    ]
+
+
 def test_predict_job_complete_is_cached(client, regular_token1):
     """Once a job lands in a terminal state we don't go back to Modal —
     the second poll must serve from the DB."""
@@ -818,6 +1173,42 @@ def test_predict_job_failed_records_error(client, regular_token1):
     body = response.json()
     assert body["status"] == "failed"
     assert body["error"] == "RuntimeError"
+
+
+@pytest.mark.parametrize(
+    "exc_name",
+    ["FunctionTimeoutError", "OutputExpiredError"],
+)
+def test_predict_job_modal_container_timeout_marks_failed(
+    client, regular_token1, exc_name
+):
+    """When Modal kills the container at its timeout (or the result expires),
+    `fc.get` raises `modal.exception.FunctionTimeoutError` /
+    `OutputExpiredError`. Both subclass the builtin `TimeoutError`, so they
+    have to be caught BEFORE the bare `TimeoutError` block — otherwise
+    they're silently treated as "still running" and the DB row never flips
+    to `failed`. Regression for a job that sat in `running` indefinitely
+    after its container timed out."""
+    import modal
+
+    job_id = _spawn_agent_and_get_job(client, regular_token1)
+
+    exc_cls = getattr(modal.exception, exc_name)
+    fc_mock = AsyncMock()
+    fc_mock.get.aio = AsyncMock(side_effect=exc_cls("container hit timeout"))
+    with patch.object(modal.FunctionCall, "from_id", return_value=fc_mock):
+        response = client.get(
+            f"/{prefix}/predict/jobs/{job_id}",
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failed"
+    assert exc_name in body["error"]
+    assert "container hit timeout" in body["error"]
+    # No Retry-After — the caller should stop polling.
+    assert "Retry-After" not in response.headers
 
 
 def test_predict_job_unknown_returns_404(client, regular_token1):

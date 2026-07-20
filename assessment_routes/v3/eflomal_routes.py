@@ -22,7 +22,6 @@ from database.models import (
 from database.models import EflomalAssessment as EflomalAssessmentModel
 from database.models import (
     EflomalBpeModel,
-    EflomalCooccurrence,
     EflomalDictionary,
     EflomalPrior,
     EflomalTargetWordCount,
@@ -31,7 +30,6 @@ from database.models import UserDB as UserModel
 from models import (
     EflomalAssessmentOut,
     EflomalBpeModels,
-    EflomalCooccurrenceItem,
     EflomalDictionaryItem,
     EflomalPriorItem,
     EflomalResultsPullResponse,
@@ -295,8 +293,9 @@ async def push_eflomal_metadata(
 ):
     """Create the eflomal_assessment metadata row.
 
-    Call this first, then push dictionary / cooccurrences / target-word-counts
-    via their own endpoints, then PATCH the assessment status to 'finished'.
+    Call this first, then push dictionary / target-word-counts / priors /
+    BPE models via their own endpoints, then PATCH the assessment status
+    to 'finished'.
 
     Idempotent: if results already exist for this assessment_id the existing
     row is returned with 200 (safe to retry after a timeout).
@@ -483,83 +482,6 @@ async def push_eflomal_dictionary(
         raise HTTPException(
             status_code=500,
             detail=f"Unexpected error inserting {len(rows)} dictionary entries for assessment {assessment_id}",
-        )
-
-
-@router.post(
-    "/assessment/{assessment_id}/eflomal-cooccurrences",
-    response_model=InsertResponse,
-)
-async def push_eflomal_cooccurrences(
-    assessment_id: int,
-    body: List[EflomalCooccurrenceItem],
-    current_user: UserModel = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Bulk insert cooccurrence entries for an eflomal assessment.
-
-    Maximum of 5,000 items per request. The eflomal_cooccurrence table has
-    no unique constraint on (assessment_id, source_word, target_word), so
-    inserts cannot conflict and a 400 from a retry is not possible — the
-    cost is that retrying the full sequence after a partial failure can
-    accumulate duplicate rows (a separate cleanup needs a unique-constraint
-    migration before upsert can be used here).
-
-    Returns the list of inserted row IDs in the same order as the input.
-    """
-    eflomal = await _get_eflomal_assessment(assessment_id, db)
-    if not await is_user_authorized_for_assessment(current_user.id, assessment_id, db):
-        raise HTTPException(
-            status_code=403, detail="Not authorized for this assessment"
-        )
-
-    if not body:
-        return InsertResponse(ids=[])
-    _check_body_size(body)
-
-    rows = [
-        {
-            "assessment_id": eflomal.id,
-            "source_word": item.source_word,
-            "target_word": item.target_word,
-            "co_occur_count": item.co_occur_count,
-            "aligned_count": item.aligned_count,
-        }
-        for item in body
-    ]
-    try:
-        ids = await _batch_insert(db, EflomalCooccurrence, rows)
-        await db.commit()
-        return InsertResponse(ids=ids)
-    except IntegrityError:
-        await db.rollback()
-        raise HTTPException(
-            status_code=400,
-            detail=f"Duplicate or constraint violation inserting {len(rows)} cooccurrences for assessment {assessment_id}",
-        )
-    except SQLAlchemyError:
-        logger.exception(
-            "Bulk insert failed for eflomal_cooccurrence, assessment_id=%s, item_count=%d",
-            assessment_id,
-            len(rows),
-        )
-        await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database error inserting {len(rows)} cooccurrences for assessment {assessment_id}",
-        )
-    except HTTPException:
-        raise
-    except Exception:
-        logger.exception(
-            "Unexpected error pushing eflomal cooccurrences, assessment_id=%s, item_count=%d",
-            assessment_id,
-            len(rows),
-        )
-        await db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Unexpected error inserting {len(rows)} cooccurrences for assessment {assessment_id}",
         )
 
 

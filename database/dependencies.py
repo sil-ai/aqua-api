@@ -1,25 +1,11 @@
 # dependencies.py
 
-import os
-
-from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-# Load environment variables from .env file
-load_dotenv()
+from config import settings
 
-DATABASE_URL = os.getenv("AQUA_DB")
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None or raw == "":
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        raise ValueError(f"Environment variable {name}={raw!r} is not a valid integer")
+DATABASE_URL = settings.aqua_db
 
 
 # Pytest's TestClient spawns a new event loop per request; asyncpg
@@ -34,17 +20,17 @@ def _env_int(name: str, default: int) -> int:
 # db.m5.large — so 40/container leaves comfortable headroom even on
 # small instance classes. Tune the env vars if running many containers
 # or if other consumers (alembic, batch jobs, replicas) eat the budget.
-if os.getenv("AQUA_DB_POOLCLASS", "").lower() == "null":
+if settings.aqua_db_poolclass and settings.aqua_db_poolclass.lower() == "null":
     from sqlalchemy.pool import NullPool
 
     engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
 else:
     engine = create_async_engine(
         DATABASE_URL,
-        pool_size=_env_int("AQUA_DB_POOL_SIZE", 2),
-        max_overflow=_env_int("AQUA_DB_MAX_OVERFLOW", 3),
-        pool_timeout=_env_int("AQUA_DB_POOL_TIMEOUT", 10),
-        pool_recycle=_env_int("AQUA_DB_POOL_RECYCLE", 1800),
+        pool_size=settings.aqua_db_pool_size,
+        max_overflow=settings.aqua_db_max_overflow,
+        pool_timeout=settings.aqua_db_pool_timeout,
+        pool_recycle=settings.aqua_db_pool_recycle,
         pool_pre_ping=True,
     )
 AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
