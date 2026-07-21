@@ -143,3 +143,33 @@ def test_invalid_loki_enabled_rejected_at_boot(settings_cls, monkeypatch):
     monkeypatch.setenv("LOKI_ENABLED", "maybe")
     with pytest.raises(ValidationError):
         settings_cls()
+
+
+@pytest.mark.parametrize("env_value", ["release", "main", "development"])
+def test_valid_loki_environment_accepted_when_enabled(
+    settings_cls, monkeypatch, env_value
+):
+    monkeypatch.setenv("AQUA_DB", _VALID_DB)
+    monkeypatch.setenv("LOKI_ENABLED", "true")
+    monkeypatch.setenv("ENVIRONMENT_LOKI", env_value)
+    assert settings_cls().environment_loki == env_value
+
+
+def test_invalid_loki_environment_rejected_when_enabled(settings_cls, monkeypatch):
+    """An ENVIRONMENT_LOKI outside the library's allowed set fails at boot when
+    Loki is on, rather than being swallowed by setup_logger's broad except (which
+    logs only the exception type, making the misconfiguration undiagnosable)."""
+    monkeypatch.setenv("AQUA_DB", _VALID_DB)
+    monkeypatch.setenv("LOKI_ENABLED", "true")
+    monkeypatch.setenv("ENVIRONMENT_LOKI", "local")
+    with pytest.raises(ValidationError, match="ENVIRONMENT_LOKI"):
+        settings_cls()
+
+
+def test_invalid_loki_environment_ignored_when_disabled(settings_cls, monkeypatch):
+    """With Loki off, the label value is never sent, so a non-canonical value
+    (including the old 'local' default) must not block boot for local dev."""
+    monkeypatch.setenv("AQUA_DB", _VALID_DB)
+    monkeypatch.setenv("LOKI_ENABLED", "false")
+    monkeypatch.setenv("ENVIRONMENT_LOKI", "local")
+    assert settings_cls().environment_loki == "local"

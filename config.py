@@ -27,8 +27,15 @@ wiring in ``app.configure_cors`` rely on.
 from typing import Optional
 
 from dotenv import load_dotenv
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Valid values for the Loki ``environment`` label. Mirrors
+# observability_library.log_schema.LokiLoggerLabels.environment
+# (Literal["release", "main", "development"]). Duplicated here on purpose:
+# config must not import observability-library, whose import is optional and
+# guarded in utils.logging_config so a missing/broken install can't crash boot.
+_VALID_LOKI_ENVIRONMENTS = ("release", "main", "development")
 
 # Load .env into os.environ before Settings reads it. Existing environment
 # variables take precedence (python-dotenv's default override=False), matching
@@ -119,7 +126,24 @@ class Settings(BaseSettings):
     loki_url: Optional[str] = None
     loki_auth_token: Optional[str] = None
     project_name: str = "aqua-api"
-    environment_loki: str = "local"
+    environment_loki: str = "development"
+
+    @model_validator(mode="after")
+    def _valid_loki_environment(self):
+        # Only meaningful when Loki shipping is on: an ``ENVIRONMENT_LOKI`` value
+        # outside the library's allowed set makes LokiLoggerLabels(...) raise
+        # inside setup_logger's broad except, which now logs only the exception
+        # *type* (to avoid leaking the auth token/URL) — so the misconfiguration
+        # would be undiagnosable. Fail fast at boot instead, matching the rest of
+        # this module. Left unchecked when Loki is disabled so local runs keep
+        # working regardless of the label value.
+        if self.loki_enabled and self.environment_loki not in _VALID_LOKI_ENVIRONMENTS:
+            raise ValueError(
+                "ENVIRONMENT_LOKI must be one of "
+                f"{_VALID_LOKI_ENVIRONMENTS} when LOKI_ENABLED is true, "
+                f"got {self.environment_loki!r}"
+            )
+        return self
 
 
 # Instantiated once, at import; import this singleton everywhere config is read.
