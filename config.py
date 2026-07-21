@@ -69,6 +69,26 @@ class Settings(BaseSettings):
     aqua_db_pool_timeout: int = 10
     aqua_db_pool_recycle: int = 1800
 
+    @field_validator(
+        "aqua_db_pool_size",
+        "aqua_db_max_overflow",
+        "aqua_db_pool_timeout",
+        "aqua_db_pool_recycle",
+        mode="before",
+    )
+    @classmethod
+    def _blank_pool_var_to_default(cls, v, info):
+        # docker-compose wires these as ``AQUA_DB_POOL_SIZE=${AQUA_DB_POOL_SIZE:-}``,
+        # i.e. present-but-blank means "use the app default". The pre-#847
+        # ``_env_int`` helper honored that (empty string => default); pydantic's
+        # int parsing does not — a present ``""`` raises int_parsing at boot. Map a
+        # blank/whitespace value back to the field's declared default to restore
+        # that behavior. Everything else (valid ints, and non-blank garbage that
+        # must still fail fast) falls through to pydantic's normal coercion.
+        if isinstance(v, str) and v.strip() == "":
+            return cls.model_fields[info.field_name].default
+        return v
+
     # --- Auth -----------------------------------------------------------
     # Optional at this layer so that importing config never fails for consumers
     # that don't need JWT signing (notably Alembic, which imports

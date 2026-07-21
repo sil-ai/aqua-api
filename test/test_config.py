@@ -74,6 +74,43 @@ def test_non_numeric_pool_config_rejected_at_boot(settings_cls, monkeypatch, env
         settings_cls()
 
 
+# (env var, field name, declared default) for the four pooled int settings.
+_POOL_FIELDS = [
+    ("AQUA_DB_POOL_SIZE", "aqua_db_pool_size", 2),
+    ("AQUA_DB_MAX_OVERFLOW", "aqua_db_max_overflow", 3),
+    ("AQUA_DB_POOL_TIMEOUT", "aqua_db_pool_timeout", 10),
+    ("AQUA_DB_POOL_RECYCLE", "aqua_db_pool_recycle", 1800),
+]
+
+
+@pytest.mark.parametrize("env_name,field_name,default", _POOL_FIELDS)
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_blank_pool_config_falls_back_to_default(
+    settings_cls, monkeypatch, env_name, field_name, default, blank
+):
+    """A present-but-blank pool var uses the field default, not a crash.
+
+    docker-compose wires these as ``AQUA_DB_POOL_SIZE=${AQUA_DB_POOL_SIZE:-}``,
+    so an unset host var reaches the process as an empty string meaning "use the
+    default". The pre-#847 ``_env_int`` helper honored this; typed pydantic ints
+    do not (a present ``""`` raises int_parsing at boot). The blank->default
+    validator restores that behavior; whitespace is treated the same as empty.
+    """
+    monkeypatch.setenv("AQUA_DB", _VALID_DB)
+    monkeypatch.setenv(env_name, blank)
+    assert getattr(settings_cls(), field_name) == default
+
+
+@pytest.mark.parametrize("env_name,field_name,default", _POOL_FIELDS)
+def test_valid_pool_config_coerced_to_int(
+    settings_cls, monkeypatch, env_name, field_name, default
+):
+    """A valid integer string is still coerced normally (blank fallback aside)."""
+    monkeypatch.setenv("AQUA_DB", _VALID_DB)
+    monkeypatch.setenv(env_name, "7")
+    assert getattr(settings_cls(), field_name) == 7
+
+
 @pytest.mark.parametrize(
     "raw,expected",
     [
