@@ -35,10 +35,10 @@ To run the API locally while developing:
     $ cd aqua-api
     ```
 
-3. Install the requirements:
+3. Install dependencies with [uv](https://docs.astral.sh/uv/) (creates `.venv` with the runtime + dev groups from `pyproject.toml`/`uv.lock`):
 
     ```
-    $ pip install -r requirements.txt
+    $ uv sync
     ```
 
 4. In case you face an error on the previous point regarding a postgres package.
@@ -130,14 +130,10 @@ to the runners, but this are used automatically when you push to main.
 ## Pre-commit
 This project uses `pre-commit` to ensure code quality before commits. It automatically runs checks like `black` and `isort`.
 ### First-time Setup
-Before you commit for the first time, you need to install `pre-commit` and set it up:
-1.  Install `pre-commit`:
+`pre-commit` is installed as part of the dev dependencies by `uv sync`. Before you commit for the first time, set up the git hooks:
+1.  Set up the git hooks:
     ```bash
-    pip install pre-commit
-    ```
-2.  Set up the git hooks:
-    ```bash
-    pre-commit install
+    uv run pre-commit install
     ```
 ### How it works
 Now, `pre-commit` will run automatically on `git commit`. If any of the checks fail, the commit will be aborted. You will see the files that were modified by the hooks.
