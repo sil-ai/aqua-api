@@ -1,7 +1,6 @@
 __version__ = "v3"
 
 import asyncio
-import os
 import secrets
 import socket
 import time
@@ -14,6 +13,7 @@ from fastapi import Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database.dependencies import get_db
 from database.models import PredictJob
 from database.models import UserDB as UserModel
@@ -51,7 +51,7 @@ PREDICT_APPS: dict[str, str] = {
     "word_alignment": "word-alignment",
 }
 
-DEFAULT_PER_APP_TIMEOUT_S = float(os.getenv("PREDICT_PER_APP_TIMEOUT_S", "60"))
+DEFAULT_PER_APP_TIMEOUT_S = settings.predict_per_app_timeout_s
 
 # agent.predict does translation + critique via Bedrock and has a 600s
 # Modal-side timeout; 60s is too tight and will produce spurious timeouts.
@@ -166,7 +166,7 @@ async def predict(
             detail=f"Not authorized for assessment {body.assessment_id}",
         )
 
-    modal_env = os.getenv("MODAL_ENV", "main")
+    modal_env = settings.modal_env
     input_payload = body.model_dump(exclude={"apps"})
 
     # Translation/critique are the only slow legs of the agent app — both
@@ -350,10 +350,12 @@ async def get_predict_job(
             modal.exception.OutputExpiredError,
         ) as exc:
             # The Modal container itself hit its timeout (or the result
-            # expired before we polled). Both subclass the builtin
-            # TimeoutError, so they must be caught BEFORE the bare
-            # `TimeoutError` block below — otherwise they'd be silently
-            # treated as "still running" and the DB status would never flip.
+            # expired before we polled). Both subclass
+            # `modal.exception.TimeoutError`, so they must be caught BEFORE
+            # the bare `TimeoutError` block below — otherwise they'd be
+            # silently treated as "still running" (that block catches
+            # `modal.exception.TimeoutError` too) and the DB status would
+            # never flip.
             logger.warning(
                 f"predict job {job.id} timed out on Modal: {type(exc).__name__}: {exc}",
                 exc_info=True,
@@ -409,7 +411,7 @@ async def semantic_similarity_inference(
     request: SemanticSimilarityRequest,
     current_user: UserModel = Depends(get_current_user),
 ):
-    modal_env = os.getenv("MODAL_ENV", "main")
+    modal_env = settings.modal_env
     logger.info(
         "Semantic similarity inference request",
         extra={

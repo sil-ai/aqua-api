@@ -7,12 +7,43 @@ with optional integration to Loki for centralized log aggregation.
 """
 
 import logging
-import os
 import socket
 from typing import Optional
 
-from observability_library import LokiHandler, LokiLoggerLabels
 from pythonjsonlogger import jsonlogger
+
+from config import settings
+
+# The Loki integration lives in observability-library (a public repo, pulled
+# in via requirements.txt). Import it optionally anyway, as cheap insurance:
+# this module is imported by setup_logger everywhere, so guarding the import
+# keeps app boot decoupled from an optional, off-by-default backend if the
+# install ever fails for reasons unrelated to the code (a GitHub outage, a
+# moved/deleted tag, restrictive egress rules). Loki logging is off by default
+# (settings.loki_enabled), so a missing dependency only matters when Loki is
+# explicitly turned on.
+#
+# Catch ImportError broadly (not just ModuleNotFoundError): observability is a
+# best-effort feature that must never break app import — the same stance the
+# `except Exception` around handler creation below takes. To avoid *silently*
+# disabling Loki when the library is present but broken (e.g. a missing
+# transitive dep), we keep the failure reason and surface it in the warning
+# emitted when Loki is enabled.
+_OBSERVABILITY_IMPORT_ERROR: Optional[str] = None
+try:
+    from observability_library import LokiHandler, LokiLoggerLabels
+
+    OBSERVABILITY_AVAILABLE = True
+except ImportError as exc:
+    LokiHandler = None
+    LokiLoggerLabels = None
+    OBSERVABILITY_AVAILABLE = False
+    _OBSERVABILITY_IMPORT_ERROR = str(exc)
+
+# Guard so the "Loki enabled but library unavailable" warning is emitted once
+# per process rather than once per logger name (setup_logger runs for ~15
+# modules at startup).
+_loki_unavailable_warned = False
 
 
 def setup_logger(
@@ -72,35 +103,47 @@ def setup_logger(
     logger.addHandler(console_handler)
 
     # 2. Loki Handler (optional, controlled by feature flag)
-    loki_enabled = os.getenv("LOKI_ENABLED", "false").lower() == "true"
-    if loki_enabled:
+    if settings.loki_enabled:
+        if not OBSERVABILITY_AVAILABLE:
+            # Loki was requested but the optional library is unavailable. Warn
+            # (once per process) and carry on with console logging rather than
+            # crashing. The captured reason distinguishes "not installed" from
+            # a broken install so the latter isn't silently swallowed.
+            global _loki_unavailable_warned
+            if not _loki_unavailable_warned:
+                logger.warning(
+                    "observability-library unavailable; Loki logging disabled "
+                    "(%s). Reinstall the project dependencies to enable it.",
+                    _OBSERVABILITY_IMPORT_ERROR,
+                )
+                _loki_unavailable_warned = True
+            return logger
         try:
-            # Get configuration from environment
-            loki_url = os.getenv("LOKI_URL")
-            loki_auth_token = os.getenv("LOKI_AUTH_TOKEN")
-            project_name = os.getenv("PROJECT_NAME", "aqua-api")
-            environment_loki = os.getenv("ENVIRONMENT_LOKI", "local")
-
             # Define labels for log organization
             labels = LokiLoggerLabels(
-                project=project_name,
-                environment=environment_loki,
+                project=settings.project_name,
+                environment=settings.environment_loki,
                 container_id=container_id,
             )
 
             # Create and configure Loki handler
             loki_handler = LokiHandler(
-                url=loki_url,
+                url=settings.loki_url,
                 labels=labels.to_loki_labels(),
                 timeout=5,  # seconds
-                auth_token=loki_auth_token,
+                auth_token=settings.loki_auth_token,
             )
             loki_handler.setLevel(logging.INFO)
 
             logger.addHandler(loki_handler)
         except Exception as e:
-            # Fail gracefully if Loki is unavailable
-            logger.warning(f"Failed to initialize Loki handler: {e}")
+            # Fail gracefully if Loki is unavailable. Log the exception *type*
+            # rather than its str(): the message originates in
+            # observability-library and could embed the Loki auth token or URL
+            # (e.g. an auth/URL-validation error that echoes its input), which
+            # would then land in plaintext in console logs. The type name is
+            # enough to diagnose without risking credential exposure.
+            logger.warning("Failed to initialize Loki handler: %s", type(e).__name__)
 
     return logger
 

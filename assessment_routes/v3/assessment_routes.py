@@ -2,7 +2,6 @@ __version__ = "v3"
 # Standard library imports
 import hashlib
 import json
-import os
 import socket
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -19,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from assessment_routes.v3.alignment_filters import eflomal_method_clause
+from config import settings
 from database.dependencies import get_db
 from database.models import Assessment, BibleRevision, BibleVersion, BibleVersionAccess
 from database.models import UserDB as UserModel
@@ -353,7 +353,7 @@ async def call_assessment_runner(
     config["source_version_id"] = source_version_id
     config["target_version_id"] = target_version_id
     config["return_all_results"] = return_all_results
-    await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
+    await f.spawn.aio(config, settings.aqua_db)
 
 
 @router.post("/assessment", response_model=List[AssessmentOut])
@@ -736,7 +736,7 @@ async def add_assessment(
     a.id = assessment.id
 
     # Resolve Modal environment once at the route level
-    resolved_modal_env = modal_env or os.getenv("MODAL_ENV", "main")
+    resolved_modal_env = modal_env or settings.modal_env
 
     # Dispatch to Modal runner (fire-and-forget via spawn). Pass `db` so
     # the runner helper takes a SELECT ... FOR UPDATE on the row and

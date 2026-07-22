@@ -59,30 +59,26 @@ To run the API locally while developing:
 
 ## Environment file
 
-The environment file should have the following variables:
+Copy [`.env.example`](.env.example) to `.env` and fill in real values:
 
-- IMAGENAME
-- REGISTRY
-- AQUA_DB
-- AQUA_DB_SYNC
-- AQUA_URL
-- GRAPHQL_SECRET
-- GRAPHQL_URL
-- AQUA_API_KEY
-- API_KEY
-- KEY_VAULT
-- AWS_ACCESS_KEY
-- AWS_SECRET_KEY
-- TEST_KEY
-- MODAL_WEBHOOK_TOKEN
-- ADMIN_PASSWORD
-- TEST_USER
-- TEST_PASSWORD
-- LOKI_ENABLED (optional, default: false)
-- LOKI_URL (optional)
-- LOKI_AUTH_TOKEN (optional)
-- PROJECT_NAME (optional, default: aqua-api)
-- ENVIRONMENT_LOKI (optional, default: local)
+```bash
+cp .env.example .env
+```
+
+`.env.example` is the authoritative list of every variable the API reads,
+with safe placeholder values and inline documentation. The application
+configuration (database, auth, CORS, Modal, thresholds, and Loki) is loaded
+and type-validated at startup by the typed settings object in
+[`config.py`](config.py) (`config.Settings`). `AQUA_DB` is a required field on
+`config.Settings`, so a missing or empty value fails validation at boot (the
+value's shape as a DB URL is not checked here — that surfaces when the engine
+connects). `SECRET_KEY` is optional on `config.Settings` (so config-only consumers
+like Alembic can import it) and its non-empty requirement is enforced at import
+in [`security_routes/utilities.py`](security_routes/utilities.py) — also
+fail-fast at boot, just in the security layer rather than in `config.Settings`
+itself. Either way, a missing required variable makes the app fail fast at boot
+instead of surfacing as a subtle runtime bug. See `.env.example` for the full
+set of optional variables and their defaults.
 
 ## Swagger
 

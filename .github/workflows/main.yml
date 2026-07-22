@@ -53,7 +53,6 @@ jobs:
 
     - name: Test API
       env:
-        OMIT_PREVIOUS_VERSIONS: true
         MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}
         SECRET_KEY: ${{ secrets.SECRET_KEY }}
         AIOHTTP_NO_EXTENSIONS: 1
