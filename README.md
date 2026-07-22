@@ -35,10 +35,11 @@ To run the API locally while developing:
     $ cd aqua-api
     ```
 
-3. Install dependencies with [uv](https://docs.astral.sh/uv/) (creates `.venv` with the runtime + dev groups from `pyproject.toml`/`uv.lock`):
+3. Install dependencies with [uv](https://docs.astral.sh/uv/) (creates `.venv` with the runtime + dev groups from `pyproject.toml`/`uv.lock`), then activate the virtualenv so `make`, `python`, `pytest`, `alembic`, etc. resolve to it (the Makefile targets call these tools directly). Without activating, run each command through `uv run` (e.g. `uv run make project-up`) instead.
 
     ```
     $ uv sync
+    $ source .venv/bin/activate
     ```
 
 4. In case you face an error on the previous point regarding a postgres package.
