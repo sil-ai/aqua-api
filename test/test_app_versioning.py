@@ -110,3 +110,18 @@ def test_latest_is_pinned_to_v3_not_v4():
         "/latest picked up v4-only routes (premature /latest -> /v4 flip): "
         f"{sorted(leaked)}"
     )
+
+    # Since #830, v4 is a mounted sub-app — its routes live inside the mount and
+    # do NOT appear in the parent route table above, so the `leaked` check can no
+    # longer see them. The realistic premature flip is now mounting the v4
+    # sub-app at /latest. /latest must stay include_router-based (mirroring v3),
+    # never a mount, so guard that directly.
+    latest_mounts = [
+        route
+        for route in configured_app.routes
+        if isinstance(route, Mount) and route.path == "/latest"
+    ]
+    assert not latest_mounts, (
+        "/latest must not be a mounted sub-app (premature /latest -> /v4 flip); "
+        "/latest stays pinned to v3 via include_router"
+    )
