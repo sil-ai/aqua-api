@@ -5,12 +5,21 @@ import fastapi
 router = fastapi.APIRouter()
 
 
-# Register the bare (``/v4``) and trailing-slash (``/v4/``) forms on the same
-# handler so both return 200 directly. With only ``@router.get("/")`` the bare
-# form 307-redirects to ``/v4/``, which trips health-check probes and strict
-# clients that don't follow redirects. The bare form is hidden from the schema
-# so the OpenAPI surface still shows a single ``/v4/`` path.
-@router.get("", include_in_schema=False)
+def v4_status_payload() -> dict:
+    """The v4 discovery payload — the single source of truth for what ``/v4``
+    reports about itself.
+
+    Shared so the mounted sub-app's ``/v4/`` root and the parent-app bare
+    ``/v4`` health-check shim (``app.py``) can never drift apart. See
+    :func:`v4_root` for the meaning of each field.
+    """
+    return {"version": "v4", "status": "preview"}
+
+
+# Only the trailing-slash root lives on the sub-app. The bare ``/v4`` form is
+# handled by a hidden route on the *parent* app (``app.py``): once ``/v4`` is a
+# mount, Starlette 307-redirects a request for the bare mount path to ``/v4/``
+# before it can reach this router, so a bare handler here would be dead code.
 @router.get("/")
 async def v4_root():
     """v4 API root — the stable signal that the ``/v4`` surface is mounted.
@@ -24,4 +33,4 @@ async def v4_root():
     ``status`` is ``"preview"`` while v4 is being built out; it becomes
     ``"stable"`` when the contract is finalized.
     """
-    return {"version": "v4", "status": "preview"}
+    return v4_status_payload()
