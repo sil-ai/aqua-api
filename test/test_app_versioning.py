@@ -1,45 +1,49 @@
-__version__ = "v3"
+"""Every route mounted under /v3 must also be exposed under /latest, so
+/latest always mirrors the full current (v3) API surface. Forgetting the
+matching /latest registration when adding a /v3 route is the concrete mistake
+this guards against.
 
-import inspect
-import re
+v1/v2 were removed in #711, so the old multi-version invariants no longer
+apply. /latest is a deliberate *superset* of /v3 (the security/admin routers
+are mounted only under /latest), so the check is one-directional: v3 ⊆ latest.
+
+This introspects the actual FastAPI route table rather than scanning app.py
+source, so it stays correct regardless of how routers get registered — loops,
+variable prefixes, or reformatted include_router calls.
+"""
+
+import fastapi
 
 import app
 
-"""
-Tests app versioning for correctness.
 
-v1/v2 were removed in issue #711, so the old multi-version invariants (a
-`/latest` alias pointing at the *highest* of several versions, and `/v1`
-router-path checks) no longer apply. The invariant that remains meaningful is:
-every router mounted under `/v3` must also be mounted under `/latest`, so
-`/latest` always exposes the full current (v3) API surface. Forgetting the
-matching `/latest` registration when adding a `/v3` route is the concrete
-mistake this guards against.
-"""
-
-
-def _include_router_calls():
-    """Return (router_var, prefix) for every include_router call in app.py.
-
-    ``\\s*`` spans newlines, so calls wrapped across multiple lines are matched
-    the same as single-line ones.
-    """
-    source = inspect.getsource(app)
-    return re.findall(
-        r'include_router\(\s*([A-Za-z_]\w*)\s*,\s*prefix="(/[^"]+)"',
-        source,
-    )
+def _routes_under(configured_app, prefix):
+    """Set of (method, sub_path) for every route mounted under `prefix`, with
+    the prefix stripped so /v3 and /latest routes are directly comparable."""
+    found = set()
+    for route in configured_app.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", None)
+        if path is None or methods is None:
+            continue
+        if path == prefix or path.startswith(prefix + "/"):
+            sub_path = path[len(prefix) :]
+            for method in methods:
+                found.add((method, sub_path))
+    return found
 
 
-def test_every_v3_router_is_also_registered_under_latest():
-    calls = _include_router_calls()
-    v3_routers = {var for var, prefix in calls if prefix == "/v3"}
-    latest_routers = {var for var, prefix in calls if prefix == "/latest"}
+def test_every_v3_route_is_also_exposed_under_latest():
+    configured_app = fastapi.FastAPI()
+    app.configure(configured_app)
 
-    assert v3_routers, "expected at least one router registered under /v3"
+    v3_routes = _routes_under(configured_app, "/v3")
+    latest_routes = _routes_under(configured_app, "/latest")
 
-    missing = v3_routers - latest_routers
+    assert v3_routes, "expected at least one route mounted under /v3"
+
+    missing = v3_routes - latest_routes
     assert not missing, (
-        "every /v3 router must also be registered under /latest; "
+        "every /v3 route must also be exposed under /latest; "
         f"missing from /latest: {sorted(missing)}"
     )
