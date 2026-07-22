@@ -27,31 +27,42 @@ from pathlib import Path
 # Running `python scripts/regen_openapi_snapshot.py` puts this file's directory
 # (scripts/) on sys.path, not the repo root, so `from app import app` can't
 # resolve. Add the repo root as an import fallback. The `not in` guard keeps
-# this a no-op under `pytest test` (which already has the repo root on sys.path
-# via PYTHONPATH=<repo root>), so importing this module during collection never
-# reorders the test session's import precedence.
+# derived below.
 REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.append(str(REPO_ROOT))
-
-# Importing `app` pulls in config.Settings and security_routes.utilities, which
-# require AQUA_DB and SECRET_KEY at import time and fail fast when either is
-# absent. Generating the OpenAPI schema never opens a DB connection or signs a
-# token, so any syntactically valid values work: provide the same dummy defaults
-# conftest.py uses so this script runs out of the box on a fresh clone or in CI,
-# where the gitignored .env that supplies these locally does not exist.
-# setdefault means a real value already in the environment always wins.
-os.environ.setdefault(
-    "AQUA_DB", "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
-)
-os.environ.setdefault("SECRET_KEY", "regen-openapi-snapshot-not-for-production")
-os.environ.setdefault("AQUA_DB_POOLCLASS", "null")
 
 # The endpoint every real client fetches; snapshot exactly what it serves.
 OPENAPI_PATH = "/openapi.json"
 
 # Committed baseline. Kept next to the test that reads it.
 SNAPSHOT_PATH = REPO_ROOT / "test" / "snapshots" / "openapi_v3.json"
+
+
+def _prepare_standalone_import() -> None:
+    """Make ``from app import app`` succeed when this script runs on its own.
+
+    Only the standalone path needs this: running ``python scripts/...`` puts
+    scripts/ (not the repo root) on ``sys.path``, and importing ``app`` pulls in
+    ``config.Settings`` and ``security_routes.utilities``, which require AQUA_DB
+    and SECRET_KEY at import time and fail fast when either is absent. The
+    gitignored .env supplies those locally but not on a fresh clone or in CI.
+
+    This is deliberately *not* run at module import: the contract test imports
+    this module (for the shared helpers) but passes its own client, so it never
+    hits this path. Keeping the ``sys.path`` / ``os.environ`` mutation out of
+    import means importing this module has no side effects that could reorder
+    the test session's import precedence or leak env defaults into other tests.
+
+    Generating the schema opens no DB connection and signs no token, so the
+    dummy values below never matter to the output; ``setdefault`` lets a real
+    value already in the environment win.
+    """
+    if str(REPO_ROOT) not in sys.path:
+        sys.path.append(str(REPO_ROOT))
+    os.environ.setdefault(
+        "AQUA_DB", "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
+    )
+    os.environ.setdefault("SECRET_KEY", "regen-openapi-snapshot-not-for-production")
+    os.environ.setdefault("AQUA_DB_POOLCLASS", "null")
 
 
 def get_openapi_response(client=None):
@@ -66,8 +77,11 @@ def get_openapi_response(client=None):
     script's path when run standalone.
     """
     if client is None:
-        # Imported lazily so importing this module (e.g. from the test, which
-        # already has the app loaded via conftest) does not build a second app.
+        # Standalone path: prepare sys.path / env, then import lazily so that
+        # merely importing this module (e.g. from the test, which already has
+        # the app loaded via conftest) does not build a second app.
+        _prepare_standalone_import()
+
         from fastapi.testclient import TestClient
 
         from app import app
