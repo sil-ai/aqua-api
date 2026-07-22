@@ -50,6 +50,14 @@ test: linting localdb-up
 	pytest test
 	make down
 
+# Rewrite the committed v3 OpenAPI contract baseline that
+# test/test_openapi_contract.py guards. Run after an INTENTIONAL v3 change
+# and commit the resulting snapshot diff (see issue #756, epic #842). No DB
+# required — generating the schema does not touch the database.
+regen-openapi-snapshot:
+	@export PYTHONPATH=${PWD} && \
+	python scripts/regen_openapi_snapshot.py
+
 
 push-branch:
 	docker push ${REGISTRY}/${IMAGENAME}:latest
