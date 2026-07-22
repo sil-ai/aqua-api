@@ -38,4 +38,10 @@ def _validate_assessment_kwargs(v):
     return v
 
 
-__all__ = ["_validate_assessment_kwargs"]
+# Deliberately empty: ``_validate_assessment_kwargs`` is an internal helper
+# (leading underscore) that the pre-split ``models`` monolith never exported via
+# ``from models import *``. Its consumers (``assessment``, ``training``) import
+# it directly with ``from .validators import _validate_assessment_kwargs``, so it
+# does not belong on the package's public surface. Kept as ``[]`` (not removed)
+# because ``schemas/__init__.py`` aggregates every submodule's ``__all__``.
+__all__ = []

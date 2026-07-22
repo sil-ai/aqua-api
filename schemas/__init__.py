@@ -1,6 +1,6 @@
 """Per-domain Pydantic schema package (issue #729).
 
-The former monolithic ``models.py`` (2,000+ lines, 75+ classes) has been split
+The former monolithic ``models.py`` (2,000+ lines, 145+ classes) has been split
 into one module per domain. Import from the specific submodule in new code::
 
     from schemas.bible import VersionIn
@@ -10,9 +10,9 @@ The whole set is also re-exported here (and, in turn, from the legacy
 ``models`` shim) so the frozen v3 surface's historical ``from models import X``
 imports keep working unchanged during the v3→v4 transition (epic #842).
 
-Module dependency order is acyclic: ``validators`` has no deps; ``tfidf``
-depends on ``assessment``; ``pivot`` on ``tokenizer``; ``training`` on
-``validators``/``assessment``/``agent``.
+Module dependency order is acyclic: ``validators`` has no deps; ``assessment``
+depends on ``validators``; ``tfidf`` on ``assessment``; ``pivot`` on
+``tokenizer``; ``training`` on ``validators``/``assessment``/``agent``.
 """
 
 from . import (
