@@ -4,12 +4,14 @@ version = "0.1.0"
 description = "AQuA API — Bible translation quality assessment service"
 requires-python = ">=3.11,<3.12"
 
-# Runtime dependencies: what the deployed API actually needs. Versions are pinned
-# to match the previous flat requirements.txt exactly — this migration is
-# packaging-only (no upgrades). The SQLAlchemy 2.0 migration and the wider
-# version bumps are tracked separately in #734. The full, resolved transitive
-# tree (including modal's aiohttp, observability-library's requests, python-jose's
-# cryptography, etc.) is captured in uv.lock.
+# Runtime dependencies: what the deployed API actually needs. The DIRECT versions
+# below are pinned to match the previous flat requirements.txt — no intentional
+# upgrades here (the SQLAlchemy 2.0 migration and the wider version bumps are
+# tracked separately in #734). Transitive dependencies are no longer pinned
+# one-by-one: uv resolves and locks the full tree in uv.lock, so some indirect
+# packages (e.g. aiohttp, cryptography, urllib3) land on newer versions than the
+# old flattened pins — that fresh, locked resolution is what makes builds
+# reproducible.
 dependencies = [
     # --- Web framework / ASGI server ---
     "fastapi==0.115.6",
