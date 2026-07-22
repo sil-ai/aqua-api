@@ -12,6 +12,7 @@ from agent_routes.v3.affix_routes import router as affix_router_v3
 from agent_routes.v3.agent_routes import router as agent_router_v3
 from agent_routes.v3.pivot_routes import router as pivot_router_v3
 from agent_routes.v3.tokenizer_routes import router as tokenizer_router_v3
+from api_v4.meta_routes import router as meta_router_v4
 from assessment_routes.v3.assessment_routes import router as assessment_router_v3
 from assessment_routes.v3.eflomal_routes import router as eflomal_router_v3
 from assessment_routes.v3.results_push_routes import router as results_write_router_v3
@@ -135,6 +136,16 @@ def configure_cors(app):
 
 
 def configure_routing(app):
+    # Versioning model (epic #842):
+    #   /v3     — frozen, fixes only. Guarded by the OpenAPI contract snapshot
+    #             test so any change to its wire surface needs a reviewed diff.
+    #   /latest — deliberately stays pinned to v3; it does NOT move to v4 when
+    #             v4 releases. The /latest -> /v4 flip is a separate, deferred
+    #             manual step with no committed date.
+    #   /v4     — new, opt-in surface released beside v3. Domain resources are
+    #             added under <domain>_routes/v4/ by the contract issues
+    #             (#825-#831); today it exposes only the /v4/ discovery root.
+    #   v1/v2   — removed as unused (#711).
     app.include_router(language_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(revision_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(version_router_v3, prefix="/v3", tags=["Version 3"])
@@ -187,6 +198,10 @@ def configure_routing(app):
 
     app.include_router(security_router, prefix="/latest", tags=["Latest"])
     app.include_router(admin_router, prefix="/latest", tags=["Latest"])
+
+    # v4: opt-in surface beside frozen v3. Only the discovery root exists so
+    # far; contract issues (#825-#831) add domain routers under this prefix.
+    app.include_router(meta_router_v4, prefix="/v4", tags=["Version 4"])
 
     @app.get("/")
     async def read_root():

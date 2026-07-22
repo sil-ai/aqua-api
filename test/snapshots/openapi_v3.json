@@ -26016,6 +26016,26 @@
           "Version 3"
         ]
       }
+    },
+    "/v4/": {
+      "get": {
+        "description": "v4 API root \u2014 the stable signal that the ``/v4`` surface is mounted.\n\nv4 is released **beside** a frozen v3 as an opt-in surface (epic #842);\n``/latest`` deliberately stays pinned to v3. The individual v4 resources\nare added under this prefix by the contract issues (#825-#831). Until then\nthis root is the only guaranteed ``/v4`` endpoint, so clients and health\nchecks have something to hit to confirm v4 is live.\n\n``status`` is ``\"preview\"`` while v4 is being built out; it becomes\n``\"stable\"`` when the contract is finalized.",
+        "operationId": "v4_root_v4__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "V4 Root",
+        "tags": [
+          "Version 4"
+        ]
+      }
     }
   }
 }
