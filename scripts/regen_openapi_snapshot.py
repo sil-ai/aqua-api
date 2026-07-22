@@ -20,17 +20,32 @@ is serialized on disk.
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
 # Running `python scripts/regen_openapi_snapshot.py` puts this file's directory
-# (scripts/) on sys.path[0], not the repo root, so `from app import app` would
-# fail. Put the repo root first so the app package imports the same way it does
-# under `pytest test` (which runs with PYTHONPATH=<repo root>). Importing this
-# module from the test is a no-op here, since the root is already on the path.
+# (scripts/) on sys.path, not the repo root, so `from app import app` can't
+# resolve. Add the repo root as an import fallback. The `not in` guard keeps
+# this a no-op under `pytest test` (which already has the repo root on sys.path
+# via PYTHONPATH=<repo root>), so importing this module during collection never
+# reorders the test session's import precedence.
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+    sys.path.append(str(REPO_ROOT))
+
+# Importing `app` pulls in config.Settings and security_routes.utilities, which
+# require AQUA_DB and SECRET_KEY at import time and fail fast when either is
+# absent. Generating the OpenAPI schema never opens a DB connection or signs a
+# token, so any syntactically valid values work: provide the same dummy defaults
+# conftest.py uses so this script runs out of the box on a fresh clone or in CI,
+# where the gitignored .env that supplies these locally does not exist.
+# setdefault means a real value already in the environment always wins.
+os.environ.setdefault(
+    "AQUA_DB", "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
+)
+os.environ.setdefault("SECRET_KEY", "regen-openapi-snapshot-not-for-production")
+os.environ.setdefault("AQUA_DB_POOLCLASS", "null")
 
 # The endpoint every real client fetches; snapshot exactly what it serves.
 OPENAPI_PATH = "/openapi.json"
