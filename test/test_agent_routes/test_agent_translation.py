@@ -545,13 +545,13 @@ def test_get_translations_by_revision_id(
     assessment1 = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     assessment2 = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add_all([assessment1, assessment2])
@@ -630,7 +630,7 @@ def test_get_translations_by_revision_id_all_versions(
     assessment = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add(assessment)
@@ -704,7 +704,7 @@ def test_get_translations_by_revision_id_with_vref_filter(
     assessment = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add(assessment)
@@ -747,7 +747,7 @@ def test_get_translations_by_revision_id_with_verse_range(
     assessment = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add(assessment)
@@ -863,13 +863,13 @@ def test_get_translations_by_revision_id_with_reference_version_filter(
     assessment_eng = Assessment(
         revision_id=test_revision_id,
         reference_id=eng_revision.id,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     assessment_swh = Assessment(
         revision_id=test_revision_id,
         reference_id=swh_revision.id,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add_all([assessment_eng, assessment_swh])
@@ -967,13 +967,13 @@ def test_version_increments_across_assessments(
     assessment1 = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     assessment2 = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add_all([assessment1, assessment2])
@@ -1018,13 +1018,13 @@ def test_bulk_version_increments_across_assessments(
     assessment1 = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     assessment2 = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add_all([assessment1, assessment2])
@@ -1072,7 +1072,7 @@ def test_get_translations_by_revision_id_all_versions_no_script(
     assessment = Assessment(
         revision_id=test_revision_id,
         reference_id=test_revision_id_2,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add(assessment)
@@ -1116,7 +1116,7 @@ def test_post_translation_null_reference_assessment(
     assessment = Assessment(
         revision_id=test_revision_id,
         reference_id=None,
-        type="agent_critique",
+        type="agent-critique",
         status="finished",
     )
     db_session.add(assessment)

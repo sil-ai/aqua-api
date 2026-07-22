@@ -1,19 +1,26 @@
 __version__ = "v3"
 # Standard library imports
 import datetime
+import pathlib
+import re
 import socket
 import time
 import unicodedata
 from collections import Counter
+from email.header import Header
 from typing import Optional
 
 import fastapi
 from fastapi import Depends, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse
+from jinja2 import Environment, FileSystemLoader
+from markupsafe import Markup, escape
 from sqlalchemy import bindparam
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import Text as TextType
+from starlette.concurrency import run_in_threadpool
 
 from database.dependencies import get_db
 from database.models import (
@@ -3299,6 +3306,111 @@ async def get_lexeme_card_by_id(
         ) from e
 
 
+async def resolve_assessment_ids(
+    db: AsyncSession,
+    current_user: UserModel,
+    assessment_id: int | None,
+    revision_id: int | None,
+    reference_id: int | None,
+    all_assessments: bool = True,
+) -> list[int]:
+    """Resolve the assessment(s) identified by assessment_id OR (revision_id,
+    reference_id) and check the user is authorized for them.
+
+    Returns the list of matching assessment IDs. Raises HTTPException on
+    invalid parameter combinations (400), no matching assessment (404), or
+    unauthorized access (403).
+    """
+    from sqlalchemy import select
+
+    from database.models import Assessment
+
+    # Validate that exactly one identification method is provided
+    has_assessment_id = assessment_id is not None
+    has_revision_pair = revision_id is not None and reference_id is not None
+
+    if not has_assessment_id and not has_revision_pair:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Must provide either assessment_id OR (revision_id and reference_id)",
+        )
+
+    if has_assessment_id and (revision_id is not None or reference_id is not None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot provide both assessment_id and revision/reference IDs. Choose one.",
+        )
+
+    # Validate that both IDs in the revision pair are provided
+    if (revision_id is None) != (reference_id is None):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Both revision_id and reference_id must be provided together",
+        )
+
+    # Look up assessment_id from revision_id and reference_id if needed
+    if has_revision_pair:
+        assessment_query = select(Assessment).filter(
+            Assessment.revision_id == revision_id,
+            Assessment.reference_id == reference_id,
+            Assessment.type == "agent-critique",
+            Assessment.status == "finished",
+            Assessment.deleted.is_not(True),
+        )
+
+        if all_assessments:
+            # Get all assessments for this revision/reference pair
+            assessment_result = await db.execute(assessment_query)
+            assessments = assessment_result.scalars().all()
+            if not assessments:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No completed agent-critique assessment found for the given revision_id and reference_id",
+                )
+            assessment_ids = [a.id for a in assessments]
+        else:
+            # Get only the latest assessment
+            # Use nulls_last() to ensure assessments with NULL end_time don't interfere
+            assessment_query = assessment_query.order_by(
+                Assessment.end_time.desc().nulls_last()
+            )
+            assessment_result = await db.execute(assessment_query)
+            assessment = assessment_result.scalars().first()
+            if not assessment:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="No completed agent-critique assessment found for the given revision_id and reference_id",
+                )
+            assessment_ids = [assessment.id]
+    else:
+        assessment_result = await db.execute(
+            select(Assessment).filter(
+                Assessment.id == assessment_id,
+                Assessment.type == "agent-critique",
+                Assessment.status == "finished",
+                Assessment.deleted.is_not(True),
+            )
+        )
+        if not assessment_result.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No completed agent-critique assessment with id {assessment_id} found",
+            )
+        assessment_ids = [assessment_id]
+
+    # Check user authorization for this assessment (all assessments in a
+    # revision/reference pair share the same access, so checking one suffices)
+    if not await is_user_authorized_for_assessment(
+        current_user.id, assessment_ids[0], db
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User not authorized to see this assessment",
+        )
+
+    return assessment_ids
+
+
 @router.get("/agent/critique", response_model=list[CritiqueIssueOut])
 async def get_critique_issues(
     assessment_id: int = None,
@@ -3308,6 +3420,7 @@ async def get_critique_issues(
     agent_translation_id: int = None,
     vref: str = None,
     book: str = None,
+    chapter: int = None,
     dimension: str = None,
     subtype: str = None,
     min_severity: int = None,
@@ -3326,6 +3439,7 @@ async def get_critique_issues(
     - agent_translation_id: int (optional) - Filter by specific agent translation ID
     - vref: str (optional) - Filter by specific verse reference (e.g., "JHN 1:1")
     - book: str (optional) - Filter by book code (e.g., "JHN")
+    - chapter: int (optional) - Filter by chapter number (requires book; chapter numbers repeat across books)
     - dimension: str (optional) - Filter by MQM dimension (e.g., "accuracy")
     - subtype: str (optional) - Filter by MQM subtype (e.g., "wrong-key-term")
     - min_severity: int (optional) - Minimum severity level (1-5). Issues with
@@ -3339,89 +3453,23 @@ async def get_critique_issues(
     try:
         from sqlalchemy import desc, select
 
-        from database.models import Assessment
-
-        # Validate that exactly one identification method is provided
-        has_assessment_id = assessment_id is not None
-        has_revision_pair = revision_id is not None and reference_id is not None
-
-        if not has_assessment_id and not has_revision_pair:
+        if chapter is not None and not book:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Must provide either assessment_id OR (revision_id and reference_id)",
+                detail="chapter filter requires book",
             )
 
-        if has_assessment_id and has_revision_pair:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot provide both assessment_id and revision/reference IDs. Choose one.",
-            )
-
-        # Validate that both IDs in the revision pair are provided
-        if (revision_id is None) != (reference_id is None):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Both revision_id and reference_id must be provided together",
-            )
-
-        # Look up assessment_id from revision_id and reference_id if needed
-        if has_revision_pair:
-            assessment_query = select(Assessment).filter(
-                Assessment.revision_id == revision_id,
-                Assessment.reference_id == reference_id,
-                Assessment.status == "finished",
-                Assessment.deleted.is_not(True),
-            )
-
-            if all_assessments:
-                # Get all assessments for this revision/reference pair
-                assessment_result = await db.execute(assessment_query)
-                assessments = assessment_result.scalars().all()
-                if not assessments:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="No completed assessment found for the given revision_id and reference_id",
-                    )
-                # Collect all assessment IDs
-                assessment_ids = [a.id for a in assessments]
-                # For authorization check, use the first one (they should all have same access)
-                assessment_id = assessment_ids[0]
-            else:
-                # Get only the latest assessment
-                # Use nulls_last() to ensure assessments with NULL end_time don't interfere
-                assessment_query = assessment_query.order_by(
-                    Assessment.end_time.desc().nulls_last()
-                )
-                assessment_result = await db.execute(assessment_query)
-                assessment = assessment_result.scalars().first()
-                if not assessment:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail="No completed assessment found for the given revision_id and reference_id",
-                    )
-                assessment_id = assessment.id
-                assessment_ids = [assessment_id]
-
-        # Check user authorization for this assessment
-        if not await is_user_authorized_for_assessment(
-            current_user.id, assessment_id, db
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User not authorized to see this assessment",
-            )
+        assessment_ids = await resolve_assessment_ids(
+            db, current_user, assessment_id, revision_id, reference_id, all_assessments
+        )
+        # Keep the resolved ID in the structured logs below when the caller
+        # identified the assessment by revision/reference pair
+        assessment_id = assessment_ids[0]
 
         # Start with base query filtered by assessment(s)
-        if has_revision_pair and all_assessments:
-            # Query for all assessments
-            query = select(AgentCritiqueIssue).where(
-                AgentCritiqueIssue.assessment_id.in_(assessment_ids)
-            )
-        else:
-            # Query for single assessment
-            query = select(AgentCritiqueIssue).where(
-                AgentCritiqueIssue.assessment_id == assessment_id
-            )
+        query = select(AgentCritiqueIssue).where(
+            AgentCritiqueIssue.assessment_id.in_(assessment_ids)
+        )
 
         # Add optional filters
         if agent_translation_id is not None:
@@ -3434,6 +3482,9 @@ async def get_critique_issues(
 
         if book:
             query = query.where(AgentCritiqueIssue.book == book)
+
+        if chapter is not None:
+            query = query.where(AgentCritiqueIssue.chapter == chapter)
 
         if dimension:
             query = query.where(AgentCritiqueIssue.dimension == dimension)
@@ -3488,6 +3539,423 @@ async def get_critique_issues(
         raise
     except SQLAlchemyError as e:
         logger.error(f"Error fetching critique issues: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error: {str(e)}",
+        ) from e
+
+
+_CHAPTER_NOTES_TEMPLATES = Environment(
+    loader=FileSystemLoader(pathlib.Path(__file__).parent / "templates"),
+    autoescape=True,
+    auto_reload=False,
+)
+
+_DIMENSION_LABELS = {
+    "accuracy": "Accuracy",
+    "terminology": "Terminology",
+    "linguistic_conventions": "Linguistic",
+}
+
+# Colours mirror the AI-Notes UI (aqua-django-app mqm.js / AgentTextView.js
+# Tailwind classes) converted to hex, since email clients need inline styles.
+_DIMENSION_STYLES = {
+    "accuracy": {"border": "#fca5a5", "color": "#b91c1c"},
+    "terminology": {"border": "#d8b4fe", "color": "#7e22ce"},
+    "linguistic_conventions": {"border": "#93c5fd", "color": "#1d4ed8"},
+}
+_DEFAULT_DIMENSION_STYLE = {"border": "#d1d5db", "color": "#4b5563"}
+
+_SEVERITY_STYLES = {
+    5: {"bg": "#fee2e2", "color": "#991b1b"},
+    4: {"bg": "#ffedd5", "color": "#9a3412"},
+    3: {"bg": "#fef9c3", "color": "#854d0e"},
+    2: {"bg": "#fefce8", "color": "#a16207"},
+    1: {"bg": "#fefce8", "color": "#ca8a04"},
+}
+
+
+def _verse_accent(max_severity: int) -> dict:
+    """Left-border accent for a verse block, from its highest active severity."""
+    if max_severity >= 5:
+        return {"border": "#ef4444", "bg": "#fef2f2"}
+    if max_severity == 4:
+        return {"border": "#f97316", "bg": "#fff7ed"}
+    if max_severity >= 1:
+        return {"border": "#eab308", "bg": "#fefce8"}
+    return {"border": None, "bg": None}
+
+
+def _subtype_label(subtype: str) -> str:
+    """Humanize an MQM leaf, e.g. "mistranslation/hallucination-numbers" ->
+    "mistranslation › hallucination numbers" (mirrors mqm.js subtypeLabel)."""
+    if not subtype:
+        return ""
+    return subtype.replace("_", " ").replace("-", " ").replace("/", " › ")
+
+
+def _marked_text(text: str) -> Markup:
+    """Render [?word?] untranslated-word markers as styled words, mirroring
+    TranslationText in the UI."""
+    parts = re.split(r"\[\?(.*?)\?\]", text)
+    return Markup("").join(
+        (
+            Markup('<em style="color:#7c3aed;">{}</em>').format(part)
+            if i % 2 == 1
+            else escape(part)
+        )
+        for i, part in enumerate(parts)
+    )
+
+
+def _issue_display(issue: AgentCritiqueIssue) -> dict:
+    severity_style = _SEVERITY_STYLES.get(issue.severity, {})
+    return {
+        "dimension_label": _DIMENSION_LABELS.get(
+            issue.dimension, issue.dimension or "Issue"
+        ),
+        "dimension_style": _DIMENSION_STYLES.get(
+            issue.dimension, _DEFAULT_DIMENSION_STYLE
+        ),
+        "subtype_label": _subtype_label(issue.subtype),
+        "severity": issue.severity,
+        "severity_style": severity_style,
+        "source_text": issue.source_text,
+        "draft_text": issue.draft_text,
+        "comments": issue.comments,
+        "suggestions": issue.suggestions or [],
+        "evidence": issue.evidence or [],
+        "is_resolved": issue.is_resolved,
+    }
+
+
+def _header_safe(value: str) -> str:
+    """HTTP header values must be latin-1 with no CR/LF: collapse whitespace
+    (version/revision names are user-supplied), then RFC 2047-encode anything
+    that isn't latin-1 — unfolded, since the default RFC 2822 folding would put
+    a literal newline inside the header value."""
+    value = " ".join(value.split())
+    try:
+        value.encode("latin-1")
+        return value
+    except UnicodeEncodeError:
+        # maxlinelen discourages folding, but 4-byte-heavy input can still
+        # exceed it; strip any residual fold (adjacent RFC 2047 encoded-words
+        # separated by whitespace concatenate correctly on decode)
+        encoded = Header(value, "utf-8", maxlinelen=len(value) * 4 + 32).encode()
+        return encoded.replace("\r", "").replace("\n", "")
+
+
+@router.get("/agent/chapter_notes_email", response_model=None)
+async def get_chapter_notes_email(
+    book: str,
+    chapter: int,
+    assessment_id: int = None,
+    revision_id: int = None,
+    reference_id: int = None,
+    min_severity: int = 3,
+    include_dismissed: bool = False,
+    format: str = "html",
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Render the AI translation notes for a whole chapter as email-safe HTML.
+
+    Composes the same content as the AI-Notes view in the Analyze UI: every
+    verse in the chapter (draft + reference text), the critique notes on the
+    verses that have them, auto back-translations, and alternative renderings.
+    The HTML uses inline styles and table layout so it renders in Gmail/Outlook.
+    This endpoint generates the email body; it does not send email.
+
+    Query Parameters:
+    - book: str (required) - Book code (e.g., "JON")
+    - chapter: int (required) - Chapter number
+    - assessment_id: int (optional) - The assessment ID. Must provide either
+      assessment_id OR (revision_id and reference_id).
+    - revision_id: int (optional) - The revision ID, with reference_id.
+    - reference_id: int (optional) - The reference ID, with revision_id.
+      Resolves to all finished assessments for the pair, like /agent/critique.
+    - min_severity: int (optional, default=3) - Omit notes with severity below
+      this. Notes with severity=NULL are always included (matches the UI).
+    - include_dismissed: bool (optional, default=false) - Include resolved
+      (dismissed) notes, marked as dismissed.
+    - format: str (optional, default="html") - "html" returns an HTMLResponse
+      with the suggested subject in an X-Email-Subject header; "json" returns
+      {"subject": ..., "html": ...}.
+
+    Returns:
+    - HTMLResponse (format=html) or {"subject": str, "html": str} (format=json)
+    """
+    request_start = time.perf_counter()
+    try:
+        from sqlalchemy import and_, desc, func, or_, select
+
+        from database.models import Assessment, BookReference
+        from database.models import VerseText as VerseTextModel
+
+        if min_severity < 1 or min_severity > 5:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="min_severity must be between 1 and 5",
+            )
+        if format not in ("html", "json"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="format must be 'html' or 'json'",
+            )
+
+        assessment_ids = await resolve_assessment_ids(
+            db, current_user, assessment_id, revision_id, reference_id
+        )
+        # Keep the resolved ID in the structured logs below when the caller
+        # identified the assessment by revision/reference pair
+        assessment_id = assessment_ids[0]
+
+        assessment_result = await db.execute(
+            select(Assessment).where(Assessment.id == assessment_id)
+        )
+        assessment = assessment_result.scalar_one_or_none()
+        if not assessment:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Assessment with id {assessment_id} not found",
+            )
+        draft_revision_id = assessment.revision_id
+        reference_revision_id = assessment.reference_id
+
+        # Draft + reference version metadata for the header and subject
+        meta_query = (
+            select(
+                BibleRevision.id.label("rev_id"),
+                BibleRevision.name.label("revision_name"),
+                BibleVersion.id.label("version_id"),
+                BibleVersion.name.label("version_name"),
+                BibleVersion.iso_language,
+                BibleVersion.iso_script,
+            )
+            .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
+            .where(
+                BibleRevision.id.in_(
+                    [
+                        rid
+                        for rid in (draft_revision_id, reference_revision_id)
+                        if rid is not None
+                    ]
+                )
+            )
+        )
+        meta_rows = {row.rev_id: row for row in await db.execute(meta_query)}
+        draft_meta = meta_rows.get(draft_revision_id)
+        reference_meta = meta_rows.get(reference_revision_id)
+
+        book_result = await db.execute(
+            select(BookReference.name).where(BookReference.abbreviation == book)
+        )
+        book_name = book_result.scalar()
+        if not book_name:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Unknown book code: {book}",
+            )
+
+        # Draft and reference verse text for the chapter
+        verse_query = select(
+            VerseTextModel.revision_id, VerseTextModel.verse, VerseTextModel.text
+        ).where(
+            VerseTextModel.revision_id.in_(
+                [
+                    rid
+                    for rid in (draft_revision_id, reference_revision_id)
+                    if rid is not None
+                ]
+            ),
+            VerseTextModel.book == book,
+            VerseTextModel.chapter == chapter,
+        )
+        draft_texts = {}
+        reference_texts = {}
+        for row in await db.execute(verse_query):
+            if row.revision_id == draft_revision_id:
+                draft_texts[row.verse] = row.text
+            else:
+                reference_texts[row.verse] = row.text
+
+        if not draft_texts and not reference_texts:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"No verse text found for {book} {chapter}",
+            )
+
+        # Critique notes, ordered by verse then severity descending
+        issue_query = (
+            select(AgentCritiqueIssue)
+            .where(
+                AgentCritiqueIssue.assessment_id.in_(assessment_ids),
+                AgentCritiqueIssue.book == book,
+                AgentCritiqueIssue.chapter == chapter,
+                or_(
+                    AgentCritiqueIssue.severity.is_(None),
+                    AgentCritiqueIssue.severity >= min_severity,
+                ),
+            )
+            .order_by(
+                AgentCritiqueIssue.verse,
+                desc(AgentCritiqueIssue.severity).nulls_last(),
+            )
+        )
+        if not include_dismissed:
+            issue_query = issue_query.where(AgentCritiqueIssue.is_resolved.is_(False))
+        issues_by_verse = {}
+        for issue in (await db.execute(issue_query)).scalars():
+            issues_by_verse.setdefault(issue.verse, []).append(issue)
+
+        # Latest back-translations/alternatives per vref, keyed like the UI:
+        # the assessment's revision + reference version + reference script
+        translations_by_verse = {}
+        if reference_meta:
+            base_filters = [
+                AgentTranslation.revision_id == draft_revision_id,
+                AgentTranslation.reference_version_id == reference_meta.version_id,
+                AgentTranslation.script == reference_meta.iso_script,
+                AgentTranslation.vref.like(f"{book} {chapter}:%"),
+            ]
+            latest_subq = (
+                select(
+                    AgentTranslation.vref,
+                    func.max(AgentTranslation.version).label("max_version"),
+                )
+                .where(*base_filters)
+                .group_by(AgentTranslation.vref)
+                .subquery()
+            )
+            translation_query = select(AgentTranslation).join(
+                latest_subq,
+                and_(
+                    AgentTranslation.vref == latest_subq.c.vref,
+                    AgentTranslation.version == latest_subq.c.max_version,
+                    *base_filters,
+                ),
+            )
+            for t in (await db.execute(translation_query)).scalars():
+                translations_by_verse[int(t.vref.rsplit(":", 1)[1])] = t
+
+        is_reference_english = (
+            reference_meta is not None and reference_meta.iso_language == "eng"
+        )
+
+        problem_count = 0
+        suggestion_count = 0
+        dismissed_count = 0
+        verses = []
+        for verse_num in sorted(set(draft_texts) | set(reference_texts)):
+            issues = issues_by_verse.get(verse_num, [])
+            active = [i for i in issues if not i.is_resolved]
+            verse_problems = sum(1 for i in active if (i.severity or 0) >= 4)
+            problem_count += verse_problems
+            suggestion_count += len(active) - verse_problems
+            dismissed_count += len(issues) - len(active)
+            translation = translations_by_verse.get(verse_num)
+            # "<range>" marks a verse whose text was merged into the previous
+            # (bridged) verse — flag it so the template can say so instead of
+            # rendering the marker literally
+            draft_text = draft_texts.get(verse_num)
+            reference_text = reference_texts.get(verse_num)
+            verses.append(
+                {
+                    "number": verse_num,
+                    "draft_text": None if draft_text == "<range>" else draft_text,
+                    "draft_is_range": draft_text == "<range>",
+                    "reference_text": (
+                        None if reference_text == "<range>" else reference_text
+                    ),
+                    "reference_is_range": reference_text == "<range>",
+                    "issues": [_issue_display(i) for i in issues],
+                    "problem_count": verse_problems,
+                    "suggestion_count": len(active) - verse_problems,
+                    "accent": _verse_accent(
+                        max((i.severity or 0 for i in active), default=0)
+                    ),
+                    "english_translation": (
+                        _marked_text(translation.english_translation)
+                        if translation
+                        and translation.english_translation
+                        and not is_reference_english
+                        else None
+                    ),
+                    "literal_translation": (
+                        _marked_text(translation.literal_translation)
+                        if translation and translation.literal_translation
+                        else None
+                    ),
+                    "alternatives": (
+                        (translation.alternatives or []) if translation else []
+                    ),
+                }
+            )
+
+        draft_label = (
+            (draft_meta.version_name or draft_meta.revision_name)
+            if draft_meta
+            else f"Revision {draft_revision_id}"
+        )
+        # Collapse newlines/whitespace: the subject goes into an HTTP header
+        # and, via format=json, into a downstream mailer's Subject header —
+        # version/revision names are user-supplied
+        subject = " ".join(
+            f"AI Translation Notes - {book_name} {chapter} ({draft_label})".split()
+        )
+
+        template = _CHAPTER_NOTES_TEMPLATES.get_template("chapter_notes_email.html.j2")
+        # Render off the event loop — cost scales with chapter size and note count
+        html = await run_in_threadpool(
+            template.render,
+            subject=subject,
+            book_name=book_name,
+            chapter=chapter,
+            draft_name=draft_label,
+            draft_iso=draft_meta.iso_language if draft_meta else None,
+            reference_name=(
+                (reference_meta.version_name or reference_meta.revision_name)
+                if reference_meta
+                else None
+            ),
+            reference_iso=reference_meta.iso_language if reference_meta else None,
+            generated_date=datetime.date.today().strftime("%d %B %Y"),
+            min_severity=min_severity,
+            problem_count=problem_count,
+            suggestion_count=suggestion_count,
+            dismissed_count=dismissed_count,
+            include_dismissed=include_dismissed,
+            verses=verses,
+        )
+
+        duration = round(time.perf_counter() - request_start, 2)
+        logger.info(
+            f"get_chapter_notes_email completed in {duration}s",
+            extra={
+                "method": "GET",
+                "path": "/agent/chapter_notes_email",
+                "assessment_id": assessment_id,
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "book": book,
+                "chapter": chapter,
+                "format": format,
+                "duration_s": duration,
+            },
+        )
+
+        if format == "json":
+            return {"subject": subject, "html": html}
+        return HTMLResponse(
+            content=html, headers={"X-Email-Subject": _header_safe(subject)}
+        )
+
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        logger.error(f"Error rendering chapter notes email: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Database error: {str(e)}",
