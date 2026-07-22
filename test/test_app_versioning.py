@@ -68,8 +68,19 @@ def test_latest_is_pinned_to_v3_not_v4():
     app.configure(configured_app)
 
     v3_routes = _routes_under(configured_app, "/v3")
+    v4_routes = _routes_under(configured_app, "/v4")
     latest_routes = _routes_under(configured_app, "/latest")
 
-    # /latest is a superset of v3 (security/admin live only under /latest), but
+    # /latest is a superset of v3 (security/admin live only under /latest), so
     # every v3 route must still be present -> /latest is anchored to v3.
-    assert v3_routes <= latest_routes
+    missing = v3_routes - latest_routes
+    assert not missing, f"/latest dropped v3 routes: {sorted(missing)}"
+
+    # ...and no v4-only route may leak into /latest. A subset check alone only
+    # detects v3 routes disappearing; it is blind to v4 routes being *added*
+    # under /latest (the realistic partial/premature flip), so assert that too.
+    leaked = v4_routes & latest_routes
+    assert not leaked, (
+        "/latest picked up v4-only routes (premature /latest -> /v4 flip): "
+        f"{sorted(leaked)}"
+    )
