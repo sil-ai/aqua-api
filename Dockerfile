@@ -32,6 +32,8 @@ ADD assessment_routes/ ./assessment_routes/
 ADD predict_routes/ ./predict_routes/
 ADD security_routes/ ./security_routes/
 ADD train_routes/ ./train_routes/
+ADD api_v4/ ./api_v4/
+ADD schemas/ ./schemas/
 ADD database/ ./database
 ADD alembic/ ./database
 ADD utils/ ./utils
