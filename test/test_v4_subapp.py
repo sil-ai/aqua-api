@@ -10,7 +10,11 @@ pin the observable consequences of that switch:
   mount otherwise 307-redirects the bare mount path);
 * v4 no longer appears in the *main* app OpenAPI schema (it moved to
   /v4/openapi.json);
-* CORS is applied correctly for /v4/* with no duplicate header.
+* CORS is applied correctly for /v4/* with no duplicate header;
+* unhandled exceptions on /v4 keep the API-wide JSON 500 contract (the mount's
+  own ServerErrorMiddleware would otherwise return a plaintext body);
+* unknown /v4 paths 404 and wrong methods 405 (the mount boundary behaves);
+* the bare-/v4 parent shim shares the mounted root's CORS policy.
 
 A fresh app is built per the module (mirroring test_app.py / test_cors.py) so
 these do not depend on the shared module-level app or the database.
@@ -19,6 +23,7 @@ these do not depend on the shared module-level app or the database.
 import fastapi
 import pytest
 from fastapi.testclient import TestClient
+from starlette.routing import Mount
 
 import app as app_module
 from api_v4.meta_routes import v4_status_payload
@@ -102,3 +107,66 @@ def test_cors_preflight_allowed_for_v4(client):
     )
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
+
+
+def test_bare_v4_shares_cors_policy_with_mounted_root(client):
+    # The bare /v4 form is a parent-app shim, not part of the mount, so it only
+    # ever gets the parent's CORS layer. Pin that it still agrees with the
+    # mounted root: allowed origin echoed, disallowed origin omitted. Catches a
+    # future divergence where v4's CORS is changed on the mount but not the shim.
+    allowed = client.get(
+        "/v4", headers={"Origin": ALLOWED_ORIGIN}, follow_redirects=False
+    )
+    assert allowed.status_code == 200
+    assert allowed.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
+
+    disallowed = client.get(
+        "/v4", headers={"Origin": DISALLOWED_ORIGIN}, follow_redirects=False
+    )
+    assert disallowed.status_code == 200
+    assert "access-control-allow-origin" not in {k.lower() for k in disallowed.headers}
+
+
+def test_v4_unknown_path_returns_404(client):
+    # The mount must not swallow unknown paths (e.g. an errant catch-all route on
+    # the sub-app). Guards the 404 boundary before real domain routers land.
+    response = client.get("/v4/does-not-exist", follow_redirects=False)
+    assert response.status_code == 404
+
+
+def test_v4_root_rejects_wrong_method(client):
+    # The discovery root is GET-only; other methods must 405, not 200/500.
+    response = client.post("/v4/", follow_redirects=False)
+    assert response.status_code == 405
+
+
+def test_v4_unhandled_exception_returns_json_500():
+    """A mounted sub-app has its own ServerErrorMiddleware that defaults to a
+    *plaintext* 500 body — diverging from the JSON ``{"detail": ...}`` contract
+    ``LoggingMiddleware`` produces for every other route. #830 registers a
+    handler on the sub-app to restore that contract; this guards it against a
+    regression (e.g. the handler being dropped).
+
+    A throwing probe route is attached to the mounted sub-app directly, and a
+    client with ``raise_server_exceptions=False`` inspects the wire response the
+    client would actually receive.
+    """
+    mock_app = fastapi.FastAPI()
+    app_module.configure(mock_app)
+
+    v4_mount = next(
+        route
+        for route in mock_app.routes
+        if isinstance(route, Mount) and route.path == "/v4"
+    )
+
+    @v4_mount.app.get("/_boom_probe")
+    async def _boom_probe():
+        raise ValueError("boom")
+
+    with TestClient(mock_app, raise_server_exceptions=False) as probe_client:
+        response = probe_client.get("/v4/_boom_probe")
+
+    assert response.status_code == 500
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {"detail": "Internal server error"}
