@@ -13,6 +13,7 @@ variable prefixes, or reformatted include_router calls.
 """
 
 import fastapi
+from starlette.routing import Mount
 
 import app
 
@@ -50,14 +51,39 @@ def test_every_v3_route_is_also_exposed_under_latest():
 
 
 def test_v4_surface_is_mounted():
-    """v4 is released beside v3 (epic #842, #824). Guard that the /v4 surface
-    exists so a lost include_router is caught, without pinning the exact set of
-    v4 routes (those grow as the contract issues land)."""
+    """v4 is released beside v3 (epic #842, #824) as an isolated sub-app
+    mounted at /v4 (#830). Guard that the mount exists and still exposes the
+    discovery root, so a lost mount is caught, without pinning the exact set of
+    v4 routes (those grow as the contract issues land).
+
+    A mount's internal routes are not in the *parent* app's route table (they
+    live on the sub-app), so this checks the mount directly rather than via
+    ``_routes_under``, which only sees the parent table.
+    """
     configured_app = fastapi.FastAPI()
     app.configure(configured_app)
 
-    v4_routes = _routes_under(configured_app, "/v4")
-    assert ("GET", "/") in v4_routes, "expected the /v4/ discovery root to be mounted"
+    v4_mount = next(
+        (
+            route
+            for route in configured_app.routes
+            if isinstance(route, Mount) and route.path == "/v4"
+        ),
+        None,
+    )
+    assert v4_mount is not None, "expected a sub-application mounted at /v4"
+
+    # The discovery root must exist inside the mounted sub-app. Its path is "/"
+    # on the sub-app (it becomes /v4/ externally).
+    sub_routes = {
+        (method, getattr(route, "path", None))
+        for route in v4_mount.routes
+        for method in (getattr(route, "methods", None) or [])
+    }
+    assert (
+        "GET",
+        "/",
+    ) in sub_routes, "expected the /v4/ discovery root inside the mounted sub-app"
 
 
 def test_latest_is_pinned_to_v3_not_v4():
@@ -83,4 +109,19 @@ def test_latest_is_pinned_to_v3_not_v4():
     assert not leaked, (
         "/latest picked up v4-only routes (premature /latest -> /v4 flip): "
         f"{sorted(leaked)}"
+    )
+
+    # Since #830, v4 is a mounted sub-app — its routes live inside the mount and
+    # do NOT appear in the parent route table above, so the `leaked` check can no
+    # longer see them. The realistic premature flip is now mounting the v4
+    # sub-app at /latest. /latest must stay include_router-based (mirroring v3),
+    # never a mount, so guard that directly.
+    latest_mounts = [
+        route
+        for route in configured_app.routes
+        if isinstance(route, Mount) and route.path == "/latest"
+    ]
+    assert not latest_mounts, (
+        "/latest must not be a mounted sub-app (premature /latest -> /v4 flip); "
+        "/latest stays pinned to v3 via include_router"
     )
