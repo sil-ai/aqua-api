@@ -12,6 +12,8 @@ from agent_routes.v3.affix_routes import router as affix_router_v3
 from agent_routes.v3.agent_routes import router as agent_router_v3
 from agent_routes.v3.pivot_routes import router as pivot_router_v3
 from agent_routes.v3.tokenizer_routes import router as tokenizer_router_v3
+from api_v4.app import create_v4_app
+from api_v4.meta_routes import v4_status_payload
 from assessment_routes.v3.assessment_routes import router as assessment_router_v3
 from assessment_routes.v3.eflomal_routes import router as eflomal_router_v3
 from assessment_routes.v3.results_push_routes import router as results_write_router_v3
@@ -135,6 +137,16 @@ def configure_cors(app):
 
 
 def configure_routing(app):
+    # Versioning model (epic #842):
+    #   /v3     — frozen, fixes only. Guarded by the OpenAPI contract snapshot
+    #             test so any change to its wire surface needs a reviewed diff.
+    #   /latest — deliberately stays pinned to v3; it does NOT move to v4 when
+    #             v4 releases. The /latest -> /v4 flip is a separate, deferred
+    #             manual step with no committed date.
+    #   /v4     — new, opt-in surface released beside v3. Domain resources are
+    #             added under <domain>_routes/v4/ by the contract issues
+    #             (#825-#831); today it exposes only the /v4/ discovery root.
+    #   v1/v2   — removed as unused (#711).
     app.include_router(language_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(revision_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(version_router_v3, prefix="/v3", tags=["Version 3"])
@@ -187,6 +199,26 @@ def configure_routing(app):
 
     app.include_router(security_router, prefix="/latest", tags=["Latest"])
     app.include_router(admin_router, prefix="/latest", tags=["Latest"])
+
+    # v4: opt-in surface beside frozen v3, mounted as an isolated sub-app so
+    # later PRs can register v4-only exception handlers / response behavior
+    # without any risk of touching v3 (issue #830). Mounting also moves the v4
+    # OpenAPI schema to /v4/openapi.json (docs at /v4/docs), so v4 no longer
+    # appears in the main app schema. See api_v4/app.py for the middleware
+    # rationale (CORS re-applied; LoggingMiddleware NOT duplicated — the parent
+    # stack already wraps the mount).
+    #
+    # Bare-/v4 health-check shim: once /v4 is a mount, Starlette 307-redirects
+    # the bare mount path (/v4 -> /v4/). The #824 scaffold deliberately served
+    # a non-redirecting 200 at bare /v4 for health-check probes and clients that
+    # don't follow redirects, so we preserve that here with an explicit,
+    # schema-hidden parent route (an exact-path route wins over the mount's
+    # redirect). It reuses the sub-app's discovery payload so the two can't drift.
+    @app.get("/v4", include_in_schema=False)
+    async def v4_root_bare():
+        return v4_status_payload()
+
+    app.mount("/v4", create_v4_app(configure_cors=configure_cors))
 
     @app.get("/")
     async def read_root():
