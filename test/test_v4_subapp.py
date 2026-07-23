@@ -155,10 +155,14 @@ def test_v4_unhandled_exception_returns_json_500():
     app_module.configure(mock_app)
 
     v4_mount = next(
-        route
-        for route in mock_app.routes
-        if isinstance(route, Mount) and route.path == "/v4"
+        (
+            route
+            for route in mock_app.routes
+            if isinstance(route, Mount) and route.path == "/v4"
+        ),
+        None,
     )
+    assert v4_mount is not None, "expected a sub-application mounted at /v4"
 
     @v4_mount.app.get("/_boom_probe")
     async def _boom_probe():
