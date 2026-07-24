@@ -41,12 +41,28 @@ dump_logs_and_fail() {
 # Clear any leftover container from a previous local run (CI runners are fresh).
 cleanup
 
+# Fail fast if the locally built image is missing, and never fall back to a
+# remote pull. The whole point is to test the image we JUST built; a stale
+# same-tag image in ECR (from a prior deploy) could otherwise be pulled and
+# smoke-tested instead, giving a false green. The pre-flight inspect gives a
+# clear, actionable message; --pull=never enforces the no-pull guarantee on
+# `docker run` even if the tag drifts past the check.
+if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "ERROR: image '$IMAGE' not found locally -- build it first (make build-actions)." >&2
+  echo "       REGISTRY/IMAGENAME must match the build step." >&2
+  exit 1
+fi
+
 echo "Booting $IMAGE ..."
-docker run -d --name "$CONTAINER" \
+if ! docker run -d --name "$CONTAINER" --pull=never \
   -e AQUA_DB="postgresql+asyncpg://smoke:smoke@127.0.0.1:5432/smoke" \
   -e SECRET_KEY="smoke-test-secret" \
   -p "${PORT}:8000" \
-  "$IMAGE" >/dev/null
+  "$IMAGE" >/dev/null; then
+  echo "ERROR: 'docker run' failed to start the container (see docker output above)." >&2
+  echo "       Common causes: host port ${PORT} already in use, or a daemon error." >&2
+  exit 1
+fi
 
 # Poll liveness until the app is serving (the 8 uvicorn workers need a moment
 # to import the app and bind). 30 x 2s = 60s ceiling.
