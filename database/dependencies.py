@@ -13,13 +13,19 @@ DATABASE_URL = settings.aqua_db
 # Production runs a single persistent loop per worker and benefits from
 # pooling — avoids the asyncpg+TLS handshake on every request.
 #
-# Default sizing: with 8 uvicorn workers, steady-state is ~16 conns per
-# container (8 × pool_size 2) and the burst ceiling is 40 (8 × (2 + 3)).
+# Default sizing: with 8 uvicorn workers, steady-state is ~40 conns per
+# container (8 × pool_size 5) and the burst ceiling is 120 (8 × (5 + 10)).
 # RDS default max_connections is LEAST({DBInstanceClassMemory/9531392},
 # 5000) — roughly 170 on db.t3.small, 340 on db.t3.medium, 675 on
-# db.m5.large — so 40/container leaves comfortable headroom even on
+# db.m5.large — so 120/container leaves comfortable headroom even on
 # small instance classes. Tune the env vars if running many containers
 # or if other consumers (alembic, batch jobs, replicas) eat the budget.
+#
+# An earlier 2+3 default starved /v3/textsearch (with comparison) under
+# moderate concurrency: a handful of slow searches consumed a worker's
+# whole pool, and the next request — even just the auth lookup — timed
+# out in get_db. Pair the bigger pool with a server-side statement_timeout
+# so a single slow query can't pin a connection indefinitely.
 if settings.aqua_db_poolclass and settings.aqua_db_poolclass.lower() == "null":
     from sqlalchemy.pool import NullPool
 
@@ -32,6 +38,11 @@ else:
         pool_timeout=settings.aqua_db_pool_timeout,
         pool_recycle=settings.aqua_db_pool_recycle,
         pool_pre_ping=True,
+        connect_args={
+            "server_settings": {
+                "statement_timeout": str(settings.aqua_db_statement_timeout_ms),
+            },
+        },
     )
 AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 

@@ -64,16 +64,23 @@ class Settings(BaseSettings):
     # TestClient spawns a fresh event loop per request). Anything else uses the
     # pooled engine configured below.
     aqua_db_poolclass: Optional[str] = None
-    aqua_db_pool_size: int = 2
-    aqua_db_max_overflow: int = 3
-    aqua_db_pool_timeout: int = 10
+    aqua_db_pool_size: int = 5
+    aqua_db_max_overflow: int = 10
+    aqua_db_pool_timeout: int = 30
     aqua_db_pool_recycle: int = 1800
+    # Server-side statement_timeout (ms) passed to asyncpg. The real safety
+    # net against pool exhaustion: caps how long any single query can pin a
+    # pooled connection, so one runaway query fails its own request instead
+    # of starving every other caller on the worker. 0 disables (Postgres
+    # default — no limit). See PR #656 / issue behind the QueuePool 500s.
+    aqua_db_statement_timeout_ms: int = 60_000
 
     @field_validator(
         "aqua_db_pool_size",
         "aqua_db_max_overflow",
         "aqua_db_pool_timeout",
         "aqua_db_pool_recycle",
+        "aqua_db_statement_timeout_ms",
         mode="before",
     )
     @classmethod
