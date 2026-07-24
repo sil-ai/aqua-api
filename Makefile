@@ -21,10 +21,11 @@ smoke-test:
 	docker run -d --name aqua-smoke \
 		-e AQUA_DB="postgresql+asyncpg://smoke:smoke@localhost:5432/smoke" \
 		-e SECRET_KEY="smoke-test-key" \
-		${REGISTRY}/${IMAGENAME}:latest
+		${REGISTRY}/${IMAGENAME}:latest \
+		|| { echo "Smoke test FAILED: container did not start"; docker rm -f aqua-smoke >/dev/null 2>&1 || true; exit 1; }
 	@ok=0; \
 	for i in $$(seq 1 30); do \
-		if docker exec aqua-smoke curl -fsS http://localhost:8000/health; then echo " /health OK"; ok=1; break; fi; \
+		if docker exec aqua-smoke curl -fsS --connect-timeout 2 --max-time 5 http://localhost:8000/health; then echo " /health OK"; ok=1; break; fi; \
 		sleep 2; \
 	done; \
 	docker logs aqua-smoke; \
