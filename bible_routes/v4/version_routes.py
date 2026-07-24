@@ -20,6 +20,8 @@ domain signals onto the #828 :class:`~api_v4.errors.V4APIError` envelope. The
 error ``code`` values are the stable contract clients branch on.
 """
 
+__version__ = "v4"
+
 import fastapi
 from fastapi import Depends, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
