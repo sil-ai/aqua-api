@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Boot the built Docker image the way the container starts in production and
+# probe it, so an image-only failure (a missing COPY, an unimportable module, a
+# broken CMD) fails the build instead of shipping silently.
+#
+# WHY THIS EXISTS (issue #876): CI builds the image (`make build-actions`) and
+# runs the test suite against the source TREE (`make test` -> pytest with
+# PYTHONPATH=$PWD), but never boots the image itself -- so the container
+# filesystem is never exercised by CI. The regression that motivated this:
+# schemas/ and api_v4/ were absent from the Dockerfile COPY set, so
+# `uvicorn app:app` died at container start with ModuleNotFoundError while every
+# CI check stayed green (fixed in 3a65946). Each v4 contract issue (#825-#831)
+# adds new top-level modules imported at ASGI load, so this is a recurring class
+# of bug, not a one-off.
+#
+# Dummy AQUA_DB/SECRET_KEY satisfy the fail-fast boot validation (config.py and
+# security_routes.utilities reject a missing/empty value) WITHOUT a live
+# database: SQLAlchemy engine creation is lazy, so /health (which touches
+# nothing external) serves regardless. We probe /health (liveness) and /v4
+# (proves the mounted sub-app and the new top-level packages import at ASGI
+# load -- the exact regression class above). We deliberately do NOT probe /ready
+# (it opens a real DB connection) since this test runs without a database.
+set -euo pipefail
+
+IMAGE="${REGISTRY:-docker-local}/${IMAGENAME:-aqua-api-dev}:latest"
+CONTAINER="aqua-smoke"
+PORT="${SMOKE_PORT:-8000}"
+
+cleanup() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+dump_logs_and_fail() {
+  echo "ERROR: $1" >&2
+  echo "----- docker logs $CONTAINER -----" >&2
+  docker logs "$CONTAINER" >&2 || true
+  exit 1
+}
+
+# Clear any leftover container from a previous local run (CI runners are fresh).
+cleanup
+
+echo "Booting $IMAGE ..."
+docker run -d --name "$CONTAINER" \
+  -e AQUA_DB="postgresql+asyncpg://smoke:smoke@127.0.0.1:5432/smoke" \
+  -e SECRET_KEY="smoke-test-secret" \
+  -p "${PORT}:8000" \
+  "$IMAGE" >/dev/null
+
+# Poll liveness until the app is serving (the 8 uvicorn workers need a moment
+# to import the app and bind). 30 x 2s = 60s ceiling.
+echo "Waiting for /health ..."
+for i in $(seq 1 30); do
+  if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then
+    echo "Container is live."
+    break
+  fi
+  if ! docker ps -q --filter "name=^${CONTAINER}$" | grep -q .; then
+    dump_logs_and_fail "container exited before serving /health"
+  fi
+  if [ "$i" -eq 30 ]; then
+    dump_logs_and_fail "container did not serve /health within 60s"
+  fi
+  sleep 2
+done
+
+echo "GET /health"
+curl -fsS "http://localhost:${PORT}/health" || dump_logs_and_fail "/health did not return success"
+echo
+
+echo "GET /v4"
+curl -fsS "http://localhost:${PORT}/v4" || dump_logs_and_fail "/v4 did not return success (v4 sub-app failed to mount?)"
+echo
+
+echo "Smoke test passed."
