@@ -142,6 +142,26 @@ def test_out_of_range_pool_config_rejected_at_boot(
         settings_cls()
 
 
+# (env var, field name, sentinel value) that must be ACCEPTED despite looking
+# out-of-range: pool_recycle=-1 disables recycling (SQLAlchemy), and
+# statement_timeout=0 means "no limit" (Postgres). Locks these in so a future
+# tightening of the bound (ge=-1 -> ge=0, or ge=0 -> gt=0) fails loudly here.
+_SENTINELS = [
+    ("AQUA_DB_POOL_RECYCLE", "aqua_db_pool_recycle", -1),
+    ("AQUA_DB_STATEMENT_TIMEOUT_MS", "aqua_db_statement_timeout_ms", 0),
+]
+
+
+@pytest.mark.parametrize("env_name,field_name,value", _SENTINELS)
+def test_sentinel_pool_config_accepted_at_boot(
+    settings_cls, monkeypatch, env_name, field_name, value
+):
+    """The disable/no-limit sentinels construct cleanly and round-trip."""
+    monkeypatch.setenv("AQUA_DB", _VALID_DB)
+    monkeypatch.setenv(env_name, str(value))
+    assert getattr(settings_cls(), field_name) == value
+
+
 @pytest.mark.parametrize(
     "raw,expected",
     [
