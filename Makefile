@@ -10,6 +10,14 @@ build-local:
 build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
+# Boot the freshly built image and probe it, so an image-only failure (a missing
+# COPY, an unimportable module, a broken CMD) fails the build instead of shipping
+# silently. CI otherwise only builds the image and tests the source TREE, never
+# the container itself. Requires the same REGISTRY/IMAGENAME used for the build.
+# See scripts/smoke_test.sh and issue #876.
+smoke-test:
+	@REGISTRY="${REGISTRY}" IMAGENAME="${IMAGENAME}" bash ./scripts/smoke_test.sh
+
 setup-pgvector:
 	@echo "Setting up pgvector extension..."
 	@docker exec -i $$(docker compose ps -q db) psql -U dbuser -d dbname -c "CREATE EXTENSION IF NOT EXISTS vector;" || echo "pgvector extension setup completed"
@@ -49,6 +57,14 @@ test: linting localdb-up
 	export AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" && \
 	pytest test
 	make down
+
+# Rewrite the committed v3 OpenAPI contract baseline that
+# test/test_openapi_contract.py guards. Run after an INTENTIONAL v3 change
+# and commit the resulting snapshot diff (see issue #756, epic #842). No DB
+# required — generating the schema does not touch the database.
+regen-openapi-snapshot:
+	@export PYTHONPATH=${PWD} && \
+	python scripts/regen_openapi_snapshot.py
 
 
 push-branch:

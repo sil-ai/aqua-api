@@ -43,6 +43,17 @@ def test_ready_endpoint(client):
     assert response.json() == {"status": "ready"}
 
 
+def test_v4_root_endpoint(client):
+    # The /v4 discovery root reports the preview status of the opt-in v4
+    # surface (epic #842, #824). Both the trailing-slash and bare forms are
+    # served directly with no 307 redirect (follow_redirects=False) so health
+    # checks and strict clients can hit either.
+    for path in ("/v4/", "/v4"):
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code == 200, path
+        assert response.json() == {"version": "v4", "status": "preview"}
+
+
 def test_ready_endpoint_returns_503_when_db_unreachable(client, monkeypatch):
     # Force the engine.connect() call inside /ready to raise so we exercise
     # the failure path and confirm the 503 contract.

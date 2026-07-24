@@ -14,8 +14,9 @@ from pythonjsonlogger import jsonlogger
 
 from config import settings
 
-# The Loki integration lives in observability-library (a public repo, pulled
-# in via requirements.txt). Import it optionally anyway, as cheap insurance:
+# The Loki integration lives in observability-library (a public repo, declared
+# as a git dependency in pyproject.toml). Import it optionally anyway, as cheap
+# insurance:
 # this module is imported by setup_logger everywhere, so guarding the import
 # keeps app boot decoupled from an optional, off-by-default backend if the
 # install ever fails for reasons unrelated to the code (a GitHub outage, a
