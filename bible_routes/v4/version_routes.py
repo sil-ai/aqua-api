@@ -130,6 +130,16 @@ async def create_version(
             message=str(exc),
             details={"group_id": exc.group_id},
         ) from exc
+    except version_service.InvalidReference as exc:
+        raise V4APIError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="INVALID_REFERENCE",
+            message=(
+                "A referenced value does not exist. Check the FK-backed fields: "
+                "iso_language, iso_script, back_translation."
+            ),
+            details={"fields": list(version_service.InvalidReference.FIELDS)},
+        ) from exc
     group_map = await version_service.group_ids_for_versions(db, [version.id])
     return _to_out(version, group_map.get(version.id, []))
 

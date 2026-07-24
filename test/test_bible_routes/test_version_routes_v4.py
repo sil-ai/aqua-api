@@ -166,6 +166,38 @@ class TestCreate:
         assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
         assert "add_to_groups" in resp.text
 
+    def test_create_unknown_iso_language_is_400_invalid_reference(
+        self, client, regular_token1, db_session
+    ):
+        """An unknown FK-backed iso code becomes a stable 400, not a catch-all 500."""
+        body = {
+            **BASE_VERSION,
+            "abbreviation": "V4BADISO",
+            "iso_language": "zzz",  # not in iso_language reference table
+            "add_to_groups": [_group_id(db_session, "Group1")],
+        }
+        resp = client.post(
+            f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
+        )
+        assert resp.status_code == 400, resp.text
+        assert resp.json()["error"]["code"] == "INVALID_REFERENCE"
+
+    def test_create_nonexistent_back_translation_is_400_invalid_reference(
+        self, client, regular_token1, db_session
+    ):
+        """A non-existent back_translation FK id becomes a stable 400, not a 500."""
+        body = {
+            **BASE_VERSION,
+            "abbreviation": "V4BADBT",
+            "back_translation": 9999999,  # no such bible_version.id
+            "add_to_groups": [_group_id(db_session, "Group1")],
+        }
+        resp = client.post(
+            f"{PREFIX}/versions", json=body, headers=_auth(regular_token1)
+        )
+        assert resp.status_code == 400, resp.text
+        assert resp.json()["error"]["code"] == "INVALID_REFERENCE"
+
 
 class TestListAndGet:
     def test_list_returns_envelope_and_is_group_scoped(

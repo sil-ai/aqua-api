@@ -40,6 +40,7 @@ from collections import defaultdict
 from datetime import date
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import BibleVersion, BibleVersionAccess, UserDB, UserGroup
@@ -75,6 +76,21 @@ class GroupMembershipRequired(VersionServiceError):
     def __init__(self, group_id: int) -> None:
         self.group_id = group_id
         super().__init__(f"Not authorized to add a version to group {group_id}.")
+
+
+class InvalidReference(VersionServiceError):
+    """A create referenced a value that fails a FK constraint on insert.
+
+    ``BibleVersion.iso_language`` / ``iso_script`` are FK-backed reference codes
+    and ``back_translation_id`` is a FK to ``bible_version.id``; a bad code or a
+    non-existent version id raises an ``IntegrityError`` on flush. The router maps
+    this to a stable 4xx (``INVALID_REFERENCE``) instead of letting it fall
+    through to the catch-all 500 — that is the whole point of the #828 contract.
+    """
+
+    #: FK-backed request fields, surfaced in the error details as a hint to the
+    #: client about which inputs can trigger this.
+    FIELDS = ("iso_language", "iso_script", "back_translation")
 
 
 def _visible_versions_query(user: UserDB, *, include_deleted: bool):
@@ -159,7 +175,10 @@ async def create_version(db: AsyncSession, user: UserDB, data) -> BibleVersion:
 
     ``data`` is a ``VersionCreate``. Raises :class:`VersionGroupRequired` if no
     group was given and :class:`GroupMembershipRequired` for any group the caller
-    does not belong to — both validated before any row is written. Duplicate group
+    does not belong to — both validated before any row is written. A FK violation
+    on insert (unknown ``iso_language`` / ``iso_script`` code, or a non-existent
+    ``back_translation`` id) becomes :class:`InvalidReference` rather than a raw
+    ``IntegrityError`` (which the catch-all would turn into a 500). Duplicate group
     ids in ``add_to_groups`` are collapsed (order-preserving) so a caller cannot
     create duplicate access rows.
     """
@@ -210,6 +229,11 @@ async def create_version(db: AsyncSession, user: UserDB, data) -> BibleVersion:
                 BibleVersionAccess(bible_version_id=new_version.id, group_id=group_id)
             )
         await db.commit()
+    except IntegrityError as exc:
+        # Client input referenced a non-existent FK target (iso code / version).
+        # Translate to a domain signal → stable 4xx, never a catch-all 500.
+        await db.rollback()
+        raise InvalidReference() from exc
     except Exception:
         await db.rollback()
         raise
