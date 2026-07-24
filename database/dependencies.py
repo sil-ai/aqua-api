@@ -18,8 +18,11 @@ DATABASE_URL = settings.aqua_db
 # RDS default max_connections is LEAST({DBInstanceClassMemory/9531392},
 # 5000) — roughly 170 on db.t3.small, 340 on db.t3.medium, 675 on
 # db.m5.large — so 120/container leaves comfortable headroom even on
-# small instance classes. Tune the env vars if running many containers
-# or if other consumers (alembic, batch jobs, replicas) eat the budget.
+# small instance classes. NOTE: this budget is per-container — N concurrent
+# App Runner instances multiply it (2 × 120 already exceeds t3.small's ~170),
+# and there is no fleet-wide saturation alert yet. See #747. Tune the env
+# vars if running many containers or if other consumers (alembic, batch
+# jobs, replicas) eat the budget.
 #
 # An earlier 2+3 default starved /v3/textsearch (with comparison) under
 # moderate concurrency: a handful of slow searches consumed a worker's

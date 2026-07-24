@@ -43,6 +43,8 @@ def test_pooled_engine_wires_statement_timeout(monkeypatch):
         kwargs = captured["kwargs"]
         assert kwargs["pool_size"] == config.settings.aqua_db_pool_size
         assert kwargs["max_overflow"] == config.settings.aqua_db_max_overflow
+        assert kwargs["pool_timeout"] == config.settings.aqua_db_pool_timeout
+        assert kwargs["pool_recycle"] == config.settings.aqua_db_pool_recycle
         server_settings = kwargs["connect_args"]["server_settings"]
         assert server_settings["statement_timeout"] == str(
             config.settings.aqua_db_statement_timeout_ms

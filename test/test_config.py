@@ -113,6 +113,35 @@ def test_valid_pool_config_coerced_to_int(
     assert getattr(settings_cls(), field_name) == 7
 
 
+# (env var, an out-of-range value that must fail the field's lower bound).
+# pool_recycle permits -1 (SQLAlchemy "disable") and statement_timeout permits
+# 0 (Postgres "no limit"), so their rejection cases sit below those sentinels.
+_OUT_OF_RANGE = [
+    ("AQUA_DB_POOL_SIZE", "0"),
+    ("AQUA_DB_POOL_SIZE", "-1"),
+    ("AQUA_DB_MAX_OVERFLOW", "-1"),
+    ("AQUA_DB_POOL_TIMEOUT", "0"),
+    ("AQUA_DB_POOL_RECYCLE", "-2"),
+    ("AQUA_DB_STATEMENT_TIMEOUT_MS", "-1"),
+]
+
+
+@pytest.mark.parametrize("env_name,value", _OUT_OF_RANGE)
+def test_out_of_range_pool_config_rejected_at_boot(
+    settings_cls, monkeypatch, env_name, value
+):
+    """A negative/zero pool value fails fast at boot, not later in the engine.
+
+    Preserves this module's fail-loud contract: a typo'd value must raise at
+    Settings() construction rather than surfacing as an opaque SQLAlchemy or
+    asyncpg error when the connection pool is first used.
+    """
+    monkeypatch.setenv("AQUA_DB", _VALID_DB)
+    monkeypatch.setenv(env_name, value)
+    with pytest.raises(ValidationError):
+        settings_cls()
+
+
 @pytest.mark.parametrize(
     "raw,expected",
     [
