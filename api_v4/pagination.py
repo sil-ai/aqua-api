@@ -49,6 +49,7 @@ ceiling should define its own params dependency rather than raise this shared ca
 from typing import Generic, TypeVar
 
 from fastapi import Query
+from pydantic import Field
 
 from api_v4.schemas.base import V4BaseModel
 
@@ -93,8 +94,11 @@ class PaginationParams:
             ),
         ),
     ) -> None:
-        self.limit = limit
-        self.offset = offset
+        # Annotate the instance attributes explicitly so consumers
+        # (``page.limit`` / ``page.offset``) get static types and editor support;
+        # the values are already range-validated by the Query bounds above.
+        self.limit: int = limit
+        self.offset: int = offset
 
 
 DataT = TypeVar("DataT")
@@ -109,16 +113,29 @@ class V4Page(V4BaseModel, Generic[DataT]):
     unambiguous; clients read the ``$ref``, not the name.
     """
 
-    #: The page of results (at most ``limit`` items).
-    items: list[DataT]
-    #: Total rows matching the query, ignoring ``limit`` / ``offset`` — this is the
-    #: full-result count a client needs to know how many pages exist, NOT
-    #: ``len(items)``.
-    total: int
-    #: The ``limit`` that produced this page (echoed back from the request).
-    limit: int
-    #: The ``offset`` that produced this page (echoed back from the request).
-    offset: int
+    items: list[DataT] = Field(
+        description="The page of results (at most ``limit`` items)."
+    )
+    total: int = Field(
+        ge=0,
+        description=(
+            "Total rows matching the query, ignoring limit/offset — the "
+            "full-result count for computing how many pages exist, not len(items)."
+        ),
+    )
+    # ge=1 mirrors the PaginationParams floor and makes the response schema
+    # self-documenting/self-validating. Deliberately NO le=MAX_LIMIT here: the
+    # envelope is shared, and a future heavy list may define its own params
+    # dependency with a higher cap (see module docstring) whose echoed limit must
+    # still validate against this model.
+    limit: int = Field(
+        ge=1,
+        description="The limit that produced this page (echoed from the request).",
+    )
+    offset: int = Field(
+        ge=0,
+        description="The offset that produced this page (echoed from the request).",
+    )
 
     @classmethod
     def create(

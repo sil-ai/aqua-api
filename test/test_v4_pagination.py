@@ -62,6 +62,13 @@ def client():
         yield c
 
 
+@pytest.fixture
+def openapi(client):
+    """The sub-app's generated OpenAPI document, built once for the OpenAPI tests
+    (generation walks every route/schema, so avoid regenerating per assertion)."""
+    return client.app.openapi()
+
+
 def _assert_validation_envelope(response):
     """The response is a 422 shaped by the #828 error contract:
     ``{"error": {"code": "VALIDATION_ERROR", ...}}``."""
@@ -131,28 +138,35 @@ def test_non_numeric_limit_rejected_with_422_envelope(client):
     _assert_validation_envelope(client.get("/_widgets", params={"limit": "abc"}))
 
 
-def test_openapi_contains_paginated_response_schema(client):
+def test_openapi_contains_paginated_response_schema(openapi):
     # The sub-app's own OpenAPI must contain the generic page schema and reference
     # it from the list route's 200 response.
-    openapi = client.app.openapi()
     page_schemas = [
         name for name in openapi["components"]["schemas"] if name.startswith("V4Page")
     ]
-    assert page_schemas == ["V4Page_WidgetOut_"], page_schemas
+    # Exactly one paginated schema, and it names its item type — asserted
+    # semantically rather than pinning the exact generated identifier, whose
+    # format can shift across FastAPI/Pydantic versions.
+    assert len(page_schemas) == 1, page_schemas
+    assert "WidgetOut" in page_schemas[0], page_schemas[0]
 
     ok_content = openapi["paths"]["/_widgets"]["get"]["responses"]["200"]["content"]
     ref = ok_content["application/json"]["schema"]["$ref"]
     assert ref == f"#/components/schemas/{page_schemas[0]}", ref
 
+    # The envelope's numeric fields carry their non-negativity constraints into
+    # the schema (self-documenting responses): total/offset >= 0, limit >= 1.
+    props = openapi["components"]["schemas"][page_schemas[0]]["properties"]
+    assert props["total"]["minimum"] == 0
+    assert props["offset"]["minimum"] == 0
+    assert props["limit"]["minimum"] == 1
 
-def test_openapi_declares_limit_offset_query_params(client):
+
+def test_openapi_declares_limit_offset_query_params(openapi):
     # The other half of the contract: limit/offset must render as documented query
     # params (bounds + defaults) on the list route, so every list endpoint that
     # depends on PaginationParams advertises pagination identically in OpenAPI.
-    params = {
-        p["name"]: p
-        for p in client.app.openapi()["paths"]["/_widgets"]["get"]["parameters"]
-    }
+    params = {p["name"]: p for p in openapi["paths"]["/_widgets"]["get"]["parameters"]}
     assert set(params) == {"limit", "offset"}
 
     limit = params["limit"]
