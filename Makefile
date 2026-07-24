@@ -28,9 +28,9 @@ smoke-test:
 		if docker exec aqua-smoke curl -fsS --connect-timeout 2 --max-time 5 http://localhost:8000/health; then echo " /health OK"; ok=1; break; fi; \
 		sleep 2; \
 	done; \
-	docker logs aqua-smoke; \
+	if [ "$$ok" != "1" ]; then echo "Smoke test FAILED: /health did not return 200 within timeout; container logs follow:"; docker logs aqua-smoke; fi; \
 	docker rm -f aqua-smoke >/dev/null 2>&1 || true; \
-	if [ "$$ok" != "1" ]; then echo "Smoke test FAILED: /health did not return 200"; exit 1; fi
+	if [ "$$ok" != "1" ]; then exit 1; fi
 
 setup-pgvector:
 	@echo "Setting up pgvector extension..."
