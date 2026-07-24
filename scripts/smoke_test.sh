@@ -20,11 +20,17 @@
 # (proves the mounted sub-app and the new top-level packages import at ASGI
 # load -- the exact regression class above). We deliberately do NOT probe /ready
 # (it opens a real DB connection) since this test runs without a database.
+#
+# The probe runs curl INSIDE the container (docker exec) rather than publishing
+# a port to the host (idea from #877, woodwardmw): no host-port mapping means no
+# chance of colliding with something already bound on the runner, and no need
+# for a SMOKE_PORT escape hatch. This relies on curl being present in the image
+# -- it ships in the python:3.11 base, and the Dockerfile's own HEALTHCHECK
+# already depends on it.
 set -euo pipefail
 
 IMAGE="${REGISTRY:-docker-local}/${IMAGENAME:-aqua-api-dev}:latest"
 CONTAINER="aqua-smoke"
-PORT="${SMOKE_PORT:-8000}"
 
 cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -36,6 +42,11 @@ dump_logs_and_fail() {
   echo "----- docker logs $CONTAINER -----" >&2
   docker logs "$CONTAINER" >&2 || true
   exit 1
+}
+
+# curl the app from inside its own container; keeps the probe off the host.
+probe() {
+  docker exec "$CONTAINER" curl -fsS --connect-timeout 2 --max-time 5 "http://localhost:8000$1"
 }
 
 # Clear any leftover container from a previous local run (CI runners are fresh).
@@ -57,10 +68,8 @@ echo "Booting $IMAGE ..."
 if ! docker run -d --name "$CONTAINER" --pull=never \
   -e AQUA_DB="postgresql+asyncpg://smoke:smoke@127.0.0.1:5432/smoke" \
   -e SECRET_KEY="smoke-test-secret" \
-  -p "${PORT}:8000" \
   "$IMAGE" >/dev/null; then
   echo "ERROR: 'docker run' failed to start the container (see docker output above)." >&2
-  echo "       Common causes: host port ${PORT} already in use, or a daemon error." >&2
   exit 1
 fi
 
@@ -68,7 +77,7 @@ fi
 # to import the app and bind). 30 x 2s = 60s ceiling.
 echo "Waiting for /health ..."
 for i in $(seq 1 30); do
-  if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then
+  if probe /health >/dev/null 2>&1; then
     echo "Container is live."
     break
   fi
@@ -82,11 +91,11 @@ for i in $(seq 1 30); do
 done
 
 echo "GET /health"
-curl -fsS "http://localhost:${PORT}/health" || dump_logs_and_fail "/health did not return success"
+probe /health || dump_logs_and_fail "/health did not return success"
 echo
 
 echo "GET /v4"
-curl -fsS "http://localhost:${PORT}/v4" || dump_logs_and_fail "/v4 did not return success (v4 sub-app failed to mount?)"
+probe /v4 || dump_logs_and_fail "/v4 did not return success (v4 sub-app failed to mount?)"
 echo
 
 echo "Smoke test passed."
