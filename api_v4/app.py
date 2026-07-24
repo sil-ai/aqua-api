@@ -36,11 +36,17 @@ Consequently:
   divergent v4 CORS would require removing the parent CORS layer from the mount
   path, not just changing this call.
 
-Unhandled-exception contract (see :func:`create_v4_app`): a mounted sub-app has
-its *own* Starlette ``ServerErrorMiddleware``, which by default sends a plaintext
-``Internal Server Error`` 500 — diverging from the JSON ``{"detail": ...}`` body
-``LoggingMiddleware`` produces for every other route. We register a handler on
-the sub-app to restore the shared JSON contract.
+Error contract (see :func:`create_v4_app` and :mod:`api_v4.errors`): the v4
+sub-app registers its own structured-error handlers via
+:func:`api_v4.errors.register_exception_handlers`, emitting the
+``{"error": {"code", "message", "details"}}`` envelope (issue #828) for domain
+errors, ``HTTPException``, validation errors, and uncaught exceptions. This
+deliberately diverges from the frozen-v3 ``{"detail": ...}`` body — v4 clients
+branch on the stable ``code``. The catch-all 500 handler returns only a generic
+body; the sub-app's own ``ServerErrorMiddleware`` re-raises the exception after
+sending it, so the traceback still reaches the parent ``LoggingMiddleware`` for
+logging (never the client). Without any handler the mount's ``ServerErrorMiddleware``
+would send a plaintext ``Internal Server Error`` 500 instead.
 
 Lifespan caveat: Starlette ``Mount`` only dispatches ``http``/``websocket``
 scopes, never ``lifespan`` — so a ``lifespan=`` passed to this sub-app would
@@ -50,21 +56,9 @@ have the parent lifespan explicitly enter this sub-app's lifespan context.
 """
 
 import fastapi
-from fastapi.responses import JSONResponse
 
+from api_v4.errors import register_exception_handlers
 from api_v4.meta_routes import router as meta_router
-
-
-async def _v4_internal_error_handler(request, exc):
-    """Return the API-wide JSON 500 body for unhandled errors on ``/v4``.
-
-    Without this, the sub-app's default ``ServerErrorMiddleware`` sends a
-    plaintext ``Internal Server Error``, breaking the ``{"detail": ...}`` JSON
-    contract every other route honors (see module docstring). Registered for the
-    base ``Exception`` so it matches the parent ``LoggingMiddleware`` shape; the
-    exception still propagates up to ``LoggingMiddleware`` for logging.
-    """
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
@@ -84,10 +78,11 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
         ),
     )
 
-    # Preserve the JSON 500 contract on the isolated sub-app (see module
-    # docstring): the mount's own ServerErrorMiddleware would otherwise return a
-    # plaintext body for unhandled exceptions.
-    v4_app.add_exception_handler(Exception, _v4_internal_error_handler)
+    # Register the v4 structured-error contract (issue #828): shapes domain
+    # errors, HTTPException, validation errors, and uncaught exceptions into the
+    # {"error": {...}} envelope on this isolated sub-app. See api_v4/errors.py for
+    # the envelope and the re-raise-for-logging behavior of the 500 handler.
+    register_exception_handlers(v4_app)
 
     # Reuse the main app's CORS configuration verbatim (see module docstring).
     configure_cors(v4_app)
