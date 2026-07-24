@@ -54,6 +54,12 @@ jobs:
         REGISTRY: ${{ env.AWS_REGISTRY }}
         IMAGENAME: ${{ env.IMAGE_NAME }}
 
+    - name: Smoke-test built image
+      run: make smoke-test
+      env:
+        REGISTRY: ${{ env.AWS_REGISTRY }}
+        IMAGENAME: ${{ env.IMAGE_NAME }}
+
     - name: Test API
       env:
         MODAL_WEBHOOK_TOKEN: ${{ secrets.MODAL_WEBHOOK_TOKEN }}

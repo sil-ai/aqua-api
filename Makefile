@@ -10,6 +10,27 @@ build-local:
 build-actions:
 	docker build --force-rm=true -t ${REGISTRY}/${IMAGENAME}:latest .
 
+# Boot the freshly built :latest image and verify it serves /health before we
+# push it (issue #876). Catches image-only breakage — a missing COPY/ADD, a bad
+# ENV PATH, an import error in the shipped layout — that the source-tree `make
+# test` can't see because it runs against the host checkout, not the container.
+# /health is a dependency-free liveness probe, so dummy AQUA_DB/SECRET_KEY (both
+# required at import) are enough to prove the app actually booted.
+smoke-test:
+	docker rm -f aqua-smoke >/dev/null 2>&1 || true
+	docker run -d --name aqua-smoke \
+		-e AQUA_DB="postgresql+asyncpg://smoke:smoke@localhost:5432/smoke" \
+		-e SECRET_KEY="smoke-test-key" \
+		${REGISTRY}/${IMAGENAME}:latest
+	@ok=0; \
+	for i in $$(seq 1 30); do \
+		if docker exec aqua-smoke curl -fsS http://localhost:8000/health; then echo " /health OK"; ok=1; break; fi; \
+		sleep 2; \
+	done; \
+	docker logs aqua-smoke; \
+	docker rm -f aqua-smoke >/dev/null 2>&1 || true; \
+	if [ "$$ok" != "1" ]; then echo "Smoke test FAILED: /health did not return 200"; exit 1; fi
+
 setup-pgvector:
 	@echo "Setting up pgvector extension..."
 	@docker exec -i $$(docker compose ps -q db) psql -U dbuser -d dbname -c "CREATE EXTENSION IF NOT EXISTS vector;" || echo "pgvector extension setup completed"
