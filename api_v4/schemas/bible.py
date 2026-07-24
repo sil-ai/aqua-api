@@ -99,5 +99,5 @@ class VersionOut(V4BaseModel):
     is_reference: bool = False
     transcribed_audio: bool = False
     owner_id: int | None = None
-    group_ids: list[int] = []
+    group_ids: list[int] = Field(default_factory=list)
     deleted: bool = False

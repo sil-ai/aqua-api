@@ -358,6 +358,28 @@ class TestGroupDedup:
         assert page["total"] == len(set(ids))
 
 
+class TestNullDeletedVisibility:
+    def test_null_deleted_row_stays_visible(self, client, regular_token1, db_session):
+        """A legacy row with ``deleted IS NULL`` must still appear in the default
+        list — v4 filters on ``deleted IS NOT TRUE``, not ``IS FALSE``, so NULL
+        counts as not-deleted (and is coerced to False in the response)."""
+        created = _create(client, regular_token1, db_session, abbreviation="V4NULLDEL")
+        version_id = created.json()["id"]
+
+        # BibleVersion.deleted is nullable; force NULL as legacy rows can have.
+        db_session.expire_all()
+        row = db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+        row.deleted = None
+        db_session.commit()
+
+        page = client.get(
+            f"{PREFIX}/versions", params={"limit": 100}, headers=_auth(regular_token1)
+        ).json()
+        by_id = {i["id"]: i for i in page["items"]}
+        assert version_id in by_id, "NULL-deleted row must stay visible"
+        assert by_id[version_id]["deleted"] is False
+
+
 class TestAdminIncludeDeleted:
     def test_include_deleted_flag_is_admin_only(
         self, client, regular_token1, admin_token, db_session

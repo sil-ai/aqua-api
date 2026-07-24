@@ -18,7 +18,12 @@ Authorization semantics preserved from v3:
 
 * **Visibility** (list / get): an admin sees every version; a non-admin sees a
   version only if it is non-deleted and one of the caller's groups has access
-  to it via ``bible_version_access``.
+  to it via ``bible_version_access``. "Non-deleted" is ``deleted IS NOT TRUE``
+  (v4 refinement over v3's ``deleted IS FALSE``): ``BibleVersion.deleted`` is a
+  nullable column and legacy rows may hold NULL, which the response layer already
+  coerces to ``False`` — so a NULL row must stay *visible*, not silently vanish
+  from listings. Authorization is unchanged; only the NULL sentinel is treated
+  consistently.
 * **``include_deleted``** (list): honored only for admins; a non-admin never
   receives soft-deleted rows regardless of the flag.
 * **Create**: the version is owned by the caller and added only to groups the
@@ -83,11 +88,12 @@ def _visible_versions_query(user: UserDB, *, include_deleted: bool):
     if user.is_admin:
         stmt = select(BibleVersion)
         if not include_deleted:
-            stmt = stmt.where(BibleVersion.deleted.is_(False))
+            # IS NOT TRUE keeps NULL-deleted (legacy) rows visible; see docstring.
+            stmt = stmt.where(BibleVersion.deleted.is_not(True))
         return stmt
 
     # Non-admin: only versions accessible through a group the user belongs to,
-    # and never soft-deleted ones.
+    # and never soft-deleted ones (NULL counts as not-deleted — see docstring).
     return (
         select(BibleVersion)
         .distinct()
@@ -96,7 +102,7 @@ def _visible_versions_query(user: UserDB, *, include_deleted: bool):
             BibleVersion.id == BibleVersionAccess.bible_version_id,
         )
         .where(
-            BibleVersion.deleted.is_(False),
+            BibleVersion.deleted.is_not(True),
             BibleVersionAccess.group_id.in_(
                 select(UserGroup.group_id).where(UserGroup.user_id == user.id)
             ),
@@ -231,9 +237,15 @@ async def soft_delete_version(
     if not user.is_admin and version.owner_id != user.id:
         raise VersionAccessForbidden(version_id)
 
-    version.deleted = True
-    version.deletedAt = date.today()
-    await db.commit()
+    # Roll back on a failed commit so the shared session is never left in an
+    # aborted-transaction state (same guard as create_version).
+    try:
+        version.deleted = True
+        version.deletedAt = date.today()
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return version
 
 
