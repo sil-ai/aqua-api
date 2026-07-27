@@ -21,6 +21,14 @@ What each assertion is pinning down:
   different, which the admin's empty self-groups page demonstrates.
 """
 
+import asyncio
+import types
+
+import pytest
+
+from api_v4.errors import V4APIError
+from security_routes.v4.dependencies import require_admin
+
 PREFIX = "/v4"
 
 #: The complete, closed set of fields UserOut may ever emit (#859). Asserting
@@ -264,6 +272,40 @@ class TestUsersMeGroups:
         )
         assert resp.status_code == 422
         assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+class TestRequireAdminFailsClosed:
+    """`require_admin` must reject anything that is not positively an admin.
+
+    Exercised directly rather than over HTTP because the interesting input — a
+    ``users.is_admin`` of NULL — cannot be produced by the shared fixtures without
+    inserting a row that other test modules would see. The function body is a
+    single branch, so calling it with a stand-in user covers the logic exactly.
+
+    ``is_admin`` is ``Column(Boolean, default=False)``: nullable, with only a
+    Python-side default, so a row written outside the ORM can hold NULL. The gate
+    must treat that as "not an admin".
+    """
+
+    @staticmethod
+    def _call(is_admin):
+        user = types.SimpleNamespace(id=1, username="probe", is_admin=is_admin)
+        return asyncio.run(require_admin(current_user=user))
+
+    def test_admin_passes(self):
+        user = self._call(True)
+        assert user.username == "probe"
+
+    @pytest.mark.parametrize("flag", [False, None])
+    def test_non_admin_and_null_are_both_rejected(self, flag):
+        """NULL is the case worth pinning: `not None` is True in Python, so the
+        existing `if not current_user.is_admin` branch already fails closed. This
+        test is what keeps a later "simplification" (e.g. `is False`) from quietly
+        turning a NULL into a pass."""
+        with pytest.raises(V4APIError) as exc_info:
+            self._call(flag)
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.code == "ADMIN_REQUIRED"
 
 
 class TestGroupsCatalog:

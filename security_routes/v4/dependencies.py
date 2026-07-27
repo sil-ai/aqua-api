@@ -50,8 +50,11 @@ async def require_admin(
     ``get_current_user`` resolves first and raises its own 401.
 
     Fails **closed** on a NULL flag: ``UserDB.is_admin`` is nullable, and
-    ``not None`` is ``True``, so a row with an indeterminate flag is treated as a
-    non-admin rather than being waved through.
+    ``not None`` is ``True`` (``None`` is falsy), so a row with an indeterminate
+    flag takes the raise branch and is treated as a non-admin rather than being
+    waved through. Pinned by ``TestRequireAdminFailsClosed`` in
+    ``test/test_security_routes/test_auth_routes_v4.py`` — do **not** "tighten"
+    this to ``is False``, which would invert the NULL case into a silent pass.
     """
     if not current_user.is_admin:
         raise V4APIError(
