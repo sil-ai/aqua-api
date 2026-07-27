@@ -59,6 +59,8 @@ import fastapi
 
 from api_v4.errors import register_exception_handlers
 from api_v4.meta_routes import router as meta_router
+from bible_routes.v4.version_routes import router as version_router
+from security_routes.auth_routes import get_current_user
 
 
 def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
@@ -88,7 +90,19 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     configure_cors(v4_app)
 
     # The meta/discovery router; its ``/`` becomes ``/v4/`` once mounted.
-    # Future v4 domain routers (<domain>_routes/v4/*) are included here too.
+    # Left PUBLIC on purpose: the ``/v4/`` discovery root (and the parent app's
+    # bare ``/v4`` health shim that reuses its payload) must answer without a
+    # token, so do NOT attach auth here.
     v4_app.include_router(meta_router)
+
+    # Domain routers are auth-protected at the router level (#831): a
+    # ``dependencies=[Depends(get_current_user)]`` here makes "protected by
+    # default" the failure mode, so a handler that forgets its own auth
+    # dependency still cannot ship unauthenticated. Handlers that need the user
+    # re-declare ``current_user: UserModel = Depends(get_current_user)`` — FastAPI
+    # dedupes the dependency, so it runs once per request.
+    v4_app.include_router(
+        version_router, dependencies=[fastapi.Depends(get_current_user)]
+    )
 
     return v4_app
