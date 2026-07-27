@@ -314,10 +314,10 @@ def test_submit_body_is_only_the_job_id(client):
 def test_submit_location_id_matches_the_job_id(client):
     # The stated rule for what job_id refers to: it is the id of the resource
     # served at the poll URL, so the Location's last segment must equal it.
-    body = client.post("/_jobs").json()
-    assert (
-        client.post("/_jobs").headers["location"].rsplit("/", 1)[-1] == body["job_id"]
-    )
+    # One response, read twice — comparing a header from a *second* submit against
+    # the first submit's body would only work while job_id is a fixed constant.
+    response = client.post("/_jobs")
+    assert response.headers["location"].rsplit("/", 1)[-1] == response.json()["job_id"]
 
 
 def test_job_accepted_response_rejects_a_nonpositive_retry_after():
@@ -331,16 +331,58 @@ def test_job_accepted_response_requires_a_poll_url():
         job_accepted_response(job_id=JOB_ID, poll_url="", retry_after_s=RETRY_AFTER_S)
 
 
-def test_contract_headers_win_over_caller_supplied_extras():
+@pytest.mark.parametrize(
+    "location_key,retry_key",
+    [
+        ("Location", "Retry-After"),
+        # Lowercase (and mixed) casing is the regression case: HTTP header names
+        # are case-insensitive but dict keys are not, so merging the caller's
+        # extras into the contract headers used to keep BOTH entries — emitting
+        # two Location headers, with the caller's winning every lookup because it
+        # was added first. The contract headers must be assigned, not merged.
+        ("location", "retry-after"),
+        ("LOCATION", "RETRY-AFTER"),
+    ],
+)
+def test_contract_headers_win_over_caller_supplied_extras(location_key, retry_key):
     response = job_accepted_response(
         job_id=JOB_ID,
         poll_url=POLL_URL,
         retry_after_s=RETRY_AFTER_S,
-        headers={"Location": "/wrong", "Retry-After": "1", "X-Extra": "kept"},
+        headers={location_key: "/wrong", retry_key: "1", "X-Extra": "kept"},
     )
     assert response.headers["location"] == POLL_URL
     assert response.headers["retry-after"] == str(RETRY_AFTER_S)
+    # Unrelated extras still survive.
     assert response.headers["x-extra"] == "kept"
+    # And exactly one of each contract header reaches the wire — a duplicate
+    # Location is not just ambiguous for clients, some proxies reject it.
+    raw = [name for name, _ in response.raw_headers]
+    assert raw.count(b"location") == 1, response.raw_headers
+    assert raw.count(b"retry-after") == 1, response.raw_headers
+
+
+def test_terminal_poll_clears_a_preexisting_retry_after():
+    # set_poll_headers enforces the post-condition rather than assuming a clean
+    # response: a handler that set Retry-After before deciding the job was done
+    # must not leak it into a terminal poll.
+    for state in TERMINAL_JOB_STATES:
+        response = Response()
+        response.headers["Retry-After"] = "5"
+        set_poll_headers(response, state=state, retry_after_s=RETRY_AFTER_S)
+        assert "retry-after" not in response.headers, state
+
+
+def test_non_terminal_poll_overwrites_a_preexisting_retry_after():
+    # The mirror case: the helper's value wins, and does not append a second
+    # Retry-After alongside the stale one.
+    for state in (JobState.PENDING, JobState.RUNNING):
+        response = Response()
+        response.headers["retry-after"] = "5"
+        set_poll_headers(response, state=state, retry_after_s=RETRY_AFTER_S)
+        assert response.headers["retry-after"] == str(RETRY_AFTER_S)
+        raw = [name for name, _ in response.raw_headers]
+        assert raw.count(b"retry-after") == 1, response.raw_headers
 
 
 # --------------------------------------------------------------------------- #

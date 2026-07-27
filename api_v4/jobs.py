@@ -456,7 +456,13 @@ def job_accepted_response(
     See divergence 3 in the module docstring.
 
     ``headers`` — optional extras for the same response. The two contract headers
-    are applied last and win, so a caller cannot accidentally shadow them.
+    are **assigned** afterwards, so a caller cannot shadow them at any casing. They
+    must not be merged into the same dict: HTTP header names are case-insensitive
+    but Python dict keys are not, so ``{"location": ..., "Location": ...}`` keeps
+    both entries and Starlette emits *two* ``Location`` headers — of which lookups
+    return the caller's, because it was added first. Assigning through
+    ``response.headers`` instead goes via ``MutableHeaders.__setitem__``, which
+    matches case-insensitively and overwrites rather than appends.
 
     Because this returns a ``Response`` directly, FastAPI does not validate it
     against the route's ``response_model``; declare the route as::
@@ -474,15 +480,16 @@ def job_accepted_response(
     if not poll_url:
         raise ValueError("poll_url is required: the 202 must say where to poll")
 
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content=JobSubmitAccepted(job_id=job_id).model_dump(mode="json"),
-        headers={
-            **(headers or {}),
-            "Location": poll_url,
-            "Retry-After": str(retry_after_s),
-        },
+        headers=headers,
     )
+    # Assigned, not merged — see the docstring. This overwrites any casing of the
+    # same name the caller supplied instead of appending a duplicate.
+    response.headers["Location"] = poll_url
+    response.headers["Retry-After"] = str(retry_after_s)
+    return response
 
 
 def poll_status_code(state: JobState) -> int:
@@ -515,6 +522,13 @@ def set_poll_headers(
     :meth:`api_v4.pagination.V4Page.create` exists: so the three job-bearing
     slices cannot each drift on the details.
 
+    On a terminal state the header is *removed*, not merely left unset, so the
+    post-condition ("a terminal poll carries no ``Retry-After``") holds no matter
+    what state the response arrived in — e.g. a handler that set the header itself
+    before deciding the job was done. This function enforces the contract rather
+    than assuming a clean response. (It cannot police middleware, which runs after
+    the handler returns and mutates the finished response.)
+
     Usage in a poll handler that declares ``response: Response`` and
     ``response_model=JobEnvelope[...]``::
 
@@ -530,7 +544,11 @@ def set_poll_headers(
         raise ValueError(f"retry_after_s must be >= 1, got {retry_after_s}")
 
     response.status_code = poll_status_code(state)
-    if not state.is_terminal:
+    if state.is_terminal:
+        # MutableHeaders.__delitem__ matches case-insensitively and is a no-op
+        # when the header is absent, so this needs no membership guard.
+        del response.headers["Retry-After"]
+    else:
         response.headers["Retry-After"] = str(retry_after_s)
 
 
