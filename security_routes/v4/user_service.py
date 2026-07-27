@@ -58,7 +58,9 @@ def _user_groups_query(user: UserDB):
     )
 
 
-async def _page(db: AsyncSession, stmt, *, limit: int, offset: int):
+async def _page(
+    db: AsyncSession, stmt, *, limit: int, offset: int, order_by
+) -> tuple[list, int]:
     """Run ``stmt`` as one page plus its unpaginated total.
 
     ``total`` counts *all* matching rows ignoring ``limit``/``offset`` (what the
@@ -68,14 +70,26 @@ async def _page(db: AsyncSession, stmt, *, limit: int, offset: int):
     offset-pagination skew between ``total`` and ``len(items)`` — the same
     documented caveat as ``version_service.list_versions``.
 
-    Ordered by ``Group.id`` so paging is stable: without a deterministic
-    ``ORDER BY``, Postgres may return rows in a different order per query and a
-    client walking ``offset`` could see the same group twice or skip one.
+    ``order_by`` is **required**, not defaulted, so the helper's behavior matches
+    its signature: it accepts an arbitrary ``stmt``, so hard-coding (or defaulting
+    to) a ``Group`` column would break the moment the write half adds a list over
+    a different table. That is not a hypothetical — the ordering column would not
+    be in the statement's FROM clause, producing
+    ``SELECT users.* FROM users ORDER BY groups.id``, which Postgres rejects with
+    *missing FROM-clause entry for table "groups"* — a request-time 500 through the
+    #828 catch-all rather than anything caught in review. A default would leave the
+    same trap, just sprung less often, so callers state their ordering explicitly
+    (the same reasoning as ``retry_after_s`` in :mod:`api_v4.jobs`).
+
+    Ordering is required at all rather than optional because paging without a
+    deterministic ``ORDER BY`` is unstable: Postgres may return rows in a different
+    order per query, so a client walking ``offset`` could see one row twice and
+    miss another.
     """
     total = (
         await db.execute(select(func.count()).select_from(stmt.subquery()))
     ).scalar_one()
-    result = await db.execute(stmt.order_by(GroupDB.id).limit(limit).offset(offset))
+    result = await db.execute(stmt.order_by(order_by).limit(limit).offset(offset))
     return list(result.scalars().all()), total
 
 
@@ -88,7 +102,13 @@ async def list_user_groups(
     no id parameter to authorize and no way to ask about another user. Replaces
     v3 ``GET /groups/me``, which returned an unbounded list.
     """
-    return await _page(db, _user_groups_query(user), limit=limit, offset=offset)
+    return await _page(
+        db,
+        _user_groups_query(user),
+        limit=limit,
+        offset=offset,
+        order_by=GroupDB.id,
+    )
 
 
 async def list_groups(
@@ -100,4 +120,6 @@ async def list_groups(
     having gated the route to admins (``require_admin``); this function does not
     re-check, exactly as v3's ``GET /groups`` body did not.
     """
-    return await _page(db, select(GroupDB), limit=limit, offset=offset)
+    return await _page(
+        db, select(GroupDB), limit=limit, offset=offset, order_by=GroupDB.id
+    )
