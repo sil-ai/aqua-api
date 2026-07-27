@@ -1,31 +1,13 @@
-import os
-
-from dotenv import load_dotenv
-from sqlalchemy import create_engine
-from sqlalchemy.orm import scoped_session, sessionmaker
-
+# NOTE: The application does all DB access through the async stack
+# (`create_async_engine` / `AsyncSession`, see `database/dependencies.py`).
+# This module intentionally exposes only `Base` for the ORM metadata, which
+# Alembic imports in `alembic/migrations/env.py`.
+#
+# A sync `create_engine(settings.aqua_db)` scaffold (`engine`, `db_session`,
+# `init_db`) used to live here but was dead code: `settings.aqua_db` is an
+# async URL (`postgresql+asyncpg://…`), so the sync engine would have raised on
+# first connect, and nothing ever connected through it. Removed to drop the
+# footgun (see issue #848).
 from database.models import Base
 
-# Load environment variables from .env file
-load_dotenv()
-
-DATABASE_URL = os.getenv("AQUA_DB")
-
-
-# If the DATABASE_URL is not set, we should raise an exception
-if not DATABASE_URL:
-    raise ValueError("No DATABASE_URL.")
-
-engine = create_engine(DATABASE_URL)
-db_session = scoped_session(
-    sessionmaker(autocommit=False, autoflush=False, bind=engine)
-)
-
-
-Base.query = db_session.query_property()
-
-
-def init_db():
-    # Import all modules here that might define models so that
-    # they will be registered properly on the metadata.
-    Base.metadata.create_all(bind=engine)
+__all__ = ["Base"]

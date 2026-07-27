@@ -1,7 +1,6 @@
 __version__ = "v3"
 
 import asyncio
-import os
 import socket
 import unicodedata
 import uuid
@@ -17,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, selectinload
 
 from assessment_routes.v3.results_query_routes import validate_parameters
+from config import settings
 from database.dependencies import get_db
 from database.models import (
     AgentLexemeCard,
@@ -716,7 +716,7 @@ async def create_training_job(
             detail="Not authorized to access one or both bible versions for training",
         )
 
-    modal_env = os.getenv("MODAL_ENV", "main")
+    modal_env = settings.modal_env
     session_id = str(uuid.uuid4())
     training_jobs = []
     skipped_job_ids = []
@@ -847,7 +847,7 @@ async def create_training_job(
                 target_version.id,
                 job.options,
             )
-            await f.spawn.aio(config, os.getenv("AQUA_DB", ""))
+            await f.spawn.aio(config, settings.aqua_db)
             return job, None
         except Exception as e:
             logger.error(f"Error dispatching training job {job.id} ({job.type}): {e}")

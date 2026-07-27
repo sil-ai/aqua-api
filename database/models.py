@@ -245,7 +245,6 @@ class AssessmentResult(Base):
     chapter = Column(Integer)
     verse = Column(Integer)
 
-    assessment_id = Column(Integer, ForeignKey("assessment.id"))
     assessment = relationship("Assessment", back_populates="results")
 
     __table_args__ = (

@@ -29,9 +29,11 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 # Read in 1MB chunks when streaming to enforce the cap without loading the
 # whole file at once.
 UPLOAD_READ_CHUNK_BYTES = 1024 * 1024
-# Most HTTP clients send plain text as "text/plain"; curl / generic clients
-# fall back to "application/octet-stream". Anything else (images, archives,
-# HTML, etc.) is rejected with 415.
+# Most HTTP clients send plain text as "text/plain"; curl sends
+# "application/octet-stream" explicitly, and some clients (e.g. requests'
+# 2-tuple file form / urllib3) emit no per-part Content-Type at all — that
+# missing case is defaulted to "application/octet-stream" below. Anything
+# else (images, archives, HTML, etc.) is rejected with 415.
 ALLOWED_CONTENT_TYPES = {"text/plain", "application/octet-stream"}
 
 
@@ -213,7 +215,10 @@ async def upload_revision(
     # DoS where an authenticated user uploads a huge body to exhaust workers.
     # Strip any media-type parameters (e.g. "text/plain; charset=utf-8") so
     # well-formed clients that include a charset aren't falsely rejected.
-    raw_content_type = file.content_type or ""
+    # Treat a missing/empty per-part Content-Type as application/octet-stream:
+    # generic HTTP clients (e.g. requests' 2-tuple file form) omit it entirely,
+    # and #767's intent was for those uploads to succeed.
+    raw_content_type = file.content_type or "application/octet-stream"
     media_type = raw_content_type.split(";", 1)[0].strip().lower()
     if media_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(

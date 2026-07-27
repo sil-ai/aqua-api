@@ -1412,6 +1412,25 @@ def test_training_job_options_validator_rejects_non_scalar(
     assert resp.status_code == 422
 
 
+def test_training_job_options_model_key_silently_dropped(
+    client, regular_token1, test_revision_id, test_revision_id_2
+):
+    """The per-call "model" override is no longer offered — the LLM is fixed
+    by the deploy config. Older clients that still send it must not break:
+    the key is dropped from options before validation and persistence."""
+    response = _create_training_jobs_via_api(
+        client,
+        regular_token1,
+        test_revision_id,
+        test_revision_id_2,
+        options={"tag": "model_drop_test", "model": "claude-opus-4-7"},
+        apps=["tfidf"],
+    )
+    assert response.status_code == 200
+    job = response.json()["training_jobs"][0]
+    assert job["options"] == {"tag": "model_drop_test"}
+
+
 def test_dispatch_failure_marks_assessment_failed(
     client, regular_token1, test_revision_id, test_revision_id_2, db_session
 ):

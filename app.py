@@ -1,7 +1,6 @@
-__version__ = "v1"
+__version__ = "v3"
 
 import logging
-import os
 
 import fastapi
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +12,8 @@ from agent_routes.v3.affix_routes import router as affix_router_v3
 from agent_routes.v3.agent_routes import router as agent_router_v3
 from agent_routes.v3.pivot_routes import router as pivot_router_v3
 from agent_routes.v3.tokenizer_routes import router as tokenizer_router_v3
+from api_v4.app import create_v4_app
+from api_v4.meta_routes import v4_status_payload
 from assessment_routes.v3.assessment_routes import router as assessment_router_v3
 from assessment_routes.v3.eflomal_routes import router as eflomal_router_v3
 from assessment_routes.v3.results_push_routes import router as results_write_router_v3
@@ -26,33 +27,13 @@ from bible_routes.v3.language_routes import router as language_router_v3
 from bible_routes.v3.revision_routes import router as revision_router_v3
 from bible_routes.v3.verse_routes import router as verse_router_v3
 from bible_routes.v3.version_routes import router as version_router_v3
+from config import Settings
 from database.dependencies import engine as async_engine
 from middleware import LoggingMiddleware
 from predict_routes.v3.predict_routes import router as predict_router_v3
 from security_routes.admin_routes import router as admin_router
 from security_routes.auth_routes import router as security_router
 from train_routes.v3.train_routes import router as train_router_v3
-
-
-def _omit_previous_versions() -> bool:
-    return os.getenv("OMIT_PREVIOUS_VERSIONS", "").lower() in ("1", "true", "yes")
-
-
-omit_previous_versions = _omit_previous_versions()
-
-if not omit_previous_versions:
-    from assessment_routes.v1.assessment_routes import router as assessment_router_v1
-    from assessment_routes.v1.results_query_routes import router as results_router_v1
-    from assessment_routes.v2.assessment_routes import router as assessment_router_v2
-    from assessment_routes.v2.results_query_routes import router as results_router_v2
-    from bible_routes.v1.language_routes import router as language_router_v1
-    from bible_routes.v1.revision_routes import router as revision_router_v1
-    from bible_routes.v1.verse_routes import router as verse_router_v1
-    from bible_routes.v1.version_routes import router as version_router_v1
-    from bible_routes.v2.language_routes import router as language_router_v2
-    from bible_routes.v2.revision_routes import router as revision_router_v2
-    from bible_routes.v2.verse_routes import router as verse_router_v2
-    from bible_routes.v2.version_routes import router as version_router_v2
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +107,11 @@ def configure_cors(app):
     because credentialed CORS with a wildcard origin is unsafe (and browsers
     reject it).
     """
-    env_origins = _parse_allowed_origins(os.getenv("ALLOWED_ORIGINS"))
+    # Read a fresh Settings() so configure_cors reflects the current
+    # ALLOWED_ORIGINS env var each time it runs. Tests build several apps in one
+    # process with different values (test/test_cors.py), so this must not be
+    # frozen to the value captured by the shared settings singleton at import.
+    env_origins = _parse_allowed_origins(Settings().allowed_origins)
     combined = list(DEFAULT_ALLOWED_ORIGINS) + env_origins
     has_wildcard = "*" in combined
     if has_wildcard:
@@ -152,28 +137,16 @@ def configure_cors(app):
 
 
 def configure_routing(app):
-    # for now the / endpoint points to v1
-    # TODO: change this when client changes software to match
-
-    # !!!: send a deprecation notice but leave the v1 route for awhile
-    # if v2 is introduced but change /latest and / to /v2/language_routes.router
-    # Reuse the module-level value so router registration stays consistent with
-    # the conditional v1/v2 imports above (which only run when this is False).
-    if not omit_previous_versions:
-        app.include_router(language_router_v1, prefix="/v1", tags=["Version 1"])
-        app.include_router(revision_router_v1, prefix="/v1", tags=["Version 1"])
-        app.include_router(version_router_v1, prefix="/v1", tags=["Version 1"])
-        app.include_router(verse_router_v1, prefix="/v1", tags=["Version 1"])
-        app.include_router(assessment_router_v1, prefix="/v1", tags=["Version 1"])
-        app.include_router(results_router_v1, prefix="/v1", tags=["Version 1"])
-
-        app.include_router(language_router_v2, prefix="/v2", tags=["Version 2"])
-        app.include_router(revision_router_v2, prefix="/v2", tags=["Version 2"])
-        app.include_router(version_router_v2, prefix="/v2", tags=["Version 2"])
-        app.include_router(verse_router_v2, prefix="/v2", tags=["Version 2"])
-        app.include_router(assessment_router_v2, prefix="/v2", tags=["Version 2"])
-        app.include_router(results_router_v2, prefix="/v2", tags=["Version 2"])
-
+    # Versioning model (epic #842):
+    #   /v3     — frozen, fixes only. Guarded by the OpenAPI contract snapshot
+    #             test so any change to its wire surface needs a reviewed diff.
+    #   /latest — deliberately stays pinned to v3; it does NOT move to v4 when
+    #             v4 releases. The /latest -> /v4 flip is a separate, deferred
+    #             manual step with no committed date.
+    #   /v4     — new, opt-in surface released beside v3. Domain resources are
+    #             added under <domain>_routes/v4/ by the contract issues
+    #             (#825-#831); today it exposes only the /v4/ discovery root.
+    #   v1/v2   — removed as unused (#711).
     app.include_router(language_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(revision_router_v3, prefix="/v3", tags=["Version 3"])
     app.include_router(version_router_v3, prefix="/v3", tags=["Version 3"])
@@ -226,6 +199,26 @@ def configure_routing(app):
 
     app.include_router(security_router, prefix="/latest", tags=["Latest"])
     app.include_router(admin_router, prefix="/latest", tags=["Latest"])
+
+    # v4: opt-in surface beside frozen v3, mounted as an isolated sub-app so
+    # later PRs can register v4-only exception handlers / response behavior
+    # without any risk of touching v3 (issue #830). Mounting also moves the v4
+    # OpenAPI schema to /v4/openapi.json (docs at /v4/docs), so v4 no longer
+    # appears in the main app schema. See api_v4/app.py for the middleware
+    # rationale (CORS re-applied; LoggingMiddleware NOT duplicated — the parent
+    # stack already wraps the mount).
+    #
+    # Bare-/v4 health-check shim: once /v4 is a mount, Starlette 307-redirects
+    # the bare mount path (/v4 -> /v4/). The #824 scaffold deliberately served
+    # a non-redirecting 200 at bare /v4 for health-check probes and clients that
+    # don't follow redirects, so we preserve that here with an explicit,
+    # schema-hidden parent route (an exact-path route wins over the mount's
+    # redirect). It reuses the sub-app's discovery payload so the two can't drift.
+    @app.get("/v4", include_in_schema=False)
+    async def v4_root_bare():
+        return v4_status_payload()
+
+    app.mount("/v4", create_v4_app(configure_cors=configure_cors))
 
     @app.get("/")
     async def read_root():

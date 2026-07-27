@@ -565,6 +565,45 @@ def test_upload_revision_accepts_octet_stream(client, regular_token1, db_session
     assert delete_revision(client, regular_token1, revision_id) == 200
 
 
+def test_upload_revision_accepts_missing_content_type(
+    client, regular_token1, db_session
+):
+    """A multipart part with no Content-Type header must be accepted:
+    `requests` (used by aqua-django-app's upload proxy) and other generic
+    HTTP clients omit the per-part Content-Type when files are passed as a
+    `(filename, fileobj)` 2-tuple. The body is hand-crafted here so the
+    "no per-part Content-Type" case is exercised deterministically rather
+    than depending on `httpx`'s mime-guessing behavior."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+
+    test_upload_file = Path("fixtures/uploadtest.txt")
+    file_bytes = test_upload_file.read_bytes()
+
+    boundary = "----testboundary801"
+    body = (
+        (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="file"; filename="uploadtest.txt"\r\n'
+            "\r\n"
+        ).encode()
+        + file_bytes
+        + f"\r\n--{boundary}--\r\n".encode()
+    )
+
+    headers = {
+        "Authorization": f"Bearer {regular_token1}",
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+    }
+    test_revision = {"version_id": version_id, "name": "No Content-Type Revision"}
+    response = client.post(
+        f"{prefix}/revision", params=test_revision, content=body, headers=headers
+    )
+
+    assert response.status_code == 200, response.text
+    revision_id = response.json()["id"]
+    assert delete_revision(client, regular_token1, revision_id) == 200
+
+
 @pytest.mark.asyncio
 async def test_read_upload_with_limit_streams_oversize_when_size_unknown():
     """When the client doesn't advertise a size (file.size is None), the

@@ -14,6 +14,15 @@ os.environ["AQUA_DB_POOLCLASS"] = "null"
 # setdefault so we never override a real value the environment provides.
 os.environ.setdefault("SECRET_KEY", "test-secret-key-not-for-production")
 
+# config.Settings (imported transitively via `from app import app` below)
+# requires AQUA_DB at construction, which runs at collection time — before any
+# test fixture. Provide the standard local test DB so a bare environment (fresh
+# clone, no .env, AQUA_DB unset) can still collect; setdefault means a real
+# AQUA_DB already exported by the shell/CI (e.g. `make test`) always wins.
+os.environ.setdefault(
+    "AQUA_DB", "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
+)
+
 from datetime import date  # noqa: E402
 
 import bcrypt  # noqa: E402

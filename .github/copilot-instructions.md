@@ -8,7 +8,7 @@ alignments, lexeme cards, critiques, pivots). Persistence is **PostgreSQL** with
 **pgvector** via **async SQLAlchemy 1.4 / asyncpg**, schema is managed with
 **alembic**, and heavy compute is dispatched to **Modal** serverless functions
 (`modal.Function.from_name(...).spawn.aio(...)`). The HTTP surface is versioned
-as **v1 / v2 / v3** (plus `/latest`), with auth via **OAuth2 / JWT**.
+as **v3** (plus `/latest`), with auth via **OAuth2 / JWT**.
 
 When reviewing pull requests, focus on **endpoint integrity**, **consistency
 with the existing endpoints**, and **sound design / SOLID principles**. Use the
@@ -57,8 +57,7 @@ New endpoints must match the established conventions — flag deviations:
 
 - **API versioning:** new work lands in `v3` (`<feature>_routes/v3/...`). Each
   module starts with `__version__ = "v3"`. The same v3 router is registered under
-  both `/v3` and `/latest` in `app.py`; v1/v2 are frozen legacy (imported
-  conditionally behind `OMIT_PREVIOUS_VERSIONS`) — do not add features to them.
+  both `/v3` and `/latest` in `app.py`.
 - **Router registration:** after adding a router, import it in `app.py` and add
   matching `include_router(..., prefix="/v3", tags=["Version 3"])` and
   `include_router(..., prefix="/latest", tags=["Version 3 / Latest"])` lines.
@@ -131,10 +130,9 @@ Review for maintainable, well-structured code:
 - Code style, import ordering, and formatting — these are enforced by **black**,
   **isort** (profile black), and **flake8** via the `linting` Make target and
   pre-commit hooks. Note that flake8 ignores `E501` (line length) and excludes
-  `v1/`, `v2/`, and `alembic/`, so do not nitpick long lines or legacy-version
-  style.
+  `alembic/`, so do not nitpick long lines or generated-migration style.
 - Pre-existing patterns that the PR merely follows (review the diff, not the
-  whole repo's legacy choices) — including frozen v1/v2 modules.
+  whole repo's legacy choices).
 - Generated migration files under `alembic/` and test `fixtures/` (and the `test/`
   scaffolding), beyond confirming a needed migration exists.
 - Local-imports-inside-handlers (e.g. `from sqlalchemy import select` inside a
