@@ -13,17 +13,33 @@ DATABASE_URL = settings.aqua_db
 # Production runs a single persistent loop per worker and benefits from
 # pooling — avoids the asyncpg+TLS handshake on every request.
 #
-# Default sizing: with 8 uvicorn workers, steady-state is ~16 conns per
-# container (8 × pool_size 2) and the burst ceiling is 40 (8 × (2 + 3)).
-# RDS default max_connections is LEAST({DBInstanceClassMemory/9531392},
-# 5000) — roughly 170 on db.t3.small, 340 on db.t3.medium, 675 on
-# db.m5.large — so 40/container leaves comfortable headroom even on
-# small instance classes. Tune the env vars if running many containers
-# or if other consumers (alembic, batch jobs, replicas) eat the budget.
+# Default sizing: with 8 uvicorn workers, steady-state is ~40 conns per
+# container (8 × pool_size 5) and the burst ceiling is 120 (8 × (5 + 10)).
+# The shared RDS instance reports max_connections=829, so even a handful of
+# containers (staging + prod share it) stay well under budget. Tune the env
+# vars if running many more containers or if other consumers (alembic, batch
+# jobs, replicas) eat the budget.
+#
+# An earlier 2+3 default (5 conns/worker) starved /v3/textsearch under the
+# overnight batch: a few multi-second searches consumed a worker's whole
+# pool and the next request — even just the auth lookup — timed out at 10s in
+# get_db, surfacing as 500 "QueuePool limit of size 2 overflow 3 reached".
+# Pair the bigger pool with a server-side statement_timeout so one slow query
+# can't pin a pooled connection indefinitely.
+# statement_timeout applies per physical connection, so wire it on both engine
+# branches — otherwise AQUA_DB_POOLCLASS=null (NullPool) would drop the runaway-
+# query safety net exactly when it removes the pool ceiling too.
+connect_args = {}
+if settings.aqua_db_statement_timeout_ms > 0:
+    connect_args["server_settings"] = {
+        "statement_timeout": str(settings.aqua_db_statement_timeout_ms)
+    }
 if settings.aqua_db_poolclass and settings.aqua_db_poolclass.lower() == "null":
     from sqlalchemy.pool import NullPool
 
-    engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
+    engine = create_async_engine(
+        DATABASE_URL, poolclass=NullPool, connect_args=connect_args
+    )
 else:
     engine = create_async_engine(
         DATABASE_URL,
@@ -32,6 +48,7 @@ else:
         pool_timeout=settings.aqua_db_pool_timeout,
         pool_recycle=settings.aqua_db_pool_recycle,
         pool_pre_ping=True,
+        connect_args=connect_args,
     )
 AsyncSessionLocal = sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
