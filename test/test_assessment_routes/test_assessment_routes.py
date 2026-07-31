@@ -2872,8 +2872,10 @@ def test_advisory_lock_actually_blocks_concurrent_session_on_same_quadruple():
         _canonicalize_kwargs,
     )
 
+    import os
+
     sync_engine = create_engine(
-        "postgresql://dbuser:dbpassword@localhost:5432/dbname",
+        os.environ["AQUA_DB"].replace("+asyncpg", ""),
         # Two distinct backend connections — required for advisory-lock
         # contention to be observable.
         pool_size=2,
@@ -2973,9 +2975,9 @@ def test_call_assessment_runner_refuses_to_respawn_non_queued_row(
     )
 
     async def _run():
-        async_engine = create_async_engine(
-            "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
-        )
+        import os
+
+        async_engine = create_async_engine(os.environ["AQUA_DB"])
         AsyncSessionLocal = sessionmaker(
             autocommit=False,
             autoflush=False,
