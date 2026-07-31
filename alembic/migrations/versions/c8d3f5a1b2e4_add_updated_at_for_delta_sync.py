@@ -22,8 +22,9 @@ backfilled from ``deletedAt`` (and finished assessments from ``end_time``) so
 a mirror's first delta pass sees sensible orderings.
 """
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "c8d3f5a1b2e4"

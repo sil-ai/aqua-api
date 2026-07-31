@@ -635,9 +635,7 @@ class TestUpdatedSince:
         self, client, admin_token, regular_token1, db_session
     ):
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
-        self._create_version(
-            client, regular_token1, db_session, "Quiet Version", "QV9"
-        )
+        self._create_version(client, regular_token1, db_session, "Quiet Version", "QV9")
 
         list_response = client.get(f"{prefix}/version", headers=admin_headers)
         watermark = max(v["updated_at"] for v in list_response.json())
