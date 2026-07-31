@@ -2864,6 +2864,8 @@ def test_advisory_lock_actually_blocks_concurrent_session_on_same_quadruple():
     actually blocks pg_try_advisory_xact_lock(K) on another connection
     (#780). Guards against accidentally swapping in a non-locking
     primitive during a refactor."""
+    import os
+
     from sqlalchemy import create_engine
     from sqlalchemy import text as _text
 
@@ -2871,8 +2873,6 @@ def test_advisory_lock_actually_blocks_concurrent_session_on_same_quadruple():
         _assess_dup_lock_key,
         _canonicalize_kwargs,
     )
-
-    import os
 
     sync_engine = create_engine(
         os.environ["AQUA_DB"].replace("+asyncpg", ""),
