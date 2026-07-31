@@ -1603,6 +1603,139 @@ def test_search_comparison_drops_main_rows_with_no_comp_coverage(
     )
 
 
+def test_search_random_comparison_fills_to_limit_despite_sparse_coverage(
+    client, regular_token1, test_db_session
+):
+    """random=true + comparison must still fill to `limit` when the comparison
+    version covers only a small fraction of the main-side term matches.
+
+    Regression guard for the pool-exhaustion perf fix. The fix caps the random
+    draw on the *main* side (before the INNER comparison join) to bound the
+    per-row LATERAL. If that draw isn't restricted to comp-covered vrefs first,
+    a sparse comparison side drops most sampled rows *after* the cap, so the
+    result silently under-fills `limit` even though far more covered pairs
+    exist. Here M (matches) >> sql_limit and exactly `limit` vrefs are covered:
+    the query must return all `limit` covered pairs, every call.
+    """
+    import csv
+
+    user1 = test_db_session.query(UserDB).filter(UserDB.username == "testuser1").first()
+    group1 = test_db_session.query(Group).filter(Group.name == "Group1").first()
+    if (
+        test_db_session.query(IsoLanguage).filter(IsoLanguage.iso639 == "swh").first()
+        is None
+    ):
+        test_db_session.add(IsoLanguage(iso639="swh", name="Swahili"))
+        test_db_session.commit()
+
+    # 250 real GEN vrefs so main-side matches (M) far exceed sql_limit
+    # (limit*10 = 100); anything <= sql_limit wouldn't exercise the under-fill.
+    with open("fixtures/verse_reference.txt") as f:
+        gen_vrefs = [
+            row["full_verse_id"]
+            for row in csv.DictReader(f, delimiter="\t")
+            if row["full_verse_id"].startswith("GEN ")
+        ][:250]
+
+    def _parse(vref):
+        book, cv = vref.split(" ", 1)
+        chapter, verse = cv.split(":")
+        return book, int(chapter), int(verse)
+
+    eng_version = BibleVersion(
+        name="Sparse Coverage Eng",
+        iso_language="eng",
+        iso_script="Latn",
+        abbreviation="SCE",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    swh_version = BibleVersion(
+        name="Sparse Coverage Swh",
+        iso_language="swh",
+        iso_script="Latn",
+        abbreviation="SCS",
+        owner_id=user1.id,
+        is_reference=False,
+    )
+    test_db_session.add_all([eng_version, swh_version])
+    test_db_session.commit()
+    test_db_session.refresh(eng_version)
+    test_db_session.refresh(swh_version)
+
+    eng_rev = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=eng_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    swh_rev = BibleRevision(
+        date=date(2024, 1, 1),
+        bible_version_id=swh_version.id,
+        published=True,
+        machine_translation=False,
+    )
+    test_db_session.add_all([eng_rev, swh_rev])
+    test_db_session.commit()
+    test_db_session.refresh(eng_rev)
+    test_db_session.refresh(swh_rev)
+
+    # Every main verse matches "God"; the comparison side covers only the first
+    # 10 vrefs (C == limit), so a correct query returns exactly those 10.
+    for vref in gen_vrefs:
+        book, chapter, verse = _parse(vref)
+        test_db_session.add(
+            VerseText(
+                text="God is here.",
+                revision_id=eng_rev.id,
+                verse_reference=vref,
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+    covered = gen_vrefs[:10]
+    for vref in covered:
+        book, chapter, verse = _parse(vref)
+        test_db_session.add(
+            VerseText(
+                text="Mungu yuko hapa.",
+                revision_id=swh_rev.id,
+                verse_reference=vref,
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+    for version in (eng_version, swh_version):
+        test_db_session.add(
+            BibleVersionAccess(bible_version_id=version.id, group_id=group1.id)
+        )
+    test_db_session.commit()
+
+    covered_refs = {_parse(v) for v in covered}
+    for _ in range(8):
+        response = client.get(
+            "/v3/textsearch",
+            params={
+                "version_id": eng_version.id,
+                "comparison_version_id": swh_version.id,
+                "term": "God",
+                "limit": 10,
+                "random": True,
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert response.status_code == 200
+        results = response.json()["results"]
+        assert (
+            len(results) == 10
+        ), f"random+comparison under-filled: got {len(results)} of 10 covered pairs"
+        refs = {(r["book"], r["chapter"], r["verse"]) for r in results}
+        assert refs <= covered_refs, f"returned uncovered vrefs: {refs - covered_refs}"
+        assert all(r["comparison_text"] for r in results)
+
+
 def test_search_by_version_id_with_comparison_revision_id(
     client, regular_token1, test_db_session
 ):

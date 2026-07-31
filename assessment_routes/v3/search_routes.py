@@ -558,30 +558,56 @@ async def search_revision_text(
     SQL_LIMIT_ABS_CAP = 10_000
     sql_limit = min(limit * 10 * len(pieces), SQL_LIMIT_ABS_CAP)
 
-    # Randomise + cap on the *main* side before the comparison lateral.
-    # `ORDER BY random()` can't be pushed below the join, so randomising on
-    # the outer (joined) query forces the per-row comp lookup to run once per
-    # term match — thousands of LATERAL invocations for a common term, only to
-    # keep sql_limit of them. Capping the main side first bounds the lateral
-    # to sql_limit invocations. The comparison join stays INNER, so main
-    # verses with no comp coverage are still dropped (they just no longer
-    # cost a lateral probe each). The non-random path keeps its outer
-    # ORDER BY book/chapter/verse: main_sub already emits rows in that order,
-    # so the lateral early-stops at the LIMIT without a full materialise.
+    # For random ordering, randomise + cap on the *main* side before the
+    # comparison lateral. `ORDER BY random()` can't be pushed below the join,
+    # so randomising the joined query would run the per-row comp lookup once
+    # per term match (thousands of LATERAL invocations for a common term) just
+    # to keep sql_limit of them. Capping the main side first bounds the lateral
+    # to sql_limit invocations.
+    #
+    # When a comparison side is present the join below is INNER — it drops main
+    # verses the comparison version doesn't cover. Sampling *before* that filter
+    # would let the cap under-fill: with sparse comparison coverage the
+    # sql_limit random draw could yield far fewer than `limit` covered rows even
+    # when plenty exist. So restrict the draw to covered vrefs first, via a
+    # semi-join against the set of vrefs the comparison side actually has (one
+    # covered-vref scan Postgres can hash, not a per-row probe). Existence is
+    # enough here — the per-row lateral below still fetches the latest
+    # comparison *text* for the already-covered, already-capped rows.
+    #
+    # The non-random path keeps its outer ORDER BY book/chapter/verse: main_sub
+    # already emits rows in that order, so the lateral early-stops at the LIMIT
+    # without a full materialise, and no under-fill is possible.
     if random:
-        base = (
-            select(
-                main_sub.c.id.label("id"),
-                main_sub.c.book.label("book"),
-                main_sub.c.chapter.label("chapter"),
-                main_sub.c.verse.label("verse"),
-                main_sub.c.verse_reference.label("verse_reference"),
-                main_sub.c.text.label("text"),
+        base_cols = [
+            main_sub.c.id.label("id"),
+            main_sub.c.book.label("book"),
+            main_sub.c.chapter.label("chapter"),
+            main_sub.c.verse.label("verse"),
+            main_sub.c.text.label("text"),
+        ]
+        if use_comparison:
+            base_cols.append(main_sub.c.verse_reference.label("verse_reference"))
+        base_select = select(*base_cols)
+        if use_comparison:
+            comp_auth = _authorized_revisions_select(
+                current_user,
+                version_id=comparison_version_id,
+                revision_id=comparison_revision_id,
             )
-            .order_by(func.random())
-            .limit(sql_limit)
-            .subquery()
-        )
+            covered_vrefs = (
+                select(VerseText.verse_reference)
+                .where(
+                    VerseText.revision_id.in_(comp_auth),
+                    VerseText.text != "",
+                    VerseText.verse_reference.is_not(None),
+                )
+                .distinct()
+            )
+            base_select = base_select.where(
+                main_sub.c.verse_reference.in_(covered_vrefs)
+            )
+        base = base_select.order_by(func.random()).limit(sql_limit).subquery()
     else:
         base = main_sub
 
@@ -609,13 +635,13 @@ async def search_revision_text(
             base.c.text.label("main_text"),
         ).select_from(base)
 
-    search_query = search_query.limit(sql_limit)
-    # Per-side dedup is already handled inside main_sub (and the comp lateral
-    # picks at most one row per main row); the random case is already ordered
-    # and capped on the main side above, so only the non-random case needs an
-    # outer ORDER BY.
+    # The random branch already ordered + capped on the main side (and its comp
+    # join only ever removes rows); only the non-random branch needs the outer
+    # ORDER BY + LIMIT.
     if not random:
-        search_query = search_query.order_by(base.c.book, base.c.chapter, base.c.verse)
+        search_query = search_query.order_by(
+            base.c.book, base.c.chapter, base.c.verse
+        ).limit(sql_limit)
 
     main_auth_select = _authorized_revisions_select(
         current_user, version_id=version_id, revision_id=revision_id
