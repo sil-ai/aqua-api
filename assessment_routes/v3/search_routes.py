@@ -635,10 +635,15 @@ async def search_revision_text(
             base.c.text.label("main_text"),
         ).select_from(base)
 
-    # The random branch already ordered + capped on the main side (and its comp
-    # join only ever removes rows); only the non-random branch needs the outer
-    # ORDER BY + LIMIT.
-    if not random:
+    # The random branch is already capped on the main side (and its comp join
+    # only ever removes rows), so it needs no outer LIMIT — but it does need an
+    # outer ORDER BY random(): the main-side cap picks *which* rows, and this
+    # shuffles the (<= sql_limit) survivors so the `limit` the Python filter
+    # keeps below is a random subset rather than planner order. It only sorts
+    # the already-capped set, so the comparison lateral stays bounded.
+    if random:
+        search_query = search_query.order_by(func.random())
+    else:
         search_query = search_query.order_by(
             base.c.book, base.c.chapter, base.c.verse
         ).limit(sql_limit)
