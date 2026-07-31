@@ -149,13 +149,17 @@ class Assessment(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
     kwargs = Column(JSONB, nullable=True, default=None)
     attempt_count = Column(Integer, nullable=False, server_default="0", default=0)
-    # onupdate covers ORM/Core writes; a DB-level BEFORE UPDATE trigger
-    # (migration c8d3f5a1b2e4) covers raw SQL so no write path can skip it.
+    # Delta-sync watermark (#887). onupdate covers ORM/Core writes; the
+    # set_updated_at() BEFORE UPDATE trigger (installed by the DDL events
+    # below / migration c8d3f5a1b2e4) covers raw SQL so no write path can
+    # skip it. clock_timestamp(), not now(): now() is transaction-start
+    # time, so a long transaction would stamp rows earlier than watermarks
+    # handed out to mirrors mid-transaction, permanently hiding the change.
     updated_at = Column(
         TIMESTAMP,
         nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
+        server_default=text("clock_timestamp()"),
+        onupdate=func.clock_timestamp(),
         index=True,
     )
 
@@ -284,11 +288,12 @@ class BibleRevision(Base):
     machine_translation = Column(Boolean, default=False)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
+    # See Assessment.updated_at for the trigger/clock_timestamp rationale.
     updated_at = Column(
         TIMESTAMP,
         nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
+        server_default=text("clock_timestamp()"),
+        onupdate=func.clock_timestamp(),
         index=True,
     )
 
@@ -337,11 +342,12 @@ class BibleVersion(Base):
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
+    # See Assessment.updated_at for the trigger/clock_timestamp rationale.
     updated_at = Column(
         TIMESTAMP,
         nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
+        server_default=text("clock_timestamp()"),
+        onupdate=func.clock_timestamp(),
         index=True,
     )
 
@@ -355,6 +361,46 @@ class BibleVersion(Base):
     )
 
     __table_args__ = (Index("ix_bible_version_deleted", "deleted"),)
+
+
+# updated_at maintenance for delta sync (#887): a BEFORE UPDATE trigger owns
+# the column so no write path (bulk update, raw SQL, soft-delete) can skip
+# bumping it. Installed here for create_all schemas (tests) and by migration
+# c8d3f5a1b2e4 for alembic-managed databases — keep the two definitions in
+# sync. The function is shared by the three triggers; a manual backfill of
+# updated_at must ALTER TABLE ... DISABLE TRIGGER first or the trigger will
+# clobber the supplied values.
+_SET_UPDATED_AT_FN = DDL(
+    """
+    CREATE OR REPLACE FUNCTION set_updated_at()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        NEW.updated_at := clock_timestamp();
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+    """
+)
+
+for _table in (BibleVersion.__table__, BibleRevision.__table__, Assessment.__table__):
+    event.listen(_table, "after_create", _SET_UPDATED_AT_FN)
+    event.listen(
+        _table,
+        "after_create",
+        DDL(
+            f"DROP TRIGGER IF EXISTS trg_{_table.name}_set_updated_at "
+            f"ON {_table.name}"
+        ),
+    )
+    event.listen(
+        _table,
+        "after_create",
+        DDL(
+            f"CREATE TRIGGER trg_{_table.name}_set_updated_at "
+            f"BEFORE UPDATE ON {_table.name} "
+            f"FOR EACH ROW EXECUTE FUNCTION set_updated_at()"
+        ),
+    )
 
 
 class BibleVersionAccess(Base):

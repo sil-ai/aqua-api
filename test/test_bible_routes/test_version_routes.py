@@ -683,6 +683,58 @@ class TestUpdatedSince:
         assert other_response.status_code == 200
         assert deleted_id not in {v["id"] for v in other_response.json()}
 
+    def test_updated_since_with_include_deleted_true(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        # updated_since takes precedence: only rows in the window come back,
+        # deleted or not, regardless of the include_deleted flag's value.
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        old_id = self._create_version(
+            client, regular_token1, db_session, "Old Combo Version", "OC9"
+        )
+        list_response = client.get(f"{prefix}/version", headers=admin_headers)
+        watermark = max(v["updated_at"] for v in list_response.json())
+
+        deleted_id = self._create_version(
+            client, regular_token1, db_session, "Combo Deleted", "CD9"
+        )
+        delete_response = client.delete(
+            f"{prefix}/version", params={"id": deleted_id}, headers=admin_headers
+        )
+        assert delete_response.status_code == 200
+
+        for flag in ("true", "false"):
+            delta_response = client.get(
+                f"{prefix}/version",
+                params={"updated_since": watermark, "include_deleted": flag},
+                headers=admin_headers,
+            )
+            assert delta_response.status_code == 200
+            delta_by_id = {v["id"]: v for v in delta_response.json()}
+            assert old_id not in delta_by_id
+            assert delta_by_id[deleted_id]["deleted"] is True
+
+    def test_raw_sql_update_bumps_updated_at_via_trigger(
+        self, client, regular_token1, db_session
+    ):
+        # The ORM onupdate can't cover raw SQL — only the DB trigger does.
+        # This is the one write path the rest of the suite never exercises.
+        from sqlalchemy import text
+
+        version_id = self._create_version(
+            client, regular_token1, db_session, "Trigger Version", "TG9"
+        )
+        row = db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+        before = row.updated_at
+
+        db_session.execute(
+            text("UPDATE bible_version SET name = 'Raw SQL Rename' WHERE id = :id"),
+            {"id": version_id},
+        )
+        db_session.commit()
+        db_session.refresh(row)
+        assert row.updated_at > before
+
 
 class TestTranscribedAudioFlag:
     def test_create_version_with_transcribed_audio(

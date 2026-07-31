@@ -1,6 +1,6 @@
 import logging
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -19,6 +19,7 @@ from security_routes.utilities import (
     get_authorized_revision_ids,
     is_user_authorized_for_bible_version,
 )
+from utils.datetime_utils import as_naive_utc
 
 router = APIRouter()
 
@@ -90,10 +91,13 @@ async def list_revisions(
     - version_id: Optional[int] = None
     Description: The id of the version to which the revision belongs. If not provided, returns all revisions.
     - updated_since: Optional[datetime] = None
-    Description: ISO-8601 timestamp. Returns only revisions modified after this
-    time, *including* soft-deleted ones (a soft-delete is an update), so
-    downstream mirrors can sync deltas — deletions included. Mirrors should use
-    the max updated_at from the response body as their next watermark.
+    Description: ISO-8601 timestamp (naive values are interpreted as UTC).
+    Returns only revisions modified after this time, *including* soft-deleted
+    ones (a soft-delete is an update), so downstream mirrors can sync deltas —
+    deletions included. Applies to any authenticated caller, scoped to the
+    revisions they are authorized for. Mirrors should use the max updated_at
+    from the response body, verbatim, as their next watermark, and keep a
+    periodic full reconcile as a safety net.
 
     Returns:
     Fields(Revision):
@@ -110,8 +114,8 @@ async def list_revisions(
     - file: UploadFile
     Description: The file containing the revision text.
     """
-    if updated_since is not None and updated_since.tzinfo is not None:
-        updated_since = updated_since.astimezone(timezone.utc).replace(tzinfo=None)
+    if updated_since is not None:
+        updated_since = as_naive_utc(updated_since)
 
     if version_id:
         # Step 1: Check version existence
