@@ -3,7 +3,7 @@ __version__ = "v3"
 import hashlib
 import json
 import socket
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import fastapi
@@ -34,6 +34,7 @@ from models import (
     AssessmentStatusUpdate,
 )
 from security_routes.auth_routes import get_current_user
+from utils.datetime_utils import as_naive_utc
 from utils.logging_config import setup_logger
 
 load_dotenv()
@@ -161,10 +162,13 @@ async def get_assessments(
     - revision_id: Filter assessments by revision ID
     - reference_id: Filter assessments by reference ID
     - type: Filter assessments by assessment type
-    - updated_since: ISO-8601 timestamp. Returns only assessments modified after
-      this time, *including* soft-deleted ones (a soft-delete is an update), so
-      downstream mirrors can sync deltas — deletions included. Mirrors should
-      use the max updated_at from the response body as their next watermark.
+    - updated_since: ISO-8601 timestamp (naive values are interpreted as UTC).
+      Returns only assessments modified after this time, *including*
+      soft-deleted ones (a soft-delete is an update), so downstream mirrors can
+      sync deltas — deletions included. Applies to any authenticated caller,
+      scoped to the assessments they are authorized for. Mirrors should use the
+      max updated_at from the response body, verbatim, as their next watermark,
+      and keep a periodic full reconcile as a safety net.
 
     Currently supported assessment types are:
 
@@ -200,8 +204,8 @@ async def get_assessments(
 
     """
 
-    if updated_since is not None and updated_since.tzinfo is not None:
-        updated_since = updated_since.astimezone(timezone.utc).replace(tzinfo=None)
+    if updated_since is not None:
+        updated_since = as_naive_utc(updated_since)
 
     if current_user.is_admin:
         # Admin users can access all assessments
