@@ -637,3 +637,54 @@ async def test_read_upload_with_limit_streams_oversize_when_size_unknown():
     # Under the cap returns the full payload.
     fake_ok = FakeUploadFile(b"abc")
     assert await read_upload_with_limit(fake_ok, max_bytes=4) == b"abc"
+
+
+def test_list_revisions_updated_since_includes_soft_deleted(
+    client, regular_token1, admin_token, db_session
+):
+    """updated_since returns only revisions modified after the timestamp,
+    including soft-deleted ones, so downstream mirrors can sync deltas (#887).
+    """
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    version_id = create_bible_version(client, regular_token1, db_session)
+    kept_id = upload_revision(client, regular_token1, version_id)
+    deleted_id = upload_revision(client, regular_token1, version_id)
+
+    list_response = client.get(f"{prefix}/revision", headers=admin_headers)
+    assert list_response.status_code == 200
+    by_id = {r["id"]: r for r in list_response.json()}
+    assert by_id[kept_id]["updated_at"] is not None
+    watermark = max(r["updated_at"] for r in list_response.json())
+
+    assert delete_revision(client, regular_token1, deleted_id) == 200
+
+    delta_response = client.get(
+        f"{prefix}/revision",
+        params={"updated_since": watermark},
+        headers=admin_headers,
+    )
+    assert delta_response.status_code == 200
+    delta_by_id = {r["id"]: r for r in delta_response.json()}
+    assert kept_id not in delta_by_id
+    assert delta_by_id[deleted_id]["deleted"] is True
+
+    # Scoped to a version_id it behaves the same way
+    delta_response = client.get(
+        f"{prefix}/revision",
+        params={"updated_since": watermark, "version_id": version_id},
+        headers=admin_headers,
+    )
+    assert delta_response.status_code == 200
+    delta_by_id = {r["id"]: r for r in delta_response.json()}
+    assert kept_id not in delta_by_id
+    assert delta_by_id[deleted_id]["deleted"] is True
+
+    # Nothing changed since the delta → empty response
+    new_watermark = max(r["updated_at"] for r in delta_response.json())
+    empty_response = client.get(
+        f"{prefix}/revision",
+        params={"updated_since": new_watermark},
+        headers=admin_headers,
+    )
+    assert empty_response.status_code == 200
+    assert empty_response.json() == []

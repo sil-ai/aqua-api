@@ -991,6 +991,11 @@
             "title": "Attempt Count",
             "type": "integer"
           },
+          "deleted": {
+            "default": false,
+            "title": "Deleted",
+            "type": "boolean"
+          },
           "end_time": {
             "anyOf": [
               {
@@ -1108,6 +1113,18 @@
           },
           "type": {
             "$ref": "#/components/schemas/AssessmentType"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
           }
         },
         "required": [
@@ -5056,6 +5073,11 @@
             ],
             "title": "Date"
           },
+          "deleted": {
+            "default": false,
+            "title": "Deleted",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -5117,6 +5139,18 @@
             ],
             "default": false,
             "title": "Published"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
           },
           "version_abbreviation": {
             "anyOf": [
@@ -7422,6 +7456,18 @@
             "default": false,
             "title": "Transcribed Audio",
             "type": "boolean"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
           }
         },
         "required": [
@@ -10143,7 +10189,7 @@
         ]
       },
       "get": {
-        "description": "Returns a list of assessments the current user is authorized to access.\n\nOptional query parameters:\n- id: Filter by one or more assessment IDs (repeated param, e.g. ?id=1&id=2).\n  IDs that do not exist or are not accessible to the current user are silently\n  omitted; a partial result is not an error.\n- revision_id: Filter assessments by revision ID\n- reference_id: Filter assessments by reference ID\n- type: Filter assessments by assessment type\n\nCurrently supported assessment types are:\n\n- semantic-similarity (requires reference)\n- sentence-length\n- word-alignment (requires reference)\n- ngrams\n- tfidf\n- text-lengths (requires reference)\n- agent-critique (requires reference)\n\n\nReturns:\nFields(AssessmentOut):\n- id: int\nDescription: The unique identifier for the assessment.\n- revision_id: int\nDescription: The unique identifier for the revision.\n- reference_id: Optional[int] = None\nDescription: The unique identifier for the reference revision.\n- type: AssessmentType\nDescription: The type of assessment to be run.\n- status: str\nDescription: The status of the assessment. (queued, failed, finished)\n- requested_time: datetime.datetime\nDescription: The time the assessment was requested.\n- start_time: datetime.datetime\nDescription: The time the assessment was started.\n- end_time: datetime.datetime\nDescription: The time the assessment was completed.\n- owner_id: int\nDescription: The unique identifier for the owner of the assessment.",
+        "description": "Returns a list of assessments the current user is authorized to access.\n\nOptional query parameters:\n- id: Filter by one or more assessment IDs (repeated param, e.g. ?id=1&id=2).\n  IDs that do not exist or are not accessible to the current user are silently\n  omitted; a partial result is not an error.\n- revision_id: Filter assessments by revision ID\n- reference_id: Filter assessments by reference ID\n- type: Filter assessments by assessment type\n- updated_since: ISO-8601 timestamp. Returns only assessments modified after\n  this time, *including* soft-deleted ones (a soft-delete is an update), so\n  downstream mirrors can sync deltas \u2014 deletions included. Mirrors should\n  use the max updated_at from the response body as their next watermark.\n\nCurrently supported assessment types are:\n\n- semantic-similarity (requires reference)\n- sentence-length\n- word-alignment (requires reference)\n- ngrams\n- tfidf\n- text-lengths (requires reference)\n- agent-critique (requires reference)\n\n\nReturns:\nFields(AssessmentOut):\n- id: int\nDescription: The unique identifier for the assessment.\n- revision_id: int\nDescription: The unique identifier for the revision.\n- reference_id: Optional[int] = None\nDescription: The unique identifier for the reference revision.\n- type: AssessmentType\nDescription: The type of assessment to be run.\n- status: str\nDescription: The status of the assessment. (queued, failed, finished)\n- requested_time: datetime.datetime\nDescription: The time the assessment was requested.\n- start_time: datetime.datetime\nDescription: The time the assessment was started.\n- end_time: datetime.datetime\nDescription: The time the assessment was completed.\n- owner_id: int\nDescription: The unique identifier for the owner of the assessment.",
         "operationId": "get_assessments_latest_assessment_get",
         "parameters": [
           {
@@ -10211,6 +10257,23 @@
                 }
               ],
               "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Updated Since"
             }
           }
         ],
@@ -13890,7 +13953,7 @@
         ]
       },
       "get": {
-        "description": "Returns a list of revisions.\n\nIf version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.\n\nInput:\n- version_id: Optional[int] = None\nDescription: The id of the version to which the revision belongs. If not provided, returns all revisions.\n\nReturns:\nFields(Revision):\n- version_id: int\nDescription: The id of the version to which the revision belongs.\n- name: str\nDescription: The name of the revision.\n- published: bool\nDescription: Whether the revision is published.\n- backTranslation: Optional[int] = None\nDescription: The id of the back translation revision.\n- machineTranslation: Optional[int] = None\nDescription: The id of the machine translation revision.\n- file: UploadFile\nDescription: The file containing the revision text.",
+        "description": "Returns a list of revisions.\n\nIf version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.\n\nInput:\n- version_id: Optional[int] = None\nDescription: The id of the version to which the revision belongs. If not provided, returns all revisions.\n- updated_since: Optional[datetime] = None\nDescription: ISO-8601 timestamp. Returns only revisions modified after this\ntime, *including* soft-deleted ones (a soft-delete is an update), so\ndownstream mirrors can sync deltas \u2014 deletions included. Mirrors should use\nthe max updated_at from the response body as their next watermark.\n\nReturns:\nFields(Revision):\n- version_id: int\nDescription: The id of the version to which the revision belongs.\n- name: str\nDescription: The name of the revision.\n- published: bool\nDescription: Whether the revision is published.\n- backTranslation: Optional[int] = None\nDescription: The id of the back translation revision.\n- machineTranslation: Optional[int] = None\nDescription: The id of the machine translation revision.\n- file: UploadFile\nDescription: The file containing the revision text.",
         "operationId": "list_revisions_latest_revision_get",
         "parameters": [
           {
@@ -13907,6 +13970,23 @@
                 }
               ],
               "title": "Version Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Updated Since"
             }
           }
         ],
@@ -16778,7 +16858,7 @@
         ]
       },
       "get": {
-        "description": "Get a list of all versions that the current user is authorized to access.\n\nAdmins may pass ``include_deleted=true`` to also return soft-deleted\nversions, so downstream mirrors can satisfy FK constraints against\nrevisions whose parent version has been soft-deleted. Non-admin callers\nnever receive soft-deleted versions regardless of this flag.",
+        "description": "Get a list of all versions that the current user is authorized to access.\n\nAdmins may pass ``include_deleted=true`` to also return soft-deleted\nversions, so downstream mirrors can satisfy FK constraints against\nrevisions whose parent version has been soft-deleted. Non-admin callers\nnever receive soft-deleted versions regardless of this flag.\n\n``updated_since`` (ISO-8601 timestamp) returns only versions modified\nafter that time, *including* soft-deleted ones (a soft-delete is an\nupdate), so downstream mirrors can sync deltas \u2014 deletions included \u2014\ninstead of re-fetching the full list. Mirrors should use the max\n``updated_at`` from the response body as their next watermark.",
         "operationId": "list_version_latest_version_get",
         "parameters": [
           {
@@ -16789,6 +16869,23 @@
               "default": false,
               "title": "Include Deleted",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Updated Since"
             }
           }
         ],
@@ -19538,7 +19635,7 @@
         ]
       },
       "get": {
-        "description": "Returns a list of assessments the current user is authorized to access.\n\nOptional query parameters:\n- id: Filter by one or more assessment IDs (repeated param, e.g. ?id=1&id=2).\n  IDs that do not exist or are not accessible to the current user are silently\n  omitted; a partial result is not an error.\n- revision_id: Filter assessments by revision ID\n- reference_id: Filter assessments by reference ID\n- type: Filter assessments by assessment type\n\nCurrently supported assessment types are:\n\n- semantic-similarity (requires reference)\n- sentence-length\n- word-alignment (requires reference)\n- ngrams\n- tfidf\n- text-lengths (requires reference)\n- agent-critique (requires reference)\n\n\nReturns:\nFields(AssessmentOut):\n- id: int\nDescription: The unique identifier for the assessment.\n- revision_id: int\nDescription: The unique identifier for the revision.\n- reference_id: Optional[int] = None\nDescription: The unique identifier for the reference revision.\n- type: AssessmentType\nDescription: The type of assessment to be run.\n- status: str\nDescription: The status of the assessment. (queued, failed, finished)\n- requested_time: datetime.datetime\nDescription: The time the assessment was requested.\n- start_time: datetime.datetime\nDescription: The time the assessment was started.\n- end_time: datetime.datetime\nDescription: The time the assessment was completed.\n- owner_id: int\nDescription: The unique identifier for the owner of the assessment.",
+        "description": "Returns a list of assessments the current user is authorized to access.\n\nOptional query parameters:\n- id: Filter by one or more assessment IDs (repeated param, e.g. ?id=1&id=2).\n  IDs that do not exist or are not accessible to the current user are silently\n  omitted; a partial result is not an error.\n- revision_id: Filter assessments by revision ID\n- reference_id: Filter assessments by reference ID\n- type: Filter assessments by assessment type\n- updated_since: ISO-8601 timestamp. Returns only assessments modified after\n  this time, *including* soft-deleted ones (a soft-delete is an update), so\n  downstream mirrors can sync deltas \u2014 deletions included. Mirrors should\n  use the max updated_at from the response body as their next watermark.\n\nCurrently supported assessment types are:\n\n- semantic-similarity (requires reference)\n- sentence-length\n- word-alignment (requires reference)\n- ngrams\n- tfidf\n- text-lengths (requires reference)\n- agent-critique (requires reference)\n\n\nReturns:\nFields(AssessmentOut):\n- id: int\nDescription: The unique identifier for the assessment.\n- revision_id: int\nDescription: The unique identifier for the revision.\n- reference_id: Optional[int] = None\nDescription: The unique identifier for the reference revision.\n- type: AssessmentType\nDescription: The type of assessment to be run.\n- status: str\nDescription: The status of the assessment. (queued, failed, finished)\n- requested_time: datetime.datetime\nDescription: The time the assessment was requested.\n- start_time: datetime.datetime\nDescription: The time the assessment was started.\n- end_time: datetime.datetime\nDescription: The time the assessment was completed.\n- owner_id: int\nDescription: The unique identifier for the owner of the assessment.",
         "operationId": "get_assessments_v3_assessment_get",
         "parameters": [
           {
@@ -19606,6 +19703,23 @@
                 }
               ],
               "title": "Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Updated Since"
             }
           }
         ],
@@ -23014,7 +23128,7 @@
         ]
       },
       "get": {
-        "description": "Returns a list of revisions.\n\nIf version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.\n\nInput:\n- version_id: Optional[int] = None\nDescription: The id of the version to which the revision belongs. If not provided, returns all revisions.\n\nReturns:\nFields(Revision):\n- version_id: int\nDescription: The id of the version to which the revision belongs.\n- name: str\nDescription: The name of the revision.\n- published: bool\nDescription: Whether the revision is published.\n- backTranslation: Optional[int] = None\nDescription: The id of the back translation revision.\n- machineTranslation: Optional[int] = None\nDescription: The id of the machine translation revision.\n- file: UploadFile\nDescription: The file containing the revision text.",
+        "description": "Returns a list of revisions.\n\nIf version_id is provided, returns a list of revisions for that version, otherwise returns a list of all revisions.\n\nInput:\n- version_id: Optional[int] = None\nDescription: The id of the version to which the revision belongs. If not provided, returns all revisions.\n- updated_since: Optional[datetime] = None\nDescription: ISO-8601 timestamp. Returns only revisions modified after this\ntime, *including* soft-deleted ones (a soft-delete is an update), so\ndownstream mirrors can sync deltas \u2014 deletions included. Mirrors should use\nthe max updated_at from the response body as their next watermark.\n\nReturns:\nFields(Revision):\n- version_id: int\nDescription: The id of the version to which the revision belongs.\n- name: str\nDescription: The name of the revision.\n- published: bool\nDescription: Whether the revision is published.\n- backTranslation: Optional[int] = None\nDescription: The id of the back translation revision.\n- machineTranslation: Optional[int] = None\nDescription: The id of the machine translation revision.\n- file: UploadFile\nDescription: The file containing the revision text.",
         "operationId": "list_revisions_v3_revision_get",
         "parameters": [
           {
@@ -23031,6 +23145,23 @@
                 }
               ],
               "title": "Version Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Updated Since"
             }
           }
         ],
@@ -25645,7 +25776,7 @@
         ]
       },
       "get": {
-        "description": "Get a list of all versions that the current user is authorized to access.\n\nAdmins may pass ``include_deleted=true`` to also return soft-deleted\nversions, so downstream mirrors can satisfy FK constraints against\nrevisions whose parent version has been soft-deleted. Non-admin callers\nnever receive soft-deleted versions regardless of this flag.",
+        "description": "Get a list of all versions that the current user is authorized to access.\n\nAdmins may pass ``include_deleted=true`` to also return soft-deleted\nversions, so downstream mirrors can satisfy FK constraints against\nrevisions whose parent version has been soft-deleted. Non-admin callers\nnever receive soft-deleted versions regardless of this flag.\n\n``updated_since`` (ISO-8601 timestamp) returns only versions modified\nafter that time, *including* soft-deleted ones (a soft-delete is an\nupdate), so downstream mirrors can sync deltas \u2014 deletions included \u2014\ninstead of re-fetching the full list. Mirrors should use the max\n``updated_at`` from the response body as their next watermark.",
         "operationId": "list_version_v3_version_get",
         "parameters": [
           {
@@ -25656,6 +25787,23 @@
               "default": false,
               "title": "Include Deleted",
               "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "updated_since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Updated Since"
             }
           }
         ],

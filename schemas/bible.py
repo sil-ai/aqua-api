@@ -92,6 +92,7 @@ class VersionOut_v3(BaseModel):
     is_reference: bool = False
     transcribed_audio: bool = False
     deleted: bool = False
+    updated_at: Optional[datetime.datetime] = None
 
     @field_validator("deleted", mode="before")
     @classmethod
@@ -161,6 +162,14 @@ class RevisionOut_v3(BaseModel):
     machineTranslation: Optional[bool] = False
     iso_language: Optional[str] = None
     is_reference: Optional[bool] = False
+    deleted: bool = False
+    updated_at: Optional[datetime.datetime] = None
+
+    @field_validator("deleted", mode="before")
+    @classmethod
+    def _coerce_deleted_null_to_false(cls, value):
+        # BibleRevision.deleted column is nullable; legacy rows have NULL.
+        return False if value is None else value
 
     model_config = {
         "json_schema_extra": {

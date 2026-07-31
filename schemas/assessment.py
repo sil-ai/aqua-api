@@ -101,6 +101,14 @@ class AssessmentOut(BaseModel):
     is_training: bool = False
     kwargs: Optional[Dict[str, Any]] = None
     attempt_count: int = 0
+    deleted: bool = False
+    updated_at: Optional[datetime.datetime] = None
+
+    @field_validator("deleted", mode="before")
+    @classmethod
+    def _coerce_deleted_null_to_false(cls, value):
+        # Assessment.deleted column is nullable; legacy rows have NULL.
+        return False if value is None else value
 
     model_config = {
         "json_schema_extra": {
