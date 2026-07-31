@@ -58,6 +58,7 @@ _VALID_DB = "postgresql+asyncpg://u:p@localhost:5432/db"
         "AQUA_DB_MAX_OVERFLOW",
         "AQUA_DB_POOL_TIMEOUT",
         "AQUA_DB_POOL_RECYCLE",
+        "AQUA_DB_STATEMENT_TIMEOUT_MS",
     ],
 )
 def test_non_numeric_pool_config_rejected_at_boot(settings_cls, monkeypatch, env_name):
@@ -74,12 +75,13 @@ def test_non_numeric_pool_config_rejected_at_boot(settings_cls, monkeypatch, env
         settings_cls()
 
 
-# (env var, field name, declared default) for the four pooled int settings.
+# (env var, field name, declared default) for the pooled int settings.
 _POOL_FIELDS = [
-    ("AQUA_DB_POOL_SIZE", "aqua_db_pool_size", 2),
-    ("AQUA_DB_MAX_OVERFLOW", "aqua_db_max_overflow", 3),
-    ("AQUA_DB_POOL_TIMEOUT", "aqua_db_pool_timeout", 10),
+    ("AQUA_DB_POOL_SIZE", "aqua_db_pool_size", 5),
+    ("AQUA_DB_MAX_OVERFLOW", "aqua_db_max_overflow", 10),
+    ("AQUA_DB_POOL_TIMEOUT", "aqua_db_pool_timeout", 30),
     ("AQUA_DB_POOL_RECYCLE", "aqua_db_pool_recycle", 1800),
+    ("AQUA_DB_STATEMENT_TIMEOUT_MS", "aqua_db_statement_timeout_ms", 60000),
 ]
 
 

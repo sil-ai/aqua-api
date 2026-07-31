@@ -64,16 +64,21 @@ class Settings(BaseSettings):
     # TestClient spawns a fresh event loop per request). Anything else uses the
     # pooled engine configured below.
     aqua_db_poolclass: Optional[str] = None
-    aqua_db_pool_size: int = 2
-    aqua_db_max_overflow: int = 3
-    aqua_db_pool_timeout: int = 10
+    aqua_db_pool_size: int = 5
+    aqua_db_max_overflow: int = 10
+    aqua_db_pool_timeout: int = 30
     aqua_db_pool_recycle: int = 1800
+    # Server-side per-statement cap (ms) applied to every pooled connection.
+    # A single runaway query can't then pin a connection for the whole pool;
+    # it fails its own request instead. 0 disables (Postgres default).
+    aqua_db_statement_timeout_ms: int = 60000
 
     @field_validator(
         "aqua_db_pool_size",
         "aqua_db_max_overflow",
         "aqua_db_pool_timeout",
         "aqua_db_pool_recycle",
+        "aqua_db_statement_timeout_ms",
         mode="before",
     )
     @classmethod
