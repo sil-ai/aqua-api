@@ -567,6 +567,15 @@ class TestIncludeDeleted:
         assert legacy_id in by_id
         assert by_id[legacy_id]["deleted"] is False
 
+        # The default listing (no params) must not drop NULL-deleted rows:
+        # the filter is deleted.is_not(True), not deleted.is_(False).
+        for headers in (admin_headers, regular_headers):
+            default_response = client.get(f"{prefix}/version", headers=headers)
+            assert default_response.status_code == 200, default_response.text
+            default_by_id = {v["id"]: v for v in default_response.json()}
+            assert legacy_id in default_by_id
+            assert default_by_id[legacy_id]["deleted"] is False
+
 
 class TestUpdatedSince:
     """``updated_since`` returns only versions modified after the given

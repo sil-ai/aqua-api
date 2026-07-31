@@ -688,3 +688,28 @@ def test_list_revisions_updated_since_includes_soft_deleted(
     )
     assert empty_response.status_code == 200
     assert empty_response.json() == []
+
+
+def test_list_revisions_includes_null_deleted_rows(
+    client, regular_token1, admin_token, db_session
+):
+    """The default listing must not drop legacy NULL-deleted rows: the filter
+    is deleted.is_not(True), not deleted.is_(False)."""
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+
+    row = (
+        db_session.query(BibleRevisionModel)
+        .filter(BibleRevisionModel.id == revision_id)
+        .first()
+    )
+    row.deleted = None
+    db_session.commit()
+
+    for token in (admin_token, regular_token1):
+        status_code, listed = list_revision(client, token, version_id)
+        assert status_code == 200
+        assert revision_id in {r["id"] for r in listed}
+        status_code, listed = list_revision(client, token)
+        assert status_code == 200
+        assert revision_id in {r["id"] for r in listed}
