@@ -48,6 +48,18 @@ AQUA_DB="postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname" .venv/bin
 docker compose down
 ```
 
+### Stale Local Databases and DDL-Event Triggers
+
+Some triggers (e.g. `set_updated_at` on bible_version/bible_revision/assessment)
+are installed by `after_create` DDL events, which only fire when `create_all`
+actually creates the table. A local database created before such a trigger was
+added will silently lack it and fail trigger-dependent tests. Recreate the
+volume when pulling changes that add DDL-event triggers:
+
+```bash
+docker compose down -v && docker compose up -d db
+```
+
 ## Alembic Migrations
 
 ### Directory Structure
