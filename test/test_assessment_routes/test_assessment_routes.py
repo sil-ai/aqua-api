@@ -3274,3 +3274,83 @@ def test_assessment_out_exposes_attempt_count(
     assert resp.status_code == 200
     bodies = [row for row in resp.json() if row["id"] == aid]
     assert bodies[0]["attempt_count"] == 1
+
+
+def test_get_assessments_updated_since_includes_soft_deleted(
+    client, regular_token1, admin_token, db_session, test_db_session
+):
+    """updated_since returns only assessments modified after the timestamp,
+    including soft-deleted ones, so downstream mirrors can sync deltas (#887).
+    """
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    version_id = create_bible_version(client, regular_token1, db_session)
+    revision_id = upload_revision(client, regular_token1, version_id)
+    reference_id = upload_revision(client, regular_token1, version_id)
+
+    with patch(
+        f"assessment_routes.{prefix}.assessment_routes.call_assessment_runner"
+    ) as mock_runner:
+        mock_runner.return_value = None
+        kept_response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "word-alignment",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert kept_response.status_code == 200
+        kept_id = kept_response.json()[0]["id"]
+
+        deleted_response = client.post(
+            f"{prefix}/assessment",
+            params={
+                "revision_id": revision_id,
+                "reference_id": reference_id,
+                "type": "sentence-length",
+            },
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+        assert deleted_response.status_code == 200
+        deleted_id = deleted_response.json()[0]["id"]
+
+    list_response = list_assessment(client, admin_token)
+    assert list_response.status_code == 200
+    by_id = {a["id"]: a for a in list_response.json()}
+    assert by_id[kept_id]["updated_at"] is not None
+    watermark = max(a["updated_at"] for a in list_response.json())
+
+    delete_response = delete_assessment(client, regular_token1, deleted_id)
+    assert delete_response.status_code == 200
+
+    delta_response = client.get(
+        f"{prefix}/assessment",
+        params={"updated_since": watermark},
+        headers=admin_headers,
+    )
+    assert delta_response.status_code == 200
+    delta_by_id = {a["id"]: a for a in delta_response.json()}
+    assert kept_id not in delta_by_id
+    assert delta_by_id[deleted_id]["deleted"] is True
+
+    # Non-admin owner also sees the deletion in their delta window
+    delta_response = client.get(
+        f"{prefix}/assessment",
+        params={"updated_since": watermark},
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert delta_response.status_code == 200
+    delta_by_id = {a["id"]: a for a in delta_response.json()}
+    assert kept_id not in delta_by_id
+    assert delta_by_id[deleted_id]["deleted"] is True
+
+    # Nothing changed since the delta → empty response
+    new_watermark = max(a["updated_at"] for a in delta_response.json())
+    empty_response = client.get(
+        f"{prefix}/assessment",
+        params={"updated_since": new_watermark},
+        headers=admin_headers,
+    )
+    assert empty_response.status_code == 200
+    assert empty_response.json() == []

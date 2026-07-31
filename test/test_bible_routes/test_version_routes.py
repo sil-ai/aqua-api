@@ -568,6 +568,124 @@ class TestIncludeDeleted:
         assert by_id[legacy_id]["deleted"] is False
 
 
+class TestUpdatedSince:
+    """``updated_since`` returns only versions modified after the given
+    timestamp, including soft-deleted ones, so downstream mirrors can sync
+    deltas (issue #887).
+    """
+
+    def _create_version(self, client, token, db_session, name, abbreviation):
+        group_1 = db_session.query(Group).filter_by(name="Group1").first()
+        headers = {"Authorization": f"Bearer {token}"}
+        params = {
+            **new_version_data,
+            "name": name,
+            "abbreviation": abbreviation,
+            "add_to_groups": [group_1.id],
+        }
+        response = client.post(f"{prefix}/version", json=params, headers=headers)
+        assert response.status_code == 200, response.text
+        return response.json()["id"]
+
+    def test_updated_since_returns_only_changed_versions_including_deleted(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        untouched_id = self._create_version(
+            client, regular_token1, db_session, "Untouched Version", "UV9"
+        )
+        renamed_id = self._create_version(
+            client, regular_token1, db_session, "Soon Renamed", "SR9"
+        )
+        deleted_id = self._create_version(
+            client, regular_token1, db_session, "Soon Deleted", "SD9"
+        )
+
+        list_response = client.get(f"{prefix}/version", headers=admin_headers)
+        assert list_response.status_code == 200
+        by_id = {v["id"]: v for v in list_response.json()}
+        assert by_id[untouched_id]["updated_at"] is not None
+        watermark = max(v["updated_at"] for v in list_response.json())
+
+        rename_response = client.put(
+            f"{prefix}/version",
+            json={"id": renamed_id, "name": "Renamed Version"},
+            headers=admin_headers,
+        )
+        assert rename_response.status_code == 200
+        delete_response = client.delete(
+            f"{prefix}/version", params={"id": deleted_id}, headers=admin_headers
+        )
+        assert delete_response.status_code == 200
+
+        delta_response = client.get(
+            f"{prefix}/version",
+            params={"updated_since": watermark},
+            headers=admin_headers,
+        )
+        assert delta_response.status_code == 200
+        delta_by_id = {v["id"]: v for v in delta_response.json()}
+        assert untouched_id not in delta_by_id
+        assert delta_by_id[renamed_id]["name"] == "Renamed Version"
+        assert delta_by_id[renamed_id]["deleted"] is False
+        assert delta_by_id[deleted_id]["deleted"] is True
+        assert delta_by_id[renamed_id]["updated_at"] > watermark
+
+    def test_updated_since_empty_when_nothing_changed(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        self._create_version(
+            client, regular_token1, db_session, "Quiet Version", "QV9"
+        )
+
+        list_response = client.get(f"{prefix}/version", headers=admin_headers)
+        watermark = max(v["updated_at"] for v in list_response.json())
+
+        delta_response = client.get(
+            f"{prefix}/version",
+            params={"updated_since": watermark},
+            headers=admin_headers,
+        )
+        assert delta_response.status_code == 200
+        assert delta_response.json() == []
+
+    def test_updated_since_non_admin_sees_deletions_of_accessible_versions(
+        self, client, admin_token, regular_token1, regular_token2, db_session
+    ):
+        regular_headers = {"Authorization": f"Bearer {regular_token1}"}
+        deleted_id = self._create_version(
+            client, regular_token1, db_session, "Mine Deleted", "MD9"
+        )
+
+        list_response = client.get(f"{prefix}/version", headers=regular_headers)
+        watermark = max(v["updated_at"] for v in list_response.json())
+
+        delete_response = client.delete(
+            f"{prefix}/version", params={"id": deleted_id}, headers=regular_headers
+        )
+        assert delete_response.status_code == 200
+
+        delta_response = client.get(
+            f"{prefix}/version",
+            params={"updated_since": watermark},
+            headers=regular_headers,
+        )
+        assert delta_response.status_code == 200
+        delta_by_id = {v["id"]: v for v in delta_response.json()}
+        assert delta_by_id[deleted_id]["deleted"] is True
+
+        # A user without access to the version still sees nothing
+        other_headers = {"Authorization": f"Bearer {regular_token2}"}
+        other_response = client.get(
+            f"{prefix}/version",
+            params={"updated_since": watermark},
+            headers=other_headers,
+        )
+        assert other_response.status_code == 200
+        assert deleted_id not in {v["id"] for v in other_response.json()}
+
+
 class TestTranscribedAudioFlag:
     def test_create_version_with_transcribed_audio(
         self, client, regular_token1, db_session

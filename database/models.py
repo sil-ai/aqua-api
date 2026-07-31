@@ -149,6 +149,15 @@ class Assessment(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
     kwargs = Column(JSONB, nullable=True, default=None)
     attempt_count = Column(Integer, nullable=False, server_default="0", default=0)
+    # onupdate covers ORM/Core writes; a DB-level BEFORE UPDATE trigger
+    # (migration c8d3f5a1b2e4) covers raw SQL so no write path can skip it.
+    updated_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+        index=True,
+    )
 
     results = relationship(
         "AssessmentResult", cascade="all, delete", back_populates="assessment"
@@ -275,6 +284,13 @@ class BibleRevision(Base):
     machine_translation = Column(Boolean, default=False)
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
+    updated_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+        index=True,
+    )
 
     back_translation = relationship("BibleRevision", remote_side=[id])
     bible_version = relationship("BibleVersion", back_populates="revisions")
@@ -321,6 +337,13 @@ class BibleVersion(Base):
     deleted = Column(Boolean, default=False)
     deletedAt = Column(TIMESTAMP, default=None)
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, default=None)
+    updated_at = Column(
+        TIMESTAMP,
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+        index=True,
+    )
 
     owner = relationship("UserDB", backref=backref("bible_versions"))
     back_translation = relationship("BibleVersion", remote_side=[id])
