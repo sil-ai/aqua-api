@@ -144,7 +144,8 @@ async def list_revisions(
         if updated_since is not None:
             stmt = stmt.where(BibleRevisionModel.updated_at > updated_since)
         else:
-            stmt = stmt.where(BibleRevisionModel.deleted.is_(False))
+            # is_not(True), not is_(False): legacy rows carry NULL deleted
+            stmt = stmt.where(BibleRevisionModel.deleted.is_not(True))
         result = await db.execute(stmt)
         revisions = result.scalars().all()
 
@@ -155,7 +156,7 @@ async def list_revisions(
         if updated_since is not None:
             stmt = stmt.where(BibleRevisionModel.updated_at > updated_since)
         else:
-            stmt = stmt.where(BibleRevisionModel.deleted.is_(False))
+            stmt = stmt.where(BibleRevisionModel.deleted.is_not(True))
         result = await db.execute(stmt)
         all_revisions = result.scalars().all()
 

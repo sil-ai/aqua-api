@@ -32,11 +32,15 @@ Deploy ordering: run this migration BEFORE deploying app code that references
 ``updated_at`` (standard migrate-then-deploy; ``server_default`` makes the new
 column safe for old app code still running during the deploy).
 
-Locking: ADD COLUMN takes ACCESS EXCLUSIVE. The catalog change is fast on
-PG16 (no table rewrite — verified: constant-folded default via attmissingval),
-but if a long-running transaction holds even a shared lock we queue behind it
-and every new query then queues behind us, freezing the table. Cap the wait so
-we fail cleanly and can be retried in a quieter window, per the pattern in
+Locking: ADD COLUMN takes ACCESS EXCLUSIVE. The column is added with a
+*stable* default (``now()``) so PG16 takes the attmissingval fast path — no
+table rewrite (verified: relfilenode unchanged; a volatile default like
+``clock_timestamp()`` in the ADD COLUMN itself forces a full rewrite under
+the exclusive lock). The operative ``clock_timestamp()`` default is applied
+right after via ALTER COLUMN ... SET DEFAULT, which is catalog-only. Even so,
+if a long-running transaction holds even a shared lock we queue behind it and
+every new query then queues behind us, freezing the table. Cap the wait so we
+fail cleanly and can be retried in a quieter window, per the pattern in
 c9e7b1f2d3a4. Index builds run CONCURRENTLY outside the transaction.
 """
 
@@ -58,14 +62,21 @@ def upgrade() -> None:
     op.execute(sa.text("SET statement_timeout = '60s'"))
 
     for table in TABLES:
+        # Stable default for the ADD COLUMN (fast path, no rewrite); the
+        # volatile clock_timestamp() default for future inserts is applied
+        # separately as a catalog-only change.
         op.add_column(
             table,
             sa.Column(
                 "updated_at",
                 sa.TIMESTAMP(),
                 nullable=False,
-                server_default=sa.text("clock_timestamp()"),
+                server_default=sa.text("now()"),
             ),
+        )
+        op.execute(
+            f"ALTER TABLE {table} "
+            "ALTER COLUMN updated_at SET DEFAULT clock_timestamp()"
         )
 
     op.execute(

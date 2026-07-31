@@ -61,7 +61,8 @@ async def list_version(
         if updated_since is not None:
             stmt = stmt.where(BibleVersionModel.updated_at > updated_since)
         elif not admin_include_deleted:
-            stmt = stmt.where(BibleVersionModel.deleted.is_(False))
+            # is_not(True), not is_(False): legacy rows carry NULL deleted
+            stmt = stmt.where(BibleVersionModel.deleted.is_not(True))
         result = await db.execute(stmt)
         versions = result.scalars().all()
     else:
@@ -84,7 +85,7 @@ async def list_version(
         if updated_since is not None:
             stmt = stmt.where(BibleVersionModel.updated_at > updated_since)
         else:
-            stmt = stmt.where(BibleVersionModel.deleted.is_(False))
+            stmt = stmt.where(BibleVersionModel.deleted.is_not(True))
         result = await db.execute(stmt)
         versions = result.scalars().all()
 

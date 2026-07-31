@@ -213,7 +213,9 @@ async def get_assessments(
         if updated_since is not None:
             stmt = stmt.where(Assessment.updated_at > updated_since)
         else:
-            stmt = stmt.where(Assessment.deleted.is_(False))
+            # is_not(True), not is_(False): legacy rows carry NULL deleted,
+            # matching the non-admin branch below
+            stmt = stmt.where(Assessment.deleted.is_not(True))
 
         stmt = _apply_filters(stmt, ids, revision_id, reference_id, type)
 
