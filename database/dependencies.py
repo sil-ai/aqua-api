@@ -26,16 +26,21 @@ DATABASE_URL = settings.aqua_db
 # get_db, surfacing as 500 "QueuePool limit of size 2 overflow 3 reached".
 # Pair the bigger pool with a server-side statement_timeout so one slow query
 # can't pin a pooled connection indefinitely.
+# statement_timeout applies per physical connection, so wire it on both engine
+# branches — otherwise AQUA_DB_POOLCLASS=null (NullPool) would drop the runaway-
+# query safety net exactly when it removes the pool ceiling too.
+connect_args = {}
+if settings.aqua_db_statement_timeout_ms > 0:
+    connect_args["server_settings"] = {
+        "statement_timeout": str(settings.aqua_db_statement_timeout_ms)
+    }
 if settings.aqua_db_poolclass and settings.aqua_db_poolclass.lower() == "null":
     from sqlalchemy.pool import NullPool
 
-    engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
+    engine = create_async_engine(
+        DATABASE_URL, poolclass=NullPool, connect_args=connect_args
+    )
 else:
-    connect_args = {}
-    if settings.aqua_db_statement_timeout_ms > 0:
-        connect_args["server_settings"] = {
-            "statement_timeout": str(settings.aqua_db_statement_timeout_ms)
-        }
     engine = create_async_engine(
         DATABASE_URL,
         pool_size=settings.aqua_db_pool_size,
