@@ -6592,13 +6592,19 @@ def test_post_lexeme_card_both_source_lemmas_none_is_upsert(
 # ── Deduplicate endpoint tests ──────────────────────────────────
 
 
+def _pg_dsn():
+    """libpq DSN for the test database, derived from AQUA_DB so these raw
+    connections hit the same database as the app under test."""
+    import os
+
+    return os.environ["AQUA_DB"].replace("postgresql+asyncpg://", "postgresql://")
+
+
 def _raw_psycopg2(statements):
     """Execute SQL statements via a separate psycopg2 autocommit connection."""
     import psycopg2
 
-    conn = psycopg2.connect(
-        "dbname=dbname user=dbuser password=dbpassword host=localhost"
-    )
+    conn = psycopg2.connect(_pg_dsn())
     conn.autocommit = True
     cur = conn.cursor()
     try:
@@ -6613,9 +6619,7 @@ def _raw_psycopg2_fetchone(sql, params=None):
     """Execute a single parameterised SQL statement and return one row."""
     import psycopg2
 
-    conn = psycopg2.connect(
-        "dbname=dbname user=dbuser password=dbpassword host=localhost"
-    )
+    conn = psycopg2.connect(_pg_dsn())
     conn.autocommit = True
     cur = conn.cursor()
     try:
@@ -6654,9 +6658,7 @@ def test_deduplicate_lexeme_cards_dry_run(
         # Verify both cards still exist via raw SQL (dry run shouldn't delete)
         import psycopg2
 
-        conn = psycopg2.connect(
-            "dbname=dbname user=dbuser password=dbpassword host=localhost"
-        )
+        conn = psycopg2.connect(_pg_dsn())
         cur = conn.cursor()
         cur.execute(
             "SELECT COUNT(*) FROM agent_lexeme_cards "
@@ -6709,9 +6711,7 @@ def test_deduplicate_lexeme_cards_merge(
         # Verify only one card remains via raw SQL
         import psycopg2
 
-        conn = psycopg2.connect(
-            "dbname=dbname user=dbuser password=dbpassword host=localhost"
-        )
+        conn = psycopg2.connect(_pg_dsn())
         cur = conn.cursor()
         cur.execute(
             "SELECT COUNT(*), MAX(confidence) FROM agent_lexeme_cards "
