@@ -50,15 +50,20 @@ from database.models import (  # noqa: E402
     VerseReference,
 )
 
-engine = create_engine("postgresql://dbuser:dbpassword@localhost:5432/dbname")
+# Fixture engines must point at the same database as the app under test, so
+# derive them from AQUA_DB (defaulted above) instead of hardcoding the URL —
+# otherwise running against a non-default port/db seeds users into the wrong
+# database and every authenticated request 401s.
+AQUA_DB_URL = os.environ["AQUA_DB"]
+SYNC_AQUA_DB_URL = AQUA_DB_URL.replace("+asyncpg", "")
+
+engine = create_engine(SYNC_AQUA_DB_URL)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 @pytest.fixture(scope="module")
 async def async_test_db_session_2():
-    async_engine = create_async_engine(
-        "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
-    )
+    async_engine = create_async_engine(AQUA_DB_URL)
 
     AsyncSessionLocal = sessionmaker(
         autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
@@ -83,9 +88,7 @@ async def async_test_db_session_2():
 # Asynchronous session fixture
 @pytest.fixture(scope="module")
 async def async_test_db_session():
-    async_engine = create_async_engine(
-        "postgresql+asyncpg://dbuser:dbpassword@localhost:5432/dbname"
-    )
+    async_engine = create_async_engine(AQUA_DB_URL)
 
     AsyncSessionLocal = sessionmaker(
         autocommit=False, autoflush=False, bind=async_engine, class_=AsyncSession
