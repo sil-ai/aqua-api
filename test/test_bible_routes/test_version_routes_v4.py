@@ -1,4 +1,4 @@
-"""Tests for the v4 Versions slice (issues #825/#826/#828/#829/#831/#833).
+"""Tests for the v4 Versions slice (issues #825/#826/#828/#829/#831/#833/#897).
 
 Mounted at ``/v4`` on the same app as v3, so these reuse the shared test
 fixtures (``client``, ``regular_token1/2``, ``admin_token``, ``db_session``).
@@ -14,10 +14,21 @@ What each assertion is pinning down:
 * unknown-id GET is a 404 ``VERSION_NOT_FOUND``;
 * an unauthenticated request is a 401 (proving router-level auth, #831);
 * delete soft-deletes and returns 204.
+
+The #897 classes pin the decisions that finished the slice, each of them a v3
+defect deliberately not carried over (see ``version_service``'s module docstring):
+
+* ``TestPatch`` — partial update, the closed ``VersionPatch`` allowlist (``id`` /
+  ``owner_id`` / ``deleted`` rejected, ``is_reference`` actually patchable), and
+  that a rejected value rolls the *whole* patch back rather than half-applying it;
+* ``TestGroupAccessSubResource`` — grant/revoke as an idempotent sub-resource,
+  including that an admin may manage a group they do not belong to;
+* ``TestDeltaSync`` — ``updated_since`` / ``updated_at``, and that a group-access
+  change moves the parent's watermark so a mirror sees visibility changes.
 """
 
 from database.models import BibleVersion as BibleVersionModel
-from database.models import Group
+from database.models import BibleVersionAccess, Group
 from database.models import UserDB as UserModel
 from database.models import UserGroup
 
@@ -449,3 +460,648 @@ class TestAdminIncludeDeleted:
             headers=_auth(regular_token1),
         )
         assert version_id not in {i["id"] for i in user_incl.json()["items"]}
+
+
+# --- #897: PATCH, the group-access sub-resource, and the delta-sync fields ----
+
+
+def _row(db_session, version_id):
+    """Re-read a version straight from the DB, bypassing the API's own view."""
+    db_session.expire_all()
+    return db_session.query(BibleVersionModel).filter_by(id=version_id).first()
+
+
+def _fetch(client, token, version_id):
+    """GET one version and return its body (asserting it is visible)."""
+    resp = client.get(f"{PREFIX}/versions/{version_id}", headers=_auth(token))
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _patch(client, token, version_id, body):
+    return client.patch(
+        f"{PREFIX}/versions/{version_id}", json=body, headers=_auth(token)
+    )
+
+
+def _delta_ids(client, token, watermark, **params):
+    """Ids returned by the ``updated_since`` delta feed, as a set."""
+    resp = client.get(
+        f"{PREFIX}/versions",
+        params={"updated_since": watermark, "limit": 100, **params},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+    return {item["id"] for item in resp.json()["items"]}
+
+
+class TestPatch:
+    """``PATCH /v4/versions/{id}`` — the field half of v3's ``PUT /version``."""
+
+    def test_patch_updates_only_sent_fields(self, client, regular_token1, db_session):
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4PATCH"
+        ).json()
+        version_id = created["id"]
+
+        resp = _patch(client, regular_token1, version_id, {"name": "Renamed V4"})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["name"] == "Renamed V4"
+        # Untouched fields keep their stored values — this is a partial update.
+        assert body["abbreviation"] == created["abbreviation"]
+        assert body["rights"] == created["rights"]
+        assert body["owner_id"] == created["owner_id"]
+        assert body["group_ids"] == created["group_ids"]
+        # A real field change moves the delta-sync watermark.
+        assert body["updated_at"] > created["updated_at"]
+
+    def test_patch_accepts_legacy_camelcase_input(
+        self, client, regular_token1, db_session
+    ):
+        """Same input-alias policy as create: legacy names in, snake_case out."""
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4PCAMEL"
+        ).json()["id"]
+
+        resp = _patch(client, regular_token1, version_id, {"machineTranslation": True})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["machine_translation"] is True
+        assert "machineTranslation" not in body
+
+    def test_patch_is_reference_actually_applies(
+        self, client, regular_token1, db_session
+    ):
+        """v3 defect: ``VersionUpdate``'s docstring advertised ``is_reference`` but
+        the model had no such field, so patching it silently did nothing. v4's
+        allowlist includes it, and it reaches the column."""
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4PREF"
+        ).json()["id"]
+
+        resp = _patch(client, regular_token1, version_id, {"is_reference": True})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["is_reference"] is True
+        assert _row(db_session, version_id).is_reference is True
+
+    def test_patch_rejects_non_patchable_and_unknown_fields(
+        self, client, regular_token1, db_session
+    ):
+        """The allowlist is closed: identity, ownership, lifecycle and group fields
+        are 422s, not silently-dropped keys (v3 fed ``id`` straight into
+        ``.values()``)."""
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4PALLOW"
+        ).json()
+        version_id = created["id"]
+
+        for body in (
+            {"id": version_id + 1},
+            {"owner_id": _user_id(db_session, "testuser2")},
+            {"deleted": True},
+            {"add_to_groups": [_group_id(db_session, "Group1")]},
+            {"remove_from_groups": [_group_id(db_session, "Group1")]},
+            {"naem": "typo"},
+        ):
+            resp = _patch(client, regular_token1, version_id, body)
+            assert resp.status_code == 422, (body, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+        # Nothing leaked through any of the rejected requests.
+        row = _row(db_session, version_id)
+        assert row.owner_id == created["owner_id"]
+        assert row.deleted is not True
+        assert (
+            _fetch(client, regular_token1, version_id)["group_ids"]
+            == created["group_ids"]
+        )
+
+    def test_patch_explicit_null_clears_nullable_and_rejects_required(
+        self, client, regular_token1, db_session
+    ):
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4PNULL"
+        ).json()["id"]
+
+        # rights is nullable on the wire, so an explicit null clears it.
+        cleared = _patch(client, regular_token1, version_id, {"rights": None})
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["rights"] is None
+
+        # name is not: an explicit null is a 422 rather than a NULLed column.
+        rejected = _patch(client, regular_token1, version_id, {"name": None})
+        assert rejected.status_code == 422, rejected.text
+        assert _row(db_session, version_id).name is not None
+
+    def test_patch_empty_body_is_a_noop(self, client, regular_token1, db_session):
+        """``{}`` changes nothing — and must not move ``updated_at``, or every empty
+        patch would wake up every mirror polling ``updated_since``."""
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4PEMPTY"
+        ).json()
+
+        resp = _patch(client, regular_token1, created["id"], {})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["updated_at"] == created["updated_at"]
+
+    def test_patch_invalid_reference_rolls_back_the_whole_patch(
+        self, client, regular_token1, db_session
+    ):
+        """The single-transaction guarantee: one bad field discards the entire
+        patch. v3 committed three times and could leave an update half-applied."""
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4PROLL"
+        ).json()
+        version_id = created["id"]
+
+        resp = _patch(
+            client,
+            regular_token1,
+            version_id,
+            # A valid rename plus an unknown FK-backed iso code, in one body.
+            {"name": "Should Not Persist", "iso_language": "zzz"},
+        )
+        assert resp.status_code == 400, resp.text
+        assert resp.json()["error"]["code"] == "INVALID_REFERENCE"
+
+        row = _row(db_session, version_id)
+        assert row.name == created["name"], "the valid half must not survive"
+        assert row.iso_language == created["iso_language"]
+        # Nothing was written, so the watermark must not have moved either.
+        assert (
+            _fetch(client, regular_token1, version_id)["updated_at"]
+            == created["updated_at"]
+        )
+
+    def test_patch_not_owner_is_403(
+        self, client, regular_token1, regular_token2, db_session
+    ):
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4POWN"
+        ).json()["id"]
+
+        resp = _patch(client, regular_token2, version_id, {"name": "Hijacked"})
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["error"]["code"] == "VERSION_ACCESS_FORBIDDEN"
+        assert _row(db_session, version_id).name != "Hijacked"
+
+    def test_patch_admin_may_patch_another_users_version(
+        self, client, regular_token1, admin_token, db_session
+    ):
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4PADMIN"
+        ).json()["id"]
+
+        resp = _patch(client, admin_token, version_id, {"name": "Admin Renamed"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["name"] == "Admin Renamed"
+
+    def test_patch_unknown_id_is_404(self, client, regular_token1):
+        resp = _patch(client, regular_token1, 9999999, {"name": "Nowhere"})
+        assert resp.status_code == 404, resp.text
+        err = resp.json()["error"]
+        assert err["code"] == "VERSION_NOT_FOUND"
+        assert err["details"]["version_id"] == 9999999
+
+    def test_patch_field_map_covers_every_schema_field(self):
+        """The service maps request fields to ORM attributes by direct index, so a
+        field added to ``VersionPatch`` without a mapping would raise at runtime.
+        Pin the two together here instead of finding out in production — that
+        silent-drift failure mode is precisely v3's phantom ``is_reference``."""
+        from api_v4.schemas.bible import VersionPatch
+        from bible_routes.v4.version_service import _PATCH_FIELD_TO_COLUMN
+
+        assert set(VersionPatch.model_fields) == set(_PATCH_FIELD_TO_COLUMN)
+        # Every target must really exist on the ORM model.
+        for column in _PATCH_FIELD_TO_COLUMN.values():
+            assert hasattr(BibleVersionModel, column), column
+
+    def test_patch_never_touches_identity_columns(self):
+        """The allowlist cannot grow an ``id`` / ``owner_id`` / ``deleted`` entry
+        without this failing — the columns v3 let a request write."""
+        from bible_routes.v4.version_service import _PATCH_FIELD_TO_COLUMN
+
+        forbidden = {"id", "owner_id", "deleted", "deletedAt", "updated_at"}
+        assert not forbidden & set(_PATCH_FIELD_TO_COLUMN.values())
+
+
+class TestGroupAccessSubResource:
+    """``PUT``/``DELETE /v4/versions/{id}/groups/{group_id}`` — the access half of
+    v3's ``PUT /version``, as an explicit, idempotent sub-resource."""
+
+    def _access_count(self, db_session, version_id, group_id):
+        db_session.expire_all()
+        return (
+            db_session.query(BibleVersionAccess)
+            .filter_by(bible_version_id=version_id, group_id=group_id)
+            .count()
+        )
+
+    def test_grant_is_idempotent(self, client, regular_token1, db_session):
+        """Re-granting existing access is a 204, not a 409 — and writes nothing, so
+        it neither duplicates the access row nor moves the watermark."""
+        group1_id = _group_id(db_session, "Group1")
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4GIDEM"
+        ).json()
+        version_id = created["id"]
+
+        resp = client.put(
+            f"{PREFIX}/versions/{version_id}/groups/{group1_id}",
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 204, resp.text
+        assert resp.content == b""
+        assert self._access_count(db_session, version_id, group1_id) == 1
+        body = _fetch(client, regular_token1, version_id)
+        assert body["group_ids"] == [group1_id]
+        assert body["updated_at"] == created["updated_at"], "no-op must not bump"
+
+    def test_admin_may_grant_and_revoke_a_group_it_does_not_belong_to(
+        self, client, regular_token1, regular_token2, admin_token, db_session
+    ):
+        """v3 blocked this: the group check ran against the *caller's* groups even
+        after the owner-or-admin gate had let the admin through, so an admin could
+        never manage access for a group they were not personally in. The fixture
+        admin belongs to no groups at all."""
+        group2_id = _group_id(db_session, "Group2")  # admin is in no group
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4GADMIN"
+        ).json()["id"]
+
+        granted = client.put(
+            f"{PREFIX}/versions/{version_id}/groups/{group2_id}",
+            headers=_auth(admin_token),
+        )
+        assert granted.status_code == 204, granted.text
+        # The grant really changed visibility: testuser2 (Group2) can now see it.
+        assert _fetch(client, regular_token2, version_id)["id"] == version_id
+        assert _fetch(client, regular_token1, version_id)["group_ids"] == sorted(
+            [_group_id(db_session, "Group1"), group2_id]
+        )
+
+        revoked = client.delete(
+            f"{PREFIX}/versions/{version_id}/groups/{group2_id}",
+            headers=_auth(admin_token),
+        )
+        assert revoked.status_code == 204, revoked.text
+        gone = client.get(
+            f"{PREFIX}/versions/{version_id}", headers=_auth(regular_token2)
+        )
+        assert gone.status_code == 404, gone.text
+
+    def test_non_admin_cannot_grant_a_group_they_are_not_in(
+        self, client, regular_token1, db_session
+    ):
+        """Non-admins keep v3's rule — and the failed grant writes nothing."""
+        group2_id = _group_id(db_session, "Group2")  # testuser1 is not a member
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4GNOMEM"
+        ).json()["id"]
+
+        resp = client.put(
+            f"{PREFIX}/versions/{version_id}/groups/{group2_id}",
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 403, resp.text
+        err = resp.json()["error"]
+        assert err["code"] == "GROUP_MEMBERSHIP_REQUIRED"
+        assert err["details"]["group_id"] == group2_id
+        assert self._access_count(db_session, version_id, group2_id) == 0
+
+    def test_revoke_is_idempotent_and_clears_duplicate_rows(
+        self, client, regular_token1, db_session
+    ):
+        """Revoking access that is not there is a 204 (the end state already
+        holds), and a revoke removes *every* matching row — ``bible_version_access``
+        has no unique constraint, and v3's ``add_to_groups`` could duplicate."""
+        group1_id = _group_id(db_session, "Group1")
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4RIDEM"
+        ).json()["id"]
+
+        # Plant a duplicate access row the way legacy data can hold one.
+        db_session.add(
+            BibleVersionAccess(bible_version_id=version_id, group_id=group1_id)
+        )
+        db_session.commit()
+        assert self._access_count(db_session, version_id, group1_id) == 2
+
+        first = client.delete(
+            f"{PREFIX}/versions/{version_id}/groups/{group1_id}",
+            headers=_auth(regular_token1),
+        )
+        assert first.status_code == 204, first.text
+        assert self._access_count(db_session, version_id, group1_id) == 0
+
+        # Second revoke: still 204, still nothing there.
+        second = client.delete(
+            f"{PREFIX}/versions/{version_id}/groups/{group1_id}",
+            headers=_auth(regular_token1),
+        )
+        assert second.status_code == 204, second.text
+
+    def test_revoking_the_last_group_hides_the_version_but_it_is_recoverable(
+        self, client, regular_token1, admin_token, db_session
+    ):
+        """Revoking the last group is allowed (v3 parity) and its consequence is
+        sharper than it looks: read access is group-scoped, so the version vanishes
+        from its own owner's GET, not just from listings. It is recoverable because
+        the write paths look versions up globally by id."""
+        group1_id = _group_id(db_session, "Group1")
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4GLAST"
+        ).json()["id"]
+
+        assert (
+            client.delete(
+                f"{PREFIX}/versions/{version_id}/groups/{group1_id}",
+                headers=_auth(regular_token1),
+            ).status_code
+            == 204
+        )
+
+        # Invisible to the owner's read path...
+        hidden = client.get(
+            f"{PREFIX}/versions/{version_id}", headers=_auth(regular_token1)
+        )
+        assert hidden.status_code == 404, hidden.text
+        # ...but still there, and still listable by an admin (unscoped read).
+        assert _row(db_session, version_id) is not None
+        assert version_id in {
+            i["id"]
+            for i in client.get(
+                f"{PREFIX}/versions", params={"limit": 100}, headers=_auth(admin_token)
+            ).json()["items"]
+        }
+
+        # The owner can still write to it by id, so access is recoverable.
+        regranted = client.put(
+            f"{PREFIX}/versions/{version_id}/groups/{group1_id}",
+            headers=_auth(regular_token1),
+        )
+        assert regranted.status_code == 204, regranted.text
+        assert _fetch(client, regular_token1, version_id)["group_ids"] == [group1_id]
+
+    def test_unknown_group_is_404_for_admin_and_403_for_non_admin(
+        self, client, regular_token1, admin_token, db_session
+    ):
+        """An admin gets the precise ``GROUP_NOT_FOUND``; a non-admin gets the same
+        ``GROUP_MEMBERSHIP_REQUIRED`` they would get for a group that exists but
+        which they are not in, so they cannot probe which group ids exist."""
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4GUNK"
+        ).json()["id"]
+        path = f"{PREFIX}/versions/{version_id}/groups/9999999"
+
+        as_admin = client.put(path, headers=_auth(admin_token))
+        assert as_admin.status_code == 404, as_admin.text
+        err = as_admin.json()["error"]
+        assert err["code"] == "GROUP_NOT_FOUND"
+        assert err["details"]["group_id"] == 9999999
+
+        as_owner = client.put(path, headers=_auth(regular_token1))
+        assert as_owner.status_code == 403, as_owner.text
+        assert as_owner.json()["error"]["code"] == "GROUP_MEMBERSHIP_REQUIRED"
+
+    def test_unknown_version_is_404(self, client, regular_token1, db_session):
+        group1_id = _group_id(db_session, "Group1")
+        for method in (client.put, client.delete):
+            resp = method(
+                f"{PREFIX}/versions/9999999/groups/{group1_id}",
+                headers=_auth(regular_token1),
+            )
+            assert resp.status_code == 404, resp.text
+            err = resp.json()["error"]
+            assert err["code"] == "VERSION_NOT_FOUND"
+            assert err["details"]["version_id"] == 9999999
+
+    def test_non_owner_is_403(self, client, regular_token1, regular_token2, db_session):
+        """The version gate runs before the group gate: a caller who is neither
+        owner nor admin cannot manage access even for their own group."""
+        group2_id = _group_id(db_session, "Group2")  # testuser2 IS a member
+        version_id = _create(
+            client, regular_token1, db_session, abbreviation="V4GNOTOWN"
+        ).json()["id"]
+
+        resp = client.put(
+            f"{PREFIX}/versions/{version_id}/groups/{group2_id}",
+            headers=_auth(regular_token2),
+        )
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["error"]["code"] == "VERSION_ACCESS_FORBIDDEN"
+        assert self._access_count(db_session, version_id, group2_id) == 0
+
+
+class TestDeltaSync:
+    """``updated_since`` + ``updated_at`` — v3 parity (#887) inside the #829 page."""
+
+    def test_updated_at_is_exposed_on_list_and_get(
+        self, client, regular_token1, db_session
+    ):
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4DUAT"
+        ).json()
+        assert created["updated_at"] is not None
+        assert (
+            _fetch(client, regular_token1, created["id"])["updated_at"]
+            == created["updated_at"]
+        )
+
+    def test_updated_since_returns_only_changed_rows_including_deleted(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        """The watermark is taken from a row's own ``updated_at`` rather than from
+        ``max()`` over a list page, so the assertion does not depend on how many
+        versions earlier tests left behind (the page caps at 100)."""
+        to_delete = _create(
+            client, regular_token1, db_session, abbreviation="V4DDEL"
+        ).json()["id"]
+        to_rename = _create(
+            client, regular_token1, db_session, abbreviation="V4DREN"
+        ).json()["id"]
+        # Created last, so its stamp is the newest; the filter is strictly greater,
+        # which makes this row the boundary that must NOT come back.
+        boundary = _create(
+            client, regular_token1, db_session, abbreviation="V4DBOUND"
+        ).json()
+        watermark = boundary["updated_at"]
+
+        assert (
+            _patch(
+                client, regular_token1, to_rename, {"name": "Delta Renamed"}
+            ).status_code
+            == 200
+        )
+        assert (
+            client.delete(
+                f"{PREFIX}/versions/{to_delete}", headers=_auth(regular_token1)
+            ).status_code
+            == 204
+        )
+
+        resp = client.get(
+            f"{PREFIX}/versions",
+            params={"updated_since": watermark, "limit": 100},
+            headers=_auth(admin_token),
+        )
+        assert resp.status_code == 200, resp.text
+        page = resp.json()
+        # Still the #829 envelope — a delta is a list, not a new response shape.
+        assert set(page) == {"items", "total", "limit", "offset"}
+        by_id = {item["id"] for item in page["items"]}
+        assert to_rename in by_id
+        # A soft-delete is an update, so the deletion IS delivered.
+        assert to_delete in by_id
+        assert boundary["id"] not in by_id, "strictly-greater boundary"
+
+        deleted_item = next(i for i in page["items"] if i["id"] == to_delete)
+        assert deleted_item["deleted"] is True
+        renamed_item = next(i for i in page["items"] if i["id"] == to_rename)
+        assert renamed_item["name"] == "Delta Renamed"
+        assert renamed_item["updated_at"] > watermark
+
+    def test_updated_since_is_empty_when_nothing_changed(
+        self, client, regular_token1, db_session
+    ):
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4DQUIET"
+        ).json()
+
+        resp = client.get(
+            f"{PREFIX}/versions",
+            params={"updated_since": created["updated_at"], "limit": 100},
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"] == []
+        assert resp.json()["total"] == 0
+
+    def test_updated_since_takes_precedence_over_include_deleted(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        """Both values of the flag must yield the same delta: a mirror asking for a
+        window needs the deletions in it regardless of ``include_deleted``."""
+        boundary = _create(
+            client, regular_token1, db_session, abbreviation="V4DPREC"
+        ).json()
+        doomed = _create(
+            client, regular_token1, db_session, abbreviation="V4DPREC2"
+        ).json()["id"]
+        watermark = boundary["updated_at"]
+        assert (
+            client.delete(
+                f"{PREFIX}/versions/{doomed}", headers=_auth(regular_token1)
+            ).status_code
+            == 204
+        )
+
+        # include_deleted=false would normally hide the row; inside a delta window
+        # it must not, or a mirror could never learn the version was deleted.
+        for flag in ("true", "false"):
+            ids = _delta_ids(client, admin_token, watermark, include_deleted=flag)
+            assert doomed in ids, flag
+
+    def test_updated_since_stays_scoped_to_the_caller(
+        self, client, regular_token1, regular_token2, db_session
+    ):
+        """A delta is authorization-scoped like any list: the owner sees their own
+        soft-delete, a user in another group sees nothing."""
+        boundary = _create(
+            client, regular_token1, db_session, abbreviation="V4DSCOPE"
+        ).json()
+        target = _create(
+            client, regular_token1, db_session, abbreviation="V4DSCOPE2"
+        ).json()["id"]
+        watermark = boundary["updated_at"]
+        assert (
+            client.delete(
+                f"{PREFIX}/versions/{target}", headers=_auth(regular_token1)
+            ).status_code
+            == 204
+        )
+
+        assert target in _delta_ids(client, regular_token1, watermark)
+        assert target not in _delta_ids(client, regular_token2, watermark)
+
+    def test_group_access_change_bumps_the_parent_watermark(
+        self, client, regular_token1, regular_token2, admin_token, db_session
+    ):
+        """The #897 decision: access rows have no ``updated_at`` and no trigger, so
+        grant/revoke touch the parent version. Without that, a mirror polling
+        ``updated_since`` would never learn that a version became visible to it —
+        the change it needs most."""
+        group2_id = _group_id(db_session, "Group2")
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4DACCESS"
+        ).json()
+        version_id = created["id"]
+        watermark = created["updated_at"]
+
+        # Nothing has changed yet, so the owner's delta is empty for this row.
+        assert version_id not in _delta_ids(client, regular_token1, watermark)
+
+        assert (
+            client.put(
+                f"{PREFIX}/versions/{version_id}/groups/{group2_id}",
+                headers=_auth(admin_token),
+            ).status_code
+            == 204
+        )
+
+        # The grant alone moved the watermark...
+        assert version_id in _delta_ids(client, regular_token1, watermark)
+        # ...and the newly-granted group's mirror picks the row up from its delta,
+        # which is the whole point: visibility changes are syncable.
+        assert version_id in _delta_ids(client, regular_token2, watermark)
+        assert _fetch(client, regular_token1, version_id)["updated_at"] > watermark
+
+        # A revoke bumps it too, for everyone who can still see the row.
+        after_grant = _fetch(client, regular_token1, version_id)["updated_at"]
+        assert (
+            client.delete(
+                f"{PREFIX}/versions/{version_id}/groups/{group2_id}",
+                headers=_auth(admin_token),
+            ).status_code
+            == 204
+        )
+        assert version_id in _delta_ids(client, regular_token1, after_grant)
+        # Documented contract limit: the client that LOST access cannot be told so
+        # by a delta — the row is outside its scope now, so only a full reconcile
+        # reveals the revocation.
+        assert version_id not in _delta_ids(client, regular_token2, after_grant)
+
+    def test_updated_since_accepts_a_timezone_aware_watermark(
+        self, client, regular_token1, db_session
+    ):
+        """The column is timezone-naive UTC, so an aware watermark has to be
+        converted rather than rejected (asyncpg refuses aware values against a naive
+        column) — the same normalization v3 does, applied in the v4 service."""
+        boundary = _create(
+            client, regular_token1, db_session, abbreviation="V4DTZ"
+        ).json()
+        target = _create(
+            client, regular_token1, db_session, abbreviation="V4DTZ2"
+        ).json()["id"]
+        assert (
+            _patch(client, regular_token1, target, {"name": "TZ Renamed"}).status_code
+            == 200
+        )
+
+        naive = boundary["updated_at"]
+        # Same instant, spelled with an explicit UTC offset.
+        aware = naive + "+00:00"
+        assert _delta_ids(client, regular_token1, aware) == _delta_ids(
+            client, regular_token1, naive
+        )
+        assert target in _delta_ids(client, regular_token1, aware)
+
+    def test_malformed_updated_since_is_422(self, client, regular_token1):
+        resp = client.get(
+            f"{PREFIX}/versions",
+            params={"updated_since": "not-a-timestamp"},
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
