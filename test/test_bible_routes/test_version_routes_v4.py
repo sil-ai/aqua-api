@@ -193,6 +193,31 @@ class TestCreate:
         assert resp.status_code == 400, resp.text
         assert resp.json()["error"]["code"] == "INVALID_REFERENCE"
 
+    def test_create_over_length_iso_code_is_422_not_500(
+        self, client, regular_token1, db_session
+    ):
+        """An over-length iso code is rejected before the write, not at the column.
+
+        ``iso_language``/``iso_script`` are ``varchar(3)``/``varchar(4)``. Without
+        ``max_length`` on the schema the value reaches Postgres, which raises
+        StringDataRightTruncation -> SQLAlchemy ``DataError`` — a *sibling* of
+        ``IntegrityError``, so ``create_version``'s FK handler cannot see it and the
+        #828 catch-all turns client input into a 500 with a traceback. The existing
+        unknown-code tests use ``"zzz"``, which fits ``varchar(3)`` and takes the FK
+        path, so only an over-length value covers this.
+        """
+        for field, value in (("iso_language", "abcd"), ("iso_script", "Latin1")):
+            resp = _create(
+                client,
+                regular_token1,
+                db_session,
+                abbreviation=f"V4LONG{field}",
+                **{field: value},
+            )
+            assert resp.status_code == 422, (field, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+            assert field in resp.text
+
     def test_create_nonexistent_back_translation_is_400_invalid_reference(
         self, client, regular_token1, db_session
     ):
@@ -633,6 +658,35 @@ class TestPatch:
             _fetch(client, regular_token1, version_id)["updated_at"]
             == created["updated_at"]
         )
+
+    def test_patch_over_length_iso_code_is_422_and_changes_nothing(
+        self, client, regular_token1, db_session
+    ):
+        """Same DataError-vs-IntegrityError hole as on create, on the patch path.
+
+        See ``test_create_over_length_iso_code_is_422_not_500``. Asserted here too
+        because ``update_version`` has its own ``except IntegrityError`` and would
+        equally have handed a 500 to the client; the watermark check confirms the
+        rejection happens before any write.
+        """
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4PLONG"
+        ).json()
+        version_id = created["id"]
+
+        for field, value in (("iso_language", "abcd"), ("iso_script", "Latin1")):
+            resp = _patch(client, regular_token1, version_id, {field: value})
+            assert resp.status_code == 422, (field, resp.text)
+            assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+            assert field in resp.text
+
+        row = _row(db_session, version_id)
+        assert row.iso_language == created["iso_language"]
+        assert row.iso_script == created["iso_script"]
+        assert (
+            _fetch(client, regular_token1, version_id)["updated_at"]
+            == created["updated_at"]
+        ), "a rejected patch must not move the delta-sync watermark"
 
     def test_patch_not_owner_is_403(
         self, client, regular_token1, regular_token2, db_session

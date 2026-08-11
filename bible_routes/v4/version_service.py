@@ -41,7 +41,9 @@ Authorization semantics preserved from v3:
   non-owner who can see the row still gets 403 — mirroring v3.
 * **Update / group access** (#897): the same owner-or-admin gate as delete, shared
   via :func:`_get_version_for_write` so all three write paths authorize
-  identically. See below for the two v3 defects deliberately *not* carried over.
+  identically. That gate does not filter ``deleted``, so a soft-deleted version
+  stays writable on all three — intentional, for the three reasons in its own
+  docstring. See below for the two v3 defects deliberately *not* carried over.
 
 Decisions this module makes for the write half (issue #897), each a departure from
 v3 ``PUT /version`` that is intentional rather than incidental:
@@ -356,6 +358,23 @@ async def _get_version_for_write(
     them the id exists — a deliberate v3-parity choice kept consistent across the
     write endpoints, unlike the read path (:func:`get_version`), which hides
     existence behind a 404.
+
+    It also does **not** filter ``deleted``, so a soft-deleted version stays
+    writable: ``PATCH`` returns 200 and a grant/revoke returns 204 on a row whose
+    ``deleted`` is true. Three reasons that is the intended behavior rather than an
+    oversight, listed because every other judgement call in this module is:
+
+    * v3 parity — v3's ``modify_version`` looks a version up globally by id with no
+      deleted filter either.
+    * :func:`soft_delete_version` documents itself as idempotent, which *requires*
+      this gate to load an already-deleted row.
+    * The delta feed wants the ``updated_at`` bump on a deleted row: mirrors receive
+      soft-deleted rows in a delta window, so a later edit to one must still reach
+      them or they hold a stale copy forever.
+
+    Note what this does *not* enable: ``deleted`` is not a ``VersionPatch`` field, so
+    a write to a soft-deleted version cannot resurrect it. Un-delete has no endpoint
+    yet — the row stays deleted, and only its other fields are editable.
     """
     version = (
         (await db.execute(select(BibleVersion).where(BibleVersion.id == version_id)))
@@ -520,6 +539,15 @@ async def grant_group_access(
     await _get_version_for_write(db, user, version_id)
     await _authorize_group(db, user, group_id)
 
+    # Advisory, not an invariant: bible_version_access has no unique constraint on
+    # (bible_version_id, group_id) — only a non-unique composite index — so two
+    # concurrent identical grants can both clear this SELECT and both INSERT. The
+    # consequences are absorbed downstream (revoke_group_access deletes *every*
+    # matching row, group_ids_for_versions is .distinct()), which is also why those
+    # two are not defensive cruft to be tidied away. Closing it properly needs a
+    # partial unique index plus an ON CONFLICT DO NOTHING insert, i.e. a migration
+    # over rows that may already hold v3-era duplicates — deliberately out of scope
+    # for this slice.
     existing = (
         await db.execute(
             select(BibleVersionAccess.id).where(
@@ -553,6 +581,17 @@ async def revoke_group_access(
     group) and the same idempotence as :func:`grant_group_access`: revoking access
     that is not there is a ``204``, because the requested end state — no access —
     already holds.
+
+    One place that reasoning deliberately stops: a group id that does not *exist* is
+    a ``404``, not a ``204``, even though "this group has no access" is trivially
+    true of it. :func:`_authorize_group` is shared with the grant path, where the
+    existence check is load-bearing (without it the insert dies on the
+    ``bible_version_access.group_id`` FK and becomes a 500), so both verbs report an
+    unknown id the same way rather than the helper growing a per-verb flag. Reporting
+    a typo'd id is also friendlier than silently succeeding. Note the check is only
+    reached by admins anyway: a non-admin gets :class:`GroupMembershipRequired` for
+    an unknown id, so strict idempotence over unknown ids was never available on
+    either verb.
 
     Deletes *every* matching access row, not just one: ``bible_version_access`` has
     no unique constraint on ``(bible_version_id, group_id)``, so a legacy duplicate

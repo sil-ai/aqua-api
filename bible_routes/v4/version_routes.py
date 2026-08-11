@@ -95,10 +95,13 @@ async def list_versions(
             "soft-delete is an update, so a mirror syncing deltas learns about "
             "deletions too. Takes precedence over include_deleted. Use the maximum "
             "updated_at across all pages of the response, verbatim, as the next "
-            "watermark, and keep a periodic full reconcile as a safety net: a write "
-            "transaction still open when a delta is served can commit rows stamped "
-            "near (though never before) that watermark, and a revoked group access "
-            "cannot be delivered to the client that lost it."
+            "watermark, and keep a periodic full reconcile as a safety net — the "
+            "watermark alone cannot be relied on to be complete. updated_at is "
+            "stamped when a statement runs but the row only becomes visible when its "
+            "transaction commits, so a write still open when a delta is served can "
+            "commit a row stamped at or below that watermark, and no later delta will "
+            "carry it. A revoked group access likewise cannot be delivered to the "
+            "client that lost it."
         ),
     ),
     db: AsyncSession = Depends(get_db),

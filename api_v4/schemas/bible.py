@@ -28,6 +28,20 @@ from pydantic import AliasChoices, Field
 
 from api_v4.schemas.base import V4BaseModel
 
+#: Shared by ``VersionCreate`` and ``VersionPatch``. ``back_translation_id`` is a
+#: FK to ``bible_version.id`` but ``forward_translation_id`` is a plain Integer
+#: column (``database/models.py``), so the two adjacent, identically-typed request
+#: fields validate differently: a non-existent ``back_translation`` is rejected
+#: with ``INVALID_REFERENCE`` on flush, while a non-existent
+#: ``forward_translation`` is stored and echoed back. That is why
+#: ``InvalidReference.FIELDS`` omits it. Surfaced as a field description so a
+#: client can tell which of the two is checked without reading the schema.
+FORWARD_TRANSLATION_DESCRIPTION = (
+    "Id of the forward-translation version. Unlike back_translation, this field is "
+    "not backed by a foreign key, so a non-existent id is accepted and stored as "
+    "given rather than rejected."
+)
+
 
 class VersionCreate(V4BaseModel):
     """Request body for ``POST /v4/versions`` (issue #826: JSON-only bodies).
@@ -37,8 +51,16 @@ class VersionCreate(V4BaseModel):
     """
 
     name: str
-    iso_language: str
-    iso_script: str
+    # max_length mirrors the varchar(3) / varchar(4) columns, and it is load-bearing
+    # rather than cosmetic: an over-length code reaches Postgres, which raises
+    # StringDataRightTruncation -> SQLAlchemy DataError. DataError is a *sibling* of
+    # IntegrityError, not a subclass, so the FK translation in create_version /
+    # update_version cannot catch it and client input would surface as a catch-all
+    # 500 (#828). Bounding the length here makes it a 422 before the write. The FK
+    # check against the iso reference tables still happens on flush; this only
+    # bounds the length.
+    iso_language: str = Field(max_length=3)
+    iso_script: str = Field(max_length=4)
     abbreviation: str
     rights: str | None = None
     # Legacy v3 camelCase names accepted on input; canonical (and emitted) name
@@ -47,6 +69,7 @@ class VersionCreate(V4BaseModel):
     forward_translation: int | None = Field(
         default=None,
         validation_alias=AliasChoices("forward_translation", "forwardTranslation"),
+        description=FORWARD_TRANSLATION_DESCRIPTION,
     )
     back_translation: int | None = Field(
         default=None,
@@ -111,18 +134,29 @@ class VersionPatch(V4BaseModel):
     (``rights``, ``forward_translation``, ``back_translation``) are typed
     ``| None`` and *can* be cleared by sending an explicit ``null``.
 
-    One cosmetic consequence, called out so nobody "fixes" it: those fields render
-    in ``/v4/openapi.json`` as e.g. ``{"type": "string", "default": null}``.
-    ``default`` is a JSON-Schema *annotation*, never validated against ``type``, so
-    the document stays valid and the ``type`` still tells a client that ``null`` is
-    not an accepted value — which is exactly the behavior.
+    One cosmetic consequence, called out so nobody "fixes" it: Pydantic emits a
+    ``default`` for those fields, so the generated schema reads e.g.
+    ``{"type": "string", "default": null}``. It does *not* reach
+    ``/v4/openapi.json`` — FastAPI serializes the whole document with
+    ``exclude_none=True`` (``fastapi/openapi/utils.py``), which strips every null
+    value, this ``default`` included — but anything else that renders the schema
+    (``model_json_schema()``, a contract-export script, a future FastAPI that stops
+    excluding nulls) will show it. Harmless either way: ``default`` is a JSON-Schema
+    *annotation*, never validated against ``type``, so the document stays valid and
+    the ``type`` still tells a client that ``null`` is not an accepted value — which
+    is exactly the behavior.
     """
 
     # See the class docstring: annotation excludes None (explicit null -> 422),
     # default None means "field absent" and is dropped by exclude_unset.
     name: str = None
-    iso_language: str = None
-    iso_script: str = None
+    # max_length as on VersionCreate, for the same reason (an over-length code is a
+    # DataError the IntegrityError handler cannot see -> 500). Pydantic does not
+    # validate defaults, so pairing it with the None default is safe: the field
+    # stays absent-able, an explicit null is still a 422, and only a real
+    # over-length string is rejected.
+    iso_language: str = Field(default=None, max_length=3)
+    iso_script: str = Field(default=None, max_length=4)
     abbreviation: str = None
     # Nullable on purpose: sending an explicit null clears these.
     rights: str | None = None
@@ -131,6 +165,7 @@ class VersionPatch(V4BaseModel):
     forward_translation: int | None = Field(
         default=None,
         validation_alias=AliasChoices("forward_translation", "forwardTranslation"),
+        description=FORWARD_TRANSLATION_DESCRIPTION,
     )
     back_translation: int | None = Field(
         default=None,
