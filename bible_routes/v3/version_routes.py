@@ -47,11 +47,8 @@ async def list_version(
     authorized for; it also takes precedence over ``include_deleted=false``.
     Mirrors should use the max ``updated_at`` from the response body,
     verbatim, as their next watermark, and keep a periodic full reconcile as
-    a safety net — the watermark alone cannot be relied on to be complete.
-    ``updated_at`` is stamped when a statement runs but the row only becomes
-    visible when its transaction commits, so a write still open when a delta
-    is served can commit a row stamped at or below that watermark, and no
-    later delta will carry it.
+    a safety net: a write transaction still open when a delta is served can
+    commit rows stamped near (though never before) that watermark.
     """
 
     admin_include_deleted = include_deleted and current_user.is_admin
