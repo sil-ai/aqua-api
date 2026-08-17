@@ -38,7 +38,6 @@ from fastapi.testclient import TestClient
 
 from app import app
 from database.models import BibleRevision as BibleRevisionModel
-from database.models import BibleVersion as BibleVersionModel
 from database.models import Group
 from database.models import UserDB as UserModel
 from database.models import UserGroup, VerseText
