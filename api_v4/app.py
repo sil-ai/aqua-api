@@ -59,6 +59,7 @@ import fastapi
 
 from api_v4.errors import register_exception_handlers
 from api_v4.meta_routes import router as meta_router
+from bible_routes.v4.revision_routes import router as revision_router
 from bible_routes.v4.version_routes import router as version_router
 from security_routes.auth_routes import get_current_user
 from security_routes.v4.group_routes import router as group_router
@@ -112,7 +113,12 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     # dependency still cannot ship unauthenticated. Handlers that need the user
     # re-declare ``current_user: UserModel = Depends(get_current_user)`` — FastAPI
     # dedupes the dependency, so it runs once per request.
-    for domain_router in (version_router, user_router, group_router):
+    for domain_router in (
+        version_router,
+        revision_router,
+        user_router,
+        group_router,
+    ):
         v4_app.include_router(
             domain_router, dependencies=[fastapi.Depends(get_current_user)]
         )
