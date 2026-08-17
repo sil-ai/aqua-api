@@ -343,9 +343,12 @@ async def create_revision(db: AsyncSession, user: UserDB, data) -> BibleRevision
     ``data`` is a ``RevisionCreate``. Synchronously loads the whole upload and returns
     the committed row — the endpoint is a 201, not a job (see the router).
 
-    Order is deliberate: authorize the parent version, then decode and parse the
-    payload, and only then write. Both failure modes that depend purely on client input
-    are therefore diagnosed before a single row is inserted.
+    Order: authorize the parent version, then decode the payload, then write. So the
+    parent-version check and the base64/UTF-8 checks do happen before any row is
+    inserted — but the **vref line-count check does not**. That one belongs to
+    ``bible_loading``, which owns the vref skeleton, so it runs *after* the revision row
+    is flushed. It is safe rather than sloppy only because of the single transaction
+    below, and ``test_wrong_line_count_leaves_no_revision_behind`` pins the outcome.
 
     One transaction covers the revision row and every verse: ``flush`` assigns the id
     the verse rows' FK needs without ending the transaction, the verses are inserted in
@@ -354,6 +357,21 @@ async def create_revision(db: AsyncSession, user: UserDB, data) -> BibleRevision
     disconnects, which arrives as :class:`asyncio.CancelledError` and is caught by the
     ``BaseException`` guard (see the module docstring for why ``except Exception`` was
     not enough).
+
+    The write is split into **two ``try`` blocks sharing that one transaction**, purely
+    so the error mapping can be precise about whose fault a failure is:
+
+    * The **revision flush** maps ``IntegrityError`` to :class:`InvalidReference`. Sound
+      because ``back_translation`` is the only client-supplied FK on that row —
+      ``bible_version_id`` was already resolved and authorized above — so it is the only
+      constraint a client can break here.
+    * The **verse inserts** deliberately carry *no* ``IntegrityError`` translation.
+      ``verse_text.verse_reference`` is a FK to ``verse_reference.full_verse_id``, so a
+      failure there means the reference table no longer matches ``fixtures/vref.txt`` —
+      server-side data drift, not client input. Mapping it to a 400
+      ``INVALID_REFERENCE`` would tell the client to fix ``back_translation``, which is
+      not the problem, and would bury a condition that ought to page someone. It falls
+      through to the #828 catch-all 500 on purpose: **do not add a handler here.**
 
     Raises :class:`VersionNotVisible` (unknown / inaccessible / soft-deleted parent),
     :class:`InvalidVerseText` (undecodable or non-vref-aligned text) and
@@ -370,16 +388,28 @@ async def create_revision(db: AsyncSession, user: UserDB, data) -> BibleRevision
         back_translation_id=data.back_translation,
         machine_translation=data.machine_translation,
     )
+    # Stage 1: the revision row only. Scoping the IntegrityError translation to this
+    # flush is what keeps INVALID_REFERENCE meaning "a field you sent is wrong".
     try:
         db.add(new_revision)
         await db.flush()
-        verse_records = await async_text_dataframe(verses, new_revision.id)
-        await text_loading(verse_records, db)
-        await db.commit()
     except IntegrityError as exc:
         # Client input referenced a non-existent FK target (back_translation).
         await db.rollback()
         raise InvalidReference() from exc
+    except BaseException:
+        # See the guard on stage 2 for why this is BaseException.
+        await db.rollback()
+        raise
+
+    # Stage 2: the verses, and the commit that ends the transaction stage 1 opened.
+    # No IntegrityError branch here on purpose — a verse_reference FK failure is
+    # server-side reference drift, not client input, and must surface as a 500. See
+    # the docstring.
+    try:
+        verse_records = await async_text_dataframe(verses, new_revision.id)
+        await text_loading(verse_records, db)
+        await db.commit()
     except ValueError as exc:
         # bible_loading rejects text that is not one line per vref. Its message
         # already names the expected and actual line counts, so it is the clearest

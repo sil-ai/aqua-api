@@ -35,6 +35,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from app import app
 from database.models import BibleRevision as BibleRevisionModel
@@ -145,6 +146,27 @@ def _list_ids(client, token, **params):
     )
     assert resp.status_code == 200, resp.text
     return {item["id"] for item in resp.json()["items"]}
+
+
+def _post_returning_5xx(payload, token):
+    """POST a revision through a client that returns 5xx bodies instead of re-raising.
+
+    The shared ``client`` fixture is built with the default
+    ``raise_server_exceptions=True``, so a server error propagates into the test instead
+    of producing a response — no way to assert on the #828 envelope. test_v4_errors.py
+    builds its own client for the same reason.
+
+    Closed explicitly rather than used as a context manager: ``TestClient`` subclasses
+    ``httpx.Client``, so the transport needs releasing, but ``with TestClient(app)``
+    would also run the app's real lifespan inside the test. There is no lifespan handler
+    on this app today, so ``with`` would be harmless now — and would silently start
+    doing real startup work the day one is added. ``close()`` cannot grow that footgun.
+    """
+    probe = TestClient(app, raise_server_exceptions=False)
+    try:
+        return probe.post(f"{PREFIX}/revisions", json=payload, headers=_auth(token))
+    finally:
+        probe.close()
 
 
 class TestAuth:
@@ -1201,16 +1223,7 @@ class TestUploadTransaction:
             "bible_routes.v4.revision_service.text_loading", _load_then_fail
         )
 
-        # The shared ``client`` fixture re-raises server exceptions instead of
-        # returning the response, so inspecting the #828 500 body needs a client with
-        # raise_server_exceptions=False — the same reason test_v4_errors.py builds its
-        # own. Not entered as a context manager, so the app's lifespan is untouched.
-        probe = TestClient(app, raise_server_exceptions=False)
-        resp = probe.post(
-            f"{PREFIX}/revisions",
-            json=self._payload(version_id),
-            headers=_auth(regular_token1),
-        )
+        resp = _post_returning_5xx(self._payload(version_id), regular_token1)
         assert resp.status_code == 500, resp.text
         assert resp.json()["error"]["code"] == "INTERNAL_ERROR"
         # The generic 500 body leaks no internals.
@@ -1225,6 +1238,42 @@ class TestUploadTransaction:
             .count()
             == 0
         )
+
+    def test_verse_insert_integrity_error_is_500_not_invalid_reference(
+        self, client, regular_token1, db_session, monkeypatch
+    ):
+        """A verse-level FK failure is server-side drift, not client input.
+
+        ``verse_text.verse_reference`` is a FK to ``verse_reference.full_verse_id``, so a
+        verse INSERT can raise ``IntegrityError`` if the reference table stops matching
+        ``fixtures/vref.txt``. While ``create_revision`` had one ``except IntegrityError``
+        around both the revision flush *and* the verse inserts, that surfaced as a 400
+        ``INVALID_REFERENCE`` naming ``back_translation`` — blaming a field the client got
+        right, and burying a data-drift condition that should page someone. The two-stage
+        split makes it a 500.
+
+        The other half of the split is pinned by
+        ``test_create_unknown_back_translation_is_400_invalid_reference``: a real
+        client-supplied bad FK must still be a 400.
+        """
+        version_id = _create_version(
+            client, regular_token1, db_session, abbreviation="V4RVERSEFK"
+        )
+
+        async def _fk_violation(verse_records, db):
+            raise IntegrityError(
+                "INSERT INTO verse_text ...", {}, Exception("verse_reference FK")
+            )
+
+        monkeypatch.setattr(
+            "bible_routes.v4.revision_service.text_loading", _fk_violation
+        )
+
+        resp = _post_returning_5xx(self._payload(version_id), regular_token1)
+        assert resp.status_code == 500, resp.text
+        assert resp.json()["error"]["code"] == "INTERNAL_ERROR"
+        # Still all-or-nothing: the revision row is rolled back too.
+        assert self._revision_count(db_session, version_id) == 0
 
     def test_a_normal_upload_still_works_after_the_patched_failures(
         self, client, regular_token1, db_session
