@@ -5,7 +5,8 @@ primitives (structured errors #828, pagination #829, snake_case canon #830) meet
 a DB-backed endpoint. The complete surface, six endpoints:
 
 * ``GET  /v4/versions``        — paginated, group-scoped list (``V4Page[VersionOut]``);
-  ``updated_since`` serves deltas for mirrors.
+  ``updated_since`` serves deltas for mirrors, and ``next_updated_since`` hands
+  back their next watermark (#899).
 * ``GET  /v4/versions/{id}``   — single version; 404 ``VERSION_NOT_FOUND``.
 * ``POST /v4/versions``        — create (201); JSON body; group-membership checked.
 * ``PATCH /v4/versions/{id}``  — partial field update in one transaction.
@@ -40,6 +41,7 @@ import fastapi
 from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api_v4.delta import next_watermark
 from api_v4.errors import V4APIError
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.bible import VersionCreate, VersionOut, VersionPatch
@@ -93,15 +95,25 @@ async def list_versions(
             "Return only versions modified strictly after this ISO-8601 timestamp "
             "(naive values are read as UTC), soft-deleted ones included — a "
             "soft-delete is an update, so a mirror syncing deltas learns about "
-            "deletions too. Takes precedence over include_deleted. Use the maximum "
-            "updated_at across all pages of the response, verbatim, as the next "
-            "watermark, and keep a periodic full reconcile as a safety net — the "
-            "watermark alone cannot be relied on to be complete. updated_at is "
-            "stamped when a statement runs but the row only becomes visible when its "
-            "transaction commits, so a write still open when a delta is served can "
-            "commit a row stamped at or below that watermark, and no later delta will "
-            "carry it. A revoked group access likewise cannot be delivered to the "
-            "client that lost it."
+            "deletions too. Takes precedence over include_deleted.\n\n"
+            "**Pass the response's `next_updated_since` verbatim** — do not derive a "
+            "watermark from the returned items. The server computes it across every "
+            "matching row (rows are ordered by id, so one page's maximum updated_at "
+            "is not the window's) and has already lapped it back by a safety margin "
+            "that exceeds the longest write transaction in the API. That lap is what "
+            "makes the feed safe: updated_at is stamped when a statement runs, but a "
+            "row only becomes visible when its transaction commits, so without it a "
+            "write still open when a delta is served could commit a row stamped at "
+            "or below a watermark you had already passed, and no later delta would "
+            "carry it. Re-delivered rows in the overlap are the intended cost; keep "
+            "your upserts idempotent.\n\n"
+            "Two client obligations. **Never move a stored watermark backwards** — "
+            "`updated_at` comes from the wall clock, so a backwards clock step must "
+            "cost you a re-delivery, not a permanent hole. And **run a full "
+            "reconcile at least daily**: required, not advisory, because no "
+            "watermark can carry a hard-deleted row (it never enters any window) or "
+            "a revoked group access (the row leaves your scope, so no delta can "
+            "mention it again). A watermark is not proof of completeness."
         ),
     ),
     db: AsyncSession = Depends(get_db),
@@ -113,8 +125,13 @@ async def list_versions(
     the flag is ignored for non-admins (see the service). ``updated_since`` turns
     the same list into a delta feed for downstream mirrors — v3 parity (#887),
     now inside the #829 page envelope.
+
+    Every response carries ``next_updated_since``, the watermark for the caller's
+    next poll (#899) — on a full list too, so a mirror's first sync and its
+    hundredth get their watermark from the same place. The lap is applied by
+    :func:`api_v4.delta.next_watermark`, which owns the contract.
     """
-    versions, total = await version_service.list_versions(
+    versions, total, max_updated_at = await version_service.list_versions(
         db,
         current_user,
         limit=page.limit,
@@ -126,7 +143,12 @@ async def list_versions(
         db, [v.id for v in versions]
     )
     items = [_to_out(v, group_map.get(v.id, [])) for v in versions]
-    return V4Page[VersionOut].create(items=items, total=total, pagination=page)
+    return V4Page[VersionOut].create(
+        items=items,
+        total=total,
+        pagination=page,
+        next_updated_since=next_watermark(max_updated_at),
+    )
 
 
 @router.get("/{version_id}", response_model=VersionOut)

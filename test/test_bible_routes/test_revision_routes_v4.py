@@ -544,7 +544,13 @@ class TestListAndGet:
         )
         assert resp.status_code == 200, resp.text
         page = resp.json()
-        assert set(page) == {"items", "total", "limit", "offset"}
+        assert set(page) == {
+            "items",
+            "total",
+            "limit",
+            "offset",
+            "next_updated_since",
+        }
         assert page["limit"] == 100 and page["offset"] == 0
         assert revision_id in {i["id"] for i in page["items"]}
         sample = next(i for i in page["items"] if i["id"] == revision_id)

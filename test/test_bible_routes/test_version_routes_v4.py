@@ -24,13 +24,20 @@ defect deliberately not carried over (see ``version_service``'s module docstring
 * ``TestGroupAccessSubResource`` — grant/revoke as an idempotent sub-resource,
   including that an admin may manage a group they do not belong to;
 * ``TestDeltaSync`` — ``updated_since`` / ``updated_at``, and that a group-access
-  change moves the parent's watermark so a mirror sees visibility changes.
+  change moves the parent's watermark so a mirror sees visibility changes;
+* ``TestWatermarkContract`` — the #899 decision: ``next_updated_since`` is computed
+  server-side over the whole match and lapped, so the stamp-vs-commit gap costs a
+  re-delivery instead of a permanently missing row.
 """
 
+from datetime import datetime
+
+from api_v4.delta import DELTA_SAFETY_LAP, next_watermark
 from database.models import BibleVersion as BibleVersionModel
 from database.models import BibleVersionAccess, Group
 from database.models import UserDB as UserModel
 from database.models import UserGroup
+from utils.datetime_utils import as_naive_utc
 
 PREFIX = "/v4"
 
@@ -247,7 +254,13 @@ class TestListAndGet:
         resp = client.get(f"{PREFIX}/versions", headers=_auth(regular_token1))
         assert resp.status_code == 200, resp.text
         page = resp.json()
-        assert set(page) == {"items", "total", "limit", "offset"}
+        assert set(page) == {
+            "items",
+            "total",
+            "limit",
+            "offset",
+            "next_updated_since",
+        }
         assert page["limit"] == 20 and page["offset"] == 0
         ids = {item["id"] for item in page["items"]}
         assert version_id in ids
@@ -1003,7 +1016,15 @@ class TestDeltaSync:
         assert resp.status_code == 200, resp.text
         page = resp.json()
         # Still the #829 envelope — a delta is a list, not a new response shape.
-        assert set(page) == {"items", "total", "limit", "offset"}
+        # next_updated_since (#899) is part of that one envelope, not a delta-only
+        # variant of it; TestWatermarkContract covers its value.
+        assert set(page) == {
+            "items",
+            "total",
+            "limit",
+            "offset",
+            "next_updated_since",
+        }
         by_id = {item["id"] for item in page["items"]}
         assert to_rename in by_id
         # A soft-delete is an update, so the deletion IS delivered.
@@ -1159,3 +1180,230 @@ class TestDeltaSync:
         )
         assert resp.status_code == 422, resp.text
         assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+class TestWatermarkContract:
+    """``next_updated_since`` — the #899 delta-sync watermark contract.
+
+    The decision #899 settled: the watermark stays a timestamp, but the server (not
+    each client) computes it, over the whole matching set, with a safety lap already
+    applied. These tests pin the *properties* that make the feed safe rather than the
+    arithmetic that currently implements them:
+
+    * it is present on every list response, delta or full;
+    * it comes from the whole match, not the returned page;
+    * it is lapped, and the lap is large enough to survive the stamp-vs-commit gap —
+      proven against a real concurrent open transaction, which is the failure #899
+      exists to close;
+    * ``null`` means "keep the watermark you have", never "start from nothing".
+    """
+
+    def test_present_on_a_full_list_not_only_a_delta(
+        self, client, regular_token1, db_session
+    ):
+        """A mirror's first sync is a full fetch, so that is exactly when it needs a
+        starting watermark. Deriving one itself is the mistake the field removes."""
+        _create(client, regular_token1, db_session, abbreviation="V4WMFULL")
+
+        resp = client.get(
+            f"{PREFIX}/versions", params={"limit": 100}, headers=_auth(regular_token1)
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["next_updated_since"] is not None
+
+    def test_null_when_nothing_matched(self, client, regular_token1, db_session):
+        """Empty delta -> null, which the contract defines as "keep your watermark".
+        Advancing on an empty result would be indistinguishable from advancing on a
+        failed one."""
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4WMNULL"
+        ).json()
+
+        resp = client.get(
+            f"{PREFIX}/versions",
+            params={"updated_since": created["updated_at"], "limit": 100},
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"] == []
+        assert resp.json()["next_updated_since"] is None
+
+    def test_computed_over_the_whole_match_not_the_returned_page(
+        self, client, regular_token1, db_session
+    ):
+        """The footgun the field exists to remove.
+
+        Rows page by ``id``, so the newest ``updated_at`` need not be on the page the
+        client is looking at. Here the newest row is deliberately the *lowest* id, so
+        a page-derived watermark would be older than the true one — and a client that
+        advanced on it would re-fetch forever, or (had it taken the max of a later
+        page) skip rows outright. Asking for ``limit=1`` must still return the
+        watermark for the whole window.
+        """
+        first = _create(
+            client, regular_token1, db_session, abbreviation="V4WMPAGE1"
+        ).json()
+        second = _create(
+            client, regular_token1, db_session, abbreviation="V4WMPAGE2"
+        ).json()
+        assert first["id"] < second["id"]
+
+        # Touch the LOWER id last, so max(updated_at) belongs to the first page's
+        # predecessor rather than to whatever page 1 happens to hold.
+        assert (
+            _patch(client, regular_token1, first["id"], {"name": "Newest"}).status_code
+            == 200
+        )
+        newest = _fetch(client, regular_token1, first["id"])["updated_at"]
+
+        resp = client.get(
+            f"{PREFIX}/versions",
+            params={"updated_since": second["updated_at"], "limit": 1, "offset": 0},
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 200, resp.text
+        page = resp.json()
+        assert len(page["items"]) == 1
+        assert page["total"] >= 1
+
+        # The watermark is derived from the whole window's newest row...
+        expected = next_watermark(as_naive_utc(datetime.fromisoformat(newest)))
+        assert datetime.fromisoformat(page["next_updated_since"]) == expected
+        # ...which, being lapped, sits strictly behind that row rather than at it.
+        assert page["next_updated_since"] < newest
+        assert expected == as_naive_utc(datetime.fromisoformat(newest)) - (
+            DELTA_SAFETY_LAP
+        )
+
+    def test_round_trip_never_loses_the_rows_it_just_delivered(
+        self, client, regular_token1, db_session
+    ):
+        """Feeding the watermark back must re-deliver the overlap, not skip it. This
+        is the client's whole loop, so it is worth asserting end to end."""
+        target = _create(
+            client, regular_token1, db_session, abbreviation="V4WMRT"
+        ).json()
+        assert (
+            _patch(
+                client, regular_token1, target["id"], {"name": "Round Trip"}
+            ).status_code
+            == 200
+        )
+
+        first = client.get(
+            f"{PREFIX}/versions", params={"limit": 100}, headers=_auth(regular_token1)
+        )
+        assert first.status_code == 200, first.text
+        watermark = first.json()["next_updated_since"]
+        assert watermark is not None
+
+        # Send it back verbatim, exactly as the contract instructs.
+        assert target["id"] in _delta_ids(client, regular_token1, watermark)
+
+    def test_lap_covers_a_write_still_open_when_the_delta_was_served(
+        self, client, regular_token1, db_session
+    ):
+        """#899 mechanism 1, reproduced and then shown to be closed.
+
+        ``updated_at`` is stamped when the statement runs; the row becomes visible at
+        commit. So a transaction that updates a row, stays open while a delta is
+        served, and commits afterwards produces a row stamped *below* a watermark the
+        client has already taken. With a raw ``max(updated_at)`` watermark that row is
+        invisible to every future delta — a permanently stale mirror with no error to
+        notice. The server-applied lap is what makes it merely re-delivered.
+
+        The open transaction here is a real one on a second connection, and the second
+        row is load-bearing: without a row committed *after* the in-flight stamp, the
+        watermark never advances past it and the scenario cannot bite. That is #899's
+        row S, and leaving it out makes this test pass whether the lap exists or not
+        (it did, until removing the lap failed to break it).
+        """
+        # R: the row whose write will be in flight when the delta is served.
+        r = _create(client, regular_token1, db_session, abbreviation="V4WMOPENR").json()
+        # S: an unrelated row, updated and committed *after* R is stamped, so the
+        # watermark the client takes sits ahead of R's stamp.
+        s = _create(client, regular_token1, db_session, abbreviation="V4WMOPENS").json()
+
+        # A second connection (db_session) holds an uncommitted UPDATE to R. The API
+        # reads on its own connections with a plain SELECT, so nothing blocks.
+        row = db_session.query(BibleVersionModel).filter_by(id=r["id"]).one()
+        row.name = "Committed Late"
+        db_session.flush()  # stamps R.updated_at server-side; still uncommitted
+        r_stamp = row.updated_at
+
+        # Now move S, committed, so max(visible updated_at) > R's stamp.
+        assert (
+            _patch(client, regular_token1, s["id"], {"name": "Row S"}).status_code
+            == 200
+        )
+        s_stamp = _fetch(client, regular_token1, s["id"])["updated_at"]
+        assert (
+            s_stamp > r_stamp.isoformat()
+        ), "S must be stamped after R to set the trap"
+
+        # Serve a delta while R's write is still in flight, and take the watermark.
+        served = client.get(
+            f"{PREFIX}/versions", params={"limit": 100}, headers=_auth(regular_token1)
+        )
+        assert served.status_code == 200, served.text
+        watermark = served.json()["next_updated_since"]
+        assert watermark is not None
+        # R's new version is not visible yet — that is the whole premise.
+        assert "Committed Late" not in {i["name"] for i in served.json()["items"]}
+
+        db_session.commit()  # R becomes visible, stamped BELOW the un-lapped max
+
+        # Un-lapped, the client would have advanced to S's stamp and lost R forever.
+        assert r["id"] not in _delta_ids(client, regular_token1, s_stamp), (
+            "precondition: a raw max(updated_at) watermark loses R — if this fails, "
+            "the scenario is not reproducing and the assertion below proves nothing"
+        )
+        # Lapped, the same poll still reaches back far enough to carry it.
+        assert r["id"] in _delta_ids(client, regular_token1, watermark), (
+            "a row committed after the delta was served must still arrive; "
+            "this is what DELTA_SAFETY_LAP buys"
+        )
+
+    def test_lap_exceeds_the_longest_write_transaction_in_the_api(self):
+        """Guards the number itself, because the contract is only as good as it.
+
+        The longest write transaction touching a delta-tracked table is the revision
+        upload: ``bible_revision`` is flushed first (stamping ``updated_at``), then all
+        ~41,899 verse rows are inserted before the single commit. Measured on
+        PostgreSQL 16 over loopback: 2.3-2.8s for the KJV fixture, 4.6s at the
+        ``MAX_TEXT_BYTES`` payload ceiling. The ceiling is structural — a larger body
+        is a 422 before any write — so this bound cannot be exceeded by input alone.
+
+        The assertion allows two orders of magnitude of headroom over the measured
+        worst case, which is what a loaded RDS instance may need.
+        """
+        measured_worst_case_seconds = 4.6
+        assert DELTA_SAFETY_LAP.total_seconds() >= measured_worst_case_seconds * 50, (
+            "DELTA_SAFETY_LAP must stay well above the longest write transaction; "
+            "lowering it silently re-opens the #899 completeness hole"
+        )
+
+    def test_watermark_is_never_derived_from_the_server_clock(
+        self, client, regular_token1, db_session
+    ):
+        """On a quiet feed, ``now() - lap`` would sit far ahead of the newest row and
+        skip everything written in between. The watermark must come from stored
+        ``updated_at`` values only, so on a quiet list it stays put."""
+        created = _create(
+            client, regular_token1, db_session, abbreviation="V4WMCLOCK"
+        ).json()
+
+        first = client.get(
+            f"{PREFIX}/versions", params={"limit": 100}, headers=_auth(regular_token1)
+        ).json()["next_updated_since"]
+        second = client.get(
+            f"{PREFIX}/versions", params={"limit": 100}, headers=_auth(regular_token1)
+        ).json()["next_updated_since"]
+
+        assert first is not None and first == second, (
+            "two polls of an unchanged list must yield the same watermark; "
+            "a clock-derived one would drift forward and skip rows"
+        )
+        assert (
+            first < created["updated_at"]
+        ), "the lap must place it behind the newest row"

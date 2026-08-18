@@ -9,7 +9,11 @@ same way — bounded, predictable, and self-documenting in OpenAPI:
   ``page.limit`` / ``page.offset`` to its (future) service/query layer.
 * :class:`V4Page` — the generic list envelope every v4 list endpoint returns::
 
-      {"items": [...], "total": 128, "limit": 20, "offset": 0}
+      {"items": [...], "total": 128, "limit": 20, "offset": 0,
+       "next_updated_since": "2026-08-18T17:51:06.278363"}
+
+  ``next_updated_since`` is the delta-sync watermark (#899) — null on lists that do
+  not support ``updated_since``. Its contract lives in :mod:`api_v4.delta`.
 
   A route declares ``response_model=V4Page[SomeModel]`` and builds the body with
   :meth:`V4Page.create`, so no endpoint reassembles the envelope by hand.
@@ -46,6 +50,7 @@ decision, not a hard constraint: a future heavy list that genuinely needs a larg
 ceiling should define its own params dependency rather than raise this shared cap.
 """
 
+from datetime import datetime
 from typing import Generic, TypeVar
 
 from fastapi import Query
@@ -136,6 +141,24 @@ class V4Page(V4BaseModel, Generic[DataT]):
         ge=0,
         description="The offset that produced this page (echoed from the request).",
     )
+    # Optional with a None default because it is meaningful only on lists that
+    # support updated_since; every other list leaves it null rather than the
+    # envelope forking into a second shape (migration guide §9: "a delta is a
+    # filtered list, not a separate response shape").
+    next_updated_since: datetime | None = Field(
+        default=None,
+        description=(
+            "The watermark to send as `updated_since` on the next poll of this list, "
+            "or null if nothing matched (in which case keep the watermark you "
+            "already have). Send it **verbatim**: it is computed across every "
+            "matching row rather than the returned page, and it already has the "
+            "server's safety lap subtracted, so re-deriving it from the items or "
+            "lapping it again is both unnecessary and unsafe. Never move a stored "
+            "watermark backwards, and keep a periodic full reconcile — a watermark "
+            "is not proof of completeness. Null on lists that do not support "
+            "`updated_since`."
+        ),
+    )
 
     @classmethod
     def create(
@@ -144,6 +167,7 @@ class V4Page(V4BaseModel, Generic[DataT]):
         items: list[DataT],
         total: int,
         pagination: PaginationParams,
+        next_updated_since: datetime | None = None,
     ) -> "V4Page[DataT]":
         """Assemble a page from a result slice, its total count, and the request's
         :class:`PaginationParams`.
@@ -164,10 +188,16 @@ class V4Page(V4BaseModel, Generic[DataT]):
         object was built. But if you ever consume the returned page directly (a
         non-HTTP helper, or a unit test asserting on the object), use the
         parametrized form so item shaping isn't silently skipped.
+
+        ``next_updated_since`` is the delta watermark for lists that support
+        ``updated_since``; build it with :func:`api_v4.delta.next_watermark` rather
+        than subtracting the lap at the call site, so every list laps identically.
+        Lists without a modification timestamp omit it.
         """
         return cls(
             items=items,
             total=total,
             limit=pagination.limit,
             offset=pagination.offset,
+            next_updated_since=next_updated_since,
         )
