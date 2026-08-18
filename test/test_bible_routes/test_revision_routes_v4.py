@@ -144,6 +144,13 @@ def _patch(client, token, revision_id, body):
     )
 
 
+def _ts(value):
+    """Parse an API timestamp to naive UTC for ordering comparisons — see the twin
+    helper in ``test_version_routes_v4`` for why these are parsed, not string-compared.
+    """
+    return as_naive_utc(datetime.fromisoformat(value))
+
+
 def _list_ids(client, token, **params):
     resp = client.get(
         f"{PREFIX}/revisions", params={"limit": 100, **params}, headers=_auth(token)
@@ -1485,7 +1492,7 @@ class TestWatermarkContract:
         assert resp.status_code == 200, resp.text
         watermark = resp.json()["next_updated_since"]
         assert watermark is not None
-        assert watermark < created["updated_at"], "the lap must place it behind"
+        assert _ts(watermark) < _ts(created["updated_at"]), "the lap places it behind"
 
     def test_computed_over_the_whole_match_not_the_returned_page(
         self, client, regular_token1, db_session
@@ -1517,8 +1524,8 @@ class TestWatermarkContract:
         page = resp.json()
         assert len(page["items"]) == 1
 
-        expected = next_watermark(as_naive_utc(datetime.fromisoformat(newest)))
-        assert datetime.fromisoformat(page["next_updated_since"]) == expected
+        expected = next_watermark(_ts(newest))
+        assert _ts(page["next_updated_since"]) == expected
 
     def test_uses_the_same_lap_as_versions(self, client, regular_token1, db_session):
         """One contract, not two implementations: both lists must lap by exactly
@@ -1547,16 +1554,13 @@ class TestWatermarkContract:
             assert (
                 page["total"] <= 100
             ), "window must fit one page for max() to be exact"
-            stamps = [
-                as_naive_utc(datetime.fromisoformat(i["updated_at"]))
-                for i in page["items"]
-                if i["updated_at"] is not None
-            ]
+            stamps = [_ts(i["updated_at"]) for i in page["items"] if i["updated_at"]]
             assert stamps, path
-            watermark = datetime.fromisoformat(page["next_updated_since"])
-            assert max(stamps) - watermark == DELTA_SAFETY_LAP, path
+            assert (
+                max(stamps) - _ts(page["next_updated_since"]) == DELTA_SAFETY_LAP
+            ), path
 
-        assert newer["updated_at"] > boundary["updated_at"]
+        assert _ts(newer["updated_at"]) > _ts(boundary["updated_at"])
 
     def test_round_trip_never_loses_the_rows_it_just_delivered(
         self, client, regular_token1, db_session

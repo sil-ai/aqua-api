@@ -144,6 +144,57 @@ from datetime import datetime, timedelta
 DELTA_SAFETY_LAP = timedelta(minutes=5)
 
 
+#: The invariant half of every ``updated_since`` parameter description — the part that
+#: is the *contract* and therefore must read identically on every list that serves a
+#: delta. Kept as one string rather than copied into each router because two lists
+#: claiming to share a contract while describing it in prose that can drift is exactly
+#: the failure this module exists to prevent. :func:`updated_since_description` composes
+#: it with the per-resource wording; ``test_v4_delta`` pins that every delta-serving
+#: endpoint's description contains it verbatim.
+_WATERMARK_CONTRACT_PROSE = (
+    "**Pass the response's `next_updated_since` verbatim** — do not derive a "
+    "watermark from the returned items. The server computes it across every "
+    "matching row (rows are ordered by id, so one page's maximum updated_at is not "
+    "the window's) and has already lapped it back by a safety margin that exceeds "
+    "the longest write transaction in the API. That lap is what makes the feed "
+    "safe: updated_at is stamped when a statement runs, but a row only becomes "
+    "visible when its transaction commits, so without it a write still open when a "
+    "delta is served could commit a row stamped at or below a watermark you had "
+    "already passed, and no later delta would carry it. Re-delivered rows in the "
+    "overlap are the intended cost; keep your upserts idempotent.\n\n"
+    "Two client obligations. **Never move a stored watermark backwards** — "
+    "`updated_at` comes from the wall clock, so a backwards clock step must cost "
+    "you a re-delivery, not a permanent hole. And **run a full reconcile at least "
+    "daily**: required, not advisory. "
+)
+
+
+def updated_since_description(
+    resource: str, *, delta_also: str = "", cannot_carry: str
+) -> str:
+    """Build the ``updated_since`` OpenAPI description for one list endpoint.
+
+    Three pieces: a lead-in naming the ``resource`` (plus any resource-specific note
+    about what its delta additionally delivers, ``delta_also``), the invariant
+    contract block, and the closing list of what no watermark can carry
+    (``cannot_carry``, which differs per resource because what leaves a caller's scope
+    differs).
+
+    ``cannot_carry`` is keyword-only and has **no default** on purpose: every resource
+    has *something* a watermark cannot express, and silently omitting that sentence
+    would let an endpoint ship a description promising more completeness than it can
+    deliver. Making it required forces the question to be answered per endpoint.
+    """
+    return (
+        f"Return only {resource} modified strictly after this ISO-8601 timestamp "
+        f"(naive values are read as UTC), soft-deleted ones included — a soft-delete "
+        f"is an update, so a mirror syncing deltas learns about deletions too"
+        f"{delta_also}. Takes precedence over include_deleted.\n\n"
+        f"{_WATERMARK_CONTRACT_PROSE}{cannot_carry} "
+        f"A watermark is not proof of completeness."
+    )
+
+
 def next_watermark(max_updated_at: datetime | None) -> datetime | None:
     """Return the watermark to hand back, given the max ``updated_at`` matched.
 

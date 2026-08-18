@@ -41,7 +41,7 @@ import fastapi
 from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api_v4.delta import next_watermark
+from api_v4.delta import next_watermark, updated_since_description
 from api_v4.errors import V4APIError
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.bible import VersionCreate, VersionOut, VersionPatch
@@ -91,29 +91,13 @@ async def list_versions(
     # union across lines when it carries a Query() default; identical semantics.
     updated_since: Optional[datetime] = Query(
         None,
-        description=(
-            "Return only versions modified strictly after this ISO-8601 timestamp "
-            "(naive values are read as UTC), soft-deleted ones included — a "
-            "soft-delete is an update, so a mirror syncing deltas learns about "
-            "deletions too. Takes precedence over include_deleted.\n\n"
-            "**Pass the response's `next_updated_since` verbatim** — do not derive a "
-            "watermark from the returned items. The server computes it across every "
-            "matching row (rows are ordered by id, so one page's maximum updated_at "
-            "is not the window's) and has already lapped it back by a safety margin "
-            "that exceeds the longest write transaction in the API. That lap is what "
-            "makes the feed safe: updated_at is stamped when a statement runs, but a "
-            "row only becomes visible when its transaction commits, so without it a "
-            "write still open when a delta is served could commit a row stamped at "
-            "or below a watermark you had already passed, and no later delta would "
-            "carry it. Re-delivered rows in the overlap are the intended cost; keep "
-            "your upserts idempotent.\n\n"
-            "Two client obligations. **Never move a stored watermark backwards** — "
-            "`updated_at` comes from the wall clock, so a backwards clock step must "
-            "cost you a re-delivery, not a permanent hole. And **run a full "
-            "reconcile at least daily**: required, not advisory, because no "
-            "watermark can carry a hard-deleted row (it never enters any window) or "
-            "a revoked group access (the row leaves your scope, so no delta can "
-            "mention it again). A watermark is not proof of completeness."
+        description=updated_since_description(
+            "versions",
+            cannot_carry=(
+                "No watermark can carry a hard-deleted row (it never enters any "
+                "window) or a revoked group access (the row leaves your scope, so no "
+                "delta can mention it again)."
+            ),
         ),
     ),
     db: AsyncSession = Depends(get_db),

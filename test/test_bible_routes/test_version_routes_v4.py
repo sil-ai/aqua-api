@@ -522,6 +522,17 @@ def _patch(client, token, version_id, body):
     )
 
 
+def _ts(value):
+    """Parse an API timestamp to naive UTC for *ordering* comparisons.
+
+    Ordering two ISO-8601 strings lexicographically happens to be correct while both
+    come from the same serializer, but it stops being obviously correct the moment one
+    side omits fractional seconds (a stamp landing exactly on a microsecond boundary) or
+    gains an offset suffix. Parsing states the intent instead of relying on that.
+    """
+    return as_naive_utc(datetime.fromisoformat(value))
+
+
 def _delta_ids(client, token, watermark, **params):
     """Ids returned by the ``updated_since`` delta feed, as a set."""
     resp = client.get(
@@ -1267,13 +1278,11 @@ class TestWatermarkContract:
         assert page["total"] >= 1
 
         # The watermark is derived from the whole window's newest row...
-        expected = next_watermark(as_naive_utc(datetime.fromisoformat(newest)))
-        assert datetime.fromisoformat(page["next_updated_since"]) == expected
+        expected = next_watermark(_ts(newest))
+        assert _ts(page["next_updated_since"]) == expected
         # ...which, being lapped, sits strictly behind that row rather than at it.
-        assert page["next_updated_since"] < newest
-        assert expected == as_naive_utc(datetime.fromisoformat(newest)) - (
-            DELTA_SAFETY_LAP
-        )
+        assert _ts(page["next_updated_since"]) < _ts(newest)
+        assert expected == _ts(newest) - DELTA_SAFETY_LAP
 
     def test_round_trip_never_loses_the_rows_it_just_delivered(
         self, client, regular_token1, db_session
@@ -1337,9 +1346,10 @@ class TestWatermarkContract:
             == 200
         )
         s_stamp = _fetch(client, regular_token1, s["id"])["updated_at"]
-        assert (
-            s_stamp > r_stamp.isoformat()
-        ), "S must be stamped after R to set the trap"
+        # r_stamp is a datetime straight off the DB row, s_stamp a string off the wire;
+        # parse rather than isoformat() the former, so the comparison does not depend on
+        # the two renderings agreeing.
+        assert _ts(s_stamp) > r_stamp, "S must be stamped after R to set the trap"
 
         # Serve a delta while R's write is still in flight, and take the watermark.
         served = client.get(
@@ -1404,6 +1414,6 @@ class TestWatermarkContract:
             "two polls of an unchanged list must yield the same watermark; "
             "a clock-derived one would drift forward and skip rows"
         )
-        assert (
-            first < created["updated_at"]
+        assert _ts(first) < _ts(
+            created["updated_at"]
         ), "the lap must place it behind the newest row"
