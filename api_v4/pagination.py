@@ -192,7 +192,9 @@ class V4Page(V4BaseModel, Generic[DataT]):
         ``next_updated_since`` is the delta watermark for lists that support
         ``updated_since``; build it with :func:`api_v4.delta.next_watermark` rather
         than subtracting the lap at the call site, so every list laps identically.
-        Lists without a modification timestamp omit it.
+        A list without a modification timestamp leaves it at its ``None`` default,
+        which serializes as ``null`` — the field is always *present*, so adding delta
+        support to a list later is not a response-shape change.
         """
         return cls(
             items=items,

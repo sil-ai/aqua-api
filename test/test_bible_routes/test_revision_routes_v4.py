@@ -20,8 +20,9 @@ What each class pins down:
   visibility follows the parent version.
 * ``TestUploadTransaction`` — the whole upload is one transaction, so a mid-load failure
   (including a client disconnect) leaves no half-loaded revision.
-* ``TestNoDeltaSyncYet`` — records that ``updated_since``/``updated_at`` are absent on
-  purpose, pending #899, so their absence is a decision rather than an oversight.
+* ``TestDeltaSync`` / ``TestWatermarkContract`` — the delta feed and the #899
+  watermark, deliberately the same contract as ``GET /v4/versions``. (These replaced
+  ``TestNoDeltaSyncYet``, which recorded the fields' absence while #899 was open.)
 
 Three v3 behaviors #891 says not to port are asserted *negatively* here: the response is
 built from named columns (no phantom ``is_reference``, no ORM splat), the wire is
@@ -30,6 +31,7 @@ snake_case, and ``POST`` is a 201.
 
 import asyncio
 import base64
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
@@ -37,11 +39,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
+from api_v4.delta import DELTA_SAFETY_LAP, next_watermark
 from app import app
 from database.models import BibleRevision as BibleRevisionModel
 from database.models import Group
 from database.models import UserDB as UserModel
 from database.models import UserGroup, VerseText
+from utils.datetime_utils import as_naive_utc
 
 PREFIX = "/v4"
 
@@ -248,6 +252,8 @@ class TestCreate:
             "deleted",
             "version_abbreviation",
             "iso_language",
+            # Arrived with the #899 watermark contract; still a closed set.
+            "updated_at",
         }
 
     def test_create_accepts_legacy_camelcase_and_bible_version_id_input(
@@ -1292,33 +1298,280 @@ class TestUploadTransaction:
         assert _verse_count(db_session, created["id"]) == 3
 
 
-class TestNoDeltaSyncYet:
-    def test_updated_since_and_updated_at_are_absent_pending_899(
+class TestDeltaSync:
+    """``updated_since`` / ``updated_at`` / ``next_updated_since`` on revisions (#891,
+    contract from #899).
+
+    Replaces ``TestNoDeltaSyncYet``, which existed only to record the absence as a
+    decision while the watermark contract was open. The contract landed in the same PR
+    as this class, so the fields ship on both lists at once and say the same thing.
+    """
+
+    def test_updated_at_is_exposed_on_create_get_and_list(
         self, client, regular_token1, db_session
     ):
-        """Recorded as a decision, not an oversight: #891 sequences the delta-sync
-        watermark contract (#899) ahead of adding these fields to a second list, so that
-        if the watermark stops being a timestamp only one endpoint has to change.
-        Delete this test in the PR that adds them.
-        """
         _, created = _created(
-            client, regular_token1, db_session, abbreviation="V4RNODELTA"
+            client, regular_token1, db_session, abbreviation="V4RDUAT"
         )
-        assert "updated_at" not in created
+        assert created["updated_at"] is not None
+        assert _fetch(client, regular_token1, created["id"])["updated_at"] == (
+            created["updated_at"]
+        )
 
-        # An unknown query parameter is ignored rather than honored, so a client cannot
-        # believe it received a delta.
+    def test_updated_since_returns_only_changed_rows_including_deleted(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        """Mirrors the versions test: a soft-delete is an update, so the deletion IS
+        delivered, and the strictly-greater boundary row is not."""
+        _, to_rename = _created(
+            client, regular_token1, db_session, abbreviation="V4RDREN"
+        )
+        _, to_delete = _created(
+            client, regular_token1, db_session, abbreviation="V4RDDEL"
+        )
+        # Created last, so its stamp is newest; strictly-greater makes it the boundary.
+        _, boundary = _created(
+            client, regular_token1, db_session, abbreviation="V4RDBOUND"
+        )
+        watermark = boundary["updated_at"]
+
+        assert (
+            _patch(
+                client, regular_token1, to_rename["id"], {"name": "Delta Renamed"}
+            ).status_code
+            == 200
+        )
+        assert (
+            client.delete(
+                f"{PREFIX}/revisions/{to_delete['id']}", headers=_auth(regular_token1)
+            ).status_code
+            == 204
+        )
+
         resp = client.get(
             f"{PREFIX}/revisions",
-            params={"updated_since": "2020-01-01T00:00:00", "limit": 100},
+            params={"updated_since": watermark, "limit": 100},
+            headers=_auth(admin_token),
+        )
+        assert resp.status_code == 200, resp.text
+        page = resp.json()
+        ids = {i["id"] for i in page["items"]}
+        assert to_rename["id"] in ids
+        assert to_delete["id"] in ids, "a soft-delete is an update"
+        assert boundary["id"] not in ids, "strictly-greater boundary"
+
+        deleted_item = next(i for i in page["items"] if i["id"] == to_delete["id"])
+        assert deleted_item["deleted"] is True
+
+    def test_updated_since_is_empty_when_nothing_changed(
+        self, client, regular_token1, db_session
+    ):
+        _, created = _created(
+            client, regular_token1, db_session, abbreviation="V4RDQUIET"
+        )
+        resp = client.get(
+            f"{PREFIX}/revisions",
+            params={"updated_since": created["updated_at"], "limit": 100},
             headers=_auth(regular_token1),
         )
         assert resp.status_code == 200, resp.text
-        assert created["id"] in {i["id"] for i in resp.json()["items"]}
+        assert resp.json()["items"] == []
+        assert resp.json()["total"] == 0
+        assert resp.json()["next_updated_since"] is None
 
+    def test_delta_delivers_a_soft_deleted_parent_version(
+        self, client, admin_token, regular_token1, db_session
+    ):
+        """Revisions-specific: the non-delta filter hides a revision whose *parent* is
+        soft-deleted, so a mirror would otherwise never learn the revision went away.
+        Delta mode drops both halves of that filter, not just the revision's own."""
+        _, boundary = _created(
+            client, regular_token1, db_session, abbreviation="V4RDPARENT0"
+        )
+        version_id, orphaned = _created(
+            client, regular_token1, db_session, abbreviation="V4RDPARENT"
+        )
+        watermark = boundary["updated_at"]
+
+        assert (
+            client.delete(
+                f"{PREFIX}/versions/{version_id}", headers=_auth(regular_token1)
+            ).status_code
+            == 204
+        )
+
+        # Outside a delta the revision is invisible (its parent is deleted)...
+        assert orphaned["id"] not in _list_ids(client, admin_token)
+        # ...but the delta window must still carry it, or a mirror keeps it forever.
+        assert orphaned["id"] in _list_ids(client, admin_token, updated_since=watermark)
+
+    def test_updated_since_stays_scoped_to_the_caller(
+        self, client, regular_token1, regular_token2, db_session
+    ):
+        """A delta is still authorization-scoped: it must not become a way to read
+        revisions the caller could not otherwise see."""
+        _, mine = _created(client, regular_token1, db_session, abbreviation="V4RDSCOPE")
+        _, theirs = _created(
+            client,
+            regular_token2,
+            db_session,
+            abbreviation="V4RDSCOPE2",
+            group_name="Group2",
+        )
+        epoch = "2020-01-01T00:00:00"
+
+        visible = _list_ids(client, regular_token1, updated_since=epoch)
+        assert mine["id"] in visible
+        assert theirs["id"] not in visible
+
+    def test_updated_since_accepts_a_timezone_aware_watermark(
+        self, client, regular_token1, db_session
+    ):
+        """The column is timezone-naive UTC, so an aware watermark is converted rather
+        than rejected (asyncpg refuses aware values against a naive column)."""
+        _, boundary = _created(
+            client, regular_token1, db_session, abbreviation="V4RDTZ"
+        )
+        _, target = _created(client, regular_token1, db_session, abbreviation="V4RDTZ2")
+        assert (
+            _patch(
+                client, regular_token1, target["id"], {"name": "TZ Renamed"}
+            ).status_code
+            == 200
+        )
+
+        naive = boundary["updated_at"]
+        aware = naive + "+00:00"
+        assert _list_ids(client, regular_token1, updated_since=aware) == _list_ids(
+            client, regular_token1, updated_since=naive
+        )
+        assert target["id"] in _list_ids(client, regular_token1, updated_since=aware)
+
+    def test_malformed_updated_since_is_422(self, client, regular_token1):
+        resp = client.get(
+            f"{PREFIX}/revisions",
+            params={"updated_since": "not-a-timestamp"},
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 422, resp.text
+        assert resp.json()["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_updated_since_is_declared_in_openapi(self, client):
+        """The inverse of the assertion TestNoDeltaSyncYet used to make."""
         schema = client.get(f"{PREFIX}/openapi.json").json()
         params = {
             p["name"]
             for p in schema["paths"]["/revisions"]["get"].get("parameters", [])
         }
-        assert "updated_since" not in params
+        assert "updated_since" in params
+
+
+class TestWatermarkContract:
+    """The #899 watermark, on revisions. The contract itself (and its adversarial
+    reproduction of the stamp-vs-commit gap) is pinned once, on versions, in
+    ``test_version_routes_v4.TestWatermarkContract``; what matters here is that
+    revisions is wired to the *same* helper rather than re-deriving the lap.
+    """
+
+    def test_present_on_a_full_list_and_lapped(
+        self, client, regular_token1, db_session
+    ):
+        _, created = _created(
+            client, regular_token1, db_session, abbreviation="V4RWMFULL"
+        )
+        resp = client.get(
+            f"{PREFIX}/revisions", params={"limit": 100}, headers=_auth(regular_token1)
+        )
+        assert resp.status_code == 200, resp.text
+        watermark = resp.json()["next_updated_since"]
+        assert watermark is not None
+        assert watermark < created["updated_at"], "the lap must place it behind"
+
+    def test_computed_over_the_whole_match_not_the_returned_page(
+        self, client, regular_token1, db_session
+    ):
+        """Same footgun as on versions: rows page by ``id``, so the newest row need not
+        be on the page in hand. Asking for ``limit=1`` must still return the whole
+        window's watermark."""
+        _, first = _created(
+            client, regular_token1, db_session, abbreviation="V4RWMPAGE1"
+        )
+        _, second = _created(
+            client, regular_token1, db_session, abbreviation="V4RWMPAGE2"
+        )
+        assert first["id"] < second["id"]
+
+        # Touch the LOWER id last, so max(updated_at) is not on page 1.
+        assert (
+            _patch(client, regular_token1, first["id"], {"name": "Newest"}).status_code
+            == 200
+        )
+        newest = _fetch(client, regular_token1, first["id"])["updated_at"]
+
+        resp = client.get(
+            f"{PREFIX}/revisions",
+            params={"updated_since": second["updated_at"], "limit": 1},
+            headers=_auth(regular_token1),
+        )
+        assert resp.status_code == 200, resp.text
+        page = resp.json()
+        assert len(page["items"]) == 1
+
+        expected = next_watermark(as_naive_utc(datetime.fromisoformat(newest)))
+        assert datetime.fromisoformat(page["next_updated_since"]) == expected
+
+    def test_uses_the_same_lap_as_versions(self, client, regular_token1, db_session):
+        """One contract, not two implementations: both lists must lap by exactly
+        ``DELTA_SAFETY_LAP``, so a mirror can treat them identically.
+
+        Asserted as an exact equality rather than an inequality, which is why the delta
+        window is scoped to rows this test created: an inequality would also pass if
+        revisions lapped by an hour, and "both lists lap the same" is the property that
+        lets a client share one code path.
+        """
+        _, boundary = _created(
+            client, regular_token1, db_session, abbreviation="V4RWMSAME0"
+        )
+        _, newer = _created(
+            client, regular_token1, db_session, abbreviation="V4RWMSAME"
+        )
+
+        for path in ("revisions", "versions"):
+            resp = client.get(
+                f"{PREFIX}/{path}",
+                params={"updated_since": boundary["updated_at"], "limit": 100},
+                headers=_auth(regular_token1),
+            )
+            assert resp.status_code == 200, resp.text
+            page = resp.json()
+            assert (
+                page["total"] <= 100
+            ), "window must fit one page for max() to be exact"
+            stamps = [
+                as_naive_utc(datetime.fromisoformat(i["updated_at"]))
+                for i in page["items"]
+                if i["updated_at"] is not None
+            ]
+            assert stamps, path
+            watermark = datetime.fromisoformat(page["next_updated_since"])
+            assert max(stamps) - watermark == DELTA_SAFETY_LAP, path
+
+        assert newer["updated_at"] > boundary["updated_at"]
+
+    def test_round_trip_never_loses_the_rows_it_just_delivered(
+        self, client, regular_token1, db_session
+    ):
+        _, target = _created(client, regular_token1, db_session, abbreviation="V4RWMRT")
+        assert (
+            _patch(
+                client, regular_token1, target["id"], {"name": "Round Trip"}
+            ).status_code
+            == 200
+        )
+        resp = client.get(
+            f"{PREFIX}/revisions", params={"limit": 100}, headers=_auth(regular_token1)
+        )
+        watermark = resp.json()["next_updated_since"]
+        assert target["id"] in _list_ids(
+            client, regular_token1, updated_since=watermark
+        )

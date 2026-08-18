@@ -26,11 +26,10 @@ contract clients branch on. The authorization and transaction decisions — incl
 three v3 behaviors #891 says not to port, and why a soft-deleted version hides its
 revisions — live in the service's module docstring, since they are not HTTP concerns.
 
-Not here, and deliberately: ``updated_since`` / ``updated_at``. v3's ``GET /revision``
-exposes a delta-sync window and ``GET /v4/versions`` carries the v4 equivalent, but the
-watermark contract itself is under review in #899 (``max(updated_at)`` is not guaranteed
-complete). Shipping the fields on a second list before that lands would double the
-surface to migrate if the watermark changes form; #891 explicitly sequences #899 first.
+Delta sync (``updated_since`` / ``updated_at`` / ``next_updated_since``) is here, and
+is deliberately character-for-character the same contract as ``GET /v4/versions`` — the
+whole point of settling #899 before adding it to a second list was that both lists then
+say the same thing. :mod:`api_v4.delta` owns that contract; this module only wires it.
 """
 
 __version__ = "v4"
@@ -42,6 +41,7 @@ import fastapi
 from fastapi import Depends, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api_v4.delta import next_watermark
 from api_v4.errors import V4APIError
 from api_v4.pagination import PaginationParams, V4Page
 from api_v4.schemas.bible import RevisionCreate, RevisionOut, RevisionPatch
@@ -89,6 +89,9 @@ def _to_out(revision: BibleRevision, version: BibleVersion | None) -> RevisionOu
         deleted=bool(revision.deleted),
         version_abbreviation=version.abbreviation if version else None,
         iso_language=version.iso_language if version else None,
+        # Not coerced: NULL is meaningful (a legacy row predating the column) and the
+        # field is Optional on the wire, so it passes through — same as VersionOut.
+        updated_at=revision.updated_at,
     )
 
 
@@ -185,6 +188,35 @@ async def list_revisions(
             "version requires a visible one."
         ),
     ),
+    updated_since: Optional[datetime] = Query(
+        None,
+        description=(
+            "Return only revisions modified strictly after this ISO-8601 timestamp "
+            "(naive values are read as UTC), soft-deleted ones included — a "
+            "soft-delete is an update, so a mirror syncing deltas learns about "
+            "deletions too, including when a revision's parent version was "
+            "soft-deleted. Takes precedence over include_deleted.\n\n"
+            "**Pass the response's `next_updated_since` verbatim** — do not derive a "
+            "watermark from the returned items. The server computes it across every "
+            "matching row (rows are ordered by id, so one page's maximum updated_at "
+            "is not the window's) and has already lapped it back by a safety margin "
+            "that exceeds the longest write transaction in the API. That lap is what "
+            "makes the feed safe: updated_at is stamped when a statement runs, but a "
+            "row only becomes visible when its transaction commits, so without it a "
+            "write still open when a delta is served could commit a row stamped at "
+            "or below a watermark you had already passed, and no later delta would "
+            "carry it. Re-delivered rows in the overlap are the intended cost; keep "
+            "your upserts idempotent.\n\n"
+            "Two client obligations. **Never move a stored watermark backwards** — "
+            "`updated_at` comes from the wall clock, so a backwards clock step must "
+            "cost you a re-delivery, not a permanent hole. And **run a full "
+            "reconcile at least daily**: required, not advisory. No watermark can "
+            "carry a hard-deleted row (it never enters any window), nor a revision "
+            "that became visible because its version was granted to one of your "
+            "groups — that grant moves the *version's* watermark, not its "
+            "revisions'. A watermark is not proof of completeness."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ) -> V4Page[RevisionOut]:
@@ -193,22 +225,33 @@ async def list_revisions(
     A revision is visible when its parent version is visible to the caller — read
     access is granted per version, via group membership — and neither the revision nor
     its version is soft-deleted.
+
+    ``updated_since`` turns the same list into a delta feed, and every response carries
+    ``next_updated_since`` — the caller's next watermark, lapped server-side by
+    :func:`api_v4.delta.next_watermark` (#899). Deliberately identical to
+    ``GET /v4/versions``: one contract, so a mirror walks either list the same way.
     """
     try:
-        revisions, total = await revision_service.list_revisions(
+        revisions, total, max_updated_at = await revision_service.list_revisions(
             db,
             current_user,
             limit=page.limit,
             offset=page.offset,
             version_id=version_id,
             include_deleted=include_deleted,
+            updated_since=updated_since,
         )
     except revision_service.VersionNotVisible as exc:
         raise _version_not_visible_error(exc, version_id) from exc
 
     version_map = await revision_service.versions_for_revisions(db, revisions)
     items = [_to_out(r, version_map.get(r.bible_version_id)) for r in revisions]
-    return V4Page[RevisionOut].create(items=items, total=total, pagination=page)
+    return V4Page[RevisionOut].create(
+        items=items,
+        total=total,
+        pagination=page,
+        next_updated_since=next_watermark(max_updated_at),
+    )
 
 
 @router.get("/{revision_id}", response_model=RevisionOut)
