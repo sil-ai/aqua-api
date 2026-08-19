@@ -36,11 +36,17 @@ Consequently:
   divergent v4 CORS would require removing the parent CORS layer from the mount
   path, not just changing this call.
 
-Unhandled-exception contract (see :func:`create_v4_app`): a mounted sub-app has
-its *own* Starlette ``ServerErrorMiddleware``, which by default sends a plaintext
-``Internal Server Error`` 500 — diverging from the JSON ``{"detail": ...}`` body
-``LoggingMiddleware`` produces for every other route. We register a handler on
-the sub-app to restore the shared JSON contract.
+Error contract (see :func:`create_v4_app` and :mod:`api_v4.errors`): the v4
+sub-app registers its own structured-error handlers via
+:func:`api_v4.errors.register_exception_handlers`, emitting the
+``{"error": {"code", "message", "details"}}`` envelope (issue #828) for domain
+errors, ``HTTPException``, validation errors, and uncaught exceptions. This
+deliberately diverges from the frozen-v3 ``{"detail": ...}`` body — v4 clients
+branch on the stable ``code``. The catch-all 500 handler returns only a generic
+body; the sub-app's own ``ServerErrorMiddleware`` re-raises the exception after
+sending it, so the traceback still reaches the parent ``LoggingMiddleware`` for
+logging (never the client). Without any handler the mount's ``ServerErrorMiddleware``
+would send a plaintext ``Internal Server Error`` 500 instead.
 
 Lifespan caveat: Starlette ``Mount`` only dispatches ``http``/``websocket``
 scopes, never ``lifespan`` — so a ``lifespan=`` passed to this sub-app would
@@ -50,21 +56,15 @@ have the parent lifespan explicitly enter this sub-app's lifespan context.
 """
 
 import fastapi
-from fastapi.responses import JSONResponse
 
+from api_v4.errors import register_exception_handlers
 from api_v4.meta_routes import router as meta_router
-
-
-async def _v4_internal_error_handler(request, exc):
-    """Return the API-wide JSON 500 body for unhandled errors on ``/v4``.
-
-    Without this, the sub-app's default ``ServerErrorMiddleware`` sends a
-    plaintext ``Internal Server Error``, breaking the ``{"detail": ...}`` JSON
-    contract every other route honors (see module docstring). Registered for the
-    base ``Exception`` so it matches the parent ``LoggingMiddleware`` shape; the
-    exception still propagates up to ``LoggingMiddleware`` for logging.
-    """
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+from bible_routes.v4.revision_routes import router as revision_router
+from bible_routes.v4.version_routes import router as version_router
+from security_routes.auth_routes import get_current_user
+from security_routes.v4.group_routes import router as group_router
+from security_routes.v4.token_routes import router as token_router
+from security_routes.v4.user_routes import router as user_router
 
 
 def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
@@ -84,16 +84,43 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
         ),
     )
 
-    # Preserve the JSON 500 contract on the isolated sub-app (see module
-    # docstring): the mount's own ServerErrorMiddleware would otherwise return a
-    # plaintext body for unhandled exceptions.
-    v4_app.add_exception_handler(Exception, _v4_internal_error_handler)
+    # Register the v4 structured-error contract (issue #828): shapes domain
+    # errors, HTTPException, validation errors, and uncaught exceptions into the
+    # {"error": {...}} envelope on this isolated sub-app. See api_v4/errors.py for
+    # the envelope and the re-raise-for-logging behavior of the 500 handler.
+    register_exception_handlers(v4_app)
 
     # Reuse the main app's CORS configuration verbatim (see module docstring).
     configure_cors(v4_app)
 
     # The meta/discovery router; its ``/`` becomes ``/v4/`` once mounted.
-    # Future v4 domain routers (<domain>_routes/v4/*) are included here too.
+    # Left PUBLIC on purpose: the ``/v4/`` discovery root (and the parent app's
+    # bare ``/v4`` health shim that reuses its payload) must answer without a
+    # token, so do NOT attach auth here.
     v4_app.include_router(meta_router)
+
+    # The token router is likewise PUBLIC, and for the same class of reason: it is
+    # the endpoint that *issues* tokens, so attaching the router-level auth
+    # dependency below would be a deadlock (a token would be required to obtain a
+    # token). This is why it is a separate router from /v4/users — router-level
+    # dependencies apply to every route on the router, so a single auth-protected
+    # router could not carry an exempt path. See security_routes/v4/token_routes.py.
+    v4_app.include_router(token_router)
+
+    # Domain routers are auth-protected at the router level (#831): a
+    # ``dependencies=[Depends(get_current_user)]`` here makes "protected by
+    # default" the failure mode, so a handler that forgets its own auth
+    # dependency still cannot ship unauthenticated. Handlers that need the user
+    # re-declare ``current_user: UserModel = Depends(get_current_user)`` — FastAPI
+    # dedupes the dependency, so it runs once per request.
+    for domain_router in (
+        version_router,
+        revision_router,
+        user_router,
+        group_router,
+    ):
+        v4_app.include_router(
+            domain_router, dependencies=[fastapi.Depends(get_current_user)]
+        )
 
     return v4_app

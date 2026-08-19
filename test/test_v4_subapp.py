@@ -142,14 +142,16 @@ def test_v4_root_rejects_wrong_method(client):
 
 def test_v4_unhandled_exception_returns_json_500():
     """A mounted sub-app has its own ServerErrorMiddleware that defaults to a
-    *plaintext* 500 body — diverging from the JSON ``{"detail": ...}`` contract
-    ``LoggingMiddleware`` produces for every other route. #830 registers a
-    handler on the sub-app to restore that contract; this guards it against a
-    regression (e.g. the handler being dropped).
+    *plaintext* 500 body. The v4 error contract (#828) registers handlers on the
+    sub-app that instead emit the structured ``{"error": {...}}`` envelope; this
+    guards, through the full parent app + mount, that an unhandled exception is
+    caught and reshaped rather than leaking a plaintext body or internals.
 
-    A throwing probe route is attached to the mounted sub-app directly, and a
-    client with ``raise_server_exceptions=False`` inspects the wire response the
-    client would actually receive.
+    This exercises the re-raise-for-logging path end to end: the sub-app's
+    ServerErrorMiddleware sends this JSON body and re-raises, and the exception
+    propagates up through the mount to the parent LoggingMiddleware. A client with
+    ``raise_server_exceptions=False`` inspects the wire response it would receive.
+    See test_v4_errors.py for the isolated per-handler assertions.
     """
     mock_app = fastapi.FastAPI()
     app_module.configure(mock_app)
@@ -173,4 +175,8 @@ def test_v4_unhandled_exception_returns_json_500():
 
     assert response.status_code == 500
     assert response.headers["content-type"].startswith("application/json")
-    assert response.json() == {"detail": "Internal server error"}
+    assert response.json() == {
+        "error": {"code": "INTERNAL_ERROR", "message": "An internal error occurred."}
+    }
+    # The raised exception's text must never reach the client.
+    assert "boom" not in response.text
