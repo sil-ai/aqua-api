@@ -16,8 +16,8 @@ services:
       - AQUA_DB=postgresql+asyncpg://dbuser:dbpassword@db:5432/dbname
       # DB connection pool tuning (defaults: pool_size=5, max_overflow=10,
       # timeout=30, recycle=1800, statement_timeout=60000ms). Set
-      # AQUA_DB_POOLCLASS=null to disable pooling entirely (one connection per
-      # request).
+      # AQUA_DB_POOLCLASS=null to disable pooling entirely (one connection
+      # per request).
       - AQUA_DB_POOLCLASS=${AQUA_DB_POOLCLASS:-}
       - AQUA_DB_POOL_SIZE=${AQUA_DB_POOL_SIZE:-}
       - AQUA_DB_MAX_OVERFLOW=${AQUA_DB_MAX_OVERFLOW:-}

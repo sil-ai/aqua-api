@@ -15,17 +15,20 @@ DATABASE_URL = settings.aqua_db
 #
 # Default sizing: with 8 uvicorn workers, steady-state is ~40 conns per
 # container (8 × pool_size 5) and the burst ceiling is 120 (8 × (5 + 10)).
-# The shared RDS instance reports max_connections=829, so even a handful of
-# containers (staging + prod share it) stay well under budget. Tune the env
-# vars if running many more containers or if other consumers (alembic, batch
+# RDS default max_connections is LEAST({DBInstanceClassMemory/9531392},
+# 5000) — roughly 170 on db.t3.small, 340 on db.t3.medium, 675 on
+# db.m5.large — so 120/container leaves comfortable headroom even on
+# small instance classes. NOTE: this budget is per-container — N concurrent
+# App Runner instances multiply it (2 × 120 already exceeds t3.small's ~170),
+# and there is no fleet-wide saturation alert yet. See #747. Tune the env
+# vars if running many containers or if other consumers (alembic, batch
 # jobs, replicas) eat the budget.
 #
-# An earlier 2+3 default (5 conns/worker) starved /v3/textsearch under the
-# overnight batch: a few multi-second searches consumed a worker's whole
-# pool and the next request — even just the auth lookup — timed out at 10s in
-# get_db, surfacing as 500 "QueuePool limit of size 2 overflow 3 reached".
-# Pair the bigger pool with a server-side statement_timeout so one slow query
-# can't pin a pooled connection indefinitely.
+# An earlier 2+3 default starved /v3/textsearch (with comparison) under
+# moderate concurrency: a handful of slow searches consumed a worker's
+# whole pool, and the next request — even just the auth lookup — timed
+# out in get_db. Pair the bigger pool with a server-side statement_timeout
+# so a single slow query can't pin a connection indefinitely.
 # statement_timeout applies per physical connection, so wire it on both engine
 # branches — otherwise AQUA_DB_POOLCLASS=null (NullPool) would drop the runaway-
 # query safety net exactly when it removes the pool ceiling too.
