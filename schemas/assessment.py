@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from .validators import _validate_assessment_kwargs
+from .validators import _coerce_null_bool_to_false, _validate_assessment_kwargs
 
 
 class AssessmentStatus(str, Enum):
@@ -101,6 +101,13 @@ class AssessmentOut(BaseModel):
     is_training: bool = False
     kwargs: Optional[Dict[str, Any]] = None
     attempt_count: int = 0
+    deleted: bool = False
+    updated_at: Optional[datetime.datetime] = None
+
+    @field_validator("deleted", mode="before")
+    @classmethod
+    def _coerce_deleted_null_to_false(cls, value):
+        return _coerce_null_bool_to_false(value)
 
     model_config = {
         "json_schema_extra": {

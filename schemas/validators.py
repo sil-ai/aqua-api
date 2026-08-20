@@ -38,6 +38,16 @@ def _validate_assessment_kwargs(v):
     return v
 
 
+def _coerce_null_bool_to_false(value):
+    """Shared ``mode="before"`` coercion for nullable Boolean columns.
+
+    ``deleted`` on bible_version / bible_revision / assessment is a nullable
+    Boolean; legacy rows carry NULL. Response models coerce NULL to False so
+    listing endpoints don't 500 on Pydantic validation (#887).
+    """
+    return False if value is None else value
+
+
 # Deliberately empty: ``_validate_assessment_kwargs`` is an internal helper
 # (leading underscore) that the pre-split ``models`` monolith never exported via
 # ``from models import *``. Its consumers (``assessment``, ``training``) import

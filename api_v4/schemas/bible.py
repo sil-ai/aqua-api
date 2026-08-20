@@ -1,9 +1,9 @@
-"""v4 Bible-domain request/response schemas (issues #825/#826/#830, epic #842).
+"""v4 Bible-domain request/response schemas (issues #825/#826/#830/#891, epic #842).
 
-The first vertical slice on the v4 surface is Versions. These schemas subclass
-:class:`api_v4.schemas.base.V4BaseModel`, so the wire contract is **snake_case**
-(issue #830): every field's canonical name is its snake_case Python attribute,
-and that is what v4 emits.
+The Bible-domain slices on the v4 surface are Versions and Revisions. These
+schemas subclass :class:`api_v4.schemas.base.V4BaseModel`, so the wire contract is
+**snake_case** (issue #830): every field's canonical name is its snake_case Python
+attribute, and that is what v4 emits.
 
 Legacy v3 spellings that were camelCase (``forwardTranslation``,
 ``backTranslation``, ``machineTranslation``) are accepted on *input* via a
@@ -22,9 +22,31 @@ are load-bearing for the #830 goal:
   document only the *deprecated* spelling — the opposite of #830.
 """
 
+# Aliased because ``RevisionOut`` has a field *named* ``date``. In a class body the
+# value assignment is stored before the annotation is evaluated, so a bare
+# ``date: date | None = None`` resolves ``date`` to the just-stored ``None`` and raises
+# ``TypeError: unsupported operand type(s) for |`` at import time.
+from datetime import date as date_type
+from datetime import datetime
+from typing import Literal
+
 from pydantic import AliasChoices, Field
 
 from api_v4.schemas.base import V4BaseModel
+
+#: Shared by ``VersionCreate`` and ``VersionPatch``. ``back_translation_id`` is a
+#: FK to ``bible_version.id`` but ``forward_translation_id`` is a plain Integer
+#: column (``database/models.py``), so the two adjacent, identically-typed request
+#: fields validate differently: a non-existent ``back_translation`` is rejected
+#: with ``INVALID_REFERENCE`` on flush, while a non-existent
+#: ``forward_translation`` is stored and echoed back. That is why
+#: ``InvalidReference.FIELDS`` omits it. Surfaced as a field description so a
+#: client can tell which of the two is checked without reading the schema.
+FORWARD_TRANSLATION_DESCRIPTION = (
+    "Id of the forward-translation version. Unlike back_translation, this field is "
+    "not backed by a foreign key, so a non-existent id is accepted and stored as "
+    "given rather than rejected."
+)
 
 
 class VersionCreate(V4BaseModel):
@@ -35,8 +57,16 @@ class VersionCreate(V4BaseModel):
     """
 
     name: str
-    iso_language: str
-    iso_script: str
+    # max_length mirrors the varchar(3) / varchar(4) columns, and it is load-bearing
+    # rather than cosmetic: an over-length code reaches Postgres, which raises
+    # StringDataRightTruncation -> SQLAlchemy DataError. DataError is a *sibling* of
+    # IntegrityError, not a subclass, so the FK translation in create_version /
+    # update_version cannot catch it and client input would surface as a catch-all
+    # 500 (#828). Bounding the length here makes it a 422 before the write. The FK
+    # check against the iso reference tables still happens on flush; this only
+    # bounds the length.
+    iso_language: str = Field(max_length=3)
+    iso_script: str = Field(max_length=4)
     abbreviation: str
     rights: str | None = None
     # Legacy v3 camelCase names accepted on input; canonical (and emitted) name
@@ -45,6 +75,7 @@ class VersionCreate(V4BaseModel):
     forward_translation: int | None = Field(
         default=None,
         validation_alias=AliasChoices("forward_translation", "forwardTranslation"),
+        description=FORWARD_TRANSLATION_DESCRIPTION,
     )
     back_translation: int | None = Field(
         default=None,
@@ -77,6 +108,97 @@ class VersionCreate(V4BaseModel):
     }
 
 
+class VersionPatch(V4BaseModel):
+    """Request body for ``PATCH /v4/versions/{id}`` (issue #897).
+
+    The field half of v3's overloaded ``PUT /version``. Every field is optional:
+    only the ones actually present in the request body are written (the service
+    uses ``model_dump(exclude_unset=True)``), so a one-field rename sends one
+    field and everything else keeps its stored value.
+
+    **Closed allowlist** (``extra="forbid"``, the one place v4 diverges from the
+    permissive default the other schemas use). This fixes two v3 defects at once:
+
+    * v3's ``VersionUpdate`` documented ``is_reference`` as patchable but had no
+      such field, so requests setting it were silently ignored. Here the set of
+      patchable fields *is* the wire contract, and an unknown name is a 422 rather
+      than a silent no-op — a misspelled ``naem`` can never look like success.
+    * v3 fed whatever survived ``exclude_unset`` straight into
+      ``.values(**version_data)``, ``id`` included. The identity and lifecycle
+      fields are simply absent here, so ``id`` / ``owner_id`` / ``deleted`` are
+      rejected with 422 instead of written: ``id`` is the URL, ownership is not
+      transferable through a field patch, and soft-delete has its own endpoint
+      (``DELETE /v4/versions/{id}``). Group access likewise moved out, to the
+      ``/v4/versions/{id}/groups/{group_id}`` sub-resource — so no
+      ``add_to_groups`` / ``remove_from_groups`` here either.
+
+    **``str``/``bool`` annotated with a ``None`` default is deliberate** for the
+    fields whose column must not become NULL (a NULL ``name`` would fail
+    ``VersionOut``'s required ``str``). Pydantic does not validate defaults, so the
+    field is *absent-able* while an explicit ``null`` in the body fails validation
+    (422) instead of nulling the column. The genuinely nullable fields
+    (``rights``, ``forward_translation``, ``back_translation``) are typed
+    ``| None`` and *can* be cleared by sending an explicit ``null``.
+
+    One cosmetic consequence, called out so nobody "fixes" it: Pydantic emits a
+    ``default`` for those fields, so the generated schema reads e.g.
+    ``{"type": "string", "default": null}``. It does *not* reach
+    ``/v4/openapi.json`` — FastAPI serializes the whole document with
+    ``exclude_none=True`` (``fastapi/openapi/utils.py``), which strips every null
+    value, this ``default`` included — but anything else that renders the schema
+    (``model_json_schema()``, a contract-export script, a future FastAPI that stops
+    excluding nulls) will show it. Harmless either way: ``default`` is a JSON-Schema
+    *annotation*, never validated against ``type``, so the document stays valid and
+    the ``type`` still tells a client that ``null`` is not an accepted value — which
+    is exactly the behavior.
+    """
+
+    # See the class docstring: annotation excludes None (explicit null -> 422),
+    # default None means "field absent" and is dropped by exclude_unset.
+    name: str = None
+    # max_length as on VersionCreate, for the same reason (an over-length code is a
+    # DataError the IntegrityError handler cannot see -> 500). Pydantic does not
+    # validate defaults, so pairing it with the None default is safe: the field
+    # stays absent-able, an explicit null is still a 422, and only a real
+    # over-length string is rejected.
+    iso_language: str = Field(default=None, max_length=3)
+    iso_script: str = Field(default=None, max_length=4)
+    abbreviation: str = None
+    # Nullable on purpose: sending an explicit null clears these.
+    rights: str | None = None
+    # Legacy v3 camelCase names accepted on input, as on VersionCreate; the
+    # canonical (and emitted) spelling stays snake_case (#830).
+    forward_translation: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("forward_translation", "forwardTranslation"),
+        description=FORWARD_TRANSLATION_DESCRIPTION,
+    )
+    back_translation: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("back_translation", "backTranslation"),
+    )
+    machine_translation: bool = Field(
+        default=None,
+        validation_alias=AliasChoices("machine_translation", "machineTranslation"),
+    )
+    is_reference: bool = None
+    transcribed_audio: bool = None
+
+    model_config = {
+        **V4BaseModel.model_config,
+        # The allowlist is closed: unknown or non-patchable fields (id, owner_id,
+        # deleted, add_to_groups, ...) are a 422, never silently dropped. See the
+        # class docstring.
+        "extra": "forbid",
+        "json_schema_extra": {
+            "example": {
+                "name": "English King James Version (revised)",
+                "rights": "Public Domain",
+            }
+        },
+    }
+
+
 class VersionOut(V4BaseModel):
     """Response body for the ``/v4/versions`` endpoints.
 
@@ -101,3 +223,199 @@ class VersionOut(V4BaseModel):
     owner_id: int | None = None
     group_ids: list[int] = Field(default_factory=list)
     deleted: bool = False
+    # Delta-sync watermark (#887/#897): maintained by the BEFORE UPDATE trigger on
+    # bible_version, so it moves on every write path including soft-delete. Optional
+    # on the wire because the column is only NOT NULL going forward — a legacy row
+    # from before the column existed may still hold NULL, the same reason _to_out
+    # coerces the nullable booleans with bool(...). Clients feed the maximum value
+    # they have seen back as ``updated_since``; see ``GET /v4/versions``.
+    updated_at: datetime | None = None
+
+
+# --- Revisions (issue #891) --------------------------------------------------
+
+#: Maximum size of an upload's *decoded* verse text. Mirrors v3's
+#: ``MAX_UPLOAD_BYTES`` (50MB) so the JSON upload is not a way to push a payload
+#: v3's multipart route would have refused. A full-Bible plaintext is ~5MB, so this
+#: is ~10x headroom.
+MAX_TEXT_BYTES = 50 * 1024 * 1024
+#: The cap actually enforced, expressed in base64 characters: base64 encodes 3 bytes
+#: as 4 characters, so a string this long cannot decode to more than
+#: :data:`MAX_TEXT_BYTES`. Enforcing it on the *encoded* string means one bound, on
+#: the value Pydantic already has, instead of a second check after decoding.
+#:
+#: Note what this does and does not buy. It bounds the decode, the parse, and the
+#: verse INSERTs. It does **not** bound the read: FastAPI reads and parses the whole
+#: JSON body *before* dependencies or handler code run, so v3's streaming
+#: pre-buffer rejection (#767, 413 before the body is consumed) has no route-layer
+#: equivalent on a JSON endpoint. A true pre-buffer cap belongs in front of the app
+#: (proxy / App Runner request-body limit) and is deliberately not reimplemented here.
+MAX_CONTENT_BASE64_CHARS = -(-MAX_TEXT_BYTES // 3) * 4
+
+
+class InlineText(V4BaseModel):
+    """Verse text carried inline in the request body, base64-encoded.
+
+    The ``text`` of a ``POST /v4/revisions`` (issue #826: JSON-only bodies — no
+    multipart). ``type`` is a discriminator that exists from day one so the *other*
+    source named in migration-guide §6 — an S3 reference, AERO's ``AudioSource``
+    pattern — can be added later as another member of a discriminated union. That is
+    an additive change to the request schema; a client sending ``type: "inline"``
+    today keeps working unchanged. Adding the alternative *after* shipping a bare
+    object with no discriminator would not have been additive, which is the whole
+    reason the field is here before there is anything to discriminate against.
+
+    Only ``inline`` exists today: nothing in this repository can fetch from S3 (no
+    client, no bucket configuration), so declaring an ``s3`` variant would document
+    a source the server would then fail to honor.
+    """
+
+    type: Literal["inline"] = "inline"
+    content_base64: str = Field(
+        max_length=MAX_CONTENT_BASE64_CHARS,
+        description=(
+            "Base64-encoded, vref-aligned UTF-8 plaintext: one line per verse "
+            "reference in fixtures/vref.txt (41,899 lines), blank for a verse with "
+            "no text. Line-wrapped base64 is accepted (whitespace is ignored on "
+            "decode, but counts toward the length cap). The decoded text is capped "
+            f"at {MAX_TEXT_BYTES} bytes."
+        ),
+    )
+
+
+class RevisionCreate(V4BaseModel):
+    """Request body for ``POST /v4/revisions`` (issues #826/#891).
+
+    One JSON body, replacing v3's multipart ``file=`` upload plus its
+    ``RevisionIn = Depends()`` form/query fields. ``date`` is not a request field: it
+    is stamped server-side, exactly as v3 does.
+    """
+
+    # Canonical name is version_id — it matches the ``version_id`` list filter and
+    # v3's own *request* field. v3's *response* spelled the same thing
+    # ``bible_version_id`` (the ORM column name); that spelling is accepted here as
+    # an input alias so a client migrating off v3's response shape can echo it back.
+    version_id: int = Field(
+        validation_alias=AliasChoices("version_id", "bible_version_id"),
+    )
+    name: str | None = None
+    published: bool = False
+    # FK to bible_revision.id (not bible_version.id — the back translation of a
+    # revision is another revision), so a non-existent id is INVALID_REFERENCE on
+    # flush. Legacy camelCase accepted on input, snake_case emitted (#830).
+    back_translation: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("back_translation", "backTranslation"),
+    )
+    machine_translation: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("machine_translation", "machineTranslation"),
+    )
+    # Required: a revision exists to hold verse text, and v3 equally required the
+    # file. There is no create-empty-then-upload flow to preserve.
+    text: InlineText
+
+    model_config = {
+        **V4BaseModel.model_config,
+        "json_schema_extra": {
+            "example": {
+                "version_id": 1,
+                "name": "June 2024",
+                "published": False,
+                "machine_translation": False,
+                "text": {
+                    "type": "inline",
+                    # base64("In the beginning...\n\n") — a 2-line stand-in; a real
+                    # body carries all 41,899 vref lines.
+                    "content_base64": "SW4gdGhlIGJlZ2lubmluZy4uLgoK",
+                },
+            }
+        },
+    }
+
+
+class RevisionPatch(V4BaseModel):
+    """Request body for ``PATCH /v4/revisions/{id}`` (issue #891).
+
+    Replaces v3's ``PUT /revision?id=&new_name=`` — a rename driven entirely by
+    query parameters. The body-shaped version generalizes for free: the same closed
+    allowlist that makes ``{"name": ...}`` work also covers the other three mutable
+    fields, so toggling ``published`` no longer needs its own endpoint.
+
+    **Closed allowlist** (``extra="forbid"``), for the reasons spelled out on
+    :class:`VersionPatch`: an unknown or non-patchable field is a 422, never a silent
+    no-op. Two fields are deliberately absent rather than merely unmentioned:
+
+    * ``version_id`` — reparenting a revision would move it into a different
+      authorization scope (read access is granted per *version*), so it is not a
+      field edit. It has no endpoint at all today.
+    * ``deleted`` — soft-delete has its own endpoint (``DELETE /v4/revisions/{id}``),
+      and there is no un-delete.
+
+    ``date`` is likewise absent: it records when the revision was uploaded.
+
+    The ``bool`` fields are annotated without ``None`` while defaulting to ``None``
+    — the :class:`VersionPatch` idiom: absent-able (``exclude_unset`` drops them),
+    but an explicit ``null`` in the body is a 422 rather than a NULLed column.
+    ``name`` and ``back_translation`` *are* nullable on the wire, matching
+    ``RevisionCreate``, so an explicit ``null`` clears them.
+    """
+
+    name: str | None = None
+    published: bool = None
+    back_translation: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("back_translation", "backTranslation"),
+    )
+    machine_translation: bool = Field(
+        default=None,
+        validation_alias=AliasChoices("machine_translation", "machineTranslation"),
+    )
+
+    model_config = {
+        **V4BaseModel.model_config,
+        "extra": "forbid",
+        "json_schema_extra": {"example": {"name": "June 2024 (revised)"}},
+    }
+
+
+class RevisionOut(V4BaseModel):
+    """Response body for the ``/v4/revisions`` endpoints.
+
+    Plain snake_case fields, no aliases — and, per #891, built **explicitly** from
+    named ORM columns by ``revision_routes._to_out`` rather than by splatting
+    ``revision.__dict__`` the way v3's ``create_revision_out`` does. v3's splat does
+    not leak today only because this field set is closed and Pydantic ignores extras;
+    it would start leaking the instant anyone set ``extra="allow"`` (the fragility
+    behind #859). Naming the columns removes the question.
+
+    ``version_abbreviation`` and ``iso_language`` are denormalized from the parent
+    version, as in v3, so listing revisions does not require a second round of
+    ``GET /v4/versions`` calls to label them.
+
+    Two fields v3 emits are deliberately gone:
+
+    * ``is_reference`` — a v3 *phantom*. ``RevisionOut_v3`` declares it, but
+      ``bible_revision`` has no such column (``is_reference`` belongs to
+      ``bible_version``), so v3's splat never populates it and every v3 revision
+      reports ``is_reference: false`` regardless of its version. Emitting a constant
+      false is worse than not emitting it; a client that wants the flag reads it from
+      the version, where it actually lives.
+    * ``updated_at`` — the delta-sync watermark, held back pending the #899 decision
+      on whether the watermark stays a timestamp. See ``GET /v4/revisions``.
+    """
+
+    id: int
+    version_id: int
+    name: str | None = None
+    # The column is DateTime; ``_to_out`` narrows it to a date rather than letting
+    # Pydantic coerce, because coercion *raises* on a datetime with a non-zero time
+    # component and legacy rows are not guaranteed to be midnight. v3 emits a date
+    # here too, so the wire shape is unchanged.
+    date: date_type | None = None
+    published: bool = False
+    back_translation: int | None = None
+    machine_translation: bool = False
+    deleted: bool = False
+    version_abbreviation: str | None = None
+    iso_language: str | None = None
