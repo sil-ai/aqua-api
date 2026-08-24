@@ -36,7 +36,9 @@ PREFIX = "/v4"
 #: a *future* column added to UserDB, not only today's known leak.
 USER_FIELDS = {"id", "username", "email", "is_admin"}
 GROUP_FIELDS = {"id", "name", "description"}
-PAGE_KEYS = {"items", "total", "limit", "offset"}
+# next_updated_since (#899) is on every V4Page; null here, since the users list
+# does not support updated_since.
+PAGE_KEYS = {"items", "total", "limit", "offset", "next_updated_since"}
 
 
 def _auth(token):

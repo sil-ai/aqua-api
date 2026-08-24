@@ -23,7 +23,10 @@ from api_v4.app import create_v4_app
 from api_v4.pagination import DEFAULT_LIMIT, MAX_LIMIT, PaginationParams, V4Page
 from api_v4.schemas.base import V4BaseModel
 
-ENVELOPE_KEYS = {"items", "total", "limit", "offset"}
+# next_updated_since is part of the one shared envelope (#899): it carries the
+# delta watermark on lists that support updated_since and is null on the rest,
+# rather than a delta response having a different shape from a full one.
+ENVELOPE_KEYS = {"items", "total", "limit", "offset", "next_updated_since"}
 
 # A distinctive total that can never equal len(items) below, so a test that the
 # envelope's `total` is the full-result count (not the page length) can't pass by
