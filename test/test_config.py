@@ -81,7 +81,7 @@ _POOL_FIELDS = [
     ("AQUA_DB_MAX_OVERFLOW", "aqua_db_max_overflow", 10),
     ("AQUA_DB_POOL_TIMEOUT", "aqua_db_pool_timeout", 30),
     ("AQUA_DB_POOL_RECYCLE", "aqua_db_pool_recycle", 1800),
-    ("AQUA_DB_STATEMENT_TIMEOUT_MS", "aqua_db_statement_timeout_ms", 60000),
+    ("AQUA_DB_STATEMENT_TIMEOUT_MS", "aqua_db_statement_timeout_ms", 60_000),
 ]
 
 
@@ -111,6 +111,55 @@ def test_valid_pool_config_coerced_to_int(
     monkeypatch.setenv("AQUA_DB", _VALID_DB)
     monkeypatch.setenv(env_name, "7")
     assert getattr(settings_cls(), field_name) == 7
+
+
+# (env var, an out-of-range value that must fail the field's lower bound).
+# pool_recycle permits -1 (SQLAlchemy "disable") and statement_timeout permits
+# 0 (Postgres "no limit"), so their rejection cases sit below those sentinels.
+_OUT_OF_RANGE = [
+    ("AQUA_DB_POOL_SIZE", "0"),
+    ("AQUA_DB_POOL_SIZE", "-1"),
+    ("AQUA_DB_MAX_OVERFLOW", "-1"),
+    ("AQUA_DB_POOL_TIMEOUT", "0"),
+    ("AQUA_DB_POOL_RECYCLE", "-2"),
+    ("AQUA_DB_STATEMENT_TIMEOUT_MS", "-1"),
+]
+
+
+@pytest.mark.parametrize("env_name,value", _OUT_OF_RANGE)
+def test_out_of_range_pool_config_rejected_at_boot(
+    settings_cls, monkeypatch, env_name, value
+):
+    """A negative/zero pool value fails fast at boot, not later in the engine.
+
+    Preserves this module's fail-loud contract: a typo'd value must raise at
+    Settings() construction rather than surfacing as an opaque SQLAlchemy or
+    asyncpg error when the connection pool is first used.
+    """
+    monkeypatch.setenv("AQUA_DB", _VALID_DB)
+    monkeypatch.setenv(env_name, value)
+    with pytest.raises(ValidationError):
+        settings_cls()
+
+
+# (env var, field name, sentinel value) that must be ACCEPTED despite looking
+# out-of-range: pool_recycle=-1 disables recycling (SQLAlchemy), and
+# statement_timeout=0 means "no limit" (Postgres). Locks these in so a future
+# tightening of the bound (ge=-1 -> ge=0, or ge=0 -> gt=0) fails loudly here.
+_SENTINELS = [
+    ("AQUA_DB_POOL_RECYCLE", "aqua_db_pool_recycle", -1),
+    ("AQUA_DB_STATEMENT_TIMEOUT_MS", "aqua_db_statement_timeout_ms", 0),
+]
+
+
+@pytest.mark.parametrize("env_name,field_name,value", _SENTINELS)
+def test_sentinel_pool_config_accepted_at_boot(
+    settings_cls, monkeypatch, env_name, field_name, value
+):
+    """The disable/no-limit sentinels construct cleanly and round-trip."""
+    monkeypatch.setenv("AQUA_DB", _VALID_DB)
+    monkeypatch.setenv(env_name, str(value))
+    assert getattr(settings_cls(), field_name) == value
 
 
 @pytest.mark.parametrize(
