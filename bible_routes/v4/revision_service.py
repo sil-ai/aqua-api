@@ -70,7 +70,7 @@ Two v3 defects in the write paths, not carried over:
 
 import base64
 import binascii
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -85,6 +85,7 @@ from database.models import (
     UserDB,
     UserGroup,
 )
+from utils.datetime_utils import as_naive_utc
 
 
 class RevisionServiceError(Exception):
@@ -153,7 +154,9 @@ class InvalidVerseText(RevisionServiceError):
         super().__init__(message)
 
 
-def _visible_revisions_query(user: UserDB, *, include_deleted: bool):
+def _visible_revisions_query(
+    user: UserDB, *, include_deleted: bool, updated_since: datetime | None = None
+):
     """Base ``SELECT BibleRevision`` scoped to what ``user`` may see.
 
     No ``limit``/``offset``/``order_by`` — callers add those (and the count query wraps
@@ -166,7 +169,20 @@ def _visible_revisions_query(user: UserDB, *, include_deleted: bool):
     rows may hold NULL, which the response layer coerces to ``False`` — so a NULL row
     must stay *visible* rather than silently vanish from listings (the same v4
     refinement ``version_service`` documents).
+
+    ``updated_since`` switches to delta mode (#899, mirroring
+    :func:`version_service._visible_versions_query`): only revisions written after that
+    instant come back, and it *replaces* the deleted filter rather than combining with
+    it — both halves of it, so a mirror also learns when a revision's **parent** version
+    was soft-deleted. Scoping is untouched: a non-admin still only sees revisions
+    reachable through their groups. Naive-UTC normalization happens here because it
+    exists for the timezone-naive ``TIMESTAMP`` column this comparison targets (asyncpg
+    refuses an aware datetime against a naive one).
     """
+    delta = updated_since is not None
+    if delta:
+        updated_since = as_naive_utc(updated_since)
+
     stmt = select(BibleRevision).join(
         BibleVersion, BibleVersion.id == BibleRevision.bible_version_id
     )
@@ -187,6 +203,10 @@ def _visible_revisions_query(user: UserDB, *, include_deleted: bool):
                 ),
             )
         )
+
+    if delta:
+        # Delta mode replaces the deleted filter entirely — see the docstring.
+        return stmt.where(BibleRevision.updated_at > updated_since)
 
     if not include_deleted:
         # Both halves: a soft-deleted revision, and any revision of a soft-deleted
@@ -223,8 +243,10 @@ async def list_revisions(
     offset: int,
     version_id: int | None = None,
     include_deleted: bool = False,
-) -> tuple[list[BibleRevision], int]:
-    """Return one page of revisions the user may see, plus the total match count.
+    updated_since: datetime | None = None,
+) -> tuple[list[BibleRevision], int, datetime | None]:
+    """Return one page of revisions the user may see, the total match count, and the
+    maximum ``updated_at`` across every matching row.
 
     ``version_id`` narrows the page to one version's revisions. It is validated
     *before* being used as a filter — an unknown, inaccessible or soft-deleted version
@@ -244,23 +266,46 @@ async def list_revisions(
     pagination envelope), computed from the same scoped query as the page. They are
     still two statements, so a concurrent write between them can cause the usual (rare)
     offset-pagination drift between ``total`` and ``len(items)``.
+
+    ``updated_since`` narrows the page to the delta window and takes precedence over
+    ``include_deleted`` (see :func:`_visible_revisions_query`). The third return value
+    is the raw input to the delta watermark — ``max(updated_at)`` over the whole
+    matching set, aggregated in the *same* statement as ``total``, never over the
+    returned page: rows are ordered by ``id``, so a page's maximum is not the window's.
+    The router laps it via :func:`api_v4.delta.next_watermark`, which owns the lap so
+    versions and revisions cannot drift apart. ``None`` when nothing matched.
+
+    Identical in shape to :func:`version_service.list_versions` on purpose — a mirror
+    walks either delta the same way, which is the point of #899 being a *contract*
+    rather than a per-endpoint choice.
+
+    One limit this feed shares with versions and cannot express: granting a group access
+    to a version makes that version's revisions newly visible, but their own
+    ``updated_at`` does not move (the grant touches the parent version row, not its
+    children), so a revisions delta will not carry them. That is what the contract's
+    required periodic full reconcile is for.
     """
     if version_id is not None:
         await _require_visible_version(db, user, version_id)
 
     stmt = _visible_revisions_query(
-        user, include_deleted=include_deleted and user.is_admin
+        user,
+        include_deleted=include_deleted and user.is_admin,
+        updated_since=updated_since,
     )
     if version_id is not None:
         stmt = stmt.where(BibleRevision.bible_version_id == version_id)
 
-    total = (
-        await db.execute(select(func.count()).select_from(stmt.subquery()))
-    ).scalar_one()
+    scoped = stmt.subquery()
+    total, max_updated_at = (
+        await db.execute(
+            select(func.count(), func.max(scoped.c.updated_at)).select_from(scoped)
+        )
+    ).one()
     result = await db.execute(
         stmt.order_by(BibleRevision.id).limit(limit).offset(offset)
     )
-    return list(result.scalars().all()), total
+    return list(result.scalars().all()), total, max_updated_at
 
 
 async def get_revision(

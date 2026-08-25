@@ -30,7 +30,8 @@ Authorization semantics preserved from v3:
   ``GET /version`` — only rows whose ``updated_at`` is strictly greater come back,
   *including* soft-deleted ones (a soft-delete is an update, and a mirror must
   learn about it), for admins and non-admins alike, scoped as usual. It therefore
-  takes precedence over ``include_deleted``.
+  takes precedence over ``include_deleted``. What the *next* watermark is, and why the
+  server rather than the client computes it, is :mod:`api_v4.delta` (#899).
 * **Create**: the version is owned by the caller and added only to groups the
   caller belongs to — with no admin bypass, exactly as v3. Group membership is
   validated *before* the row is inserted (v4 refinement: v3 inserted first and
@@ -84,8 +85,8 @@ transaction as the access write.
   access. Once the access row is gone the version is outside that caller's scope,
   so no delta can carry it — exactly as a mirror cannot see rows it never had
   access to. Revocation is observable to admins and to groups that still hold
-  access; everyone else needs the periodic full reconcile that v3's ``updated_since``
-  docstring already prescribes as the safety net.
+  access; everyone else needs the periodic full reconcile that :mod:`api_v4.delta`
+  makes a *required* part of the watermark contract (#899) rather than a suggestion.
 """
 
 from collections import defaultdict
@@ -223,8 +224,9 @@ async def list_versions(
     offset: int,
     include_deleted: bool,
     updated_since: datetime | None = None,
-) -> tuple[list[BibleVersion], int]:
-    """Return one page of versions the user may see, plus the total match count.
+) -> tuple[list[BibleVersion], int, datetime | None]:
+    """Return one page of versions the user may see, the total match count, and the
+    maximum ``updated_at`` across every matching row.
 
     ``total`` is the count of *all* matching rows ignoring ``limit``/``offset``
     (for the pagination envelope), computed from the *same* scoped query as the
@@ -232,14 +234,26 @@ async def list_versions(
     statements, so a concurrent insert/delete between them can cause the usual
     (rare) offset-pagination drift between ``total`` and ``len(items)``.
 
-    ``updated_since`` narrows the page to the delta window (see
-    :func:`_visible_versions_query`); everything else — scoping, ordering by ``id``,
-    pagination — is unchanged, so a mirror walks a delta exactly like a full list.
+    The third return value is the delta watermark's raw input (#899). It is
+    aggregated over the whole matching set in the *same* statement as ``total`` —
+    one extra column, no extra round trip — because a watermark taken from the
+    returned page would be wrong: rows are ordered by ``id``, so a page's maximum
+    ``updated_at`` is not the window's, and a paginating mirror that advanced on it
+    would skip the rows with lower ids and later timestamps. Computing it
+    server-side is what removes that footgun from every client. ``None`` when
+    nothing matched. The router turns it into ``next_updated_since`` via
+    :func:`api_v4.delta.next_watermark`, which applies the safety lap; this
+    function deliberately does *not* lap it, so the lap lives in exactly one place.
+
     Ordering stays ``id`` rather than ``updated_at`` because ``id`` is unique and
-    therefore a stable paging key; the consequence for a *paginating* mirror is that
-    its next watermark is the maximum ``updated_at`` across **all** pages of the
-    delta, so it must finish walking before advancing (taking the max of one page
-    would skip the rows with lower ids and later timestamps).
+    therefore a stable paging key.
+
+    ``updated_since`` narrows the page to the delta window (see
+    :func:`_visible_versions_query`); everything else — scoping, ordering,
+    pagination — is unchanged, so a mirror walks a delta exactly like a full list.
+    The watermark is returned for a full list too, so a mirror's *first* (full)
+    sync gets its starting watermark from the same place as every later poll rather
+    than deriving one itself at the moment it is easiest to get wrong.
     """
     effective_include_deleted = include_deleted and user.is_admin
     stmt = _visible_versions_query(
@@ -248,13 +262,16 @@ async def list_versions(
         updated_since=updated_since,
     )
 
-    total = (
-        await db.execute(select(func.count()).select_from(stmt.subquery()))
-    ).scalar_one()
+    scoped = stmt.subquery()
+    total, max_updated_at = (
+        await db.execute(
+            select(func.count(), func.max(scoped.c.updated_at)).select_from(scoped)
+        )
+    ).one()
     result = await db.execute(
         stmt.order_by(BibleVersion.id).limit(limit).offset(offset)
     )
-    return list(result.scalars().all()), total
+    return list(result.scalars().all()), total, max_updated_at
 
 
 async def get_version(db: AsyncSession, user: UserDB, version_id: int) -> BibleVersion:

@@ -393,7 +393,7 @@ class RevisionOut(V4BaseModel):
     version, as in v3, so listing revisions does not require a second round of
     ``GET /v4/versions`` calls to label them.
 
-    Two fields v3 emits are deliberately gone:
+    One field v3 emits is deliberately gone:
 
     * ``is_reference`` — a v3 *phantom*. ``RevisionOut_v3`` declares it, but
       ``bible_revision`` has no such column (``is_reference`` belongs to
@@ -401,8 +401,8 @@ class RevisionOut(V4BaseModel):
       reports ``is_reference: false`` regardless of its version. Emitting a constant
       false is worse than not emitting it; a client that wants the flag reads it from
       the version, where it actually lives.
-    * ``updated_at`` — the delta-sync watermark, held back pending the #899 decision
-      on whether the watermark stays a timestamp. See ``GET /v4/revisions``.
+    Only one v3 field is deliberately gone; ``updated_at`` arrived with the #899
+    watermark contract and is now emitted here, same as on ``VersionOut``.
     """
 
     id: int
@@ -419,3 +419,8 @@ class RevisionOut(V4BaseModel):
     deleted: bool = False
     version_abbreviation: str | None = None
     iso_language: str | None = None
+    # Nullable, and NOT coerced: NULL is meaningful (a legacy row predating the
+    # column), and a mirror must be able to tell "never stamped" from a real
+    # timestamp — max() skips NULLs, so such a row simply cannot advance a
+    # watermark. Mirrors VersionOut.updated_at.
+    updated_at: datetime | None = None
