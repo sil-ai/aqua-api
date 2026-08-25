@@ -59,6 +59,7 @@ import fastapi
 
 from api_v4.errors import register_exception_handlers
 from api_v4.meta_routes import router as meta_router
+from assessment_routes.v4.assessment_routes import router as assessment_router
 from bible_routes.v4.revision_routes import router as revision_router
 from bible_routes.v4.version_routes import router as version_router
 from security_routes.auth_routes import get_current_user
@@ -116,6 +117,7 @@ def create_v4_app(*, configure_cors) -> fastapi.FastAPI:
     for domain_router in (
         version_router,
         revision_router,
+        assessment_router,
         user_router,
         group_router,
     ):
