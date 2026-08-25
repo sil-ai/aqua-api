@@ -43,6 +43,7 @@ from typing import get_args
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from api_v4.schemas.assessment import AssessmentOptions, AssessmentOptionsBase
 from assessment_routes.v3 import assessment_routes as v3_assessment_routes
@@ -569,6 +570,73 @@ class TestAgentCritiqueOptions:
             ),
         )
         assert resp.status_code == 422, resp.text
+
+    @pytest.mark.parametrize(
+        "options",
+        [
+            {"first_vref": ""},
+            {"first_vref": "   "},
+            {"first_vref": "GEN 1:1", "last_vref": ""},
+            {"first_vref": "GEN 1:1", "last_vref": "   "},
+            {"first_vref": "GEN 1:1", "response_language": ""},
+            {"first_vref": "GEN 1:1", "response_language": "   "},
+        ],
+        ids=[
+            "empty-first",
+            "blank-first",
+            "empty-last",
+            "blank-last",
+            "empty-language",
+            "blank-language",
+        ],
+    )
+    def test_blank_string_options_rejected(
+        self, client, regular_token1, db_session, group1_version, options
+    ):
+        """A blank vref is a dedup escape, not just untidy input.
+
+        An empty ``first_vref`` is *stored* as ``{"first_vref": ""}`` but reads as
+        absent to the create-time dedup, which probes falsy values with
+        ``NOT (kwargs ? 'first_vref')`` — so the stored row has the key, an identical
+        resubmit looks for rows without it, the two never match, and the repeat
+        dispatches a second GPU run instead of returning 409. Rejected at the edge in
+        both spellings; see ``AgentCritiqueOptions._reject_blank``.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        resp = _submit(
+            client,
+            regular_token1,
+            _body(
+                revision_id,
+                {"type": "agent-critique", "reference_id": reference_id, **options},
+            ),
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_a_blank_vref_never_reaches_storage(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The rejection happens before any row is written or any runner spawned."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        with patch(V4_DISPATCH, new_callable=AsyncMock) as dispatch:
+            resp = client.post(
+                f"{PREFIX}/assessments",
+                json=_body(
+                    revision_id,
+                    {
+                        "type": "agent-critique",
+                        "reference_id": reference_id,
+                        "first_vref": "",
+                    },
+                ),
+                headers=_auth(regular_token1),
+            )
+        assert resp.status_code == 422, resp.text
+        dispatch.assert_not_awaited()
+        db_session.commit()
+        assert (
+            db_session.query(Assessment).filter_by(revision_id=revision_id).count() == 0
+        )
 
     def test_option_belonging_to_another_type_rejected(
         self, client, regular_token1, db_session, group1_version
@@ -1328,6 +1396,44 @@ class TestRunnerPayload:
         config, _db_url = spawn.await_args.args
         assert config["source_version_id"] is None
         assert config["reference_id"] is None
+
+    def test_row_that_left_queued_is_409_not_a_second_spawn(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The #780 ``FOR UPDATE`` guard, surfaced through the v4 error envelope.
+
+        ``call_assessment_runner`` refuses to re-spawn a row that is no longer
+        ``queued`` and raises a 409 whose ``detail`` is a *dict*. This is the one
+        create-path error whose mapping reads fields back out of a frozen v3
+        exception payload, so it is pinned here: if v3's detail shape ever shifts,
+        this fails rather than quietly reporting ``status: None``.
+        """
+        revision_id, _ = _pair(db_session, group1_version)
+        with patch(V4_DISPATCH, new_callable=AsyncMock) as dispatch:
+            dispatch.side_effect = HTTPException(
+                status_code=409,
+                detail={
+                    "detail": "Assessment in progress",
+                    "existing_id": 4242,
+                    "status": "running",
+                    "requested_time": None,
+                },
+            )
+            resp = client.post(
+                f"{PREFIX}/assessments",
+                json=_body(revision_id, {"type": "tfidf"}),
+                headers=_auth(regular_token1),
+            )
+        assert resp.status_code == 409, resp.text
+        assert _error_code(resp) == "ASSESSMENT_ALREADY_DISPATCHED"
+        details = resp.json()["error"]["details"]
+        assert details["status"] == "running"
+        # The id reported is the row this request created, not v3's `existing_id`.
+        db_session.commit()
+        row = db_session.query(Assessment).filter_by(revision_id=revision_id).one()
+        assert details["assessment_id"] == row.id
+        # Refused, not dispatched twice, and left for whatever advanced it.
+        assert row.status == "queued"
 
     def test_runner_failure_is_503_and_marks_the_row_failed(
         self, client, regular_token1, db_session, group1_version

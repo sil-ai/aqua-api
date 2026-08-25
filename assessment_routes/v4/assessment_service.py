@@ -602,6 +602,15 @@ async def create_assessment(db: AsyncSession, user: UserDB, data) -> Assessment:
         await db.rollback()
         raise
     await db.refresh(assessment)
+    # Read the id out now, while the instance is live. Every failure path below rolls
+    # the session back, and `rollback()` expires an instance's attributes
+    # unconditionally — `expire_on_commit=False` (database/dependencies.py) suppresses
+    # that on *commit* only. Reading `assessment.id` after a rollback therefore fires a
+    # lazy refresh, and a lazy refresh is IO from a plain attribute access, which under
+    # asyncpg raises MissingGreenlet. That would turn every one of these domain errors
+    # into an opaque 500 with no error envelope, in exactly the paths that exist to
+    # report a specific failure.
+    assessment_id = assessment.id
 
     try:
         await _dispatch(
@@ -620,15 +629,15 @@ async def create_assessment(db: AsyncSession, user: UserDB, data) -> Assessment:
         if exc.status_code == status.HTTP_409_CONFLICT:
             detail = exc.detail if isinstance(exc.detail, dict) else {}
             raise AssessmentAlreadyDispatched(
-                assessment.id, detail.get("status")
+                assessment_id, detail.get("status")
             ) from exc
-        raise AssessmentDispatchFailed(assessment.id) from exc
+        raise AssessmentDispatchFailed(assessment_id) from exc
     except Exception as exc:
         logger.error(
             "Modal runner dispatch failed",
             exc_info=True,
             extra={
-                "assessment_id": assessment.id,
+                "assessment_id": assessment_id,
                 "modal_env": settings.modal_env,
                 "error_type": type(exc).__name__,
             },
@@ -645,10 +654,10 @@ async def create_assessment(db: AsyncSession, user: UserDB, data) -> Assessment:
         except SQLAlchemyError as cleanup_err:
             await db.rollback()
             logger.error(
-                f"Failed to mark assessment {assessment.id} as failed "
+                f"Failed to mark assessment {assessment_id} as failed "
                 f"after runner error: {cleanup_err}"
             )
-        raise AssessmentDispatchFailed(assessment.id) from exc
+        raise AssessmentDispatchFailed(assessment_id) from exc
 
     # Commit the queued -> running transition _dispatch performed under FOR UPDATE.
     await db.commit()

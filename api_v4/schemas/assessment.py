@@ -61,7 +61,7 @@ overlays the stored key; see that module for the precedence rules.
 
 from typing import Annotated, Literal, Union
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from api_v4.schemas.base import V4BaseModel
 
@@ -174,11 +174,13 @@ class AgentCritiqueOptions(ReferencedAssessmentOptions):
 
     type: Literal["agent-critique"]
     first_vref: str = Field(
+        min_length=1,
         max_length=VREF_MAX_LENGTH,
         description="First verse of the range to critique, e.g. 'GEN 1:1'.",
     )
     last_vref: str | None = Field(
         default=None,
+        min_length=1,
         max_length=VREF_MAX_LENGTH,
         description=(
             "Last verse of the range. Omit it to critique through to the end of the "
@@ -188,6 +190,7 @@ class AgentCritiqueOptions(ReferencedAssessmentOptions):
     )
     response_language: str | None = Field(
         default=None,
+        min_length=1,
         max_length=RESPONSE_LANGUAGE_MAX_LENGTH,
         description="Language the agent should write its critique in.",
     )
@@ -201,6 +204,29 @@ class AgentCritiqueOptions(ReferencedAssessmentOptions):
             "than a plain boolean."
         ),
     )
+
+    @field_validator("first_vref", "last_vref", "response_language")
+    @classmethod
+    def _reject_blank(cls, value: str | None) -> str | None:
+        """Reject a value that is empty or only whitespace.
+
+        ``min_length=1`` alone would let ``"   "`` through, and both spellings are
+        load-bearing rather than cosmetic. An empty ``first_vref`` is stored as
+        ``{"first_vref": ""}`` but reads as *absent* to the create-time dedup, which
+        probes falsy values with ``NOT (kwargs ? 'first_vref')``
+        (``assessment_service._completed_duplicate_query``): the stored row has the
+        key, the repeat request looks for rows without it, so the two never match and
+        an identical resubmit dispatches a second GPU run instead of returning 409.
+        A whitespace-only value dedups correctly but is equally meaningless to the
+        runner, so both are refused at the edge.
+
+        The value is checked, never stripped: ``Assessment.kwargs`` must stay
+        byte-identical to what v3 would have stored for the same request (see the
+        module docstring), and silently rewriting a caller's value would break that.
+        """
+        if value is not None and not value.strip():
+            raise ValueError("must not be empty or whitespace-only")
+        return value
 
     def stored_options(self) -> dict:
         """The vref range and response language; ``transcribed_audio`` is *not* here.
