@@ -631,6 +631,26 @@ async def create_assessment(db: AsyncSession, user: UserDB, data) -> Assessment:
             raise AssessmentAlreadyDispatched(
                 assessment_id, detail.get("status")
             ) from exc
+        # Any other HTTPException is unexpected here. In practice that means
+        # call_assessment_runner's 404 — the row this request committed moments ago is
+        # no longer in the table — which nothing in the codebase can currently cause:
+        # assessment deletion is soft (`deleted = True`) and the guard selects by
+        # primary key without filtering on it, so only an out-of-band DELETE lands
+        # here. Neither side logs it (v3 raises that 404 without a log of its own), so
+        # log it here: the reported 503 is otherwise indistinguishable from an ordinary
+        # runner outage, in the one case where it means rows are vanishing from under
+        # live requests. Still reported as ASSESSMENT_DISPATCH_FAILED — a 503 invites
+        # the retry that would recreate the row, and this module's contract is that no
+        # v3-shaped exception reaches the v4 error envelope.
+        logger.error(
+            "Unexpected HTTPException from the assessment runner",
+            exc_info=True,
+            extra={
+                "assessment_id": assessment_id,
+                "status_code": exc.status_code,
+                "modal_env": settings.modal_env,
+            },
+        )
         raise AssessmentDispatchFailed(assessment_id) from exc
     except Exception as exc:
         logger.error(

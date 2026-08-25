@@ -1435,6 +1435,35 @@ class TestRunnerPayload:
         # Refused, not dispatched twice, and left for whatever advanced it.
         assert row.status == "queued"
 
+    def test_unexpected_runner_httpexception_is_503_and_logged(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A non-409 HTTPException from the runner still reports 503, but is logged.
+
+        In practice this is ``call_assessment_runner``'s 404 — the row this request
+        committed moments ago is gone from the table. Nothing in the codebase can
+        currently cause it (assessment deletion is soft and the guard selects by primary
+        key), so it means rows are vanishing from under live requests. Neither v3 nor v4
+        logged it before, which made the resulting 503 indistinguishable from an
+        ordinary runner outage. 503 is kept deliberately: it invites the retry that
+        recreates the row, and no v3-shaped exception may reach the v4 error envelope.
+        """
+        revision_id, _ = _pair(db_session, group1_version)
+        with patch(V4_DISPATCH, new_callable=AsyncMock) as dispatch:
+            dispatch.side_effect = HTTPException(
+                status_code=404, detail="Assessment 4242 not found"
+            )
+            with patch.object(assessment_service.logger, "error") as log_error:
+                resp = client.post(
+                    f"{PREFIX}/assessments",
+                    json=_body(revision_id, {"type": "tfidf"}),
+                    headers=_auth(regular_token1),
+                )
+        assert resp.status_code == 503, resp.text
+        assert _error_code(resp) == "ASSESSMENT_DISPATCH_FAILED"
+        log_error.assert_called_once()
+        assert log_error.call_args.kwargs["extra"]["status_code"] == 404
+
     def test_runner_failure_is_503_and_marks_the_row_failed(
         self, client, regular_token1, db_session, group1_version
     ):
