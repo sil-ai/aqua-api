@@ -80,9 +80,11 @@ from database.models import (
     BibleVersion,
     BibleVersionAccess,
     Group,
-    UserGroup,
 )
 from database.models import UserDB as UserModel
+from database.models import (
+    UserGroup,
+)
 from schemas.assessment import AssessmentOut as AssessmentOutV3
 from schemas.assessment import AssessmentStatus, AssessmentType
 
@@ -2352,9 +2354,7 @@ class TestList:
         # conftest fixtures give each user exactly one group, so the overlap has to be
         # built here; it is scoped to this one version.
         second = _extra_group_for(db_session, "testuser1")
-        db_session.add(
-            BibleVersionAccess(bible_version_id=version_id, group_id=second)
-        )
+        db_session.add(BibleVersionAccess(bible_version_id=version_id, group_id=second))
         db_session.commit()
         revision_id, reference_id = _pair(db_session, version_id)
         assessment_id = _make_assessment(db_session, revision_id, reference_id)
