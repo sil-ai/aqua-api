@@ -1,6 +1,6 @@
-"""Assessment create service for the v4 surface (issues #865/#893, epic #842).
+"""Assessment data-access service for the v4 surface (issues #865/#893, epic #842).
 
-HTTP-agnostic data access and authorization behind ``POST /v4/assessments``,
+HTTP-agnostic data access and authorization behind the ``/v4/assessments`` endpoints,
 following the pattern :mod:`bible_routes.v4.version_service` established: functions
 take an :class:`~sqlalchemy.ext.asyncio.AsyncSession`, the current
 :class:`~database.models.UserDB` and plain data, return ORM rows, and raise the small
@@ -8,8 +8,8 @@ take an :class:`~sqlalchemy.ext.asyncio.AsyncSession`, the current
 (:mod:`assessment_routes.v4.assessment_routes`) owns the mapping onto the #828 error
 envelope.
 
-Scope is **create only**. List, poll, delete and the typed result sub-resources are
-separate PRs on #893; the runner-facing surface (``results_push_*``, ``eflomal-*``,
+Scope is **create, read and delete**. The typed result sub-resources are a separate PR
+on #893; the runner-facing surface (``results_push_*``, ``eflomal-*``,
 ``tfidf-artifacts/*``, the status ``PATCH``) stays on v3 permanently — it is our own
 code talking to our own code and is not client contract (#842's 2026-08-25b decision
 4).
@@ -83,14 +83,108 @@ bugs and are not:
   for exact equality. Preserved rather than harmonized: v3 is frozen and live, so a
   v4 POST that deduped differently from a v3 POST against the same rows would be the
   duplicate-run bug this module exists to avoid.
+
+
+Who can see an assessment (:func:`_visible_assessments_query`)
+--------------------------------------------------------------
+
+One predicate serves the list, the single read and the delete gate, because
+authorization that is defined per endpoint is how four of this slice's five security
+issues happened (#858/#860/#862/#865). It says an assessment is visible when:
+
+1. the caller's groups reach the **revision's** version, **and** the **reference's**
+   version too where the row has a reference. v3's non-admin list query already works
+   this way (``assessment_routes.py:238-260``) and submit enforces the same rule on
+   both ids, so this is carried over rather than decided;
+2. the row is not ``is_training``; and
+3. nothing in the chain is soft-deleted — the assessment, its revision, its revision's
+   version, and the reference's revision and version.
+
+Admins skip (1) and keep (2) and (3).
+
+**Training rows are hidden** (#893's 2026-08-26 decision 3). ``train_routes/v3`` writes
+its jobs into the *same* ``assessment`` table with ``is_training=True``, and v3's
+``GET /assessment`` does not filter them, so v3 returns training jobs mixed in with
+assessments. Copying v3's filter set verbatim would inherit that leak silently. #895
+will expose those rows as their own resource, and one database row addressable as two
+different v4 resources with two different shapes is very hard to walk back once a
+client depends on it. Consequence, stated on the endpoint too: a client comparing v4's
+list against v3's sees **fewer** rows, by design.
+
+**A soft-deleted revision hides its assessments** (decision 5, a deliberate divergence
+from v3). v3's read visibility checks only that the caller's groups reach the revision's
+version; it never checks whether the revision or version is deleted. v4's revisions
+service filters both levels, and this follows that precedent so the three read surfaces
+agree: if ``GET /v4/revisions/{id}`` 404s, so do assessments of it. The note for
+delta-sync consumers is that an assessment can leave a mirror's scope *without being
+deleted itself*, because its revision was — the same class of event the periodic full
+reconcile already exists for, now with a second cause.
+
+``updated_since`` switches the list to **delta mode**, mirroring
+:func:`bible_routes.v4.revision_service._visible_revisions_query`: only rows written
+after that instant come back, and it *replaces* the deleted filters rather than
+combining with them, so a mirror learns about soft-deletes. Scoping and the
+``is_training`` exclusion are untouched. Naive-UTC normalization happens in the query
+builder because it exists for the timezone-naive ``TIMESTAMP`` column the comparison
+targets (asyncpg refuses an aware datetime against a naive one).
+
+The scoping is expressed as ``version_id IN (subquery)`` rather than a join to
+``bible_version_access``, for two reasons: the reference half is a *disjunction*
+("either there is no reference, or its version is reachable") which a join cannot
+express, and a join would multiply rows for a version reachable through two of the
+caller's groups, forcing a ``distinct()`` that then has to be threaded through the
+count/watermark subquery. v3 materializes the same set into a Python list with two
+extra round trips; keeping it as a subquery is one statement.
+
+
+Delete, and the three things it fixes (decision 4)
+--------------------------------------------------
+
+v3 soft-deletes, allows owner-or-admin, and returns 403 otherwise. v4 keeps all three
+and changes this much:
+
+**(a) The existence leak is closed.** v3 looks the row up with *no* permission filter
+and then answers 403, so 404-vs-403 tells an unauthorized caller whether an id exists —
+exactly the probe this slice already ruled out on submit (#865). v4 answers **404 when
+the caller cannot reach the assessment, and 403 only when they can reach it but do not
+own it** (:func:`_get_assessment_for_write`).
+
+  The gate scopes by group access but does **not** filter the ``deleted`` flags, so it
+  is a superset of the read predicate. That is deliberate on both counts:
+  :func:`soft_delete_assessment` documents itself as idempotent, which requires the
+  gate to load an already-deleted row; and hiding a row from *writes* because its
+  revision was deleted would leave an owner unable to clean up rows they still own —
+  the same call :mod:`bible_routes.v4.revision_service` makes for the same reason. The
+  two differ only for rows the caller *would* see but for a deleted flag, where a 403
+  discloses nothing they could not already learn from having group access at all.
+  ``is_training`` rows stay excluded here too, so deleting one is a 404 rather than a
+  back door into #895's resource.
+
+**(b) ``owner_id`` is nullable, so legacy rows are admin-only.** Rows created before
+the column existed have no owner, ``is_owner`` is false for everyone, and only an admin
+can delete them. Not a bug to fix — a fact the endpoint documents, since otherwise it
+reads as an authorization failure.
+
+**(c) Deleting a queued or running assessment does not stop the Modal run.** It keeps
+going, keeps costing GPU time, and its results still push back into the soft-deleted
+row. Allowed anyway, and said out loud on the endpoint: refusing with a 409 while in
+flight would block the most likely legitimate use of delete — getting rid of an
+expensive run started by mistake — while providing no actual protection, because v4 has
+no Modal handle to cancel with either way.
+
+Verified rather than assumed: **delete-then-resubmit works.** Both
+:func:`_completed_duplicate_query` and :func:`_in_progress_duplicate_query` already
+filter ``Assessment.deleted.is_not(True)``, matching v3, so a soft-deleted assessment
+does not block an identical resubmit with a spurious 409.
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi import HTTPException, status
-from sqlalchemy import JSON, or_, select
+from sqlalchemy import JSON, and_, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from api_v4.schemas.assessment import (
     AgentCritiqueOptions,
@@ -111,12 +205,20 @@ from assessment_routes.v3.assessment_routes import (
 )
 from bible_routes.v4 import revision_service
 from config import settings
-from database.models import Assessment, BibleVersion, UserDB
+from database.models import (
+    Assessment,
+    BibleRevision,
+    BibleVersion,
+    BibleVersionAccess,
+    UserDB,
+    UserGroup,
+)
 from schemas.assessment import (
     ASSESSMENT_TERMINAL_STATUSES,
     AssessmentIn,
     AssessmentStatus,
 )
+from utils.datetime_utils import as_naive_utc
 from utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -202,6 +304,33 @@ class AssessmentDispatchFailed(AssessmentServiceError):
     def __init__(self, assessment_id: int) -> None:
         self.assessment_id = assessment_id
         super().__init__("The assessment runner is unavailable or failed.")
+
+
+class AssessmentNotFound(AssessmentServiceError):
+    """No assessment with this id is visible to (read) or reachable by the caller.
+
+    One signal for "no such id", "outside your groups", "soft-deleted", "its revision
+    was soft-deleted" and "it is a training row", because the read predicate resolves
+    all five in a single scoped query and separating them would hand back the existence
+    oracle the predicate exists to remove (see the module docstring).
+    """
+
+    def __init__(self, assessment_id: int) -> None:
+        self.assessment_id = assessment_id
+        super().__init__(f"Assessment {assessment_id} does not exist.")
+
+
+class AssessmentAccessForbidden(AssessmentServiceError):
+    """The caller can reach the assessment but neither owns it nor is an admin.
+
+    Raised only *after* :class:`AssessmentNotFound` has been ruled out, which is the
+    decision-4(a) fix: v3 reported 403 for rows the caller could not see at all, so its
+    404-vs-403 answer leaked whether an id existed.
+    """
+
+    def __init__(self, assessment_id: int) -> None:
+        self.assessment_id = assessment_id
+        super().__init__(f"Not authorized to delete assessment {assessment_id}.")
 
 
 async def _authorized_revisions(
@@ -682,4 +811,259 @@ async def create_assessment(db: AsyncSession, user: UserDB, data) -> Assessment:
     # Commit the queued -> running transition _dispatch performed under FOR UPDATE.
     await db.commit()
     await db.refresh(assessment)
+    return assessment
+
+
+# ---------------------------------------------------------------------------
+# The read / delete half: GET /v4/assessments, GET /v4/assessments/{id},
+# DELETE /v4/assessments/{id}. See "Who can see an assessment" and "Delete, and
+# the three things it fixes" in the module docstring for the decisions.
+# ---------------------------------------------------------------------------
+
+
+def _accessible_version_ids(user: UserDB):
+    """Subquery yielding the ids of every version ``user``'s groups can reach.
+
+    Kept as a subquery rather than materialized into a Python list (v3 runs two extra
+    round trips to build one) because it is used **twice** in the same statement — once
+    for the revision's version and once for the reference's — and because an ``IN``
+    against it cannot multiply rows the way a join to ``bible_version_access`` would for
+    a version reachable through two of the caller's groups.
+    """
+    return select(BibleVersionAccess.bible_version_id).where(
+        BibleVersionAccess.group_id.in_(
+            select(UserGroup.group_id).where(UserGroup.user_id == user.id)
+        )
+    )
+
+
+def _visible_assessments_query(
+    user: UserDB, *, include_deleted: bool, updated_since: datetime | None = None
+):
+    """Base ``SELECT Assessment`` scoped to what ``user`` may see.
+
+    No ``limit``/``offset``/``order_by`` — callers add those, and the count/watermark
+    query wraps this as a subquery, so the authorization logic lives in exactly one
+    place for all three endpoints. The full rule, and why each clause is there, is in
+    the module docstring; what follows is only what is easy to misread in the code.
+
+    The joins to the revision and its version are **inner** and unconditional: both
+    branches need them, because even an admin gets the soft-delete filters. The
+    reference joins are **outer**, because most types have no reference — which is also
+    why every clause touching them is guarded by
+    ``or_(Assessment.reference_id.is_(None), ...)``. Without that guard a reference-free
+    row would be filtered out, since a comparison against the NULLs an outer join
+    produces is never true.
+
+    ``is_not(True)`` rather than ``is_(False)`` on every ``deleted`` column: they are
+    nullable and legacy rows may hold NULL, which the response layer coerces to
+    ``False`` — so a NULL row must stay *visible* rather than silently vanish (the same
+    v4 refinement the versions and revisions services document). ``is_training`` is
+    ``NOT NULL`` with a false default, but is spelled the same way for consistency and
+    because nothing here should depend on that constraint holding.
+
+    ``include_deleted`` lifts all five deleted filters at once; ``updated_since``
+    replaces them entirely (delta mode). Neither touches the group scoping or the
+    ``is_training`` exclusion.
+    """
+    reference_revision = aliased(BibleRevision, name="reference_revision")
+    reference_version = aliased(BibleVersion, name="reference_version")
+
+    stmt = (
+        select(Assessment)
+        .join(BibleRevision, BibleRevision.id == Assessment.revision_id)
+        .join(BibleVersion, BibleVersion.id == BibleRevision.bible_version_id)
+        .outerjoin(reference_revision, reference_revision.id == Assessment.reference_id)
+        .outerjoin(
+            reference_version,
+            reference_version.id == reference_revision.bible_version_id,
+        )
+        # Decision 3: training rows belong to #895's resource, not this one. Applied
+        # on every branch, include_deleted and delta mode included.
+        .where(Assessment.is_training.is_not(True))
+    )
+
+    if not user.is_admin:
+        accessible = _accessible_version_ids(user)
+        stmt = stmt.where(
+            BibleVersion.id.in_(accessible),
+            or_(
+                Assessment.reference_id.is_(None),
+                reference_version.id.in_(accessible),
+            ),
+        )
+
+    if updated_since is not None:
+        # Delta mode replaces the deleted filters entirely — a soft-delete is how a
+        # mirror learns to drop the row.
+        return stmt.where(Assessment.updated_at > as_naive_utc(updated_since))
+
+    if not include_deleted:
+        stmt = stmt.where(
+            Assessment.deleted.is_not(True),
+            BibleRevision.deleted.is_not(True),
+            BibleVersion.deleted.is_not(True),
+            or_(
+                Assessment.reference_id.is_(None),
+                and_(
+                    reference_revision.deleted.is_not(True),
+                    reference_version.deleted.is_not(True),
+                ),
+            ),
+        )
+    return stmt
+
+
+async def list_assessments(
+    db: AsyncSession,
+    user: UserDB,
+    *,
+    limit: int,
+    offset: int,
+    ids: list[int] | None = None,
+    revision_id: int | None = None,
+    reference_id: int | None = None,
+    assessment_type: str | None = None,
+    include_deleted: bool = False,
+    updated_since: datetime | None = None,
+) -> tuple[list[Assessment], int, datetime | None]:
+    """Return one page of assessments the user may see, the total match count, and the
+    maximum ``updated_at`` across every matching row.
+
+    The four filters are v3's, minus its unfiltered training rows: ``ids`` (repeated
+    ``id=``), ``revision_id``, ``reference_id`` and ``assessment_type``. They are plain
+    equality filters applied *after* the visibility predicate, so a filter can only ever
+    narrow what the caller could already see — a ``revision_id`` they cannot reach
+    yields an empty page rather than a leak. That is the deliberate difference from
+    ``GET /v4/revisions``, which validates its ``version_id`` filter and 404s on an
+    unusable one: there, the filter names the collection's *parent*, so a typo looks
+    like "this version has no revisions" and is worth reporting; here, three of the four
+    filters are ordinary attribute filters and one bad id in a batch of five should not
+    fail the request (v3 documents the same silent-omission behavior for ``id``).
+
+    ``include_deleted`` is honored only for admins, as on the versions and revisions
+    lists; a non-admin never receives soft-deleted rows regardless of the flag.
+
+    ``total`` counts *all* matching rows ignoring ``limit``/``offset`` (for the
+    pagination envelope), computed from the same scoped query as the page. They are
+    still two statements, so a concurrent write between them can cause the usual (rare)
+    offset-pagination drift between ``total`` and ``len(items)``.
+
+    ``updated_since`` narrows the page to the delta window and takes precedence over
+    ``include_deleted``. The third return value is the raw input to the delta watermark
+    — ``max(updated_at)`` over the whole matching set, aggregated in the *same*
+    statement as ``total``, never over the returned page: rows are ordered by ``id``, so
+    a page's maximum is not the window's. The router laps it via
+    :func:`api_v4.delta.next_watermark`, which owns the lap so the three delta feeds
+    cannot drift apart. ``None`` when nothing matched.
+
+    Ordered by ``id`` ascending, like every other v4 list, rather than v3's
+    ``requested_time`` descending. Offset pagination needs a total order on a column
+    that cannot tie or move, and ``requested_time`` is nullable on legacy rows; a client
+    that wants newest-first sorts the page it received or walks from the last page.
+    """
+    stmt = _visible_assessments_query(
+        user,
+        include_deleted=include_deleted and user.is_admin,
+        updated_since=updated_since,
+    )
+    # `if ids` rather than `is not None`: an explicitly empty list is treated as "no id
+    # filter" instead of compiling to `IN ()`, which would silently return nothing.
+    if ids:
+        stmt = stmt.where(Assessment.id.in_(ids))
+    if revision_id is not None:
+        stmt = stmt.where(Assessment.revision_id == revision_id)
+    if reference_id is not None:
+        stmt = stmt.where(Assessment.reference_id == reference_id)
+    if assessment_type is not None:
+        stmt = stmt.where(Assessment.type == assessment_type)
+
+    scoped = stmt.subquery()
+    total, max_updated_at = (
+        await db.execute(
+            select(func.count(), func.max(scoped.c.updated_at)).select_from(scoped)
+        )
+    ).one()
+    result = await db.execute(stmt.order_by(Assessment.id).limit(limit).offset(offset))
+    return list(result.scalars().all()), total, max_updated_at
+
+
+async def get_assessment(
+    db: AsyncSession, user: UserDB, assessment_id: int
+) -> Assessment:
+    """Return a single assessment the user may see, or raise :class:`AssessmentNotFound`.
+
+    Visibility-scoped, so a caller asking for an assessment they cannot reach gets the
+    same signal as for a truly missing id. New in v4 — v3 had no single-assessment read
+    at all; a client polled by listing.
+    """
+    stmt = _visible_assessments_query(user, include_deleted=False).where(
+        Assessment.id == assessment_id
+    )
+    assessment = (await db.execute(stmt)).scalars().first()
+    if assessment is None:
+        raise AssessmentNotFound(assessment_id)
+    return assessment
+
+
+async def _get_assessment_for_write(
+    db: AsyncSession, user: UserDB, assessment_id: int
+) -> Assessment:
+    """Load an assessment for a write, enforcing the owner-or-admin gate.
+
+    Two steps in this order, which *is* the decision-4(a) fix: resolve the row through
+    the group-scoped predicate first — a caller who cannot reach it gets
+    :class:`AssessmentNotFound` — and only then check ownership, so
+    :class:`AssessmentAccessForbidden` is reachable exclusively for rows whose existence
+    the caller has already established. v3 looked the row up with no permission filter
+    and answered 403, which made its status code an existence oracle.
+
+    ``include_deleted=True`` is passed deliberately, and it is the one place this gate
+    is *wider* than the read predicate: see decision 4(a) in the module docstring for
+    why an already-deleted row and a row whose revision was deleted both have to stay
+    writable, and why the disclosure that widening implies is nil.
+
+    ``owner_id`` is nullable, so on a legacy row with no owner ``is_owner`` is false for
+    every caller and only an admin passes — decision 4(b), documented on the endpoint
+    because it otherwise reads as an authorization bug.
+    """
+    stmt = _visible_assessments_query(user, include_deleted=True).where(
+        Assessment.id == assessment_id
+    )
+    assessment = (await db.execute(stmt)).scalars().first()
+    if assessment is None:
+        raise AssessmentNotFound(assessment_id)
+    if not user.is_admin and assessment.owner_id != user.id:
+        raise AssessmentAccessForbidden(assessment_id)
+    return assessment
+
+
+async def soft_delete_assessment(
+    db: AsyncSession, user: UserDB, assessment_id: int
+) -> Assessment:
+    """Soft-delete an assessment (owner or admin only). Mirrors v3 ``DELETE /assessment``.
+
+    Authorized by :func:`_get_assessment_for_write`. Idempotent: re-deleting an
+    already-soft-deleted row is allowed and writes the flag again. The result rows are
+    left in place, exactly as v3 leaves them; this flips a flag, it does not reclaim
+    storage.
+
+    A queued or running assessment can be deleted, and doing so does **not** stop the
+    Modal run — decision 4(c), stated on the endpoint. Note the run's own callbacks keep
+    writing to the soft-deleted row, which is harmless: the row is hidden from reads,
+    and its ``updated_at`` moving again simply re-delivers a row a mirror has already
+    dropped.
+    """
+    assessment = await _get_assessment_for_write(db, user, assessment_id)
+
+    try:
+        assessment.deleted = True
+        # date.today() rather than a full timestamp: it is what v3's delete and both v4
+        # sibling services write, and the column is not on the wire. Not worth an
+        # unexplained difference between the three.
+        assessment.deletedAt = date.today()
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
     return assessment

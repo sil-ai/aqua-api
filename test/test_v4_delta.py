@@ -94,11 +94,15 @@ class TestDescriptionIsOneContract:
             assert "hard-deleted" in description, path
             assert "not proof of completeness" in description, path
 
-    def test_versions_and_revisions_both_serve_deltas(self, spec):
+    def test_every_list_with_a_watermark_serves_deltas(self, spec):
         """Guards the discovery helper itself: if a refactor dropped the parameter, the
-        assertions above would pass vacuously over an empty-but-nonzero list."""
+        assertions above would pass vacuously over an empty-but-nonzero list.
+
+        The three lists named here are every v4 collection whose table carries
+        ``updated_at``, so this also fails if one of them silently loses delta support.
+        """
         paths = {path for path, _ in _delta_endpoints(spec)}
-        assert {"/versions", "/revisions"} <= paths
+        assert {"/versions", "/revisions", "/assessments"} <= paths
 
     def test_builder_requires_the_cannot_carry_clause(self):
         """Keyword-only with no default, deliberately — see the builder's docstring.
