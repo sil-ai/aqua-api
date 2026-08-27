@@ -4627,6 +4627,18 @@
             ],
             "title": "Assessment Id"
           },
+          "bt_pivot": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Route the agent's back-translation through a pivot language (render the target into a close language first, then into the reference language) instead of going direct. Null \u2014 the default \u2014 leaves the choice to the agent's deployment default. Whether pivoting reads better varies by language pair, so it is settable per request rather than fixed at deploy time (see #911).",
+            "title": "Bt Pivot"
+          },
           "include_critique": {
             "default": true,
             "title": "Include Critique",

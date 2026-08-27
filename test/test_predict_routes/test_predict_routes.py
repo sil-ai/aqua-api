@@ -355,6 +355,87 @@ def test_predict_forwards_include_flags_to_modal(
     assert captured["payload"][field] is expected
 
 
+@pytest.mark.parametrize(
+    "extra,expected",
+    [
+        ({"bt_pivot": True}, True),
+        ({"bt_pivot": False}, False),
+        ({}, None),
+    ],
+    ids=["pivot_on", "pivot_off", "pivot_omitted_defaults_null"],
+)
+def test_predict_forwards_bt_pivot_to_modal(client, regular_token1, extra, expected):
+    """`bt_pivot` must survive `model_dump(exclude={"apps"})` and reach the
+    app payload. It used to be dropped by PredictInput's fixed field set
+    (issue #911), which silently downgraded a pivot-on request to the
+    agent's deployment default. Omitting it forwards null, which the agent
+    reads as "use the deployment default"."""
+    captured = {}
+
+    async def capture(payload):
+        captured["payload"] = payload
+        return {"ok": True}
+
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock({"ngrams": capture}),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams"], **extra),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert "bt_pivot" in captured["payload"]
+    assert captured["payload"]["bt_pivot"] is expected
+
+
+def test_predict_forwards_bt_pivot_to_spawned_agent(client, regular_token1):
+    """`bt_pivot` must reach the *spawned* slow-agent payload, not just the
+    synchronous fan-out. Back-translation runs on the slow path only, so
+    the spawn is the leg the flag actually steers — the sync call has
+    translation suppressed and never pivots."""
+    spawn_payloads: list[dict] = []
+
+    async def capture_spawn(payload):
+        spawn_payloads.append(payload)
+        fc = AsyncMock()
+        fc.object_id = "fc-test-bt-pivot"
+        return fc
+
+    def from_name(app_name, fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+        mock_fn.remote.aio = AsyncMock(return_value={"pairs": []})
+        mock_fn.spawn.aio = AsyncMock(side_effect=capture_spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["agent"], include_translation=True, bt_pivot=True),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert len(spawn_payloads) == 1
+    assert spawn_payloads[0]["bt_pivot"] is True
+
+
+def test_predict_rejects_non_boolean_bt_pivot(client, regular_token1):
+    """`bt_pivot` is typed, so a bad value is a 422 at the boundary rather
+    than a silently-dropped field (the failure mode issue #911 is about)."""
+    response = client.post(
+        f"/{prefix}/predict",
+        json=_body(apps=["ngrams"], bt_pivot="telugu"),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422, response.text
+    assert "bt_pivot" in response.text
+
+
 def test_predict_ignores_model_override(client, regular_token1):
     """The per-call `model` override is no longer offered — the LLM is fixed
     by the agent's deploy config. A client that still sends `model` must not
