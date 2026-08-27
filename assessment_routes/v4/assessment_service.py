@@ -8,11 +8,12 @@ take an :class:`~sqlalchemy.ext.asyncio.AsyncSession`, the current
 (:mod:`assessment_routes.v4.assessment_routes`) owns the mapping onto the #828 error
 envelope.
 
-Scope is **create, read and delete**. The typed result sub-resources are a separate PR
-on #893; the runner-facing surface (``results_push_*``, ``eflomal-*``,
-``tfidf-artifacts/*``, the status ``PATCH``) stays on v3 permanently — it is our own
-code talking to our own code and is not client contract (#842's 2026-08-25b decision
-4).
+Scope is **create, read, delete, and the generic result read**. The remaining typed
+result sub-resources (``/ngrams``, ``/text-lengths``, ``/alignment-scores``, ``/tfidf``,
+``/missing-words``) and the comparisons family are follow-ups on #893; the runner-facing
+surface (``results_push_*``, ``eflomal-*``, ``tfidf-artifacts/*``, the status ``PATCH``)
+stays on v3 permanently — it is our own code talking to our own code and is not client
+contract (#842's 2026-08-25b decision 4).
 
 
 What v4 changes, and what it deliberately does not
@@ -176,6 +177,33 @@ Verified rather than assumed: **delete-then-resubmit works.** Both
 :func:`_completed_duplicate_query` and :func:`_in_progress_duplicate_query` already
 filter ``Assessment.deleted.is_not(True)``, matching v3, so a soft-deleted assessment
 does not block an identical resubmit with a spurious 409.
+
+
+How the generic result read is shaped (:func:`get_results`)
+-----------------------------------------------------------
+
+``GET /v4/assessments/{id}/results`` serves the three types whose rows land in
+``assessment_result`` (:data:`RESULT_ASSESSMENT_TYPES`). Four decisions carry the read,
+each documented on the function that implements it:
+
+* **Authorization is not defined here.** It is :func:`get_assessment` with a ``types``
+  filter, so the family's one visibility predicate covers this read too — and the
+  "wrong type" refusal is a clause on the same statement rather than a check afterwards,
+  which is what makes it indistinguishable from every other reason for the 404.
+* **Canonical vref order**, via a join to ``book_reference``, replacing v3's ``id``
+  order (:func:`_verse_level_results`).
+* **One row per verse, first-write-wins**, which is what makes that order a total order
+  and therefore makes offset pagination stable. One row per ``(assessment, vref)`` is
+  already the intended invariant, so this is a guard against #721's retry duplicates and
+  a no-op in correct data (:func:`_verse_level_results`).
+* **``vrefs`` is derived, not stored** — from the assessed revision's ``<range>``
+  markers via :mod:`bible_routes.v4.verse_range_service`, whose module docstring holds
+  the memoisation argument. :func:`get_results` documents why the *revision's* markers
+  and not the union with the reference's.
+
+Aggregated rows keep v3's rollup exactly — mean score, ``bool_or`` flags — and are a
+different projection, so the router maps them to a different response type
+(:func:`_aggregated_results`).
 """
 
 from datetime import date, datetime, timedelta
@@ -189,6 +217,8 @@ from sqlalchemy.orm import aliased
 from api_v4.schemas.assessment import (
     AgentCritiqueOptions,
     ReferencedAssessmentOptions,
+    ResultAggregate,
+    ResultScope,
     WordAlignmentOptions,
 )
 from assessment_routes.v3.alignment_filters import eflomal_method_clause
@@ -203,13 +233,15 @@ from assessment_routes.v3.assessment_routes import (
     _canonicalize_kwargs,
     call_assessment_runner,
 )
-from bible_routes.v4 import revision_service
+from bible_routes.v4 import revision_service, verse_range_service
 from config import settings
 from database.models import (
     Assessment,
+    AssessmentResult,
     BibleRevision,
     BibleVersion,
     BibleVersionAccess,
+    BookReference,
     UserDB,
     UserGroup,
 )
@@ -217,6 +249,7 @@ from schemas.assessment import (
     ASSESSMENT_TERMINAL_STATUSES,
     AssessmentIn,
     AssessmentStatus,
+    AssessmentType,
 )
 from utils.datetime_utils import as_naive_utc
 from utils.logging_config import setup_logger
@@ -989,17 +1022,30 @@ async def list_assessments(
 
 
 async def get_assessment(
-    db: AsyncSession, user: UserDB, assessment_id: int
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    types: tuple[str, ...] | None = None,
 ) -> Assessment:
     """Return a single assessment the user may see, or raise :class:`AssessmentNotFound`.
 
     Visibility-scoped, so a caller asking for an assessment they cannot reach gets the
     same signal as for a truly missing id. New in v4 — v3 had no single-assessment read
     at all; a client polled by listing.
+
+    ``types`` narrows the lookup to an allowed set of ``Assessment.type`` values, which is
+    how a result sub-resource refuses an assessment whose results it does not serve. It is
+    a clause on the *same* statement rather than a check on the row afterwards, and that
+    is the point: the read predicate resolves every reason a caller cannot have this
+    resource — no such id, outside your groups, soft-deleted, a training row, wrong type —
+    into the one signal, so no combination of them can be told apart from the outside.
     """
     stmt = _visible_assessments_query(user, include_deleted=False).where(
         Assessment.id == assessment_id
     )
+    if types is not None:
+        stmt = stmt.where(Assessment.type.in_(types))
     assessment = (await db.execute(stmt)).scalars().first()
     if assessment is None:
         raise AssessmentNotFound(assessment_id)
@@ -1067,3 +1113,263 @@ async def soft_delete_assessment(
         await db.rollback()
         raise
     return assessment
+
+
+# ---------------------------------------------------------------------------
+# The typed result reads: GET /v4/assessments/{id}/results. See "How the generic
+# result read is shaped" in the module docstring for the decisions.
+# ---------------------------------------------------------------------------
+
+#: The assessment types whose per-verse scores land in ``assessment_result``, and so the
+#: only types ``GET /v4/assessments/{id}/results`` serves. Taken from the enum rather
+#: than written as literals so a renamed value fails at import instead of silently
+#: narrowing the read to nothing. The other four types have their own result tables and
+#: their own sub-resources.
+#:
+#: ``word-alignment`` is one of the three, which is easy to miss: the client class named
+#: ``FetchFormalEquivalenceResults`` calls ``/result`` for it. Its runner deliberately
+#: preserves ``<range>`` as a literal token, so it was checked separately — assessment
+#: 31109 on revision 24976 has 5 merged spans covering 6 continuation verses, **zero**
+#: result rows for those continuations, and all 5 span first-verses scored. Identical to
+#: ``sentence-length``: the preserved token lands in ``alignment_threshold_scores`` /
+#: ``alignment_top_source_scores``, not here.
+RESULT_ASSESSMENT_TYPES = (
+    AssessmentType.word_alignment.value,
+    AssessmentType.semantic_similarity.value,
+    AssessmentType.sentence_length.value,
+)
+
+
+def _placeable_results(assessment_id: int, scope: ResultScope) -> list:
+    """WHERE clauses for the assessment's rows that a canonically ordered read can place.
+
+    ``chapter`` and ``verse`` must be non-null, and the caller's join to
+    ``book_reference`` supplies the third condition by being an inner join. The three
+    columns are nullable and are written together by ``push_results``, so this excludes
+    nothing that exists — it is here so the read cannot emit ``"MAT None:None"`` as a
+    ``vref``, and so that every aggregate level summarizes exactly the set the verse level
+    serves. Applied to the count as well as the page, which is what keeps ``total``
+    honest (the trap ``train_routes`` documents at its own ``BookReference`` join).
+
+    ``book`` is compared to the already-upper-cased scope value directly rather than
+    through v3's ``func.upper(column)``, which cannot use
+    ``idx_assessment_result_main``. Stored abbreviations always come from
+    ``fixtures/vref.txt`` and are upper case, so nothing is lost.
+    """
+    clauses = [
+        AssessmentResult.assessment_id == assessment_id,
+        AssessmentResult.chapter.is_not(None),
+        AssessmentResult.verse.is_not(None),
+    ]
+    if scope.book is not None:
+        clauses.append(AssessmentResult.book == scope.book)
+    if scope.chapter is not None:
+        clauses.append(AssessmentResult.chapter == scope.chapter)
+    if scope.verse is not None:
+        clauses.append(AssessmentResult.verse == scope.verse)
+    return clauses
+
+
+async def _verse_level_results(
+    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
+) -> tuple[list, int]:
+    """One page of verse-level rows in canonical order, plus the total row count.
+
+    **Canonical vref order, not v3's ``id`` order.** v3 orders these by ``min(id)``, i.e.
+    insertion order, which is why the one known client re-sorts every result set against a
+    ``vref.txt`` fixture on arrival. Ordering here retires that.
+
+    **One row per verse, via ``DISTINCT ON``, and the deduplication is defensive rather
+    than semantic.** The intended invariant, confirmed with the repo owner, is exactly one
+    ``assessment_result`` row per ``(assessment, vref)``. Note that the type does not enter
+    that key and cannot: ``assessment_result`` has no ``type`` column, and ``assessment_id``
+    references one ``assessment`` row carrying one ``type``, so the type is functionally
+    determined by the id. The real fact behind "a verse can be scored by several assessment
+    types" is that those scores live under *different* ``assessment_id``s — one row per run
+    — which this read never sees at once, since it is scoped to a single assessment.
+    (``train_routes`` handles the cross-assessment case, and dedups a vref that both
+    sem-sim and word-alignment scored for exactly this reason.)
+
+    So in correct data this ``DISTINCT ON`` is a **no-op**. It is here for the one way the
+    invariant can break: the natural key has no uniqueness constraint (#721, whose fix
+    cannot land while the shared schema is frozen), so a retried Modal push re-inserts
+    rather than upserts. Two rows for one verse would make ``(book, chapter, verse)``
+    unable to decide which comes first, and offset pagination is stable only under a total
+    order — a page boundary could then repeat or skip a row. Guarding costs nothing: the
+    ``DISTINCT ON`` rides ``idx_assessment_result_main`` either way.
+
+    First-write-wins rather than v3's ``avg(score)`` across the duplicates. Given the
+    invariant this is not a close call: there is no legitimate "two scores for this verse
+    in this assessment" case, so averaging would be averaging a corrupt retry against its
+    own copy, and the mean of a pair that should never have existed is not a better answer
+    than the row that was written first. It is also the convention the rest of the tree
+    applies to this exact hazard — ``train_routes`` keeps the first of duplicate
+    ``assessment_result`` rows, and #721's own fix is ``ON CONFLICT DO NOTHING``. And it
+    means every field of the returned row comes from *one real row*, which is what lets
+    ``note`` be served at all: under v3's grouping it would have to be an invented
+    aggregate over values that are prose.
+
+    ``DISTINCT ON`` and its ``ORDER BY`` run in an inner query on the stored
+    ``(book, chapter, verse, id)`` — matching ``idx_assessment_result_main`` — because
+    Postgres requires the ``ORDER BY`` to *begin* with the ``DISTINCT ON`` expressions,
+    and the canonical order begins with ``book_reference.number`` instead. The outer query
+    joins the book order on and re-sorts. ``vref`` is rebuilt from the group columns rather
+    than read from the ``vref`` column, exactly as v3 does, so it cannot be null and
+    cannot disagree with the triple the row was deduplicated on.
+    """
+    deduplicated = (
+        select(
+            AssessmentResult.id,
+            AssessmentResult.assessment_id,
+            AssessmentResult.book,
+            AssessmentResult.chapter,
+            AssessmentResult.verse,
+            AssessmentResult.score,
+            AssessmentResult.flag,
+            AssessmentResult.hide,
+            AssessmentResult.note,
+        )
+        .where(*_placeable_results(assessment_id, scope))
+        .distinct(
+            AssessmentResult.book, AssessmentResult.chapter, AssessmentResult.verse
+        )
+        .order_by(
+            AssessmentResult.book,
+            AssessmentResult.chapter,
+            AssessmentResult.verse,
+            AssessmentResult.id,
+        )
+        .subquery()
+    )
+    placed = (
+        select(*deduplicated.c, BookReference.number.label("book_number"))
+        .select_from(deduplicated)
+        .join(BookReference, BookReference.abbreviation == deduplicated.c.book)
+        .subquery()
+    )
+    total = await db.scalar(select(func.count()).select_from(placed))
+    rows = (
+        await db.execute(
+            select(placed)
+            .order_by(placed.c.book_number, placed.c.chapter, placed.c.verse)
+            .limit(limit)
+            .offset(offset)
+        )
+    ).all()
+    return list(rows), total or 0
+
+
+async def _aggregated_results(
+    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
+) -> tuple[list, int]:
+    """One page of rolled-up rows in canonical order, plus the number of groups.
+
+    v3's rollup, preserved: ``avg(score)``, ``bool_or(flag)``, ``bool_or(hide)``, grouped
+    by the location columns the level keeps. What is *not* preserved is v3's ``min(id)``
+    projection — an aggregate row is not a stored row, and the lowest id among the verses
+    it summarizes identifies nothing the row represents.
+
+    ``book_reference.number`` joins in at every level, including ``text`` where nothing is
+    ordered by it. That is deliberate: the join is also a filter, so keeping it everywhere
+    means a whole-text mean is taken over exactly the verses the chapter-level rows
+    summarize, and a client can reconcile the two. It has to enter ``GROUP BY`` wherever
+    it is ordered by, since Postgres infers functional dependency only from a grouped
+    primary key and ``assessment_result.book`` is not one.
+
+    At ``aggregate=text`` the grouping is on ``assessment_id`` alone, so the result is one
+    row — or none, when the assessment has no placeable rows at all.
+
+    That level is a **new capability rather than a port**, verified rather than inferred:
+    ``GET /v3/result?aggregate=text`` answers **500**
+    (``AttributeError: Could not locate column in row for column 'book'``,
+    ``results_query_routes.py:698``), because v3 formats every row's ``vref`` from
+    ``row.book`` while guarding only ``chapter`` and ``verse``, and at that level the
+    projection has no ``book`` column at all. ``aggregate=book`` and ``aggregate=chapter``
+    do work there. Worth knowing because whole-text rollup is exactly the "translation
+    level" the Paratext extension needs, so no client can be relying on v3 behaviour here
+    — there is none to preserve.
+    """
+    if scope.aggregate is ResultAggregate.chapter:
+        group_columns = (AssessmentResult.book, AssessmentResult.chapter)
+        canonical_columns = (BookReference.number,)
+    elif scope.aggregate is ResultAggregate.book:
+        group_columns = (AssessmentResult.book,)
+        canonical_columns = (BookReference.number,)
+    else:
+        group_columns = ()
+        canonical_columns = ()
+
+    grouped = (
+        select(
+            AssessmentResult.assessment_id,
+            *group_columns,
+            func.avg(AssessmentResult.score).label("score"),
+            func.bool_or(AssessmentResult.flag).label("flag"),
+            func.bool_or(AssessmentResult.hide).label("hide"),
+        )
+        .select_from(AssessmentResult)
+        .join(BookReference, BookReference.abbreviation == AssessmentResult.book)
+        .where(*_placeable_results(assessment_id, scope))
+        .group_by(AssessmentResult.assessment_id, *canonical_columns, *group_columns)
+        # (number, book, chapter) sorts identically to (number, chapter) — the book
+        # abbreviation is determined by its number — so the group columns can just follow.
+        .order_by(*canonical_columns, *group_columns)
+    )
+    total = await db.scalar(select(func.count()).select_from(grouped.subquery()))
+    rows = (await db.execute(grouped.limit(limit).offset(offset))).all()
+    return list(rows), total or 0
+
+
+async def get_results(
+    db: AsyncSession,
+    user: UserDB,
+    assessment_id: int,
+    *,
+    scope: ResultScope,
+    limit: int,
+    offset: int,
+) -> tuple[list, int, dict[tuple[str, int, int], list[str]]]:
+    """One page of an assessment's generic results: rows, total, and the span map.
+
+    Authorized by :func:`get_assessment` with ``types=RESULT_ASSESSMENT_TYPES``, so the
+    family's single visibility predicate decides this read too and an assessment of a type
+    this read does not serve is refused by the same clause as one the caller cannot see.
+
+    Returns the raw rows for the router to shape, the total ignoring ``limit``/``offset``,
+    and the assessed revision's ``<range>`` span map — ``{}`` when aggregating, where the
+    merge does not apply. Fetching the map here rather than in the router keeps every
+    database read in this layer and makes it impossible to build a verse-level page
+    without it.
+
+    The span map is the **revision's**, never the union of the revision's and the
+    reference's, and that is a correctness choice rather than an omission. A verse marked
+    ``<range>`` in the revision is merged by ``GET /v3/text`` however many revisions were
+    requested, so it can never also have a result row of its own: with the revision's
+    markers alone, no verse can be both claimed by a neighbour's ``vrefs`` and returned as
+    its own row. Including the reference's markers would break that — if the runner
+    fetched the two texts separately, a verse marked only in the reference does have its
+    own row, and would then be double-claimed. The residual case is the mild one: a verse
+    marked only in the reference, if the runner fetched both texts in one call, appears
+    unscored rather than covered — which is exactly what v3 reports today, so it is a
+    smaller improvement rather than a regression.
+
+    ``total`` and the page are two statements, so the usual rare offset-pagination drift
+    between them applies. Unlike the assessments list there is no watermark: result rows
+    carry no ``updated_at``, so this list has no delta feed.
+    """
+    assessment = await get_assessment(
+        db, user, assessment_id, types=RESULT_ASSESSMENT_TYPES
+    )
+    if scope.aggregate is not None:
+        rows, total = await _aggregated_results(
+            db, assessment_id, scope, limit=limit, offset=offset
+        )
+        return rows, total, {}
+
+    rows, total = await _verse_level_results(
+        db, assessment_id, scope, limit=limit, offset=offset
+    )
+    continuations = await verse_range_service.continuations_for_revision(
+        db, assessment.revision_id
+    )
+    return rows, total, continuations

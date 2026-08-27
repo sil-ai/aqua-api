@@ -49,6 +49,20 @@ What each group of tests pins down:
 * ``TestReadSchemaContract`` — that the poll body really is the resource *plus* the
   shared envelope, invariants included, and that the three v3 fields v4 drops stay
   dropped.
+* ``TestResultsAuthorization`` — the one 404 that covers every reason a caller cannot
+  have a result set, including the sixth reason this read adds: an assessment whose type
+  keeps its scores in another table.
+* ``TestResultsPage`` — the dedicated 100/1000 pagination, and canonical vref order
+  holding across a page boundary (v3 orders by insertion id).
+* ``TestResultsRows`` — the ``vref`` / ``vrefs`` split: that a merged span is one row
+  under its first verse, that a genuinely unscored verse is absent *and*
+  distinguishable from a covered one, and that one verse is one row.
+* ``TestResultsScope`` — v3's ``book``/``chapter``/``verse`` filters, and every invalid
+  combination of them rejecting by construction rather than by a runtime guard.
+* ``TestResultsAggregation`` — v3's rollup preserved (mean score, any-flag), the
+  per-level projection, and ``vrefs`` structurally absent at every level.
+* ``TestResultsSchemaContract`` — that the two row types stay two types: the aggregate
+  shape cannot swallow a verse row, and neither carries ``source``/``target``.
 """
 
 import itertools
@@ -62,20 +76,34 @@ from pydantic import ValidationError
 
 from api_v4.delta import DELTA_SAFETY_LAP
 from api_v4.jobs import ASSESSMENT_STATE_MAP, JobEnvelope, JobState
-from api_v4.pagination import DEFAULT_LIMIT, MAX_LIMIT
+from api_v4.pagination import (
+    DEFAULT_LIMIT,
+    MAX_LIMIT,
+    RESULT_DEFAULT_LIMIT,
+    RESULT_MAX_LIMIT,
+    ResultPaginationParams,
+    V4Page,
+)
 from api_v4.schemas.assessment import (
     AssessmentJob,
     AssessmentOptions,
     AssessmentOptionsBase,
     AssessmentOut,
+    AssessmentResultAggregateOut,
+    AssessmentResultOut,
+    AssessmentResultRow,
+    ResultAggregate,
+    ResultScope,
 )
 from assessment_routes.v3 import assessment_routes as v3_assessment_routes
 from assessment_routes.v4 import assessment_service
 from assessment_routes.v4.assessment_routes import ASSESSMENT_RETRY_AFTER_S
 from assessment_routes.v4.assessment_routes import router as v4_assessment_router
+from bible_routes.v4 import verse_range_service
 from config import settings
 from database.models import (
     Assessment,
+    AssessmentResult,
     BibleRevision,
     BibleVersion,
     BibleVersionAccess,
@@ -84,6 +112,7 @@ from database.models import (
 from database.models import UserDB as UserModel
 from database.models import (
     UserGroup,
+    VerseText,
 )
 from schemas.assessment import AssessmentOut as AssessmentOutV3
 from schemas.assessment import AssessmentStatus, AssessmentType
@@ -272,6 +301,89 @@ def _ids(resp):
 def _route(name):
     """The declared APIRoute for a v4 assessments handler, by function name."""
     return next(r for r in v4_assessment_router.routes if r.name == name)
+
+
+def _vref_parts(vref):
+    """``"MAT 9:20"`` -> ``("MAT", 9, 20)``, the way ``push_results`` splits it."""
+    book_chapter, verse = vref.split(":")
+    book, chapter = book_chapter.split(" ")
+    return book, int(chapter), int(verse)
+
+
+def _make_result(
+    db_session, assessment_id, vref, *, score=0.5, flag=False, hide=False, note=None
+):
+    """Insert one ``assessment_result`` row, with the location columns v3's push derives.
+
+    Inserted directly for the same reason assessment rows are: the only writer is the
+    runner-facing v3 push endpoint, and these tests need duplicates, null flags and rows
+    for types no v4 read serves — none of which that endpoint will produce on request.
+    """
+    book, chapter, verse = _vref_parts(vref)
+    row = AssessmentResult(
+        assessment_id=assessment_id,
+        vref=vref,
+        score=score,
+        flag=flag,
+        hide=hide,
+        note=note,
+        book=book,
+        chapter=chapter,
+        verse=verse,
+    )
+    db_session.add(row)
+    db_session.commit()
+    db_session.refresh(row)
+    return row.id
+
+
+def _make_results(db_session, assessment_id, vrefs, **kwargs):
+    """Insert one plain row per vref, in the order given (so ids follow that order)."""
+    return [_make_result(db_session, assessment_id, vref, **kwargs) for vref in vrefs]
+
+
+def _make_verse_texts(db_session, revision_id, texts):
+    """Insert ``verse_text`` rows from a ``{vref: text}`` mapping.
+
+    Only the chapters under test are inserted — the span map reads the marked chapters,
+    not the whole revision, so a full 41,899-line upload would prove nothing extra. The
+    memo is cleared afterwards because it is deliberately permanent: a test that read the
+    revision before these rows existed would otherwise have pinned the empty map.
+    """
+    for vref, text in texts.items():
+        book, chapter, verse = _vref_parts(vref)
+        db_session.add(
+            VerseText(
+                revision_id=revision_id,
+                verse_reference=vref,
+                text=text,
+                book=book,
+                chapter=chapter,
+                verse=verse,
+            )
+        )
+    db_session.commit()
+    verse_range_service.clear_cache()
+
+
+RANGE = verse_range_service.VERSE_RANGE_MARKER
+
+
+def _results(client, token, assessment_id, **params):
+    return client.get(
+        f"{PREFIX}/assessments/{assessment_id}/results",
+        params=params,
+        headers=_auth(token),
+    )
+
+
+def _rows(resp):
+    assert resp.status_code == 200, resp.text
+    return resp.json()["items"]
+
+
+def _vrefs(resp):
+    return [row["vref"] for row in _rows(resp)]
 
 
 def _extra_group_for(db_session, username):
@@ -2715,3 +2827,846 @@ class TestReadSchemaContract:
             if p.alias == "type"
         )
         assert AssessmentType in get_args(param.type_)
+
+
+SERVED_TYPES = ("word-alignment", "semantic-similarity", "sentence-length")
+UNSERVED_TYPES = ("ngrams", "tfidf", "text-lengths", "agent-critique")
+
+
+class TestResultsAuthorization:
+    """``GET /v4/assessments/{id}/results`` — one 404 for every reason to refuse.
+
+    The read adds a sixth reason to the five the poll already covers: an assessment whose
+    type keeps its scores in a different table. Every refusal is checked to report the
+    *same* code, because the point of resolving them in one scoped query is that no
+    combination of them can be told apart from outside.
+    """
+
+    def _with_results(self, db_session, version_id, **kwargs):
+        """A fresh assessment carrying one result row, so a 404 is never just emptiness."""
+        revision_id, reference_id = _pair(db_session, version_id)
+        assessment_id = _make_assessment(
+            db_session, revision_id, reference_id, **kwargs
+        )
+        _make_results(db_session, assessment_id, ["MAT 1:1"])
+        return revision_id, assessment_id
+
+    @pytest.mark.parametrize("type_", SERVED_TYPES)
+    def test_each_served_type_returns_its_results(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        """All three types whose rows land in ``assessment_result``, including
+        ``word-alignment`` — the one the client's ``FetchFormalEquivalenceResults`` reads
+        and the one whose ``<range>`` handling had to be checked separately."""
+        _, assessment_id = self._with_results(db_session, group1_version, type_=type_)
+        assert _vrefs(_results(client, regular_token1, assessment_id)) == ["MAT 1:1"]
+
+    @pytest.mark.parametrize("type_", UNSERVED_TYPES)
+    def test_a_type_this_read_does_not_serve_is_a_404(
+        self, client, regular_token1, db_session, group1_version, type_
+    ):
+        """Rows are inserted anyway, so this pins a refusal by *type* rather than a read
+        that happens to find nothing."""
+        _, assessment_id = self._with_results(db_session, group1_version, type_=type_)
+        resp = _results(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_unknown_id_is_a_404(self, client, regular_token1):
+        resp = _results(client, regular_token1, 10**9)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_an_assessment_outside_the_callers_groups_is_a_404(
+        self, client, regular_token1, db_session, group2_version
+    ):
+        _, assessment_id = self._with_results(db_session, group2_version)
+        resp = _results(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_cross_group_reference_hides_the_results_too(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        """Both halves of the visibility rule apply: reachable revision, unreachable
+        reference. This is the read through which #865's leak was actually exploitable.
+        """
+        revision_id = _make_revision(db_session, group1_version)
+        reference_id = _make_revision(db_session, group2_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_results(db_session, assessment_id, ["MAT 1:1"])
+        resp = _results(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_training_run_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_results(
+            db_session, group1_version, is_training=True
+        )
+        resp = _results(client, regular_token1, assessment_id)
+        assert resp.status_code == 404, resp.text
+        assert _error_code(resp) == "ASSESSMENT_NOT_FOUND"
+
+    def test_a_soft_deleted_assessment_is_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        _, assessment_id = self._with_results(db_session, group1_version, deleted=True)
+        assert _results(client, regular_token1, assessment_id).status_code == 404
+
+    def test_a_soft_deleted_revision_hides_its_results(
+        self, client, regular_token1, db_session
+    ):
+        version_id = _make_version(db_session, "Group1")
+        revision_id, assessment_id = self._with_results(db_session, version_id)
+        assert _results(client, regular_token1, assessment_id).status_code == 200
+        _set_deleted(db_session, BibleRevision, revision_id)
+        assert _results(client, regular_token1, assessment_id).status_code == 404
+
+    def test_every_refusal_reports_the_same_status_and_code(
+        self, client, regular_token1, db_session, group1_version, group2_version
+    ):
+        """The whole reason the service resolves these in one query: a caller cannot tell
+        "no such assessment" from "not yours" from "wrong type" from "training run"."""
+        _, unserved = self._with_results(db_session, group1_version, type_="ngrams")
+        _, theirs = self._with_results(db_session, group2_version)
+        _, training = self._with_results(db_session, group1_version, is_training=True)
+        answers = {
+            (resp.status_code, _error_code(resp))
+            for resp in (
+                _results(client, regular_token1, 10**9),
+                _results(client, regular_token1, unserved),
+                _results(client, regular_token1, theirs),
+                _results(client, regular_token1, training),
+            )
+        }
+        assert answers == {(404, "ASSESSMENT_NOT_FOUND")}
+
+    def test_the_403_of_the_delete_path_does_not_appear_here(
+        self, client, regular_token2, db_session
+    ):
+        """Reading results is not an owner-gated operation: any caller whose groups reach
+        the revision reads them, so this endpoint never answers 403 (unlike DELETE)."""
+        version_id = _make_version(db_session, "Group2")
+        _, assessment_id = self._with_results(db_session, version_id)
+        # Owned by testuser1, requested by testuser2, who shares the group.
+        assert _results(client, regular_token2, assessment_id).status_code == 200
+
+
+class TestResultsPage:
+    """The dedicated 100/1000 pagination (#893 decision 3) and canonical vref order."""
+
+    def _scored(self, db_session, group1_version, vrefs, **kwargs):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_results(db_session, assessment_id, vrefs, **kwargs)
+        return assessment_id
+
+    def test_page_envelope(self, client, regular_token1, db_session, group1_version):
+        assessment_id = self._scored(db_session, group1_version, ["GEN 1:1", "GEN 1:2"])
+        resp = _results(client, regular_token1, assessment_id)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert set(body) == {"items", "total", "limit", "offset", "next_updated_since"}
+        assert body["total"] == 2
+        assert body["offset"] == 0
+        # No delta feed: assessment_result carries no modification timestamp. The key is
+        # present and null rather than missing, so adding one later is not a shape change.
+        assert body["next_updated_since"] is None
+
+    def test_the_default_limit_is_the_result_default_not_the_catalog_one(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        assert _results(client, regular_token1, assessment_id).json()["limit"] == (
+            RESULT_DEFAULT_LIMIT
+        )
+        assert RESULT_DEFAULT_LIMIT != DEFAULT_LIMIT
+
+    def test_limit_at_the_result_max_is_accepted(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        resp = _results(client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["limit"] == RESULT_MAX_LIMIT
+
+    def test_limit_above_the_result_max_is_a_422_not_a_clamp(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        resp = _results(
+            client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT + 1
+        )
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_raising_this_cap_did_not_raise_the_catalog_cap(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The reason this is its own dependency rather than a wider bound on the shared
+        one: the same limit is legal here and rejected on the assessments list."""
+        assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        assert (
+            _results(
+                client, regular_token1, assessment_id, limit=RESULT_MAX_LIMIT
+            ).status_code
+            == 200
+        )
+        assert _list(client, regular_token1, limit=MAX_LIMIT + 1).status_code == 422
+
+    def test_order_is_canonical_and_not_insertion_order(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Inserted in an order that is neither canonical nor alphabetical, so the
+        expected list rules out all three: v3 orders by ``min(id)``, which is why the one
+        known client re-sorts every result set against a ``vref.txt`` fixture."""
+        assessment_id = self._scored(
+            db_session, group1_version, ["MAT 1:1", "GEN 1:2", "EXO 1:1", "GEN 1:1"]
+        )
+        assert _vrefs(_results(client, regular_token1, assessment_id)) == [
+            "GEN 1:1",
+            "GEN 1:2",
+            "EXO 1:1",
+            "MAT 1:1",
+        ]
+
+    def test_canonical_order_holds_across_a_page_boundary(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._scored(
+            db_session, group1_version, ["MAT 1:1", "GEN 1:2", "EXO 1:1", "GEN 1:1"]
+        )
+        first = _results(client, regular_token1, assessment_id, limit=2)
+        second = _results(client, regular_token1, assessment_id, limit=2, offset=2)
+        assert _vrefs(first) == ["GEN 1:1", "GEN 1:2"]
+        assert _vrefs(second) == ["EXO 1:1", "MAT 1:1"]
+        # total is the whole match count on both pages, not len(items).
+        assert first.json()["total"] == second.json()["total"] == 4
+
+    def test_offset_past_the_end_is_an_empty_page(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        assessment_id = self._scored(db_session, group1_version, ["GEN 1:1"])
+        resp = _results(client, regular_token1, assessment_id, offset=5)
+        assert _rows(resp) == []
+        assert resp.json()["total"] == 1
+
+    def test_an_assessment_with_no_results_is_an_empty_page_not_a_404(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A finished assessment that pushed nothing, and a running one, both read as an
+        empty result set — the resource exists, it is just empty."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        resp = _results(client, regular_token1, assessment_id)
+        assert _rows(resp) == []
+        assert resp.json()["total"] == 0
+
+
+class TestResultsRows:
+    """The ``vref`` / ``vrefs`` split, and what a row is."""
+
+    def _assessment_on(self, db_session, group1_version, verse_texts):
+        """An assessment whose revision carries ``verse_texts`` (a ``{vref: text}`` map)."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        _make_verse_texts(db_session, revision_id, verse_texts)
+        return _make_assessment(db_session, revision_id, reference_id)
+
+    def test_a_merged_span_is_one_row_under_its_first_verse(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The shape verified on assessment 31109 / revision 24976: the continuation verse
+        has no row of its own, and the anchor's ``vrefs`` names it."""
+        assessment_id = self._assessment_on(
+            db_session,
+            group1_version,
+            {"MAT 9:20": "text", "MAT 9:21": RANGE, "MAT 9:22": "text"},
+        )
+        _make_results(db_session, assessment_id, ["MAT 9:20", "MAT 9:22"])
+        rows = _rows(_results(client, regular_token1, assessment_id))
+        assert [row["vref"] for row in rows] == ["MAT 9:20", "MAT 9:22"]
+        assert rows[0]["vrefs"] == ["MAT 9:20", "MAT 9:21"]
+        assert rows[1]["vrefs"] == ["MAT 9:22"]
+
+    def test_a_span_can_cover_more_than_two_verses(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """``MAT 25:2-4`` is one of the five real spans on revision 24976."""
+        assessment_id = self._assessment_on(
+            db_session,
+            group1_version,
+            {
+                "MAT 25:1": "text",
+                "MAT 25:2": "text",
+                "MAT 25:3": RANGE,
+                "MAT 25:4": RANGE,
+                "MAT 25:5": "text",
+            },
+        )
+        _make_results(db_session, assessment_id, ["MAT 25:1", "MAT 25:2", "MAT 25:5"])
+        rows = _rows(_results(client, regular_token1, assessment_id))
+        assert [row["vrefs"] for row in rows] == [
+            ["MAT 25:1"],
+            ["MAT 25:2", "MAT 25:3", "MAT 25:4"],
+            ["MAT 25:5"],
+        ]
+
+    def test_a_revision_with_no_markers_gives_every_row_a_single_vref(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The overwhelmingly common case, and the one where the span query costs a single
+        statement that finds nothing."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_results(db_session, assessment_id, ["GEN 1:1", "GEN 1:2"])
+        rows = _rows(_results(client, regular_token1, assessment_id))
+        assert [row["vrefs"] for row in rows] == [["GEN 1:1"], ["GEN 1:2"]]
+
+    def test_an_unscored_verse_is_absent_and_distinguishable_from_a_covered_one(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The finding that made ``vrefs`` necessary rather than convenient. ``MAT 9:21``
+        is missing because the row above covers it; ``MAT 9:23`` is missing because it was
+        never scored — real text, no result, as with ``MAT 23:14`` on revision 24976. Both
+        are absent from ``items``; only one is inside the union of every ``vrefs``."""
+        assessment_id = self._assessment_on(
+            db_session,
+            group1_version,
+            {
+                "MAT 9:20": "text",
+                "MAT 9:21": RANGE,
+                "MAT 9:22": "text",
+                "MAT 9:23": "real text that was never scored",
+            },
+        )
+        _make_results(db_session, assessment_id, ["MAT 9:20", "MAT 9:22"])
+        rows = _rows(_results(client, regular_token1, assessment_id))
+        served = {row["vref"] for row in rows}
+        covered = {vref for row in rows for vref in row["vrefs"]}
+        assert "MAT 9:21" not in served and "MAT 9:23" not in served
+        assert "MAT 9:21" in covered
+        assert "MAT 9:23" not in covered
+
+    def test_a_chapter_opening_marker_does_not_reach_into_the_previous_chapter(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """merge_verse_ranges' own rule: a marker attaches only within its book and
+        chapter, so an orphan at verse 1 absorbs nothing and is not absorbed."""
+        assessment_id = self._assessment_on(
+            db_session,
+            group1_version,
+            {"MAT 9:37": "text", "MAT 9:38": "text", "MAT 10:1": RANGE},
+        )
+        _make_results(db_session, assessment_id, ["MAT 9:37", "MAT 9:38"])
+        rows = _rows(_results(client, regular_token1, assessment_id))
+        assert [row["vrefs"] for row in rows] == [["MAT 9:37"], ["MAT 9:38"]]
+
+    def test_a_span_whose_anchor_was_never_scored_leaves_both_verses_unassessed(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The two causes of a missing verse can coincide, and the union still tells the
+        truth. ``MAT 9:20`` has text but no score — the ``MAT 23:14`` shape — and
+        ``MAT 9:21`` is merged into it, so no row carries either. Both fall outside every
+        ``vrefs``, which is the correct answer: nothing about either verse was assessed,
+        and a client must not be told the span above covers one of them."""
+        assessment_id = self._assessment_on(
+            db_session,
+            group1_version,
+            {"MAT 9:20": "text", "MAT 9:21": RANGE, "MAT 9:22": "text"},
+        )
+        _make_results(db_session, assessment_id, ["MAT 9:22"])
+        rows = _rows(_results(client, regular_token1, assessment_id))
+        covered = {vref for row in rows for vref in row["vrefs"]}
+        assert covered == {"MAT 9:22"}
+
+    def test_the_same_verse_scored_by_two_assessments_stays_in_its_own_result_set(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """What a "duplicate ``(assessment_id, vref)``" is *not*. A verse legitimately
+        carries scores from several assessment types, but the type is a property of the
+        ``assessment`` row — ``assessment_result`` has no type column — so those scores sit
+        under **different** ``assessment_id``s. This read is scoped to one assessment, so
+        neither result set can see the other's row, and the deduplication has nothing to
+        do with the multi-type case."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        alignment = _make_assessment(
+            db_session, revision_id, reference_id, type_="word-alignment"
+        )
+        similarity = _make_assessment(
+            db_session, revision_id, reference_id, type_="semantic-similarity"
+        )
+        _make_result(db_session, alignment, "GEN 1:1", score=0.25)
+        _make_result(db_session, similarity, "GEN 1:1", score=0.75)
+        for assessment_id, expected in ((alignment, 0.25), (similarity, 0.75)):
+            resp = _results(client, regular_token1, assessment_id)
+            rows = _rows(resp)
+            assert len(rows) == 1, rows
+            assert resp.json()["total"] == 1
+            assert rows[0]["score"] == expected
+            assert rows[0]["assessment_id"] == assessment_id
+
+    def test_one_verse_is_one_row_first_write_wins(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """One row per ``(assessment, vref)`` is the intended invariant — the type is not
+        part of that key, since ``assessment_result`` has no type column and the id
+        determines it — so the pair inserted here is corruption, of the only kind that can
+        occur: a retried Modal push re-inserting instead of upserting (#721, whose
+        constraint cannot land while the shared schema is frozen).
+
+        Two things are pinned. Offset pagination stays stable, because one row per verse is
+        what makes canonical order a total order. And the surviving row is the *first*, not
+        an average of the two — averaging a corrupt retry against its own copy answers a
+        question nobody asked, and there is no legitimate two-scores-for-one-verse case to
+        average. Matches ``train_routes`` and #721's own ``ON CONFLICT DO NOTHING``.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_result(db_session, assessment_id, "GEN 1:1", score=0.25, note="first")
+        _make_result(db_session, assessment_id, "GEN 1:1", score=0.75, note="second")
+        resp = _results(client, regular_token1, assessment_id)
+        rows = _rows(resp)
+        assert len(rows) == 1
+        assert resp.json()["total"] == 1
+        assert rows[0]["score"] == 0.25
+        # Every field comes from that one row, which is what lets `note` be served at all.
+        assert rows[0]["note"] == "first"
+
+    def test_note_is_served(self, client, regular_token1, db_session, group1_version):
+        """New in v4: v3's grouped projection drops the column, so ``/result`` reports it
+        null on every row for every type."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_result(db_session, assessment_id, "GEN 1:1", note="looks wrong")
+        assert _rows(_results(client, regular_token1, assessment_id))[0]["note"] == (
+            "looks wrong"
+        )
+
+    def test_null_flag_and_hide_are_coerced_to_false(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Both columns are nullable with only a Python-side default, so a row written
+        outside ``push_results`` can hold NULL — the same coercion ``_to_out`` applies to
+        ``deleted``."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        result_id = _make_result(db_session, assessment_id, "GEN 1:1")
+        row = db_session.query(AssessmentResult).filter_by(id=result_id).first()
+        row.flag = None
+        row.hide = None
+        db_session.commit()
+        assert row.flag is None, "the UPDATE must actually store NULL"
+        served = _rows(_results(client, regular_token1, assessment_id))[0]
+        assert served["flag"] is False
+        assert served["hide"] is False
+
+    def test_flag_and_hide_are_reported_when_set(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_result(db_session, assessment_id, "GEN 1:1", flag=True, hide=True)
+        served = _rows(_results(client, regular_token1, assessment_id))[0]
+        assert served["flag"] is True and served["hide"] is True
+
+    def test_source_and_target_are_not_returned(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Missing-words-only fields in v3, and not on this read even when the columns
+        hold something — the rows this serves are per verse, not per word."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        result_id = _make_result(db_session, assessment_id, "GEN 1:1")
+        row = db_session.query(AssessmentResult).filter_by(id=result_id).first()
+        row.source = "beginning"
+        row.target = [{"eng": "beginning"}]
+        db_session.commit()
+        served = _rows(_results(client, regular_token1, assessment_id))[0]
+        assert not {"source", "target"} & set(served)
+
+    def test_the_row_carries_its_own_id_and_assessment_id(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        result_id = _make_result(db_session, assessment_id, "GEN 1:1")
+        served = _rows(_results(client, regular_token1, assessment_id))[0]
+        assert served["id"] == result_id
+        assert served["assessment_id"] == assessment_id
+
+
+class TestResultsScope:
+    """v3's ``book`` / ``chapter`` / ``verse`` filters, and the invariants over them.
+
+    v3 enforces these at runtime in ``validate_parameters`` and answers 400. Here they are
+    a ``model_validator`` on :class:`ResultScope`, so the combination cannot be
+    constructed and the answer is the standard 422 envelope (#486).
+    """
+
+    @pytest.fixture
+    def scored(self, db_session, group1_version):
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_results(
+            db_session,
+            assessment_id,
+            ["GEN 1:1", "GEN 1:2", "GEN 2:1", "MAT 1:1"],
+        )
+        return assessment_id
+
+    def test_book_narrows_to_one_book(self, client, regular_token1, scored):
+        assert _vrefs(_results(client, regular_token1, scored, book="GEN")) == [
+            "GEN 1:1",
+            "GEN 1:2",
+            "GEN 2:1",
+        ]
+
+    def test_book_is_case_insensitive(self, client, regular_token1, scored):
+        """The input is upper-cased once in the schema, so the query can compare the column
+        directly and use ``idx_assessment_result_main`` — v3's ``func.upper(column)``
+        cannot."""
+        assert _vrefs(_results(client, regular_token1, scored, book="gen")) == _vrefs(
+            _results(client, regular_token1, scored, book="GEN")
+        )
+
+    def test_chapter_narrows_within_the_book(self, client, regular_token1, scored):
+        assert _vrefs(
+            _results(client, regular_token1, scored, book="GEN", chapter=1)
+        ) == ["GEN 1:1", "GEN 1:2"]
+
+    def test_verse_narrows_to_one_row(self, client, regular_token1, scored):
+        resp = _results(client, regular_token1, scored, book="GEN", chapter=1, verse=2)
+        assert _vrefs(resp) == ["GEN 1:2"]
+        assert resp.json()["total"] == 1
+
+    def test_a_well_formed_book_that_names_nothing_is_an_empty_page(
+        self, client, regular_token1, scored
+    ):
+        """A filter narrows an already-authorized set rather than naming the collection's
+        parent, so it cannot 404 — the same rule the assessments list follows."""
+        resp = _results(client, regular_token1, scored, book="XYZ")
+        assert _rows(resp) == []
+        assert resp.json()["total"] == 0
+
+    def test_a_book_that_is_not_three_letters_is_a_422(
+        self, client, regular_token1, scored
+    ):
+        """v3 checks only ``len(book) > 3``, so it accepts ``"G"`` and answers an empty
+        result set instead of reporting the mistake."""
+        for bad in ("G", "GENESIS"):
+            resp = _results(client, regular_token1, scored, book=bad)
+            assert resp.status_code == 422, (bad, resp.text)
+            assert _error_code(resp) == "VALIDATION_ERROR"
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            pytest.param({"chapter": 1}, id="chapter-without-book"),
+            pytest.param({"book": "GEN", "verse": 1}, id="verse-without-chapter"),
+            pytest.param(
+                {"aggregate": "book", "book": "GEN", "chapter": 1},
+                id="aggregate-book-with-chapter",
+            ),
+            pytest.param(
+                {"aggregate": "chapter", "book": "GEN", "chapter": 1, "verse": 1},
+                id="aggregate-chapter-with-verse",
+            ),
+            pytest.param(
+                {"aggregate": "text", "book": "GEN"}, id="aggregate-text-with-book"
+            ),
+        ],
+    )
+    def test_every_inconsistent_combination_is_a_422(
+        self, client, regular_token1, scored, params
+    ):
+        resp = _results(client, regular_token1, scored, **params)
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_an_unknown_aggregate_level_is_a_422(self, client, regular_token1, scored):
+        resp = _results(client, regular_token1, scored, aggregate="verse")
+        assert resp.status_code == 422, resp.text
+        assert _error_code(resp) == "VALIDATION_ERROR"
+
+    def test_the_scope_filters_compose_with_pagination(
+        self, client, regular_token1, scored
+    ):
+        resp = _results(client, regular_token1, scored, book="GEN", limit=2, offset=2)
+        assert _vrefs(resp) == ["GEN 2:1"]
+        assert resp.json()["total"] == 3
+
+
+class TestResultsAggregation:
+    """v3's rollup, preserved: mean score, any-flag, and a per-level projection."""
+
+    @pytest.fixture
+    def scored(self, db_session, group1_version):
+        """Scores chosen so a mean cannot be confused with a min, max or sum, and so the
+        two books differ in *which* flag is set."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_result(db_session, assessment_id, "GEN 1:1", score=0.25, hide=True)
+        _make_result(db_session, assessment_id, "GEN 1:2", score=0.75)
+        _make_result(db_session, assessment_id, "GEN 2:1", score=1.0)
+        _make_result(db_session, assessment_id, "MAT 1:1", score=0.0, flag=True)
+        return assessment_id
+
+    def test_chapter_level_rolls_up_per_chapter_in_canonical_order(
+        self, client, regular_token1, scored
+    ):
+        rows = _rows(_results(client, regular_token1, scored, aggregate="chapter"))
+        assert [(row["book"], row["chapter"]) for row in rows] == [
+            ("GEN", 1),
+            ("GEN", 2),
+            ("MAT", 1),
+        ]
+        assert [row["score"] for row in rows] == [0.5, 1.0, 0.0]
+
+    def test_book_level_rolls_up_per_book(self, client, regular_token1, scored):
+        rows = _rows(_results(client, regular_token1, scored, aggregate="book"))
+        assert [row["book"] for row in rows] == ["GEN", "MAT"]
+        assert [row["chapter"] for row in rows] == [None, None]
+        # mean(0.25, 0.75, 1.0) — not the mean of the chapter means.
+        assert rows[0]["score"] == pytest.approx(2.0 / 3.0)
+
+    def test_text_level_is_exactly_one_row(self, client, regular_token1, scored):
+        resp = _results(client, regular_token1, scored, aggregate="text")
+        rows = _rows(resp)
+        assert len(rows) == 1
+        assert resp.json()["total"] == 1
+        assert rows[0]["book"] is None and rows[0]["chapter"] is None
+        assert rows[0]["score"] == pytest.approx(0.5)
+
+    def test_flags_roll_up_as_any_not_all(self, client, regular_token1, scored):
+        """One flagged verse flags its whole scope, and ``flag`` and ``hide`` roll up
+        independently — they are set on different books in the fixture."""
+        by_book = {
+            row["book"]: row
+            for row in _rows(_results(client, regular_token1, scored, aggregate="book"))
+        }
+        assert by_book["GEN"]["hide"] is True and by_book["GEN"]["flag"] is False
+        assert by_book["MAT"]["flag"] is True and by_book["MAT"]["hide"] is False
+        whole = _rows(_results(client, regular_token1, scored, aggregate="text"))[0]
+        assert whole["flag"] is True and whole["hide"] is True
+
+    @pytest.mark.parametrize("level", ["chapter", "book", "text"])
+    def test_vrefs_is_absent_at_every_aggregate_level(
+        self, client, regular_token1, scored, level
+    ):
+        """The range merge is verse-level only, so ``vrefs`` on a row covering a book is
+        either meaningless or 30,000 entries long. Absent, not empty — and with it go the
+        other fields v3 also drops when aggregating."""
+        for row in _rows(_results(client, regular_token1, scored, aggregate=level)):
+            assert not {"vref", "vrefs", "note", "id"} & set(row)
+            assert set(row) == {
+                "assessment_id",
+                "book",
+                "chapter",
+                "score",
+                "flag",
+                "hide",
+            }
+
+    def test_aggregation_composes_with_the_scope_filters(
+        self, client, regular_token1, scored
+    ):
+        rows = _rows(
+            _results(client, regular_token1, scored, aggregate="chapter", book="GEN")
+        )
+        assert [(row["book"], row["chapter"]) for row in rows] == [
+            ("GEN", 1),
+            ("GEN", 2),
+        ]
+
+    def test_aggregated_rows_paginate(self, client, regular_token1, scored):
+        first = _results(client, regular_token1, scored, aggregate="chapter", limit=2)
+        second = _results(
+            client, regular_token1, scored, aggregate="chapter", limit=2, offset=2
+        )
+        assert [(r["book"], r["chapter"]) for r in _rows(first)] == [
+            ("GEN", 1),
+            ("GEN", 2),
+        ]
+        assert [(r["book"], r["chapter"]) for r in _rows(second)] == [("MAT", 1)]
+        assert first.json()["total"] == 3
+
+    def test_text_level_on_an_empty_result_set_returns_no_rows(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """One row is what ``aggregate=text`` returns when there is something to average;
+        with nothing scored there is no row rather than a row of nulls."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        resp = _results(client, regular_token1, assessment_id, aggregate="text")
+        assert _rows(resp) == []
+        assert resp.json()["total"] == 0
+
+    def test_a_merged_span_counts_once_in_a_rollup(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """Because no row exists for a continuation verse, a span contributes one score to
+        the mean, not one per verse it covers. Worth pinning: it is the reason there is no
+        combine rule to invent for spans."""
+        revision_id, reference_id = _pair(db_session, group1_version)
+        _make_verse_texts(
+            db_session,
+            revision_id,
+            {"MAT 9:20": "text", "MAT 9:21": RANGE, "MAT 9:22": "text"},
+        )
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_result(db_session, assessment_id, "MAT 9:20", score=0.0)
+        _make_result(db_session, assessment_id, "MAT 9:22", score=1.0)
+        row = _rows(_results(client, regular_token1, assessment_id, aggregate="text"))[
+            0
+        ]
+        assert row["score"] == pytest.approx(0.5)
+
+
+class TestResultsSchemaContract:
+    """That the two row types stay two types, and that the scope invariants are the model's."""
+
+    VERSE_FIELDS = {
+        "id",
+        "assessment_id",
+        "vref",
+        "vrefs",
+        "score",
+        "flag",
+        "hide",
+        "note",
+    }
+    AGGREGATE_FIELDS = {"assessment_id", "book", "chapter", "score", "flag", "hide"}
+
+    def test_each_row_type_has_exactly_its_own_fields(self):
+        assert set(AssessmentResultOut.model_fields) == self.VERSE_FIELDS
+        assert set(AssessmentResultAggregateOut.model_fields) == self.AGGREGATE_FIELDS
+
+    def test_vrefs_is_structurally_absent_from_the_aggregate_row(self):
+        """Not "present and empty": a client cannot read ``vrefs`` off an aggregate row at
+        all, which is the whole reason for modelling it as a separate type."""
+        assert not {"vref", "vrefs"} & set(AssessmentResultAggregateOut.model_fields)
+
+    def test_neither_row_carries_source_or_target(self):
+        for model in (AssessmentResultOut, AssessmentResultAggregateOut):
+            assert not {"source", "target"} & set(model.model_fields)
+
+    def test_a_verse_row_is_not_coerced_into_the_aggregate_shape(self):
+        """The union's members overlap on ``assessment_id``/``score``/``flag``/``hide``, so
+        a page validated against the aggregate member first would silently drop ``vref``
+        and ``vrefs``. Pinned at the model, since FastAPI re-validates the body."""
+        page = V4Page[AssessmentResultRow].model_validate(
+            {
+                "items": [
+                    {
+                        "id": 1,
+                        "assessment_id": 2,
+                        "vref": "MAT 9:20",
+                        "vrefs": ["MAT 9:20", "MAT 9:21"],
+                        "score": 0.5,
+                        "flag": False,
+                        "hide": False,
+                        "note": None,
+                    }
+                ],
+                "total": 1,
+                "limit": RESULT_DEFAULT_LIMIT,
+                "offset": 0,
+            }
+        )
+        assert isinstance(page.items[0], AssessmentResultOut)
+        assert page.items[0].vrefs == ["MAT 9:20", "MAT 9:21"]
+
+    def test_an_aggregate_row_resolves_to_the_aggregate_member(self):
+        page = V4Page[AssessmentResultRow].model_validate(
+            {
+                "items": [
+                    {
+                        "assessment_id": 2,
+                        "book": "MAT",
+                        "chapter": 9,
+                        "score": 0.5,
+                        "flag": False,
+                        "hide": False,
+                    }
+                ],
+                "total": 1,
+                "limit": RESULT_DEFAULT_LIMIT,
+                "offset": 0,
+            }
+        )
+        assert isinstance(page.items[0], AssessmentResultAggregateOut)
+
+    def test_the_route_returns_a_page_of_the_union(self):
+        route = _route("get_assessment_results")
+        assert route.response_model.__name__.startswith("V4Page")
+
+    def test_the_route_uses_the_result_pagination_dependency(self):
+        """Not the shared catalog params — the whole point of #893 decision 3, and the
+        thing a well-meaning cleanup would "simplify" back."""
+        route = _route("get_assessment_results")
+        assert any(
+            dependency.call is ResultPaginationParams
+            for dependency in route.dependant.dependencies
+        )
+
+    @pytest.mark.parametrize(
+        "scope",
+        [
+            pytest.param({}, id="everything"),
+            pytest.param({"book": "GEN"}, id="book"),
+            pytest.param({"book": "GEN", "chapter": 1}, id="book-chapter"),
+            pytest.param(
+                {"book": "GEN", "chapter": 1, "verse": 1}, id="book-chapter-verse"
+            ),
+            pytest.param({"aggregate": "text"}, id="text"),
+            pytest.param({"aggregate": "book"}, id="book-level"),
+            pytest.param(
+                {"aggregate": "book", "book": "GEN"}, id="book-level-one-book"
+            ),
+            pytest.param(
+                {"aggregate": "chapter", "book": "GEN", "chapter": 1},
+                id="chapter-level-one-chapter",
+            ),
+        ],
+    )
+    def test_a_consistent_scope_is_accepted(self, scope):
+        assert ResultScope(**scope) is not None
+
+    @pytest.mark.parametrize(
+        "scope",
+        [
+            pytest.param({"chapter": 1}, id="chapter-without-book"),
+            pytest.param({"verse": 1}, id="verse-without-anything"),
+            pytest.param({"book": "GEN", "verse": 1}, id="verse-without-chapter"),
+            pytest.param(
+                {"aggregate": "book", "book": "GEN", "chapter": 1},
+                id="aggregate-book-with-chapter",
+            ),
+            pytest.param(
+                {"aggregate": "chapter", "book": "GEN", "chapter": 1, "verse": 1},
+                id="aggregate-chapter-with-verse",
+            ),
+            pytest.param({"aggregate": "text", "book": "GEN"}, id="text-with-book"),
+        ],
+    )
+    def test_an_inconsistent_scope_cannot_be_constructed(self, scope):
+        """By construction, not by a runtime guard: the service never re-checks these, so
+        this is the only thing standing between it and a contradictory query."""
+        with pytest.raises(ValidationError):
+            ResultScope(**scope)
+
+    def test_the_book_abbreviation_is_normalized_by_the_model(self):
+        assert ResultScope(book="mat").book == "MAT"
+
+    def test_the_aggregate_levels_are_v3s_three(self):
+        assert {level.value for level in ResultAggregate} == {"chapter", "book", "text"}
+
+    def test_the_served_types_are_the_three_that_write_to_assessment_result(self):
+        """Pinned against the enum so adding a type does not silently join or leave this
+        read: ``word-alignment`` belongs here, which is easy to miss."""
+        assert set(assessment_service.RESULT_ASSESSMENT_TYPES) == set(SERVED_TYPES)
+        assert set(SERVED_TYPES) | set(UNSERVED_TYPES) == {
+            t.value for t in AssessmentType
+        }
