@@ -355,6 +355,173 @@ def test_predict_forwards_include_flags_to_modal(
     assert captured["payload"][field] is expected
 
 
+@pytest.mark.parametrize(
+    "extra,expected",
+    [
+        ({"bt_pivot": True}, True),
+        ({"bt_pivot": False}, False),
+        ({"bt_pivot": None}, None),
+        ({}, None),
+    ],
+    ids=[
+        "pivot_on",
+        "pivot_off",
+        "pivot_explicit_null",
+        "pivot_omitted_defaults_null",
+    ],
+)
+def test_predict_forwards_bt_pivot_to_modal(client, regular_token1, extra, expected):
+    """`bt_pivot` must survive `model_dump(exclude={"apps"})` and reach the
+    app payload. It used to be dropped by PredictInput's fixed field set
+    (issue #911), which silently downgraded a pivot-on request to the
+    agent's deployment default. Omitting it forwards null, which the agent
+    reads as "use the deployment default" — as does sending null explicitly,
+    the likelier shape from a client working around the old drop."""
+    captured = {}
+
+    async def capture(payload):
+        captured["payload"] = payload
+        return {"ok": True}
+
+    with patch(
+        "predict_routes.v3.predict_routes.modal.Function",
+        _make_modal_mock({"ngrams": capture}),
+    ):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["ngrams"], **extra),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert "bt_pivot" in captured["payload"]
+    assert captured["payload"]["bt_pivot"] is expected
+
+
+def test_predict_forwards_bt_pivot_to_spawned_agent(client, regular_token1):
+    """`bt_pivot` must reach the *spawned* slow-agent payload, not just the
+    synchronous fan-out. Back-translation runs on the slow path only, so
+    the spawn is the leg the flag actually steers — the sync call has
+    translation suppressed and never pivots."""
+    spawn_payloads: list[dict] = []
+
+    async def capture_spawn(payload):
+        spawn_payloads.append(payload)
+        fc = AsyncMock()
+        fc.object_id = "fc-test-bt-pivot"
+        return fc
+
+    def from_name(app_name, fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+        mock_fn.remote.aio = AsyncMock(return_value={"pairs": []})
+        mock_fn.spawn.aio = AsyncMock(side_effect=capture_spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["agent"], include_translation=True, bt_pivot=True),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert len(spawn_payloads) == 1
+    assert "bt_pivot" in spawn_payloads[0]
+    assert spawn_payloads[0]["bt_pivot"] is True
+
+
+def test_predict_bt_pivot_alone_does_not_spawn_slow_agent(client, regular_token1):
+    """`bt_pivot` steers the back-translation but must not itself trigger
+    the slow path. `spawn_slow_agent` keys off include_translation /
+    include_critique only, so a pivot-on request that opted out of
+    translation stays a fast-only call with no job handle — pinned here
+    against a future "bt_pivot implies translation" shortcut."""
+    spawn_calls: list[dict] = []
+
+    async def capture_spawn(payload):
+        spawn_calls.append(payload)
+        fc = AsyncMock()
+        fc.object_id = "fc-should-not-happen"
+        return fc
+
+    def from_name(app_name, fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+        mock_fn.remote.aio = AsyncMock(return_value={"pairs": []})
+        mock_fn.spawn.aio = AsyncMock(side_effect=capture_spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(apps=["agent"], include_translation=False, bt_pivot=True),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert "job" not in response.json()
+    assert spawn_calls == []
+
+
+def test_predict_bt_pivot_survives_flag_suppression_for_all_apps(
+    client, regular_token1
+):
+    """The slow-spawn path rewrites include_translation/include_critique on
+    the synchronous payload for *every* app (see
+    test_predict_non_agent_apps_get_suppressed_flags_when_agent_co_selected).
+    `bt_pivot` is not part of that suppression, so it must still reach each
+    app's sync payload unchanged — the shallow `dict(input_payload)` copy
+    only overrides the two include flags."""
+    captured: dict[str, dict] = {}
+
+    async def spawn(_payload):
+        fc = AsyncMock()
+        fc.object_id = "fc-x"
+        return fc
+
+    def from_name(app_name, _fn_name, environment_name=None):
+        mock_fn = AsyncMock()
+
+        async def capture(payload):
+            captured[app_name] = payload
+            return {"ok": True}
+
+        mock_fn.remote.aio = AsyncMock(side_effect=capture)
+        mock_fn.spawn.aio = AsyncMock(side_effect=spawn)
+        return mock_fn
+
+    mock_cls = AsyncMock()
+    mock_cls.from_name = from_name
+    with patch("predict_routes.v3.predict_routes.modal.Function", mock_cls):
+        response = client.post(
+            f"/{prefix}/predict",
+            json=_body(
+                apps=["ngrams", "agent"], include_translation=True, bt_pivot=True
+            ),
+            headers={"Authorization": f"Bearer {regular_token1}"},
+        )
+
+    assert response.status_code == 200, response.text
+    for app_name in ("ngrams", "agent-critique"):
+        assert captured[app_name]["include_translation"] is False
+        assert captured[app_name]["bt_pivot"] is True
+
+
+def test_predict_rejects_non_boolean_bt_pivot(client, regular_token1):
+    """`bt_pivot` is typed, so a bad value is a 422 at the boundary rather
+    than a silently-dropped field (the failure mode issue #911 is about)."""
+    response = client.post(
+        f"/{prefix}/predict",
+        json=_body(apps=["ngrams"], bt_pivot="telugu"),
+        headers={"Authorization": f"Bearer {regular_token1}"},
+    )
+    assert response.status_code == 422, response.text
+    assert "bt_pivot" in response.text
+
+
 def test_predict_ignores_model_override(client, regular_token1):
     """The per-call `model` override is no longer offered — the LLM is fixed
     by the agent's deploy config. A client that still sends `model` must not
