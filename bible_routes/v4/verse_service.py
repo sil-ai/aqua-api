@@ -141,6 +141,32 @@ _VREF_PATH = pathlib.Path(__file__).resolve().parents[2] / "fixtures" / "vref.tx
 VREF_LINES: tuple[str, ...] = tuple(_VREF_PATH.read_text(encoding="utf-8").splitlines())
 
 
+def _has_readable_text():
+    """The predicate for "this revision has readable text at this verse".
+
+    One definition, used by both :func:`_scoped_verses_query` under
+    ``include_verses=union`` and :func:`list_chapters`, because the two reads have to
+    agree: ``/chapters`` exists to build a navigation tree, so a chapter it advertises
+    must be one the default verses read can actually return rows for. Written separately
+    the two drifted, and the drift was invisible — the tree simply contained a dead link.
+
+    Readable excludes both ways a stored row can carry no verse. A ``<range>`` marker is a
+    verse the publisher printed as part of the one above it: as a continuation its text
+    lives on its anchor's row, and as an orphan (a marker opening a chapter, with nothing
+    before it to attach to) there is no text anywhere. NULL is excluded explicitly rather
+    than left to ``<>``'s three-valued logic, both so the intent survives a reader and
+    because ``list_chapters`` needs the same exclusion stated, not inferred.
+
+    Note this is deliberately *not* applied under ``include_verses=all``, whose contract
+    is the canonical skeleton: there an unreadable verse is still a row, with empty text.
+    ``/chapters`` aligns with ``union`` because that is the mode a navigation tree drives.
+    """
+    return (
+        VerseText.text.is_not(None),
+        VerseText.text != VERSE_RANGE_MARKER,
+    )
+
+
 def _scoped_verses_query(revision_id: int, scope: VerseScope):
     """The scoped, canonically-ordered verse query, without ``limit``/``offset``.
 
@@ -195,12 +221,9 @@ def _scoped_verses_query(revision_id: int, scope: VerseScope):
     if not all_mode:
         # "Only the verses this revision has text for", which drops both halves of the
         # marker case: continuations (folded into their anchor's `vrefs` instead) and
-        # orphan markers (no text to serve). NULL is excluded explicitly rather than
-        # left to `<>`'s three-valued logic, so the intent survives a reader.
-        stmt = stmt.where(
-            VerseText.text.is_not(None),
-            VerseText.text != VERSE_RANGE_MARKER,
-        )
+        # orphan markers (no text to serve). Shared with `list_chapters` — see
+        # `_has_readable_text`.
+        stmt = stmt.where(*_has_readable_text())
 
     if scope.book is not None:
         stmt = stmt.where(VerseReference.book_reference == scope.book)
@@ -304,11 +327,27 @@ async def export_text(db: AsyncSession, user: UserDB, revision_id: int) -> str:
 async def list_chapters(
     db: AsyncSession, user: UserDB, revision_id: int
 ) -> dict[str, list[int]]:
-    """Book abbreviation to the chapter numbers this revision has verses for.
+    """Book abbreviation to the chapter numbers this revision has readable verses in.
 
-    Authorized by :func:`revision_service.get_revision`. v3's ``GET /chapters`` carried
-    over unchanged, including the query: one ``DISTINCT`` over ``(book, chapter)`` joined
-    to ``book_reference`` for canonical book order, chapters ascending within each book.
+    Authorized by :func:`revision_service.get_revision`. v3's ``GET /chapters`` query,
+    with one deliberate difference: one ``DISTINCT`` over ``(book, chapter)`` joined to
+    ``book_reference`` for canonical book order, chapters ascending within each book,
+    **restricted to rows with readable text** (:func:`_has_readable_text`).
+
+    That restriction is not v3 parity, and it is not optional either — it is the price of
+    the merge. This map exists to build a navigation tree, so every chapter it advertises
+    has to be one the default verses read will return rows for. v3 satisfies that by
+    accident: its ``/chapter`` does not merge, so a chapter holding nothing but ``<range>``
+    markers still hands those rows back. v4 drops markers under ``union``, so without the
+    same predicate here the tree would advertise a chapter that answers empty — a dead
+    link, and an invisible one.
+
+    The shape is reachable rather than theoretical. A chapter-opening marker means the
+    publisher printed that chapter's first verse as part of the previous chapter's last,
+    and ``bible_loading`` drops blank lines, so in a partial upload the marker can be the
+    only row a chapter has. ``PSA 117`` is two verses long, which is the shortest way to
+    get there. NULL text is the same case from the other direction: ``bible_loading``
+    never writes one, but the column is nullable and legacy rows exist.
 
     Unpaginated, and deliberately so: the result is bounded by the canon at 89 books and
     1,511 chapters, no parameter can widen it, and it is a *map* — paging a map splits
@@ -331,7 +370,7 @@ async def list_chapters(
             select(VerseText.book, VerseText.chapter, BookReference.number)
             .distinct()
             .join(BookReference, VerseText.book == BookReference.abbreviation)
-            .where(VerseText.revision_id == revision_id)
+            .where(VerseText.revision_id == revision_id, *_has_readable_text())
             .order_by(BookReference.number, VerseText.chapter)
         )
     ).all()

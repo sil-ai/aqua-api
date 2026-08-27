@@ -335,7 +335,13 @@ async def list_chapters(
 
     A map from book abbreviation to chapter numbers — books in canonical order, chapters
     ascending — for building a navigation tree without fetching any text. Carried over
-    from v3's `GET /chapters` unchanged, now with a typed response.
+    from v3's `GET /chapters`, now with a typed response.
+
+    **Every chapter listed here returns verses.** A chapter appears only if this revision
+    has readable text in it, which is the same rule the verses read applies by default —
+    so following the tree can never land on an empty chapter. This differs from v3, which
+    lists a chapter holding nothing but merge markers; v3's `/chapter` hands those markers
+    back as verses, so its tree is consistent too, just about a different thing.
 
     Not paginated: the canon bounds it at 89 books and 1,511 chapters, no parameter can
     widen it, and paging a map would split a book's chapter list across pages.

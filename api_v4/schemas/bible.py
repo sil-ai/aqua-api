@@ -682,8 +682,10 @@ class RevisionChaptersOut(V4BaseModel):
 
     chapters: dict[str, list[int]] = Field(
         description=(
-            "Book abbreviation to the chapter numbers this revision has verses for. "
-            "Books in canonical order, chapters ascending."
+            "Book abbreviation to the chapter numbers this revision has readable verses "
+            "in. Books in canonical order, chapters ascending. Every chapter listed here "
+            "returns rows from the verses read, so a navigation tree built from this map "
+            "has no dead entries."
         ),
     )
 

@@ -1108,6 +1108,74 @@ class TestChapters:
         assert resp.status_code == 200, resp.text
         assert resp.json() == {"chapters": {}}
 
+    def test_a_chapter_holding_only_a_marker_is_not_advertised(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """A chapter whose only stored row is a chapter-opening ``<range>`` marker has no
+        readable verse, so listing it would put a dead link in the navigation tree.
+
+        Reachable rather than theoretical: the marker means the publisher printed that
+        chapter's opening verse as part of the previous chapter's last verse, and
+        ``bible_loading`` drops blank lines, so in a partial upload the marker can be the
+        only row the chapter has. PSA 117 is two verses long, which makes it the shortest
+        way to build the shape.
+
+        This is an inconsistency v4 *introduces* if the two reads disagree, not one it
+        inherits: v3's ``/chapter`` does not merge, so it hands the marker row straight
+        back and v3's tree has no dead link. v4 drops markers under ``union``, so
+        ``/chapters`` has to drop them too — which is why both reads take the predicate
+        from one place.
+        """
+        revision_id = _revision_with(
+            db_session,
+            group1_version,
+            {
+                "PSA 116:19": "I will pay my vows unto the LORD",
+                "PSA 117:1": RANGE,
+                "MAT 1:1": "The book of the generation",
+            },
+        )
+        resp = _chapters(client, regular_token1, revision_id)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["chapters"] == {"PSA": [116], "MAT": [1]}
+        # The pairing the map exists for: every advertised chapter yields rows, and the
+        # unadvertised one yields none.
+        assert _vrefs(
+            _verses(client, regular_token1, revision_id, book="PSA", chapter=116)
+        ) == ["PSA 116:19"]
+        assert (
+            _rows(_verses(client, regular_token1, revision_id, book="PSA", chapter=117))
+            == []
+        )
+
+    def test_a_chapter_holding_only_null_text_is_not_advertised(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The other half of the same predicate. ``bible_loading`` never writes a NULL
+        verse, but the column is nullable and legacy rows exist, and a chapter of them is
+        as unreadable as a chapter of markers."""
+        revision_id = _revision_with(
+            db_session,
+            group1_version,
+            {"GEN 1:1": "In the beginning", "GEN 2:1": None},
+        )
+        resp = _chapters(client, regular_token1, revision_id)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["chapters"] == {"GEN": [1]}
+
+    def test_a_chapter_keeps_its_listing_when_only_some_rows_are_markers(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The filter removes chapters with nothing readable, never chapters that merely
+        contain a merge — which are the common case."""
+        revision_id = _revision_with(
+            db_session,
+            group1_version,
+            {"MAT 9:20": "the hem of his garment", "MAT 9:21": RANGE},
+        )
+        resp = _chapters(client, regular_token1, revision_id)
+        assert resp.json()["chapters"] == {"MAT": [9]}
+
 
 class TestResultsJoin:
     """The published §15.3 guarantee, asserted rather than assumed.
