@@ -52,7 +52,10 @@ ceiling should define its own params dependency rather than raise this shared ca
 :class:`ResultPaginationParams` is the first list to take that route (#893). It
 subclasses this one with a 100/1000 policy for the verse-level *result* reads, so
 the two ceilings sit side by side and the catalog cap stays where the catalog
-lists want it.
+lists want it. :class:`VersePaginationParams` (#892) is the second, with a 200/1000
+policy for the verse *text* read. Three dependencies rather than one shared cap is
+the intended shape, not drift: each names a page size sized to what its own consumers
+actually ask for, and none of them can widen another.
 """
 
 from datetime import datetime
@@ -158,6 +161,72 @@ class ResultPaginationParams(PaginationParams):
                 f"{RESULT_DEFAULT_LIMIT}; must be between 1 and "
                 f"{RESULT_MAX_LIMIT} (out-of-range values are rejected with 422, "
                 f"not clamped)."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0."
+            ),
+        ),
+    ) -> None:
+        self.limit: int = limit
+        self.offset: int = offset
+
+
+#: Default page size for the verses read. 200 rather than the results read's 100 because
+#: the request this endpoint most often serves is *one chapter* — v3's ``GET /chapter``
+#: is the second-busiest verse endpoint in the one known client — and the longest chapter
+#: in the canon is Psalm 119 at 176 verses. A default of 100 would split the commonest
+#: whole unit across two pages for no reason; 200 covers every chapter in the canon in a
+#: single default-sized page.
+VERSE_DEFAULT_LIMIT = 200
+#: Hard maximum page size for the verses read; above this is a 422, not a clamp. 1000
+#: matches both the result reads' ceiling and
+#: :data:`api_v4.schemas.bible.MAX_VREFS`, so a caller who asks for the maximum number of
+#: verse references can receive all of them in one page and there is a single number to
+#: remember across the verse-level surface.
+#:
+#: Not larger, and this is the read the shared module docstring's warning was written
+#: about: a result row is ~194 bytes *because* v3 never populated its text fields, while
+#: a verse row carries the verse itself. Measured whole-revision exports run 250 KB for a
+#: gospel to 9.4 MB for a full Bible — and size tracks script and language far more than
+#: verse count, since one measured revision has 21% fewer verses than another and is 2.4x
+#: larger. At the worst measured density a 1000-row page is well under a megabyte; at
+#: 5000 it would not be. Size nothing here off verse counts.
+VERSE_MAX_LIMIT = 1000
+
+
+class VersePaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the verses read: 200 by default, 1000 max.
+
+    Consumed as ``page: VersePaginationParams = Depends()`` and interchangeable with the
+    other two at :meth:`V4Page.create`, for the reason
+    :class:`ResultPaginationParams` documents — a page echoes whichever dependency's
+    limit produced it through the one envelope.
+
+    ``super().__init__`` is deliberately not called here either; see
+    :class:`ResultPaginationParams` for why re-declaring the catalog bounds would defeat
+    the override.
+
+    Note ``GET /v4/revisions/{id}/text`` takes **no** pagination dependency at all: it is
+    the one v4 read with no ``limit``/``offset``, because its 41,899 lines are bounded by
+    construction and their positions are the format. See that endpoint's description.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            VERSE_DEFAULT_LIMIT,
+            ge=1,
+            le=VERSE_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{VERSE_DEFAULT_LIMIT} (enough for any single chapter); must be "
+                f"between 1 and {VERSE_MAX_LIMIT} (out-of-range values are rejected "
+                f"with 422, not clamped)."
             ),
         ),
         offset: int = Query(

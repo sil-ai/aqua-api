@@ -1,7 +1,7 @@
-"""v4 Bible-domain request/response schemas (issues #825/#826/#830/#891, epic #842).
+"""v4 Bible-domain request/response schemas (issues #825/#826/#830/#891/#892, epic #842).
 
-The Bible-domain slices on the v4 surface are Versions and Revisions. These
-schemas subclass :class:`api_v4.schemas.base.V4BaseModel`, so the wire contract is
+The Bible-domain slices on the v4 surface are Versions, Revisions, and Verses &
+text. These schemas subclass :class:`api_v4.schemas.base.V4BaseModel`, so the wire contract is
 **snake_case** (issue #830): every field's canonical name is its snake_case Python
 attribute, and that is what v4 emits.
 
@@ -28,9 +28,10 @@ are load-bearing for the #830 goal:
 # ``TypeError: unsupported operand type(s) for |`` at import time.
 from datetime import date as date_type
 from datetime import datetime
+from enum import Enum
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from api_v4.schemas.base import V4BaseModel
 
@@ -424,3 +425,271 @@ class RevisionOut(V4BaseModel):
     # timestamp — max() skips NULLs, so such a row simply cannot advance a
     # watermark. Mirrors VersionOut.updated_at.
     updated_at: datetime | None = None
+
+
+# --- Verses & text (issue #892) ----------------------------------------------
+
+#: Length of a USFM book abbreviation. Every entry in ``fixtures/book_reference.txt``
+#: is exactly three characters (``GEN``, ``1SA``, ``3JN``), which is what makes an
+#: *exact* length the right validation: v3 checks only ``len(book) > 3``, so it accepts
+#: ``"G"`` and turns it into an empty result set.
+#:
+#: Lives here, in the Bible domain, and is imported by
+#: :mod:`api_v4.schemas.assessment`: a book abbreviation is a Bible-domain fact
+#: whichever read is scoping by it, and both the results read (#893) and the verses
+#: read (#892) need the same bound.
+BOOK_ABBREVIATION_LENGTH = 3
+
+#: Maximum number of references a single ``vrefs`` filter may carry (#867, settled on
+#: #892). A vref costs ~18-20 bytes once percent-encoded with its ``&vrefs=`` overhead,
+#: so 1000 is ~20 KB of URL — comfortably under the ~60 KB platform ingress ceiling,
+#: with 500-per-request already proven in production by the one known client. It is
+#: also :data:`api_v4.pagination.VERSE_MAX_LIMIT`, so a caller who asks for the maximum
+#: number of references can receive them all in a single page.
+#:
+#: **The limit is not the point; the error is.** v3 accepts an unlimited list, but past
+#: roughly 3,000 references the URL exceeds the platform ingress limit and is rejected
+#: *before reaching the application* — the caller gets a non-JSON body and the server
+#: logs nothing. A stated limit that answers with a 422 naming both numbers converts a
+#: silent infrastructure rejection into an answerable API response. A ``POST`` variant
+#: was considered and rejected: a POST that creates nothing cuts against v4's
+#: "verbs live in the HTTP method" rule and gives two ways to perform one read.
+MAX_VREFS = 1000
+
+
+class IncludeVerses(str, Enum):
+    """Which verses ``GET /v4/revisions/{id}/verses`` returns.
+
+    v3's flag has a third value, ``intersection``, which v3's own docs describe as
+    "treated identically to 'union' for a single revision". It is a *cross-revision*
+    set operation, and the only endpoint that could give it meaning — v3's
+    ``GET /texts`` — is cut from v4 (no client has ever called it). A value that can
+    never differ from another value is not a choice, so v4 has two.
+    """
+
+    #: Every canonical verse reference, whether or not this revision has text for it.
+    all = "all"
+    #: Only the verses this revision actually has text for. The default.
+    union = "union"
+
+
+class VerseScope(V4BaseModel):
+    """Which verses to return from ``GET /v4/revisions/{id}/verses``.
+
+    The five parameters cover what v3 spread across five endpoints — ``/verse``,
+    ``/chapter``, ``/book``, ``/text`` and ``/vrefs`` — and the invariants that make
+    them coherent hold **by construction** here rather than as runtime checks, the same
+    way :class:`api_v4.schemas.assessment.ResultScope` does it for the results read:
+
+    1. ``chapter`` requires ``book``
+    2. ``verse`` requires ``book`` (and ``chapter``)
+    3. ``vrefs`` cannot be combined with ``book`` / ``chapter`` / ``verse``
+
+    Rule 3 is the one v3 has no opinion on, because in v3 the two were different
+    endpoints. They are two ways of naming a set of verses, and combining them can only
+    intersect one with the other — which returns fewer rows than either filter alone
+    suggests, silently. Rejecting is also the reversible direction: allowing the
+    combination later is not a breaking change, forbidding it later would be. The stated
+    use case for ``vrefs`` is a whole-Bible word search, whose references land wherever
+    the word occurs, so nothing about it wants a book filter as well.
+
+    ``include_verses`` composes with all of them, which *is* new: v3 offered the flag
+    only on ``/text``, its whole-revision read. ``include_verses=all`` with ``book=MAT``
+    is every canonical verse of Matthew including the ones this revision lacks, and with
+    ``vrefs=[...]`` it is a direct answer to "which of these references does this
+    revision have?".
+
+    A well-formed ``book`` naming no book, or a ``vrefs`` entry naming no canonical
+    verse, yields an empty page rather than a 404: these narrow an already-authorized
+    set instead of naming the collection's parent. Only the revision id in the path can
+    404.
+    """
+
+    book: str | None = Field(
+        default=None,
+        min_length=BOOK_ABBREVIATION_LENGTH,
+        max_length=BOOK_ABBREVIATION_LENGTH,
+        description=(
+            "Restrict to one book, as its three-letter USFM abbreviation (`MAT`). "
+            "Case-insensitive. A well-formed abbreviation that names no book yields an "
+            "empty page, not a 404. Cannot be combined with `vrefs`."
+        ),
+    )
+    chapter: int | None = Field(
+        default=None,
+        ge=1,
+        description="Restrict to one chapter. Requires `book`; excludes `vrefs`.",
+    )
+    verse: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "Restrict to one verse. Requires `book` and `chapter`; excludes `vrefs`."
+        ),
+    )
+    vrefs: list[str] | None = Field(
+        default=None,
+        description=(
+            f"Restrict to this explicit list of verse references (`GEN 1:1`), for a "
+            f"scattered selection no book/chapter filter can express. Case-insensitive. "
+            f"**At most {MAX_VREFS} per request**; more is a 422 naming the limit and "
+            f"the number received. Cannot be combined with `book`, `chapter` or "
+            f"`verse`. A reference naming no canonical verse simply matches nothing. "
+            f"Under the default `include_verses=union` a requested reference the "
+            f"revision has no text for is absent from the page; use "
+            f"`include_verses=all` to have every requested reference come back, with "
+            f"empty text where there is none."
+        ),
+    )
+    include_verses: IncludeVerses = Field(
+        default=IncludeVerses.union,
+        description=(
+            "`union` (the default) returns only the verses this revision has text for, "
+            "with verses the publisher merged into a neighbour folded into that "
+            "neighbour's row. `all` returns every canonical verse in scope — all 41,899 "
+            "of them when nothing else narrows the request — with empty text where the "
+            "revision has none, and performs no merging: every row covers exactly one "
+            "verse. Join against a result set using the default."
+        ),
+    )
+
+    @field_validator("book")
+    @classmethod
+    def _upper_book(cls, value: str | None) -> str | None:
+        """Normalize the abbreviation to upper case.
+
+        Stored book values come from ``fixtures/vref.txt`` via ``bible_loading``, so
+        they are always upper case. Normalizing the *input* once here lets the query
+        compare the reference column directly rather than wrapping it in ``upper()``,
+        which would forfeit the index.
+        """
+        return value.upper() if value is not None else None
+
+    @field_validator("vrefs")
+    @classmethod
+    def _bounded_vrefs(cls, value: list[str] | None) -> list[str] | None:
+        """Enforce :data:`MAX_VREFS` and normalize each reference.
+
+        The bound is **not** declared as a ``max_length`` on the field, and that is
+        deliberate: a field constraint runs before this validator and would win, and its
+        message ("List should have at most 1000 items") names the limit but not what the
+        caller actually sent. Naming both numbers is the entire value of the cap (see
+        :data:`MAX_VREFS`), so the check lives where it can say them. The limit is
+        advertised to clients through the field description and the OpenAPI parameter,
+        not through a constraint keyword.
+
+        Upper-casing matches the ``book`` filter's case-insensitivity: a canonical vref
+        is an upper-case book abbreviation followed by digits, a space and a colon, so
+        ``.upper()`` is total over well-formed input and idempotent. Malformed entries
+        are not rejected — they simply match nothing, the same answer as a well-formed
+        reference to a verse the revision lacks.
+        """
+        if value is None:
+            return None
+        if len(value) > MAX_VREFS:
+            raise ValueError(
+                f"at most {MAX_VREFS} vrefs per request; received {len(value):,}"
+            )
+        return [vref.strip().upper() for vref in value]
+
+    @model_validator(mode="after")
+    def _consistent_scope(self) -> "VerseScope":
+        if self.chapter is not None and self.book is None:
+            raise ValueError("chapter requires book")
+        if self.verse is not None and self.chapter is None:
+            raise ValueError("verse requires book and chapter")
+        if self.vrefs is not None and (
+            self.book is not None or self.chapter is not None or self.verse is not None
+        ):
+            raise ValueError("vrefs cannot be combined with book, chapter or verse")
+        return self
+
+
+class VerseOut(V4BaseModel):
+    """One row of ``GET /v4/revisions/{id}/verses``.
+
+    ``vref`` and ``vrefs`` are deliberately the **same pair, with the same meaning**, as
+    on :class:`api_v4.schemas.assessment.AssessmentResultOut`. That is the published
+    guarantee behind this read: a client can inner-join a result set to a verse set on
+    ``vref`` and get the text that was actually scored, because both surfaces agree on
+    what a merged span is called and which verses it covers.
+
+    * **``vref`` is the span's first verse** — ``MAT 9:20`` for a row covering
+      ``MAT 9:20-21`` — never a range label like ``"MAT 9:20-21"``. This is the one
+      behaviour change from v3's ``/chapter``, ``/book``, ``/verse`` and ``/vrefs``,
+      which return the publisher's continuation rows raw, marker text and all, and from
+      v3's ``/text``, which labels a merged row with a range string. A range string is
+      not a line of ``fixtures/vref.txt``, so a client joining on it drops the row
+      silently — which is exactly the failure the results read was shaped to avoid.
+    * **``vrefs`` is every verse the row covers**, in canonical order, beginning with
+      ``vref``. A single entry in the overwhelming majority of cases; more only where the
+      publisher printed several verses as one unit. Under ``include_verses=all`` it is
+      always exactly ``[vref]``, because that mode does no merging.
+
+    ``text`` never carries the stored ``<range>`` marker. Under ``union`` a merged
+    continuation is not a row at all; under ``all`` it is a row with empty text. The one
+    place the marker is still emitted verbatim is ``GET /v4/revisions/{id}/text``, where
+    it is part of the file format rather than a leaked storage detail.
+    """
+
+    id: int | None = Field(
+        default=None,
+        description=(
+            "The stored `verse_text` row's id, or null for a canonical verse this "
+            "revision has no row for (only reachable with `include_verses=all`). On a "
+            "merged span it is the anchor's row. Stable, but not a handle: no v4 "
+            "endpoint addresses a single verse by id."
+        ),
+    )
+    revision_id: int = Field(
+        description="The revision this verse belongs to (echoed from the path).",
+    )
+    vref: str = Field(
+        description=(
+            "The verse this row is stored under — the **first** verse of the span when "
+            "the publisher merged several. Always a literal canonical verse reference, "
+            "so it joins against `vref.txt` and against an assessment's results."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this row's text covers, in canonical order and beginning with "
+            "`vref`. A single entry unless the revision merged verses into this one, in "
+            "which case the continuations follow. Always exactly `[vref]` under "
+            "`include_verses=all`, which does not merge."
+        ),
+    )
+    text: str = Field(
+        description=(
+            "The verse text, or the merged text of the span. Empty for a canonical "
+            "verse this revision has no text for. Never the `<range>` marker."
+        ),
+    )
+
+
+class RevisionChaptersOut(V4BaseModel):
+    """Response body for ``GET /v4/revisions/{id}/chapters``.
+
+    v3's ``RevisionChapters`` carried over unchanged, wrapper object included: book
+    abbreviation to the chapter numbers this revision has verses for, books in canonical
+    order and chapters ascending within each.
+
+    The wrapper is kept rather than returning the bare map because a JSON object whose
+    keys are data documents as ``additionalProperties`` in OpenAPI, which generated
+    clients render as an untyped bag; and because a top-level object leaves room to add
+    a sibling field later without changing the response *shape*.
+    """
+
+    chapters: dict[str, list[int]] = Field(
+        description=(
+            "Book abbreviation to the chapter numbers this revision has verses for. "
+            "Books in canonical order, chapters ascending."
+        ),
+    )
+
+    model_config = {
+        **V4BaseModel.model_config,
+        "json_schema_extra": {
+            "example": {"chapters": {"GEN": [1, 2, 3], "MAT": [1, 2]}}
+        },
+    }
