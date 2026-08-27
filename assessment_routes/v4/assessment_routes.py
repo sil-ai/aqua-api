@@ -1,7 +1,7 @@
 """v4 Assessments router (issues #826/#827/#828/#865/#893, epic #842).
 
 The first real consumer of :mod:`api_v4.jobs`, and the first v4 endpoint whose work
-happens somewhere else. Four endpoints:
+happens somewhere else. Five endpoints:
 
 * ``POST   /v4/assessments``      — submit a run; ``202 Accepted`` with ``Location``
   and ``Retry-After``.
@@ -11,10 +11,12 @@ happens somewhere else. Four endpoints:
   filters, and ``updated_since`` delta sync.
 * ``DELETE /v4/assessments/{id}`` — soft-delete (``204``); ``404``/``403`` as
   appropriate.
+* ``GET    /v4/assessments/{id}/results`` — the generic per-verse scores, paginated,
+  in canonical vref order, with v3's scoping filters and its ``aggregate`` rollups.
 
-The typed result sub-resources (``/results``, ``/ngrams``, ``/text-lengths``,
-``/alignment-scores``, ``/tfidf``, ``/missing-words``) are the remainder of #893 and
-land in a follow-up PR, as does the comparisons family.
+The remaining typed result sub-resources (``/ngrams``, ``/text-lengths``,
+``/alignment-scores``, ``/tfidf``, ``/missing-words``) are the rest of #893 and land in
+follow-up PRs, as does the comparisons family.
 
 The shape of the change from v3, which is the whole point of the slice:
 
@@ -78,6 +80,16 @@ only ever narrow what the caller could already see, so a ``revision_id`` outside
 caller's groups yields an empty page. That differs on purpose from
 ``GET /v4/revisions``, whose ``version_id`` names the collection's parent and is
 therefore validated; see :func:`assessment_service.list_assessments`.
+
+**The results read declares its own pagination and its own scope, and neither is
+re-validated in the handler.** ``ResultPaginationParams`` (100/1000) rather than the
+shared catalog params (20/100), because a results consumer wants bulk —
+:mod:`api_v4.pagination` asks a heavy list to define its own dependency rather than raise
+the shared cap. :class:`ResultScopeParams` is a thin adapter over
+:class:`~api_v4.schemas.assessment.ResultScope`, whose ``model_validator`` holds the four
+parameters' invariants, so an inconsistent combination cannot reach the service at all.
+That is #486's principle: v4 satisfies these by construction instead of by a runtime
+guard like v3's ``validate_parameters``.
 """
 
 __version__ = "v4"
@@ -87,7 +99,9 @@ from typing import List, Optional
 
 import fastapi
 from fastapi import Depends, Query, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api_v4.delta import next_watermark, updated_since_description
@@ -100,8 +114,18 @@ from api_v4.jobs import (
     set_poll_headers,
     state_for_assessment_status,
 )
-from api_v4.pagination import PaginationParams, V4Page
-from api_v4.schemas.assessment import AssessmentCreate, AssessmentJob, AssessmentOut
+from api_v4.pagination import PaginationParams, ResultPaginationParams, V4Page
+from api_v4.schemas.assessment import (
+    BOOK_ABBREVIATION_LENGTH,
+    AssessmentCreate,
+    AssessmentJob,
+    AssessmentOut,
+    AssessmentResultAggregateOut,
+    AssessmentResultOut,
+    AssessmentResultRow,
+    ResultAggregate,
+    ResultScope,
+)
 from assessment_routes.v4 import assessment_service
 from database.dependencies import get_db
 from database.models import Assessment
@@ -295,11 +319,16 @@ def _to_job(assessment: Assessment) -> AssessmentJob:
 def _not_found_error(exc: Exception, assessment_id: int) -> V4APIError:
     """The 404 for an assessment the caller cannot read or reach.
 
-    Shared by the poll and the delete so both report an unreachable id identically. One
-    code covers "no such id", "outside your groups", "soft-deleted", "its revision was
-    soft-deleted" and "it is a training row" — the service resolves all five in one
-    scoped query and must not separate them (see its module docstring). The prose comes
-    from the signal rather than being re-written here, so the two cannot drift.
+    Shared by the poll, the delete and the results read so all three report an
+    unreachable id identically. One code covers "no such id", "outside your groups",
+    "soft-deleted", "its revision was soft-deleted" and "it is a training row" — the
+    service resolves all five in one scoped query and must not separate them (see its
+    module docstring). On the results read the same code also covers a sixth: an
+    assessment whose *type* has no rows in this result table. That is one clause on the
+    same statement, so it cannot be told apart from the other five either, and a caller
+    learns nothing about an assessment they may not see by asking for its results. The
+    prose comes from the signal rather than being re-written here, so the two cannot
+    drift.
     """
     return V4APIError(
         status_code=status.HTTP_404_NOT_FOUND,
@@ -470,6 +499,197 @@ async def get_assessment(
     job = _to_job(assessment)
     set_poll_headers(response, state=job.state, retry_after_s=ASSESSMENT_RETRY_AFTER_S)
     return job
+
+
+def _scope_description(field: str) -> str:
+    """The ``Query`` description for one scope parameter, taken from ``ResultScope``.
+
+    Read off the schema rather than written twice, so the parameter documented in
+    ``/v4/openapi.json`` and the field that actually validates it cannot drift apart.
+    """
+    return ResultScope.model_fields[field].description
+
+
+class ResultScopeParams:
+    """Adapter turning the four scope query parameters into one validated ``ResultScope``.
+
+    Consumed as ``scope: ResultScopeParams = Depends()``; the handler then passes
+    ``scope.scope`` to the service.
+
+    Why an adapter rather than the model itself. FastAPI 0.115 can take a Pydantic model
+    as a query-parameter container, but this version renders it in OpenAPI as a *single*
+    parameter whose schema is a ``$ref`` — so a generated client would send one object
+    instead of four query parameters. Declaring the parameters here keeps the documented
+    surface flat while :class:`~api_v4.schemas.assessment.ResultScope` stays the one place
+    the invariants live.
+
+    Why the ``ValidationError`` is re-raised as a ``RequestValidationError``: a Pydantic
+    error escaping a dependency would reach the #828 catch-all as a **500**, turning a
+    malformed request into a server fault. Re-raised, it lands on the handler that already
+    shapes FastAPI's own validation failures, so an inconsistent scope is the same
+    ``422 VALIDATION_ERROR`` envelope as a misspelled ``aggregate`` — one error shape for
+    the whole endpoint. ``loc`` is prefixed with ``"query"`` because that is where the
+    values came from; Pydantic reports a model-level error with an empty ``loc``.
+
+    The ``Query`` bounds duplicate the model's own bounds so OpenAPI advertises them
+    (``BOOK_ABBREVIATION_LENGTH``, ``ge=1``). They are the same numbers from the same
+    constant, not a second rule: whichever layer rejects first, the answer is the same
+    422, and the model remains the authority that nothing can bypass.
+    """
+
+    def __init__(
+        self,
+        book: Optional[str] = Query(
+            None,
+            min_length=BOOK_ABBREVIATION_LENGTH,
+            max_length=BOOK_ABBREVIATION_LENGTH,
+            description=_scope_description("book"),
+        ),
+        chapter: Optional[int] = Query(
+            None, ge=1, description=_scope_description("chapter")
+        ),
+        verse: Optional[int] = Query(
+            None, ge=1, description=_scope_description("verse")
+        ),
+        aggregate: Optional[ResultAggregate] = Query(
+            None, description=_scope_description("aggregate")
+        ),
+    ) -> None:
+        try:
+            self.scope: ResultScope = ResultScope(
+                book=book, chapter=chapter, verse=verse, aggregate=aggregate
+            )
+        except ValidationError as exc:
+            raise RequestValidationError(
+                [{**error, "loc": ("query", *error["loc"])} for error in exc.errors()]
+            ) from exc
+
+
+def _to_result_out(row, continuations: dict) -> AssessmentResultOut:
+    """Build one verse-level result row, deriving its ``vrefs`` from the span map.
+
+    ``vref`` is formatted from the row's ``book``/``chapter``/``verse`` rather than read
+    from the stored ``vref`` column — which is what v3 does, and which means the label
+    cannot disagree with the triple the row was deduplicated and ordered on, nor be null on
+    a legacy row.
+
+    ``vrefs`` is that label followed by whatever the revision merged into this verse.
+    ``continuations`` holds an entry only for verses that absorbed something, so the common
+    case is a one-element list built with no lookup cost. ``flag`` and ``hide`` are coerced
+    because both columns are nullable and carry only a Python-side default, so a row
+    written outside ``push_results`` can hold NULL — the same coercion ``_to_out`` applies
+    to ``deleted``.
+    """
+    vref = f"{row.book} {row.chapter}:{row.verse}"
+    return AssessmentResultOut(
+        id=row.id,
+        assessment_id=row.assessment_id,
+        vref=vref,
+        vrefs=[vref, *continuations.get((row.book, row.chapter, row.verse), ())],
+        score=row.score,
+        flag=bool(row.flag),
+        hide=bool(row.hide),
+        note=row.note,
+    )
+
+
+def _to_result_aggregate(row) -> AssessmentResultAggregateOut:
+    """Build one rolled-up result row.
+
+    ``book`` and ``chapter`` are read with a default because the aggregate query projects
+    *different columns per level* — both at ``aggregate=chapter``, only ``book`` at
+    ``aggregate=book``, neither at ``aggregate=text``, where the single row summarizes
+    everything and so has no location. That varying projection is v3's, and it is the
+    reason an aggregate row is its own response type rather than a verse row with fields
+    nulled: ``vrefs`` is *absent* here, not empty.
+    """
+    return AssessmentResultAggregateOut(
+        assessment_id=row.assessment_id,
+        book=getattr(row, "book", None),
+        chapter=getattr(row, "chapter", None),
+        score=row.score,
+        flag=bool(row.flag),
+        hide=bool(row.hide),
+    )
+
+
+@router.get(
+    "/{assessment_id}/results",
+    response_model=V4Page[AssessmentResultRow],
+)
+async def get_assessment_results(
+    assessment_id: int,
+    page: ResultPaginationParams = Depends(),
+    scope: ResultScopeParams = Depends(),
+    db: AsyncSession = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+) -> V4Page[AssessmentResultRow]:
+    """Read one assessment's per-verse scores, in canonical Bible order.
+
+    Serves the three assessment types whose scores are stored per verse —
+    `word-alignment`, `semantic-similarity` and `sentence-length`. An assessment of any
+    other type reports `404 ASSESSMENT_NOT_FOUND`, the same answer as an assessment that
+    does not exist, that is outside your groups, or that is a training run: the other
+    types keep their scores in their own tables and have their own sub-resources.
+
+    **A result set is not one row per verse, and you cannot derive coverage by
+    subtracting.** Two different things cause a verse to be missing from this list. It may
+    be *covered* by the row above it, because the revision merges it into the preceding
+    verse (published as `MAT 9:20-21`, stored once under `MAT 9:20`); or it may never have
+    been scored at all, which happens for real reasons — `MAT 23:14` on one measured
+    revision has 355 characters of text and no score, because the reference lacks the
+    verse and there was nothing to compare against. The two mean opposite things: "look at
+    the row above" versus "no data exists".
+
+    `vrefs` is what tells them apart. Each row carries `vref`, the verse it is stored
+    under, **and** `vrefs`, every verse it covers. The union of `vrefs` across a result set
+    is exactly the assessed set, so a verse outside that union was genuinely never scored.
+
+    **`vref` is the span's first verse, never a range label.** A row covering
+    `MAT 9:20-21` reports `vref: "MAT 9:20"` and `vrefs: ["MAT 9:20", "MAT 9:21"]`. `vref`
+    is always a literal canonical verse reference, so it joins directly against a
+    `vref.txt`-style fixture and against the verses read — a label like `"MAT 9:20-21"`
+    matches no canonical line and would be silently dropped by a client that joins on it.
+
+    **Ordering is canonical vref order** — Bible order, then chapter, then verse — not
+    v3's insertion order, so a client no longer has to re-sort every page. Exactly one row
+    per verse, which is what makes `offset` pagination stable across pages.
+
+    **Scoping and rollups.** `book`, `chapter` and `verse` narrow progressively; each
+    needs the one above it. `aggregate` rolls the scores up instead, to `chapter`, `book`
+    or the whole `text`, and cannot be combined with a scope narrower than itself. An
+    inconsistent combination is a `422`, not a silently ignored parameter.
+
+    Aggregated rows are a **different shape** — they carry the location they summarize
+    (`book`/`chapter`, and neither at `aggregate=text`, which is a single row), and they
+    have no `vref`, `vrefs`, `note` or `id`. The rollup is not symmetric across fields:
+
+    * `score` is the **mean** of the verses in scope.
+    * `flag` and `hide` are **any** — one flagged verse flags its whole chapter.
+
+    `source` and `target` are not returned at any level. They are populated only for
+    missing-words-shaped assessments, whose per-word rows this read does not serve.
+    """
+    try:
+        rows, total, continuations = await assessment_service.get_results(
+            db,
+            current_user,
+            assessment_id,
+            scope=scope.scope,
+            limit=page.limit,
+            offset=page.offset,
+        )
+    except assessment_service.AssessmentNotFound as exc:
+        raise _not_found_error(exc, assessment_id) from exc
+
+    if scope.scope.aggregate is None:
+        items = [_to_result_out(row, continuations) for row in rows]
+    else:
+        items = [_to_result_aggregate(row) for row in rows]
+    # No next_updated_since: assessment_result carries no modification timestamp, so this
+    # list has no delta feed. The key is still present and null, per the envelope's
+    # contract that adding delta support later is not a response-shape change.
+    return V4Page[AssessmentResultRow].create(items=items, total=total, pagination=page)
 
 
 @router.delete("/{assessment_id}", status_code=status.HTTP_204_NO_CONTENT)

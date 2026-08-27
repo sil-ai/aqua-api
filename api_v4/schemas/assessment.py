@@ -115,12 +115,54 @@ Three v3 ``AssessmentOut`` fields are deliberately **not** emitted:
   ``is_reference`` on ``RevisionOut``. #895 exposes those rows as their own resource.
 * ``attempt_count`` — the timeout sweep's own bookkeeping. The operational verbs left
   the public surface with this slice (#842), and their counter goes with them.
+
+
+The result reads: two row shapes and one scope, invalid by construction
+-----------------------------------------------------------------------
+
+``GET /v4/assessments/{id}/results`` serves the three types whose rows land in
+``assessment_result``, and its page holds one of **two** row types rather than one type
+with fields nulled:
+
+* :class:`AssessmentResultOut` — a verse-level row, carrying ``vref`` (the span's first
+  verse, which is what is stored) *and* ``vrefs`` (every verse it covers).
+* :class:`AssessmentResultAggregateOut` — a chapter, book or whole-text rollup, carrying
+  only the scope it summarizes and the rolled-up score and flags.
+
+Why two types and not one. v3 projects a *different column set* when aggregating: it
+drops ``vref``, ``source``, ``target`` and ``note``, and at ``aggregate=text`` there are
+no group columns at all, so the single row has no location of any kind. Modelling that as
+the verse row with four fields nulled would put ``vrefs`` on a row covering a whole book,
+where it is either meaningless or 30,000 entries long — #893's 2026-08-27 decision 5.
+Two types make ``vrefs`` structurally absent under aggregation instead of conventionally
+empty, and a client branches on ``aggregate`` in its *request* to know which it gets.
+
+``source`` and ``target`` are on neither type. They are populated only for
+missing-words-shaped assessments, whose per-word rows this read does not serve, and v3's
+``/result`` never returns them either (its grouped projection drops them for every type).
+Serving them here would be a new capability rather than a port, so they wait for the
+read that actually needs them.
+
+:class:`ResultScope` is the request half, and it is where #486's principle is paid off.
+v3 guards the same four parameters with ``validate_parameters``, a runtime function that
+raises five separate ``HTTPException(400)``s and is frozen with the rest of v3. Here the
+invariants are a ``model_validator``, so an inconsistent scope **cannot be constructed**:
+the service layer never has to re-check, the rules are unit-testable without an HTTP
+client, and the failure is the standard 422 envelope rather than a bespoke 400. The
+adapter that turns query parameters into one of these lives with the route, so OpenAPI
+still documents four flat query parameters rather than one object.
+
+``reverse`` is not carried. v3's only branch on it tests
+``assessment_type in ["question-answering", "word-tests"]``, and neither value is in
+``AssessmentType`` — so it cannot fire for anything v4 can create. (The comment above it
+says "missing words", naming a third type again: a stale comment, not a spec.)
 """
 
 from datetime import datetime
+from enum import Enum
 from typing import Annotated, Literal, Union
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from api_v4.jobs import JobEnvelope, JobState
 from api_v4.schemas.base import V4BaseModel
@@ -549,7 +591,252 @@ class AssessmentJob(AssessmentOut, JobEnvelope):
     """
 
 
+#: Length of a USFM book abbreviation. Every entry in ``fixtures/book_reference.txt`` is
+#: exactly three characters (``GEN``, ``1SA``, ``3JN``), which is what makes an exact
+#: length the right validation: v3 checks only ``len(book) > 3``, so it accepts ``"G"``
+#: and turns it into an empty result set.
+BOOK_ABBREVIATION_LENGTH = 3
+
+
+class ResultAggregate(str, Enum):
+    """The level a result set may be rolled up to. v3's ``aggType``, same three values.
+
+    Absent (``None``) means verse level, which is the default and the only level that
+    carries ``vrefs``.
+    """
+
+    chapter = "chapter"
+    book = "book"
+    text = "text"
+
+
+class ResultScope(V4BaseModel):
+    """Which slice of a result set to return, and at what level.
+
+    The four parameters are v3's, and so are the invariants — but they hold *by
+    construction* here (see the module docstring). Five rules, each of which v3 raises a
+    separate ``HTTPException(400)`` for:
+
+    1. ``chapter`` requires ``book``
+    2. ``verse`` requires ``chapter`` (and so, transitively, ``book``)
+    3. ``aggregate=book`` conflicts with ``chapter``
+    4. ``aggregate=chapter`` conflicts with ``verse``
+    5. ``aggregate=text`` conflicts with ``book``, ``chapter`` and ``verse``
+
+    Rules 3-5 are all the same statement — a rollup cannot be narrower than the scope it
+    rolls up — but they are written out one at a time so the 422's message names the pair
+    the caller actually sent.
+
+    A ``book`` that is well-formed but names no book yields an empty page rather than a
+    404. It narrows an already-authorized set instead of naming the collection's parent,
+    which is the same rule ``GET /v4/assessments``' filters follow.
+    """
+
+    book: str | None = Field(
+        default=None,
+        min_length=BOOK_ABBREVIATION_LENGTH,
+        max_length=BOOK_ABBREVIATION_LENGTH,
+        description=(
+            "Restrict to one book, as its three-letter USFM abbreviation (`MAT`). "
+            "Case-insensitive. A well-formed abbreviation that names no book yields an "
+            "empty page, not a 404."
+        ),
+    )
+    chapter: int | None = Field(
+        default=None,
+        ge=1,
+        description="Restrict to one chapter. Requires `book`.",
+    )
+    verse: int | None = Field(
+        default=None,
+        ge=1,
+        description="Restrict to one verse. Requires `book` and `chapter`.",
+    )
+    aggregate: ResultAggregate | None = Field(
+        default=None,
+        description=(
+            "Roll the scores up to this level instead of returning verses. Omit it for "
+            "verse level. An aggregate level cannot be narrower than the scope it "
+            "summarizes, so `chapter` excludes `verse`, `book` excludes `chapter`, and "
+            "`text` excludes all three."
+        ),
+    )
+
+    @field_validator("book")
+    @classmethod
+    def _upper(cls, value: str | None) -> str | None:
+        """Normalize the abbreviation to upper case.
+
+        Stored book values come from ``fixtures/vref.txt`` via ``bible_loading``, so they
+        are always upper case. Normalizing the *input* once here lets the query compare
+        the column directly and use ``idx_assessment_result_main``, where v3's
+        ``func.upper(column) == book.upper()`` cannot.
+        """
+        return value.upper() if value is not None else None
+
+    @model_validator(mode="after")
+    def _consistent_scope(self) -> "ResultScope":
+        if self.chapter is not None and self.book is None:
+            raise ValueError("chapter requires book")
+        if self.verse is not None and self.chapter is None:
+            raise ValueError("verse requires book and chapter")
+        if self.aggregate is ResultAggregate.book and self.chapter is not None:
+            raise ValueError("aggregate=book cannot be combined with chapter")
+        if self.aggregate is ResultAggregate.chapter and self.verse is not None:
+            raise ValueError("aggregate=chapter cannot be combined with verse")
+        if self.aggregate is ResultAggregate.text and (
+            self.book is not None or self.chapter is not None or self.verse is not None
+        ):
+            raise ValueError(
+                "aggregate=text cannot be combined with book, chapter or verse"
+            )
+        return self
+
+
+class AssessmentResultOut(V4BaseModel):
+    """One verse-level row of ``GET /v4/assessments/{id}/results``.
+
+    ``vref`` and ``vrefs`` are the reason this read exists in this shape, and they are not
+    redundant:
+
+    * **``vref`` is the span's first verse** — ``MAT 9:20`` for a row covering
+      ``MAT 9:20-21`` — because that is what is stored and it is the stable key. Labelling
+      the row ``MAT 9:20-21`` was considered and rejected on evidence: the existing client
+      inner-joins every result set against a canonical ``vref.txt`` fixture, so a row
+      whose ``vref`` is not a literal line of that file is dropped with no error, and the
+      row would simply vanish from the web app.
+    * **``vrefs`` is every verse the row covers**, derived at read time from the
+      revision's ``<range>`` markers (:mod:`bible_routes.v4.verse_range_service`). One
+      entry in the overwhelming majority of cases.
+
+    What ``vrefs`` is *for*: a result set is not one row per verse, and a missing verse has
+    two different causes. It may be covered by the span above it, or it may never have been
+    scored at all — verified on revision 24976, which has 1065 merged-text rows and 1064
+    result rows, the gap being ``MAT 23:14``, a bracketed textual-variant verse with real
+    text that the reference lacks. The union of every row's ``vrefs`` is exactly the
+    covered set, so anything outside it is genuinely unassessed. Without the field the two
+    cases are indistinguishable, which is why it is not merely a convenience.
+    """
+
+    id: int = Field(
+        description=(
+            "The stored row's id. Stable for a given assessment and verse, but not a "
+            "handle: no v4 endpoint addresses a single result row."
+        ),
+    )
+    assessment_id: int = Field(
+        description="The assessment these results belong to (echoed from the path).",
+    )
+    vref: str = Field(
+        description=(
+            "The verse this row is stored under — the **first** verse of the span when "
+            "several were merged. Always a literal canonical vref, so it joins against "
+            "`vref.txt` and against the verses read."
+        ),
+    )
+    vrefs: list[str] = Field(
+        description=(
+            "Every verse this row covers, in canonical order and beginning with `vref`. "
+            "A single entry unless the revision merged verses into this one (`<range>`), "
+            "in which case the continuations follow. The union of this field across a "
+            "whole result set is the assessed set: a verse absent from every `vrefs` was "
+            "never scored, rather than being covered by a neighbour."
+        ),
+    )
+    score: float | None = Field(
+        default=None,
+        description=(
+            "The verse's score. Null only if the row was stored without one; what the "
+            "number means is the assessment type's business."
+        ),
+    )
+    flag: bool = Field(
+        default=False,
+        description=(
+            "Whether the row was flagged for attention. Coerced from null on legacy "
+            "rows written before the column had a default."
+        ),
+    )
+    hide: bool = Field(
+        default=False,
+        description=(
+            "Whether the row is marked as hidden from display. Advisory — the row is "
+            "still returned; it is up to the client to honour it."
+        ),
+    )
+    note: str | None = Field(
+        default=None,
+        description=(
+            "Free-text note the runner attached to this verse, or null. New in v4: v3's "
+            "grouped projection drops the column, so `/result` always reported it null."
+        ),
+    )
+
+
+class AssessmentResultAggregateOut(V4BaseModel):
+    """One rolled-up row of ``GET /v4/assessments/{id}/results?aggregate=...``.
+
+    Its own type rather than the verse row with fields nulled — see the module docstring.
+    ``vrefs`` is structurally absent: the range merge is verse-level only.
+
+    The rollup rules are v3's, and they are not symmetric:
+
+    * ``score`` is the **mean** of the verses in scope (``avg``).
+    * ``flag`` and ``hide`` are **any** (``bool_or``) — one flagged verse flags its whole
+      chapter.
+
+    Note this is a different question from what a score does across a *merged verse span*,
+    which does not arise at all: no rows exist for merged continuations, so there is
+    nothing to combine.
+    """
+
+    assessment_id: int = Field(
+        description="The assessment these results belong to (echoed from the path).",
+    )
+    book: str | None = Field(
+        default=None,
+        description=(
+            "The book this row summarizes, or null at `aggregate=text`, which "
+            "summarizes everything and so has no location. v3 rendered these as a "
+            "`vref` string (`MAT`, `MAT 9`); build that from `book` and `chapter` if you "
+            "need it."
+        ),
+    )
+    chapter: int | None = Field(
+        default=None,
+        description=(
+            "The chapter this row summarizes; null at `aggregate=book` and "
+            "`aggregate=text`."
+        ),
+    )
+    score: float | None = Field(
+        default=None,
+        description=(
+            "Mean score across the verses in scope. Null only if none of them had a "
+            "score."
+        ),
+    )
+    flag: bool = Field(
+        default=False,
+        description="True if **any** verse in scope was flagged.",
+    )
+    hide: bool = Field(
+        default=False,
+        description="True if **any** verse in scope was marked hidden.",
+    )
+
+
+#: The item type of the results page: a verse row, or an aggregated row. Declared as a
+#: union rather than one permissive model so ``vrefs`` and ``vref`` cannot appear on an
+#: aggregate row and the aggregate shape cannot silently swallow a verse row's fields.
+#: Which one a page holds is decided by the request's ``aggregate``, so a client never
+#: has to sniff the shape; ``test_assessment_routes_v4`` pins that both directions
+#: serialize as their own member.
+AssessmentResultRow = Union[AssessmentResultOut, AssessmentResultAggregateOut]
+
+
 __all__ = [
+    "BOOK_ABBREVIATION_LENGTH",
     "RESPONSE_LANGUAGE_MAX_LENGTH",
     "VREF_MAX_LENGTH",
     "AgentCritiqueOptions",
@@ -558,8 +845,13 @@ __all__ = [
     "AssessmentOptions",
     "AssessmentOptionsBase",
     "AssessmentOut",
+    "AssessmentResultAggregateOut",
+    "AssessmentResultOut",
+    "AssessmentResultRow",
     "NgramsOptions",
     "ReferencedAssessmentOptions",
+    "ResultAggregate",
+    "ResultScope",
     "SemanticSimilarityOptions",
     "SentenceLengthOptions",
     "TextLengthsOptions",

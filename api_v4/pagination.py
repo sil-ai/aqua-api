@@ -48,6 +48,11 @@ pull tens of thousands of rows. 100 keeps a single v4 page's payload and DB scan
 bounded; a client that needs more walks pages via ``offset``. This is a policy
 decision, not a hard constraint: a future heavy list that genuinely needs a larger
 ceiling should define its own params dependency rather than raise this shared cap.
+
+:class:`ResultPaginationParams` is the first list to take that route (#893). It
+subclasses this one with a 100/1000 policy for the verse-level *result* reads, so
+the two ceilings sit side by side and the catalog cap stays where the catalog
+lists want it.
 """
 
 from datetime import datetime
@@ -102,6 +107,68 @@ class PaginationParams:
         # Annotate the instance attributes explicitly so consumers
         # (``page.limit`` / ``page.offset``) get static types and editor support;
         # the values are already range-validated by the Query bounds above.
+        self.limit: int = limit
+        self.offset: int = offset
+
+
+#: Default page size for the verse-level result reads. 100 rather than the catalog's
+#: 20 because results consumers want bulk: the one known client sets its own page size
+#: to 5000 and fetches every remaining page concurrently, and a full Bible's 37,599
+#: rows at 20 per page is 1,880 requests.
+RESULT_DEFAULT_LIMIT = 100
+#: Hard maximum page size for the result reads; above this is a 422, not a clamp.
+#: 1000 matches v3's own ``le=1000`` on these endpoints, so nothing a v3 client can ask
+#: for is lost, and a full Bible is 38 requests — immaterial to a client that already
+#: parallelizes. Not 5000: a ceiling is a one-way door in the safe direction, since
+#: raising it later is non-breaking and lowering it is not. Today's ~194-byte row is
+#: unusually thin *because* v3 never populated the text fields; if a later read serves
+#: verse text, rows reach ~700-1000 bytes and a 5000-row page becomes 3-5 MB. Sizing
+#: the ceiling against the thin row would lock in a number to regret.
+RESULT_MAX_LIMIT = 1000
+
+
+class ResultPaginationParams(PaginationParams):
+    """``limit`` / ``offset`` for the verse-level result reads: 100 by default, 1000 max.
+
+    Consumed exactly like the shared params — ``page: ResultPaginationParams = Depends()``
+    — and interchangeable with them at :meth:`V4Page.create`, which is why this subclasses
+    rather than duplicates: a page built from either dependency echoes its own limit
+    through the same envelope.
+
+    A separate dependency rather than a wider bound on the shared one, per the module
+    docstring: the catalog lists (versions, revisions, assessments) have no reason to
+    serve 1000 rows, and a shared cap raised for one consumer silently widens every
+    other. Out-of-range values are a 422 here too — the bounds are the same ``Query``
+    mechanism, only the numbers differ.
+
+    ``super().__init__`` is deliberately **not** called: its whole body is the two
+    ``Query`` defaults being replaced, and FastAPI reads the signature of *this*
+    ``__init__`` to declare the parameters. Calling it would re-declare the catalog
+    bounds this class exists to override.
+    """
+
+    def __init__(
+        self,
+        limit: int = Query(
+            RESULT_DEFAULT_LIMIT,
+            ge=1,
+            le=RESULT_MAX_LIMIT,
+            description=(
+                f"Maximum number of items to return. Defaults to "
+                f"{RESULT_DEFAULT_LIMIT}; must be between 1 and "
+                f"{RESULT_MAX_LIMIT} (out-of-range values are rejected with 422, "
+                f"not clamped)."
+            ),
+        ),
+        offset: int = Query(
+            0,
+            ge=0,
+            description=(
+                "Number of items to skip before collecting the page. "
+                "Defaults to 0; must be >= 0."
+            ),
+        ),
+    ) -> None:
         self.limit: int = limit
         self.offset: int = offset
 
