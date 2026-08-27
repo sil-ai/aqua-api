@@ -28,10 +28,11 @@ data as well as new.
 Why the memoisation needs no invalidation
 -----------------------------------------
 
-``verse_text`` is **write-once**. The only insert is ``bible_loading.upload_verses``,
-there is no ``UPDATE`` against the table anywhere in the tree, ``RevisionPatch``'s closed
-allowlist (:mod:`bible_routes.v4.revision_service`) deliberately excludes text, and the
-only other operation is the cascade delete that removes the revision itself. So a
+``verse_text`` is **write-once**. The only insert is ``bible_loading.text_loading``
+(reached through ``upload_bible``), there is no ``UPDATE`` against the table anywhere in
+the tree — migrations included, ``RevisionPatch``'s closed allowlist
+(:mod:`bible_routes.v4.revision_service`) deliberately excludes text, and the only other
+operation is the cascade delete that removes the revision itself. So a
 revision's span map is an immutable fact about an immutable row set: this is
 memoisation, not caching. There is no invalidation logic to get wrong and no staleness
 window to bound — deliberately unlike v3's

@@ -3523,6 +3523,57 @@ class TestResultsAggregation:
         ]
         assert row["score"] == pytest.approx(0.5)
 
+    @pytest.mark.parametrize("aggregate", ["chapter", "book", "text"])
+    def test_a_duplicate_row_is_not_averaged_into_a_rollup(
+        self, client, regular_token1, db_session, group1_version, aggregate
+    ):
+        """A rollup summarizes the deduplicated set, exactly like the verse level.
+
+        The #721 retry duplicate this inserts is the same corruption
+        ``test_one_verse_is_one_row_first_write_wins`` pins at the verse level. The two
+        levels have to agree about it: if the rollup averaged 0.25 with 0.75 while the
+        verse row reported 0.25, a chapter mean would contradict the very rows it
+        summarizes — and only under aggregation, where the verse rows are not returned for
+        a client to notice. v3 does average the pair; this is a deliberate break from it,
+        and the same break the verse level already makes.
+
+        Pinned at all three levels because each takes a different projection and grouping,
+        so a regression could reappear at one and not the others.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_result(db_session, assessment_id, "GEN 1:1", score=0.25)
+        _make_result(db_session, assessment_id, "GEN 1:1", score=0.75)
+        # A second verse, so the mean under test is not itself a single-row group.
+        _make_result(db_session, assessment_id, "GEN 1:2", score=0.75)
+        resp = _results(client, regular_token1, assessment_id, aggregate=aggregate)
+        rows = _rows(resp)
+        assert len(rows) == 1
+        assert resp.json()["total"] == 1
+        # mean(0.25, 0.75), not mean(0.25, 0.75, 0.75): the duplicate is gone from
+        # the group, not merely outvoted in it.
+        assert rows[0]["score"] == pytest.approx(0.5)
+
+    def test_a_duplicate_row_does_not_flag_a_rollup_it_should_not(
+        self, client, regular_token1, db_session, group1_version
+    ):
+        """The ``bool_or`` half of the same rule: a discarded duplicate cannot flag a group.
+
+        Separate from the score case because ``any`` is not a mean — a single spurious
+        ``flag=True`` survives averaging-free aggregation and would silently mark a whole
+        chapter for attention off a row the verse level never returns.
+        """
+        revision_id, reference_id = _pair(db_session, group1_version)
+        assessment_id = _make_assessment(db_session, revision_id, reference_id)
+        _make_result(db_session, assessment_id, "GEN 1:1", score=0.5, flag=False)
+        _make_result(db_session, assessment_id, "GEN 1:1", score=0.5, flag=True)
+        verse_rows = _rows(_results(client, regular_token1, assessment_id))
+        assert [row["flag"] for row in verse_rows] == [False]
+        row = _rows(
+            _results(client, regular_token1, assessment_id, aggregate="chapter")
+        )[0]
+        assert row["flag"] is False
+
 
 class TestResultsSchemaContract:
     """That the two row types stay two types, and that the scope invariants are the model's."""

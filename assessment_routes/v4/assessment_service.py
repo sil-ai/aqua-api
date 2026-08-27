@@ -195,7 +195,9 @@ each documented on the function that implements it:
 * **One row per verse, first-write-wins**, which is what makes that order a total order
   and therefore makes offset pagination stable. One row per ``(assessment, vref)`` is
   already the intended invariant, so this is a guard against #721's retry duplicates and
-  a no-op in correct data (:func:`_verse_level_results`).
+  a no-op in correct data (:func:`_deduplicated_results`). Both the verse level and the
+  rollups read through it, so a duplicate cannot skew a mean that the verse rows it
+  summarizes do not show.
 * **``vrefs`` is derived, not stored** — from the assessed revision's ``<range>``
   markers via :mod:`bible_routes.v4.verse_range_service`, whose module docstring holds
   the memoisation argument. :func:`get_results` documents why the *revision's* markers
@@ -1147,9 +1149,10 @@ def _placeable_results(assessment_id: int, scope: ResultScope) -> list:
     ``book_reference`` supplies the third condition by being an inner join. The three
     columns are nullable and are written together by ``push_results``, so this excludes
     nothing that exists — it is here so the read cannot emit ``"MAT None:None"`` as a
-    ``vref``, and so that every aggregate level summarizes exactly the set the verse level
-    serves. Applied to the count as well as the page, which is what keeps ``total``
+    ``vref``. Applied to the count as well as the page, which is what keeps ``total``
     honest (the trap ``train_routes`` documents at its own ``BookReference`` join).
+    Together with :func:`_deduplicated_results`, which both levels share, this is what
+    makes every aggregate level summarize exactly the set the verse level serves.
 
     ``book`` is compared to the already-upper-cased scope value directly rather than
     through v3's ``func.upper(column)``, which cannot use
@@ -1170,54 +1173,56 @@ def _placeable_results(assessment_id: int, scope: ResultScope) -> list:
     return clauses
 
 
-async def _verse_level_results(
-    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
-) -> tuple[list, int]:
-    """One page of verse-level rows in canonical order, plus the total row count.
+def _deduplicated_results(assessment_id: int, scope: ResultScope):
+    """The assessment's placeable rows as a subquery, one row per verse, first-write-wins.
 
-    **Canonical vref order, not v3's ``id`` order.** v3 orders these by ``min(id)``, i.e.
-    insertion order, which is why the one known client re-sorts every result set against a
-    ``vref.txt`` fixture on arrival. Ordering here retires that.
+    Shared by both levels — :func:`_verse_level_results` serves these rows and
+    :func:`_aggregated_results` rolls them up — so a rollup can never summarize a set the
+    verse level does not serve. Reading the raw table at one level and the deduplicated set
+    at the other would make a chapter mean disagree with the verse rows under it, and only
+    in the rollups, where no client can see the rows to notice.
 
-    **One row per verse, via ``DISTINCT ON``, and the deduplication is defensive rather
-    than semantic.** The intended invariant, confirmed with the repo owner, is exactly one
-    ``assessment_result`` row per ``(assessment, vref)``. Note that the type does not enter
-    that key and cannot: ``assessment_result`` has no ``type`` column, and ``assessment_id``
-    references one ``assessment`` row carrying one ``type``, so the type is functionally
-    determined by the id. The real fact behind "a verse can be scored by several assessment
-    types" is that those scores live under *different* ``assessment_id``s — one row per run
-    — which this read never sees at once, since it is scoped to a single assessment.
-    (``train_routes`` handles the cross-assessment case, and dedups a vref that both
-    sem-sim and word-alignment scored for exactly this reason.)
+    **The deduplication is defensive rather than semantic.** The intended invariant,
+    confirmed with the repo owner, is exactly one ``assessment_result`` row per
+    ``(assessment, vref)``. Note that the type does not enter that key and cannot:
+    ``assessment_result`` has no ``type`` column, and ``assessment_id`` references one
+    ``assessment`` row carrying one ``type``, so the type is functionally determined by the
+    id. The real fact behind "a verse can be scored by several assessment types" is that
+    those scores live under *different* ``assessment_id``s — one row per run — which this
+    read never sees at once, since it is scoped to a single assessment. (``train_routes``
+    handles the cross-assessment case, and dedups a vref that both sem-sim and
+    word-alignment scored for exactly this reason.)
 
     So in correct data this ``DISTINCT ON`` is a **no-op**. It is here for the one way the
     invariant can break: the natural key has no uniqueness constraint (#721, whose fix
     cannot land while the shared schema is frozen), so a retried Modal push re-inserts
-    rather than upserts. Two rows for one verse would make ``(book, chapter, verse)``
-    unable to decide which comes first, and offset pagination is stable only under a total
-    order — a page boundary could then repeat or skip a row. Guarding costs nothing: the
-    ``DISTINCT ON`` rides ``idx_assessment_result_main`` either way.
+    rather than upserts. At the verse level two rows for one verse would make
+    ``(book, chapter, verse)`` unable to decide which comes first, and offset pagination is
+    stable only under a total order — a page boundary could then repeat or skip a row. In a
+    rollup they would instead be silently averaged into the mean. Guarding costs nothing:
+    the ``DISTINCT ON`` rides ``idx_assessment_result_main`` either way.
 
-    First-write-wins rather than v3's ``avg(score)`` across the duplicates. Given the
-    invariant this is not a close call: there is no legitimate "two scores for this verse
-    in this assessment" case, so averaging would be averaging a corrupt retry against its
-    own copy, and the mean of a pair that should never have existed is not a better answer
-    than the row that was written first. It is also the convention the rest of the tree
-    applies to this exact hazard — ``train_routes`` keeps the first of duplicate
-    ``assessment_result`` rows, and #721's own fix is ``ON CONFLICT DO NOTHING``. And it
-    means every field of the returned row comes from *one real row*, which is what lets
-    ``note`` be served at all: under v3's grouping it would have to be an invented
-    aggregate over values that are prose.
+    First-write-wins rather than v3's ``avg(score)`` across the duplicates, at **both**
+    levels. Given the invariant this is not a close call: there is no legitimate "two
+    scores for this verse in this assessment" case, so averaging would be averaging a
+    corrupt retry against its own copy, and the mean of a pair that should never have
+    existed is not a better answer than the row that was written first. It is also the
+    convention the rest of the tree applies to this exact hazard — ``train_routes`` keeps
+    the first of duplicate ``assessment_result`` rows, and #721's own fix is
+    ``ON CONFLICT DO NOTHING``. And it means every field of a returned verse row comes from
+    *one real row*, which is what lets ``note`` be served at all: under v3's grouping it
+    would have to be an invented aggregate over values that are prose.
 
-    ``DISTINCT ON`` and its ``ORDER BY`` run in an inner query on the stored
+    ``DISTINCT ON`` and its ``ORDER BY`` run here, on the stored
     ``(book, chapter, verse, id)`` — matching ``idx_assessment_result_main`` — because
     Postgres requires the ``ORDER BY`` to *begin* with the ``DISTINCT ON`` expressions,
-    and the canonical order begins with ``book_reference.number`` instead. The outer query
-    joins the book order on and re-sorts. ``vref`` is rebuilt from the group columns rather
-    than read from the ``vref`` column, exactly as v3 does, so it cannot be null and
-    cannot disagree with the triple the row was deduplicated on.
+    and the canonical order begins with ``book_reference.number`` instead. Each caller
+    joins the book order on outside this subquery. All nine columns are projected even
+    though the rollups use four: the ``ORDER BY`` above fixes *which* row survives, so the
+    surviving row's fields are the same set either way, and one projection keeps the two
+    callers reading the same thing.
     """
-    deduplicated = (
+    return (
         select(
             AssessmentResult.id,
             AssessmentResult.assessment_id,
@@ -1241,6 +1246,25 @@ async def _verse_level_results(
         )
         .subquery()
     )
+
+
+async def _verse_level_results(
+    db: AsyncSession, assessment_id: int, scope: ResultScope, *, limit: int, offset: int
+) -> tuple[list, int]:
+    """One page of verse-level rows in canonical order, plus the total row count.
+
+    **Canonical vref order, not v3's ``id`` order.** v3 orders these by ``min(id)``, i.e.
+    insertion order, which is why the one known client re-sorts every result set against a
+    ``vref.txt`` fixture on arrival. Ordering here retires that.
+
+    One row per verse comes from :func:`_deduplicated_results`, which holds the argument
+    for it. This function's own job is the canonical order the dedup subquery cannot
+    express: it joins ``book_reference`` on and re-sorts by its ``number``. ``vref`` is
+    rebuilt from the group columns rather than read from the ``vref`` column, exactly as v3
+    does, so it cannot be null and cannot disagree with the triple the row was
+    deduplicated on.
+    """
+    deduplicated = _deduplicated_results(assessment_id, scope)
     placed = (
         select(*deduplicated.c, BookReference.number.label("book_number"))
         .select_from(deduplicated)
@@ -1269,6 +1293,12 @@ async def _aggregated_results(
     projection — an aggregate row is not a stored row, and the lowest id among the verses
     it summarizes identifies nothing the row represents.
 
+    The rollup runs over :func:`_deduplicated_results`, not the raw table, which is the
+    second deliberate break from v3 here. v3 averages #721's retry duplicates into the
+    mean; doing that while the verse level keeps only the first copy would make a chapter
+    mean disagree with the very rows it summarizes — and only under aggregation, where the
+    verse rows are not there to contradict it.
+
     ``book_reference.number`` joins in at every level, including ``text`` where nothing is
     ordered by it. That is deliberate: the join is also a filter, so keeping it everywhere
     means a whole-text mean is taken over exactly the verses the chapter-level rows
@@ -1289,11 +1319,12 @@ async def _aggregated_results(
     level" the Paratext extension needs, so no client can be relying on v3 behaviour here
     — there is none to preserve.
     """
+    deduplicated = _deduplicated_results(assessment_id, scope)
     if scope.aggregate is ResultAggregate.chapter:
-        group_columns = (AssessmentResult.book, AssessmentResult.chapter)
+        group_columns = (deduplicated.c.book, deduplicated.c.chapter)
         canonical_columns = (BookReference.number,)
     elif scope.aggregate is ResultAggregate.book:
-        group_columns = (AssessmentResult.book,)
+        group_columns = (deduplicated.c.book,)
         canonical_columns = (BookReference.number,)
     else:
         group_columns = ()
@@ -1301,16 +1332,15 @@ async def _aggregated_results(
 
     grouped = (
         select(
-            AssessmentResult.assessment_id,
+            deduplicated.c.assessment_id,
             *group_columns,
-            func.avg(AssessmentResult.score).label("score"),
-            func.bool_or(AssessmentResult.flag).label("flag"),
-            func.bool_or(AssessmentResult.hide).label("hide"),
+            func.avg(deduplicated.c.score).label("score"),
+            func.bool_or(deduplicated.c.flag).label("flag"),
+            func.bool_or(deduplicated.c.hide).label("hide"),
         )
-        .select_from(AssessmentResult)
-        .join(BookReference, BookReference.abbreviation == AssessmentResult.book)
-        .where(*_placeable_results(assessment_id, scope))
-        .group_by(AssessmentResult.assessment_id, *canonical_columns, *group_columns)
+        .select_from(deduplicated)
+        .join(BookReference, BookReference.abbreviation == deduplicated.c.book)
+        .group_by(deduplicated.c.assessment_id, *canonical_columns, *group_columns)
         # (number, book, chapter) sorts identically to (number, chapter) — the book
         # abbreviation is determined by its number — so the group columns can just follow.
         .order_by(*canonical_columns, *group_columns)
